@@ -464,11 +464,17 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
   await requestStarted;
   await page.keyboard.press('Escape');
   await expect(picker).toBeHidden();
-  // The dirty recipe draft opens Save/Discard/Stay; discard to navigate.
+  // Handle the dirty Save/Discard/Stay guard with Stay, then clear the draft
+  // back to clean so the actual navigation remains a same-document SPA move.
   await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
-  const discard = page.getByRole('button', { name: 'Discard and leave' });
-  await expect(discard).toBeVisible();
-  await discard.click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(guard).toBeHidden();
+  await expect(page).toHaveURL(/\/recipe-editor\/new/);
+  await page.getByLabel('Recipe name', { exact: true }).fill('');
+  await expect(page.getByRole('status').filter({ hasText: 'Unsaved changes' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
   await expect(page).toHaveURL(/\/recipes$/);
   expect(await page.evaluate(() => (window as any).__krausenLifecycleMarker)).toBe(marker);
   // Deliver the held mutation response only after unmount; it must complete.
