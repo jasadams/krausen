@@ -63,14 +63,25 @@ pub fn TwoFactorAuth() -> impl IntoView {
         setup_loading.set(true);
         error.set(None);
         success.set(None);
+        setup_data.set(None);
+        verification_code.set(String::new());
+        // A setup is a new command sequence; do not reuse an earlier
+        // enable/disable request identity.
+        enable_request.set(None);
+        disable_request.set(None);
 
-        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
-            setup_loading.set(false);
-            error.set(Some("Reload security settings before enabling 2FA.".into()));
-            return;
-        };
         leptos::task::spawn_local(async move {
             use krausen_types::account::TotpSetupOutcome as Outcome;
+            // The TOTP card may have loaded before a sibling password change.
+            // Re-read current authority before constructing a new setup command.
+            let status = match get_security_status().await {
+                Ok(status) => status,
+                Err(e) => {
+                    error.set(Some(e.to_string()));
+                    setup_loading.set(false);
+                    return;
+                }
+            };
             match setup_totp(status.revision).await {
                 Ok(Outcome::Pending(data)) => {
                     setup_data.set(Some(data));
@@ -104,28 +115,37 @@ pub fn TwoFactorAuth() -> impl IntoView {
             return;
         }
 
-        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
-            error.set(Some(
-                "Reload security settings before confirming 2FA.".into(),
-            ));
-            return;
-        };
-        let request = enable_request
+        // An uncertain earlier attempt keeps its exact revision and request
+        // identity. Only a new command reads current authority.
+        let pending = enable_request
             .get_untracked()
-            .filter(|(old_code, revision, _)| old_code == &code && *revision == status.revision)
-            .map(|(_, _, id)| id)
-            .or_else(crate::utils::request_id::new_request_id);
-        let Some(request) = request else {
-            error.set(Some("Unable to create request identity.".into()));
-            return;
-        };
-        enable_request.set(Some((code.clone(), status.revision, request.clone())));
+            .filter(|(old_code, _, _)| old_code == &code);
         enable_loading.set(true);
         error.set(None);
 
         leptos::task::spawn_local(async move {
             use krausen_types::account::TotpEnableOutcome as Outcome;
-            match enable_totp(code, status.revision, request).await {
+            let (revision, request) = match pending {
+                Some((_, revision, request)) => (revision, request),
+                None => {
+                    let status = match get_security_status().await {
+                        Ok(status) => status,
+                        Err(e) => {
+                            error.set(Some(e.to_string()));
+                            enable_loading.set(false);
+                            return;
+                        }
+                    };
+                    let Some(request) = crate::utils::request_id::new_request_id() else {
+                        error.set(Some("Unable to create request identity.".into()));
+                        enable_loading.set(false);
+                        return;
+                    };
+                    enable_request.set(Some((code.clone(), status.revision, request.clone())));
+                    (status.revision, request)
+                }
+            };
+            match enable_totp(code, revision, request).await {
                 Ok(Outcome::Saved { .. }) => {
                     enable_request.set(None);
                     success.set(Some("2FA has been successfully enabled".to_string()));
@@ -135,9 +155,12 @@ pub fn TwoFactorAuth() -> impl IntoView {
                     totp_status.refetch();
                 }
                 Ok(Outcome::InvalidCode) => {
+                    // A corrected code is a new payload and needs a new request.
+                    enable_request.set(None);
                     error.set(Some("Invalid verification code. Please try again.".into()));
                 }
                 Ok(Outcome::NoPendingSetup) => {
+                    enable_request.set(None);
                     error.set(Some(
                         "No pending 2FA setup found. Start the setup process again.".into(),
                     ));
@@ -145,12 +168,38 @@ pub fn TwoFactorAuth() -> impl IntoView {
                     setup_data.set(None);
                 }
                 Ok(Outcome::Conflict { .. }) => {
+                    enable_request.set(None);
                     error.set(Some(
                         "Security settings changed. Reload before trying again.".into(),
                     ));
+                    current_view.set(View::Status);
+                    setup_data.set(None);
                     totp_status.refetch();
                 }
+                Ok(Outcome::Forbidden) | Ok(Outcome::Invalid) => {
+                    enable_request.set(None);
+                    error.set(Some("2FA confirmation is not allowed.".into()));
+                    current_view.set(View::Status);
+                    setup_data.set(None);
+                }
+                Ok(Outcome::ResultExpired) | Ok(Outcome::RequestIdentityConflict) => {
+                    enable_request.set(None);
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".into(),
+                    ));
+                    current_view.set(View::Status);
+                    setup_data.set(None);
+                    totp_status.refetch();
+                }
+                Ok(Outcome::Retryable) | Ok(Outcome::Unavailable) => {
+                    // Keep the exact pending request so an explicit retry
+                    // reuses its revision rather than silently taking a newer one.
+                    error.set(Some(
+                        "2FA confirmation is temporarily unavailable. Try again.".into(),
+                    ));
+                }
                 Ok(_) => {
+                    enable_request.set(None);
                     error.set(Some("2FA confirmation is unavailable. Try again.".into()));
                 }
                 Err(e) => {
@@ -162,45 +211,70 @@ pub fn TwoFactorAuth() -> impl IntoView {
     };
 
     let handle_disable = move |_| {
-        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
-            error.set(Some(
-                "Reload security settings before disabling 2FA.".into(),
-            ));
-            return;
-        };
-        let request = disable_request
-            .get_untracked()
-            .filter(|(revision, _)| *revision == status.revision)
-            .map(|(_, id)| id)
-            .or_else(crate::utils::request_id::new_request_id);
-        let Some(request) = request else {
-            error.set(Some("Unable to create request identity.".into()));
-            return;
-        };
-        disable_request.set(Some((status.revision, request.clone())));
+        // Preserve an uncertain attempt's exact revision and request identity.
+        let pending = disable_request.get_untracked();
         disable_loading.set(true);
         error.set(None);
         success.set(None);
 
         leptos::task::spawn_local(async move {
             use krausen_types::account::TotpDisableOutcome as Outcome;
-            match disable_totp(status.revision, request).await {
+            let (revision, request) = match pending {
+                Some((revision, request)) => (revision, request),
+                None => {
+                    let status = match get_security_status().await {
+                        Ok(status) => status,
+                        Err(e) => {
+                            error.set(Some(e.to_string()));
+                            disable_loading.set(false);
+                            return;
+                        }
+                    };
+                    let Some(request) = crate::utils::request_id::new_request_id() else {
+                        error.set(Some("Unable to create request identity.".into()));
+                        disable_loading.set(false);
+                        return;
+                    };
+                    disable_request.set(Some((status.revision, request.clone())));
+                    (status.revision, request)
+                }
+            };
+            match disable_totp(revision, request).await {
                 Ok(Outcome::Saved { .. }) => {
                     disable_request.set(None);
                     success.set(Some("2FA has been successfully disabled".to_string()));
                     totp_status.refetch();
                 }
                 Ok(Outcome::NotEnabled) => {
+                    disable_request.set(None);
                     error.set(Some("2FA is not currently enabled.".into()));
                     totp_status.refetch();
                 }
                 Ok(Outcome::Conflict { .. }) => {
+                    disable_request.set(None);
                     error.set(Some(
                         "Security settings changed. Reload before trying again.".into(),
                     ));
                     totp_status.refetch();
                 }
+                Ok(Outcome::Forbidden) | Ok(Outcome::Invalid) => {
+                    disable_request.set(None);
+                    error.set(Some("Disabling 2FA is not allowed.".into()));
+                }
+                Ok(Outcome::ResultExpired) | Ok(Outcome::RequestIdentityConflict) => {
+                    disable_request.set(None);
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".into(),
+                    ));
+                    totp_status.refetch();
+                }
+                Ok(Outcome::Retryable) | Ok(Outcome::Unavailable) => {
+                    error.set(Some(
+                        "Disabling 2FA is temporarily unavailable. Try again.".into(),
+                    ));
+                }
                 Ok(_) => {
+                    disable_request.set(None);
                     error.set(Some("Disabling 2FA is unavailable. Try again.".into()));
                 }
                 Err(e) => {
@@ -215,6 +289,7 @@ pub fn TwoFactorAuth() -> impl IntoView {
         current_view.set(View::Status);
         setup_data.set(None);
         verification_code.set(String::new());
+        enable_request.set(None);
         error.set(None);
     };
 
