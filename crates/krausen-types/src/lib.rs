@@ -8,3 +8,5 @@
 pub mod brewery;
 pub mod sync;
 pub mod workspace;
+
+pub mod validation;

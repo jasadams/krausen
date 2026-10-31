@@ -38,12 +38,12 @@ mod volumes;
 
 pub use derived::{Corrections, Derived, FermentablePoints, IbuContribution, Volumes};
 pub use equipment::{Chilling, Equipment};
-pub use presets::{
-    builtin_presets, EquipmentField, EquipmentPreset, PresetCatalogue, ProfileSource,
-};
 pub use error::CalcError;
+pub use presets::{
+    EquipmentField, EquipmentPreset, PresetCatalogue, ProfileSource, builtin_presets,
+};
 pub use recipe::{Fermentable, Hop, HopUse, Recipe, Yeast};
-pub use units::{Gravity, GAL_PER_L, LB_PER_KG, PPG_TO_POINTS_L_PER_KG};
+pub use units::{GAL_PER_L, Gravity, LB_PER_KG, PPG_TO_POINTS_L_PER_KG};
 
 /// Derive every bench-sheet figure for a recipe brewed on a given brewery.
 ///
@@ -64,11 +64,24 @@ pub fn derive(recipe: &Recipe, equipment: &Equipment) -> Result<Derived, CalcErr
     let extract = extract::compute(recipe, equipment, &volumes);
 
     // 3. Attenuation — needs OG.
-    let final_gravity = extract::final_gravity(extract.original_gravity, recipe.yeast.apparent_attenuation);
+    let final_gravity =
+        extract::final_gravity(extract.original_gravity, recipe.yeast.apparent_attenuation);
+    if !extract.original_gravity.sg().is_finite()
+        || !final_gravity.sg().is_finite()
+        || final_gravity.sg() < 1.0
+        || final_gravity > extract.original_gravity
+        || extract.original_gravity.sg() >= 1.775
+    {
+        return Err(CalcError::InvalidInput {
+            field: "gravity".into(),
+            reason: "calculated gravity is outside the supported formula domain",
+        });
+    }
     let abv_percent = extract::abv(extract.original_gravity, final_gravity);
 
     // 4. IBU — needs both boil gravities.
-    let mean_boil_gravity = ibu::mean_boil_gravity(extract.pre_boil_gravity, extract.original_gravity);
+    let mean_boil_gravity =
+        ibu::mean_boil_gravity(extract.pre_boil_gravity, extract.original_gravity);
     let ibu_contributions =
         ibu::contributions(recipe, equipment, volumes.post_boil_l, mean_boil_gravity);
     let ibu_total = ibu_contributions.iter().map(|c| c.ibu).sum();
@@ -104,6 +117,151 @@ pub fn derive(recipe: &Recipe, equipment: &Equipment) -> Result<Derived, CalcErr
 /// one, and these are all conditions a brewer would want told about rather
 /// than papered over.
 fn validate(recipe: &Recipe, equipment: &Equipment) -> Result<(), CalcError> {
+    fn check(
+        field: impl Into<String>,
+        value: f64,
+        valid: impl FnOnce(f64) -> bool,
+        reason: &'static str,
+    ) -> Result<(), CalcError> {
+        let field = field.into();
+        if !value.is_finite() {
+            return Err(CalcError::InvalidInput {
+                field,
+                reason: "must be finite",
+            });
+        }
+        if !valid(value) {
+            return Err(CalcError::InvalidInput { field, reason });
+        }
+        Ok(())
+    }
+    let nonnegative = |v: f64| v >= 0.0;
+    let positive = |v: f64| v > 0.0;
+    check(
+        "batch_size_l",
+        recipe.batch_size_l,
+        positive,
+        "must be positive",
+    )?;
+    check(
+        "mash_water_l",
+        recipe.mash_water_l,
+        nonnegative,
+        "must be nonnegative",
+    )?;
+    if let Some(temp) = recipe.whirlpool_temp_c {
+        check("whirlpool_temp_c", temp, |_| true, "must be finite")?;
+    }
+    for (i, grain) in recipe.fermentables.iter().enumerate() {
+        check(
+            format!("fermentables[{i}].kg"),
+            grain.kg,
+            positive,
+            "must be positive",
+        )?;
+        check(
+            format!("fermentables[{i}].ppg"),
+            grain.ppg,
+            positive,
+            "must be positive",
+        )?;
+        check(
+            format!("fermentables[{i}].ebc"),
+            grain.ebc,
+            nonnegative,
+            "must be nonnegative",
+        )?;
+    }
+    for (i, hop) in recipe.hops.iter().enumerate() {
+        check(
+            format!("hops[{i}].grams"),
+            hop.grams,
+            positive,
+            "must be positive",
+        )?;
+        check(
+            format!("hops[{i}].alpha_acid"),
+            hop.alpha_acid,
+            |v| (0.0..=1.0).contains(&v),
+            "must be between zero and one",
+        )?;
+        if hop.use_ == HopUse::Boil && hop.minutes > recipe.boil_minutes {
+            return Err(CalcError::InvalidInput {
+                field: format!("hops[{i}].minutes"),
+                reason: "cannot exceed boil duration",
+            });
+        }
+    }
+    for (field, value) in [
+        (
+            "boil_off_rate_l_per_hour",
+            equipment.boil_off_rate_l_per_hour,
+        ),
+        (
+            "grain_absorption_l_per_kg",
+            equipment.grain_absorption_l_per_kg,
+        ),
+        ("kettle_deadspace_l", equipment.kettle_deadspace_l),
+        ("losses_l", equipment.losses_l),
+    ] {
+        check(field, value, nonnegative, "must be nonnegative")?;
+    }
+    check(
+        "mash_efficiency",
+        equipment.mash_efficiency,
+        |v| v > 0.0 && v <= 1.0,
+        "must be greater than zero and at most one",
+    )?;
+    check(
+        "apparent_attenuation",
+        recipe.yeast.apparent_attenuation,
+        |v| (0.0..=1.0).contains(&v),
+        "must be between zero and one",
+    )?;
+    check(
+        "kettle_diameter_cm",
+        equipment.kettle_diameter_cm,
+        positive,
+        "must be positive",
+    )?;
+    check(
+        "kettle_opening_cm",
+        equipment.kettle_opening_cm,
+        |v| v > 0.0 && v <= equipment.kettle_diameter_cm,
+        "must be positive and no larger than kettle diameter",
+    )?;
+    check(
+        "boil_temp_c",
+        equipment.boil_temp_c,
+        |_| true,
+        "must be finite",
+    )?;
+    match equipment.chilling {
+        Chilling::None => {}
+        Chilling::Forced {
+            rate_per_min,
+            plateau_c,
+        } => {
+            check(
+                "chilling.rate_per_min",
+                rate_per_min,
+                positive,
+                "must be positive",
+            )?;
+            check(
+                "chilling.plateau_c",
+                plateau_c,
+                |v| v < equipment.boil_temp_c,
+                "must be below boil temperature",
+            )?;
+        }
+        Chilling::Counterflow { litres_per_minute } => check(
+            "chilling.litres_per_minute",
+            litres_per_minute,
+            positive,
+            "must be positive",
+        )?,
+    }
     if recipe.fermentables.is_empty() {
         return Err(CalcError::EmptyGrist);
     }

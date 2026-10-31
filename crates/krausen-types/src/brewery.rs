@@ -210,6 +210,9 @@ pub struct ProcessStep {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProcessV1 {
+    /// Explicit apparent attenuation for the complete wort; never inferred from yeast rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apparent_attenuation_fraction: Option<f64>,
     pub mash_steps: Vec<ProcessStep>,
     pub fermentation_steps: Vec<ProcessStep>,
     pub whirlpool_minutes: Option<f64>,
@@ -240,5 +243,22 @@ mod tests {
         assert_eq!(restored, document);
         assert_eq!(restored.batch_size_l, None);
         assert_eq!(restored.process.unsupported["schedule"]["stage"], "custom");
+    }
+
+    #[test]
+    fn older_process_without_attenuation_stays_absent() {
+        let document = RecipeDocumentV1::default();
+        let mut old = serde_json::to_value(document).unwrap();
+        old["process"]
+            .as_object_mut()
+            .unwrap()
+            .remove("apparent_attenuation_fraction");
+        let restored: RecipeDocumentV1 = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.process.apparent_attenuation_fraction, None);
+        assert!(
+            serde_json::to_value(restored).unwrap()["process"]
+                .get("apparent_attenuation_fraction")
+                .is_none()
+        );
     }
 }
