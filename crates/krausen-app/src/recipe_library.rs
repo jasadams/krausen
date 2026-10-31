@@ -381,28 +381,26 @@ async fn archive_inner(
         let sql = "INSERT INTO recipe_archive_events (workspace_id,recipe_id,metadata_revision,archived,actor_id,recorded_at) VALUES ($1,$2,$3,$4,$5,$6)";
         let now = chrono::Utc::now().timestamp();
         match &mut tx {
-            DbTx::Postgres(t) => {
-                sqlx::query(sql)
-                    .bind(&actor.workspace_id)
-                    .bind(&q.recipe_id)
-                    .bind(revision)
-                    .bind(q.archived)
-                    .bind(&actor.actor_id)
-                    .bind(now)
-                    .execute(&mut **t)
-                    .await
-            }
-            DbTx::Sqlite(t) => {
-                sqlx::query(sql)
-                    .bind(&actor.workspace_id)
-                    .bind(&q.recipe_id)
-                    .bind(revision)
-                    .bind(q.archived)
-                    .bind(&actor.actor_id)
-                    .bind(now)
-                    .execute(&mut **t)
-                    .await
-            }
+            DbTx::Postgres(t) => sqlx::query(sql)
+                .bind(&actor.workspace_id)
+                .bind(&q.recipe_id)
+                .bind(revision)
+                .bind(q.archived)
+                .bind(&actor.actor_id)
+                .bind(now)
+                .execute(&mut **t)
+                .await
+                .map(|result| result.rows_affected()),
+            DbTx::Sqlite(t) => sqlx::query(sql)
+                .bind(&actor.workspace_id)
+                .bind(&q.recipe_id)
+                .bind(revision)
+                .bind(q.archived)
+                .bind(&actor.actor_id)
+                .bind(now)
+                .execute(&mut **t)
+                .await
+                .map(|result| result.rows_affected()),
         }
         .map_err(crate::db_error)?;
         record_change(&mut tx, actor, "recipe.archive.v1", &q.recipe_id, revision).await?;
