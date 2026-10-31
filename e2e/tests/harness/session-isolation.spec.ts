@@ -36,8 +36,8 @@ function familyLabel(familyId: string | null): string {
  * context logs in through the supported path and owns a separate family, so
  * revoking family A leaves family B usable.
  *
- * Run with E2E_AUTH_MODE=static for the expected red baseline and with
- * E2E_AUTH_MODE=fresh for the green acceptance run.
+ * Red: E2E_AUTH_MODE=static ... --config=e2e/playwright.config.ts --retries=0 --trace=off
+ * Green: E2E_AUTH_MODE=fresh ... --config=e2e/playwright.security.config.ts --retries=0 --trace=off
  */
 test.describe('harness: isolated auth session families', () => {
   test.skip(isPersonalMode(), 'Requires self_hosted/SaaS password login');
