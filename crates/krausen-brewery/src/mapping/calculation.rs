@@ -27,6 +27,14 @@ fn record_default(defaults: &mut Vec<AppliedDefault>, path: String, value: f64, 
     }
 }
 
+fn merge_defaults(into: &mut Vec<AppliedDefault>, from: Vec<AppliedDefault>) {
+    for default in from {
+        if !into.iter().any(|existing| existing.path == default.path) {
+            into.push(default);
+        }
+    }
+}
+
 /// Same projection while recording every engine fallback value actually used.
 /// The caller freezes this list with the accepted calculation context.
 pub fn targets_with_defaults(
@@ -36,6 +44,8 @@ pub fn targets_with_defaults(
     applied_defaults: &mut Vec<AppliedDefault>,
 ) -> Targets {
     let mut out = Targets::default();
+    let mut water_defaults = Vec::new();
+    let mut projection_defaults = Vec::new();
     if d.hops.is_empty()
         && !v.diagnostics.iter().any(|d| {
             matches!(
@@ -83,7 +93,7 @@ pub fn targets_with_defaults(
                     Some(value) => value,
                     None => {
                         record_default(
-                            applied_defaults,
+                            &mut water_defaults,
                             "process.kettle_top_up_l".into(),
                             0.0,
                             "L",
@@ -118,6 +128,7 @@ pub fn targets_with_defaults(
                     out.mash_water_l = mash;
                     out.sparge_water_l = sparge;
                     out.kettle_water_l = Some(kettle);
+                    merge_defaults(applied_defaults, water_defaults);
                 } else {
                     v.state = Readiness::Invalid;
                     v.diagnostics.push(Diagnostic {
@@ -180,7 +191,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    applied_defaults,
+                                    projection_defaults,
                                     format!("fermentables[{}].specification.colour_ebc", f.row_id),
                                     0.0,
                                     "EBC",
@@ -211,7 +222,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    applied_defaults,
+                                    projection_defaults,
                                     format!("hops[{}].specification.alpha_fraction", h.row_id),
                                     0.0,
                                     "fraction",
@@ -229,7 +240,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    applied_defaults,
+                                    projection_defaults,
                                     format!("hops[{}].contact_minutes", h.row_id),
                                     0.0,
                                     "minutes",
@@ -277,7 +288,7 @@ pub fn targets_with_defaults(
                     Some(value) => value,
                     None => {
                         record_default(
-                            applied_defaults,
+                            projection_defaults,
                             "process.kettle_top_up_l".into(),
                             0.0,
                             "L",
@@ -300,7 +311,7 @@ pub fn targets_with_defaults(
                     Some(value) => value,
                     None => {
                         record_default(
-                            applied_defaults,
+                            projection_defaults,
                             "process.whirlpool_minutes".into(),
                             0.0,
                             "minutes",
@@ -340,7 +351,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                applied_defaults,
+                                projection_defaults,
                                 "equipment.kettle_diameter_cm".into(),
                                 1.0,
                                 "cm",
@@ -356,7 +367,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                applied_defaults,
+                                projection_defaults,
                                 "equipment.kettle_opening_cm".into(),
                                 1.0,
                                 "cm",
@@ -372,7 +383,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                applied_defaults,
+                                projection_defaults,
                                 "equipment.boil_temperature_c".into(),
                                 100.0,
                                 "C",
@@ -390,6 +401,7 @@ pub fn targets_with_defaults(
     if let Some(input) = projected {
         match formulation::calculate(&input) {
             Ok(r) => {
+                merge_defaults(applied_defaults, projection_defaults);
                 out.pre_boil_sg = Some(r.pre_boil_sg);
                 out.original_sg = Some(r.original_sg);
                 if v.target_available(Target::FinalGravity) {
