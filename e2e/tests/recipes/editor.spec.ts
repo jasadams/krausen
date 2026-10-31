@@ -503,3 +503,33 @@ test('clean focus refetch invalidates preview before showing a newer saved recip
   await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Clean remote update')).toBe(true);
   await other.close();
 });
+
+test('recovered draft retains saved profile selection and resolves its preview', async ({ page }) => {
+  const previews: any[] = [];
+  page.on('response', async response => {
+    if (response.url().includes('/preview_formulation') && response.ok()) {
+      try { previews.push(await response.json()); } catch { /* Transport errors are not previews. */ }
+    }
+  });
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const profileName = `Recovery profile ${Date.now()}`;
+  await page.getByLabel('Profile name').fill(profileName);
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  const selector = page.getByLabel('Equipment profile', { exact: true });
+  if (await selector.getByRole('option', { name: profileName }).count() === 0 && await page.getByRole('button', { name: 'Load more profiles' }).isVisible()) {
+    await page.getByRole('button', { name: 'Load more profiles' }).click();
+  }
+  await expect(selector.getByRole('option', { name: profileName })).toBeAttached();
+  await selector.selectOption({ label: profileName });
+  const profileId = await selector.inputValue();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Profile recovery draft');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Profile recovery draft' && result.Preview.context.equipment_profile?.profile_id === profileId)).toBe(true);
+});
