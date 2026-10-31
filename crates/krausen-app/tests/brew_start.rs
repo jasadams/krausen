@@ -380,6 +380,17 @@ async fn exercise(db: DbPool) {
         .await,
         StartBrewOutcome::ContextConflict { .. }
     ));
+    let preview2_new = preview_document(&db, &actor, &doc2).await;
+    let digest2_new = preview2_new.context_digest.clone().expect("new context");
+    let StartBrewOutcome::Started { .. } = brew_start::start(
+        &db,
+        &actor,
+        start_request(&actor, &recipe_id, 2, Some(2), &digest2_new),
+    )
+    .await
+    else {
+        panic!("refreshed current start");
+    };
     // A real V1 context envelope (V1 policy version/source hash, no applied
     // defaults) is refused rather than silently accepted under V2.
     let mut v1_context = preview2_new.context.clone().expect("v1 source context");
@@ -409,17 +420,6 @@ async fn exercise(db: DbPool) {
                 .as_ref()
                 .is_some_and(|context| context.policy_version == "krausen-formulation-v2")
     ));
-    let preview2_new = preview_document(&db, &actor, &doc2).await;
-    let digest2_new = preview2_new.context_digest.clone().expect("new context");
-    let StartBrewOutcome::Started { .. } = brew_start::start(
-        &db,
-        &actor,
-        start_request(&actor, &recipe_id, 2, Some(2), &digest2_new),
-    )
-    .await
-    else {
-        panic!("refreshed current start");
-    };
 
     // Engine fallbacks actually used are frozen explicitly, not left as nulls.
     let mut defaults_doc = complete_document(&profile_id, "Defaults");
