@@ -372,7 +372,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     });
     let filter_change = Callback::new(move |value: String| archived.set(value == "archived"));
     view! { <Show when=move || !context_valid.get()><BreweryNotice title="Workspace changed" body="Return to the original workspace to use this library." warning=true/></Show><div class="recipe-editor" hidden=move || !context_valid.get()>
-        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your workspace"</p><h1>"Recipes"</h1><p>"Find a recipe and continue brewing."</p></div><div><ButtonLink href="/beerxml" variant=ButtonVariant::Secondary>"Import BeerXML"</ButtonLink><ButtonLink href="/recipe-editor/new">"New recipe"</ButtonLink></div></header>
+        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your workspace"</p><h1>"Recipes"</h1><p>"Find a recipe and continue brewing."</p></div><div class="recipe-editor__actions"><ButtonLink href="/beerxml" variant=ButtonVariant::Secondary>"Import BeerXML"</ButtonLink><ButtonLink href="/recipe-editor/new">"New recipe"</ButtonLink></div></header>
         <BreweryPanel title="Recipe library" description="Search saved recipes or show archived records.">
             <div class="recipe-editor__fields"><BreweryDraftField id="library-search" label="Search recipes" value=Signal::derive(move || search.get()) on_change=search_change/><BreweryDraftSelect id="library-filter" label="Show" value=archive_filter on_change=filter_change options=vec![("active".into(), "Active recipes".into()), ("archived".into(), "Archived recipes".into())]/></div>
             <Show when=move || loading.get()><BreweryNotice title="Loading recipes" body="Please wait."/></Show>
