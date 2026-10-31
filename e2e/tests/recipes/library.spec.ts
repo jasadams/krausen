@@ -197,3 +197,63 @@ test('delayed legacy source responses respect selection and context recheck', as
   await page.waitForTimeout(300);
   await expect(page.getByRole('heading', { name: 'Stored recipe source' })).toHaveCount(0);
 });
+
+test('denied archive hides displayed history and rejects a late revision response', async ({ page }) => {
+  test.setTimeout(60_000);
+  const title = `Denied history ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.goto('/recipes');
+  await page.getByLabel('Search recipes').fill(title);
+  await page.getByRole('button', { name: `History for ${title}` }).click();
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
+  let started!: () => void;
+  let release!: () => void;
+  let completed!: () => void;
+  const startedPromise = new Promise<void>(resolve => { started = resolve; });
+  const releasePromise = new Promise<void>(resolve => { release = resolve; });
+  const completedPromise = new Promise<void>(resolve => { completed = resolve; });
+  let delayNextRevision = false;
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Revision && delayNextRevision) {
+      delayNextRevision = false;
+      const response = await route.fetch();
+      started();
+      await releasePromise;
+      await route.fulfill({ response });
+      completed();
+    } else if (command?.Archive) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+    } else {
+      await route.continue();
+    }
+  });
+  // A typed denial must immediately remove content that is already visible.
+  await page.getByRole('button', { name: `Archive ${title}` }).click();
+  await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toHaveCount(0);
+
+  // Reopen in the same account and prove a response already in flight cannot
+  // restore retained content after a later denial.
+  await page.reload();
+  await page.getByLabel('Search recipes').fill(title);
+  await page.getByRole('button', { name: `History for ${title}` }).click();
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
+  delayNextRevision = true;
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await startedPromise;
+  await page.getByRole('button', { name: `Archive ${title}` }).click();
+  await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toHaveCount(0);
+  release();
+  await completedPromise;
+  await page.waitForTimeout(300);
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toHaveCount(0);
+  await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
+});

@@ -52,22 +52,31 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let blocked = RwSignal::new(false);
     let saving = RwSignal::new(false);
     let context_valid = RwSignal::new(true);
-    #[cfg(target_arch = "wasm32")]
     let context_generation = RwSignal::new(0_u64);
+    // Every authority failure and context recheck removes retained data and
+    // invalidates all in-flight responses before any new context is accepted.
+    let invalidate_context = Callback::new(move |_| {
+        context_valid.set(false);
+        context_generation.update(|n| *n += 1);
+        generation.update(|n| *n += 1);
+        history_generation.update(|n| *n += 1);
+        detail_generation.update(|n| *n += 1);
+        results.set(Vec::new());
+        next.set(None);
+        history.set(None);
+        recovery.set(None);
+        selected_revision.set(None);
+        loading.set(false);
+        detail_loading.set(false);
+        status.set(
+            "Account or workspace changed. Reopen the library in the original workspace.".into(),
+        );
+    });
     #[cfg(target_arch = "wasm32")]
     {
         let recheck = Callback::new(move |_| {
-            context_valid.set(false);
-            generation.update(|n| *n += 1);
-            history_generation.update(|n| *n += 1);
-            detail_generation.update(|n| *n += 1);
-            selected_revision.set(None);
-            detail_loading.set(false);
-            context_generation.update(|n| *n += 1);
+            invalidate_context.run(());
             let sequence = context_generation.get_untracked();
-            results.set(Vec::new());
-            history.set(None);
-            recovery.set(None);
             let expected = intent.get_value();
             leptos::task::spawn_local(async move {
                 let valid = crate::server_fns::context::get_user_context()
@@ -125,9 +134,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     status.set(String::new());
                 }
                 Ok(LibraryOutcome::ContextChanged | LibraryOutcome::Forbidden) => {
-                    results.set(Vec::new());
-                    next.set(None);
-                    status.set("Account or workspace changed. Reopen the library in the original workspace.".into());
+                    invalidate_context.run(())
+                }
+                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => {
+                    invalidate_context.run(())
                 }
                 _ => status.set("Unable to load recipes. Try again.".into()),
             }
@@ -187,9 +197,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                         }
                     }
                     Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => {
-                        history.set(None);
-                        results.set(Vec::new());
-                        status.set("Account or workspace changed. Reopen the library.".into());
+                        invalidate_context.run(())
+                    }
+                    Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => {
+                        invalidate_context.run(())
                     }
                     _ => status.set("Unable to load revision history.".into()),
                 }
@@ -221,8 +232,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     recovery.set(Some((source, diagnostic)))
                 }
                 Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => {
-                    results.set(Vec::new());
-                    context_valid.set(false);
+                    invalidate_context.run(())
+                }
+                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => {
+                    invalidate_context.run(())
                 }
                 _ => status.set("Unable to recover the stored recipe source.".into()),
             }
@@ -255,8 +268,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     selected_revision.set(Some((revision, document)))
                 }
                 Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => {
-                    results.set(Vec::new());
-                    context_valid.set(false);
+                    invalidate_context.run(())
+                }
+                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => {
+                    invalidate_context.run(())
                 }
                 _ => status.set("Unable to load that saved revision.".into()),
             }
@@ -282,9 +297,13 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     detail_loading.set(false);
                     load.run(None);
                 }
-                Ok(LibraryOutcome::Unavailable) | Err(_) => {
+                Ok(LibraryOutcome::Unavailable) => {
                     status.set("The result is uncertain. Retry the same request.".into())
                 }
+                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => {
+                    invalidate_context.run(())
+                }
+                Err(_) => status.set("The result is uncertain. Retry the same request.".into()),
                 Ok(LibraryOutcome::ResultExpired | LibraryOutcome::RequestIdentityConflict) => {
                     blocked.set(true);
                     status.set("The previous request cannot be confirmed. Review the library before continuing.".into());
@@ -295,8 +314,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     load.run(None);
                 }
                 Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => {
-                    results.set(Vec::new());
-                    status.set("Account or workspace changed. Reopen the library.".into());
+                    invalidate_context.run(())
                 }
                 _ => {
                     pending.set(None);
