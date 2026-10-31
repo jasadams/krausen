@@ -417,7 +417,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         } else {
                             baseline.set(snapshot.document.clone());
                             revision.set(Some(snapshot.revision));
-                            draft.set(RecipeDraft::new(snapshot.document));
+                            draft.update(|d| d.replace_saved(snapshot.document));
                             status.set("Updated to the current saved revision.".into());
                         }
                     }
@@ -832,7 +832,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 }
                 recovery_storage_key.set(None);
             }
-            draft.set(RecipeDraft::new(baseline.get_untracked()));
+        draft.update(|d| d.replace_saved(baseline.get_untracked()));
             retry.set(None);
             true
         })));
@@ -908,7 +908,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         if crate::pages::recipe_recovery::remove(&key).is_err() { status.set("Could not discard the retained local draft.".into()); return; }
                         recovery_storage_key.set(None);
                     }
-                    baseline.set(remote_for_reload.document.clone()); draft.set(RecipeDraft::new(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
+                    baseline.set(remote_for_reload.document.clone()); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
                 }>"Discard draft and reload"</Button>
                 <Button on:click=move |_| { baseline.set(remote_for_reapply.clone()); draft.update(|d| d.mark_earlier_document_saved(remote_for_reapply.clone())); revision.set(Some(revision_number)); retry.set(None); conflict.set(None); status.set("Draft retained against the current revision. Review it, then choose Save.".into()); }>"Reapply my draft"</Button>
             </section> }

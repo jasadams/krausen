@@ -186,6 +186,11 @@ impl RecipeDraft {
         self.baseline = self.contents();
         self.dirty = false;
     }
+    pub fn replace_saved(&mut self, document: RecipeDocumentV1) {
+        let next = self.generation.checked_add(1).expect("draft generation exhausted");
+        *self = Self::new(document);
+        self.generation = next;
+    }
     pub fn mark_earlier_document_saved(&mut self, document: RecipeDocumentV1) {
         self.baseline = DraftContents {
             document,
@@ -265,5 +270,16 @@ mod tests {
         draft.undo();
         assert_eq!(draft.number_text("row.amount", None), "-");
         assert!(draft.snapshot().is_err());
+    }
+
+    #[test]
+    fn replacing_clean_saved_document_invalidates_existing_preview_generation() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        let before = draft.generation;
+        let replacement = RecipeDocumentV1 { title: "Remote revision".into(), ..Default::default() };
+        draft.replace_saved(replacement.clone());
+        assert_ne!(draft.generation, before);
+        assert_eq!(draft.document(), &replacement);
+        assert!(!draft.dirty);
     }
 }

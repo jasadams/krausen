@@ -478,3 +478,28 @@ test('a pending save cannot be discarded while its result is uncertain', async (
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await expect(page).toHaveURL(/recipe-editor/);
 });
+
+test('clean focus refetch invalidates preview before showing a newer saved recipe', async ({ page }) => {
+  const previews: any[] = [];
+  page.on('response', async response => {
+    if (response.url().includes('/preview_formulation') && response.ok()) {
+      try { previews.push(await response.json()); } catch { /* Transport error, not a preview. */ }
+    }
+  });
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Clean original');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  await page.reload();
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Clean original')).toBe(true);
+  const other = await page.context().newPage();
+  await other.goto(url);
+  await other.getByLabel('Recipe name', { exact: true }).fill('Clean remote update');
+  await other.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Clean remote update');
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Clean remote update')).toBe(true);
+  await other.close();
+});
