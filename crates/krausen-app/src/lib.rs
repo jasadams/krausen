@@ -40,6 +40,8 @@ pub enum Error {
     IngredientArchived,
     #[error("duplicate ingredient entry")]
     DuplicateIngredient,
+    #[error("style reference is unresolved")]
+    UnresolvedStyle,
     #[error("workspace revision conflict")]
     Conflict { expected: i64, actual: i64 },
     #[error("request identity reused with a different payload")]
@@ -428,8 +430,8 @@ pub async fn enqueue_outbox(
 pub mod formulation;
 pub mod interchange;
 
-mod style_reference;
 pub mod recipe_editor;
+mod style_reference;
 
 pub mod equipment;
 
@@ -437,3 +439,5 @@ pub mod recipe_library;
 pub mod process_summary;
 
 pub mod catalogue;
+
+pub mod scaling;

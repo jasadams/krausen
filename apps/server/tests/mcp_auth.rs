@@ -1269,6 +1269,184 @@ async fn exercise(db: DbPool) {
         stale.structured_content.unwrap()["outcome"]["Conflict"]["actual"],
         2
     );
+    // Scaling preview/apply and duplication use the same shared application
+    // operations through MCP; apply is guarded by head and accepted context.
+    let mut scale_doc = krausen_types::brewery::RecipeDocumentV1::default();
+    scale_doc.title = "MCP scale".into();
+    scale_doc.batch_size_l = Some(20.0);
+    scale_doc.boil_minutes = Some(60.0);
+    scale_doc.process.mash_water_method = Some("manual".into());
+    scale_doc.process.mash_water_l = Some(12.0);
+    scale_doc.process.apparent_attenuation_fraction = Some(0.8);
+    scale_doc.process.kettle_top_up_l = Some(2.0);
+    scale_doc.equipment_overrides.mash_efficiency_fraction = Some(0.75);
+    scale_doc.equipment_overrides.boil_off_l_per_hour = Some(3.0);
+    scale_doc.equipment_overrides.transfer_loss_l = Some(2.0);
+    scale_doc.equipment_overrides.grain_absorption_l_per_kg = Some(0.8);
+    scale_doc.equipment_overrides.kettle_capacity_l = Some(30.0);
+    scale_doc
+        .fermentables
+        .push(krausen_types::brewery::FermentableAddition {
+            row_id: "scale-grain".into(),
+            amount_kg: Some(4.0),
+            addition: krausen_types::brewery::AdditionStage {
+                stage: "mash".into(),
+                time_minutes: Some(60.0),
+            },
+            specification: krausen_types::brewery::FermentableSpecification {
+                name: None,
+                producer: None,
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        });
+    scale_doc.hops.push(krausen_types::brewery::HopAddition {
+        row_id: "scale-hop".into(),
+        amount_g: Some(30.0),
+        stage: "boil".into(),
+        contact_minutes: Some(60.0),
+        temperature_c: Some(100.0),
+        specification: krausen_types::brewery::HopSpecification {
+            name: None,
+            producer: None,
+            alpha_fraction: Some(0.055),
+        },
+        source: None,
+    });
+    let scale_saved = krausen_app::recipe_editor::save(
+        &db,
+        &actor_for_recipe,
+        &intent,
+        None,
+        None,
+        &scale_doc,
+        uuid::Uuid::new_v4(),
+    )
+    .await;
+    let krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
+        recipe_id: scale_id,
+        ..
+    } = scale_saved
+    else {
+        panic!("create scaling recipe");
+    };
+    let scale_args = json!({
+        "workspace_id": ws,
+        "intent": intent,
+        "recipe_id": scale_id,
+        "target_batch_size_l": 40.0
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let scale_preview_mcp = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_scale_preview").with_arguments(scale_args.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(scale_preview_mcp.is_error, Some(false));
+    let scale_preview_value = scale_preview_mcp.structured_content.unwrap();
+    assert_eq!(scale_preview_value["outcome"]["Preview"]["factor"], 2.0);
+    assert_eq!(
+        scale_preview_value["outcome"]["Preview"]["scaled_document"]["fermentables"][0]["amount_kg"],
+        8.0
+    );
+    let browser_scale = krausen_ui::server_fns::scaling::execute_preview(
+        &db,
+        &actor_for_recipe,
+        krausen_types::scaling::ScalePreviewRequest {
+            intent: intent.clone(),
+            recipe_id: scale_id.clone(),
+            target_batch_size_l: 40.0,
+        },
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_value(browser_scale).unwrap(),
+        scale_preview_value["outcome"]
+    );
+    let preview_outcome: krausen_types::scaling::ScaleOutcome =
+        serde_json::from_value(scale_preview_value["outcome"].clone()).unwrap();
+    let krausen_types::scaling::ScaleOutcome::Preview(scale_preview) = preview_outcome else {
+        panic!("scale preview");
+    };
+    let scale_request = krausen_types::scaling::ScaleApplyRequest {
+        intent: intent.clone(),
+        recipe_id: scale_id.clone(),
+        expected_revision: 1,
+        target_batch_size_l: 40.0,
+        accepted: scale_preview.accepted.clone(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let apply_args = json!({"workspace_id": ws, "request": scale_request})
+        .as_object()
+        .unwrap()
+        .clone();
+    let applied = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_scale_apply").with_arguments(apply_args.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(applied.is_error, Some(false));
+    assert_eq!(
+        applied.structured_content.as_ref().unwrap()["outcome"]["Applied"]["revision"],
+        2
+    );
+    let replayed = legacy
+        .call_tool(CallToolRequestParams::new("recipe_scale_apply").with_arguments(apply_args))
+        .await
+        .unwrap();
+    assert_eq!(applied.structured_content, replayed.structured_content);
+    let duplicate_request = krausen_types::scaling::DuplicateRecipe {
+        intent: intent.clone(),
+        source_recipe_id: scale_id.clone(),
+        expected_revision: 2,
+        title: Some("MCP copy".into()),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let duplicate_args = json!({"workspace_id": ws, "request": duplicate_request})
+        .as_object()
+        .unwrap()
+        .clone();
+    let duplicated = modern
+        .call_tool(CallToolRequestParams::new("recipe_duplicate").with_arguments(duplicate_args))
+        .await
+        .unwrap();
+    assert_eq!(duplicated.is_error, Some(false));
+    assert_eq!(
+        duplicated.structured_content.as_ref().unwrap()["outcome"]["Duplicated"]["revision"],
+        1
+    );
+    assert_eq!(
+        duplicated.structured_content.unwrap()["outcome"]["Duplicated"]["source_revision"],
+        2
+    );
+    let bad_scale = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_scale_apply").with_arguments(
+                json!({
+                    "workspace_id": ws,
+                    "request": {
+                        "intent": intent,
+                        "recipe_id": scale_id,
+                        "expected_revision": 2,
+                        "target_batch_size_l": 40.0,
+                        "accepted": scale_preview.accepted,
+                        "request_id": "invalid"
+                    }
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_scale.is_error, Some(true));
     // Real browser and both SDK transports use the same library, retained
     // history and guarded archive operations under the verified principal.
     use krausen_types::recipe_library::{

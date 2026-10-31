@@ -67,6 +67,24 @@ pub const RECIPE_PROCESS_SUMMARY: Operation = Operation {
     input_contract: "ProcessSummaryRequest",
     output_contract: "ProcessSummaryOutcome",
 };
+pub const RECIPE_SCALE_PREVIEW: Operation = Operation {
+    id: "recipe.scale-preview.v1",
+    mcp_tool: "recipe_scale_preview",
+    input_contract: "scale-preview-request.v1",
+    output_contract: "ScaleOutcome",
+};
+pub const RECIPE_SCALE_APPLY: Operation = Operation {
+    id: "recipe.scale-apply.v1",
+    mcp_tool: "recipe_scale_apply",
+    input_contract: "scale-apply-request.v1",
+    output_contract: "ScaleApplyOutcome",
+};
+pub const RECIPE_DUPLICATE: Operation = Operation {
+    id: "recipe.duplicate.v1",
+    mcp_tool: "recipe_duplicate",
+    input_contract: "duplicate-recipe.v1",
+    output_contract: "DuplicateOutcome",
+};
 pub const BEERXML_PREVIEW: Operation = Operation {
     id: "beerxml.preview.v1",
     mcp_tool: "beerxml_preview",
@@ -197,6 +215,9 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_READ,
     RECIPE_SAVE,
     RECIPE_PROCESS_SUMMARY,
+    RECIPE_SCALE_PREVIEW,
+    RECIPE_SCALE_APPLY,
+    RECIPE_DUPLICATE,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

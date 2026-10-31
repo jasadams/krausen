@@ -52,10 +52,12 @@ jobs:
       - run: cargo test -p krausen-app --test equipment_profiles
       - run: cargo test -p krausen-app --test ingredient_catalogue
       - run: cargo test -p krausen-app --lib style_reference
+      - run: cargo test -p krausen-app --lib scaling::tests
       - run: cargo test -p krausen-app --test recipe_editor
       - run: cargo test -p krausen-app --test interchange
       - run: cargo test -p krausen-app --test recipe_library
       - run: cargo test -p krausen-app --test process_summary
+      - run: cargo test -p krausen-app --test scaling
       - run: cargo test -p krausen-beerxml -p krausen-types
       - run: cargo test -p krausen-calc
       - run: cargo test -p krausen-core --lib canonical_json
@@ -74,6 +76,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib beerxml::tests
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
       - run: cargo test -p krausen-ui --features ssr --lib catalogue_picker::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_scaling::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
       - uses: actions/setup-node@v4

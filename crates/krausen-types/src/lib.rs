@@ -14,12 +14,13 @@ pub mod validation;
 
 pub mod formulation;
 
-pub mod request_context;
 pub mod recipe_editor;
+pub mod request_context;
 
 pub mod equipment;
 pub mod interchange;
 pub mod catalogue;
 
-pub mod recipe_library;
 pub mod process_summary;
+pub mod recipe_library;
+pub mod scaling;
