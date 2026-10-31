@@ -72,6 +72,19 @@ async fn read_inner(
             if document.schema_version != 1 {
                 return Ok(ProcessSummaryOutcome::InvalidRequest);
             }
+            // A caller-supplied source identity is a trusted label only after
+            // it has been scoped to this workspace and parent. New drafts may
+            // omit it; partial or non-positive pairs are impossible.
+            let (recipe_id, base_revision) = match (recipe_id, base_revision) {
+                (None, None) => (None, None),
+                (Some(recipe_id), Some(revision)) if revision > 0 => {
+                    if !base_revision_exists(pool, actor, &intent, &recipe_id, revision).await? {
+                        return Ok(ProcessSummaryOutcome::NotFound);
+                    }
+                    (Some(recipe_id), Some(revision))
+                }
+                _ => return Ok(ProcessSummaryOutcome::InvalidRequest),
+            };
             (
                 SummarySource::UnsavedDraft {
                     recipe_id,
@@ -134,6 +147,31 @@ async fn read_inner(
         context: &context,
     });
     Ok(ProcessSummaryOutcome::Summary(summary))
+}
+
+/// Verify a caller-declared draft base revision exists under the current
+/// workspace and recipe. Historical bases are valid; no head check is applied.
+async fn base_revision_exists(
+    pool: &DbPool,
+    actor: &ActorContext,
+    intent: &OperationIntent,
+    recipe_id: &str,
+    revision: i64,
+) -> Result<bool, Error> {
+    let mut tx = pool.begin_write().await.map_err(boundary_error)?;
+    authorize_workspace(&mut tx, actor).await?;
+    check_intent(actor, intent)?;
+    let count = scalar!(
+        &mut tx,
+        i64,
+        "SELECT COUNT(*) FROM recipe_revisions WHERE workspace_id = $1 AND recipe_id = $2 AND revision = $3",
+        &actor.workspace_id,
+        recipe_id,
+        revision
+    )
+    .map_err(db_error)?;
+    tx.commit().await.map_err(boundary_error)?;
+    Ok(count.unwrap_or(0) > 0)
 }
 
 enum SavedRead {

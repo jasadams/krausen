@@ -386,6 +386,102 @@ async fn exercise(db: DbPool) {
         matches!(recipe_editor::read(&db, &actor, &intent(&actor), &recipe_id).await, RecipeReadOutcome::Found(snapshot) if snapshot.document.title == "Saved revision two")
     );
 
+    // Draft source identity is scoped and checked; historical bases remain valid.
+    let ProcessSummaryOutcome::Summary(historical) = summary(
+        &db,
+        &actor,
+        ProcessSummarySelection::Draft {
+            recipe_id: Some(recipe_id.clone()),
+            base_revision: Some(1),
+            document: unsaved.clone(),
+        },
+    )
+    .await
+    else {
+        panic!("historical base draft summary unavailable");
+    };
+    assert_eq!(
+        historical.source,
+        SummarySource::UnsavedDraft {
+            recipe_id: Some(recipe_id.clone()),
+            base_revision: Some(1)
+        }
+    );
+    for selection in [
+        ProcessSummarySelection::Draft {
+            recipe_id: Some(recipe_id.clone()),
+            base_revision: None,
+            document: unsaved.clone(),
+        },
+        ProcessSummarySelection::Draft {
+            recipe_id: None,
+            base_revision: Some(1),
+            document: unsaved.clone(),
+        },
+        ProcessSummarySelection::Draft {
+            recipe_id: Some(recipe_id.clone()),
+            base_revision: Some(0),
+            document: unsaved.clone(),
+        },
+    ] {
+        assert_eq!(
+            summary(&db, &actor, selection).await,
+            ProcessSummaryOutcome::InvalidRequest
+        );
+    }
+    assert_eq!(
+        summary(
+            &db,
+            &actor,
+            ProcessSummarySelection::Draft {
+                recipe_id: Some(recipe_id.clone()),
+                base_revision: Some(99),
+                document: unsaved.clone(),
+            },
+        )
+        .await,
+        ProcessSummaryOutcome::NotFound
+    );
+    let mut other = complete_draft(&profile_id);
+    other.title = "Other recipe".into();
+    let RecipeSaveOutcome::Saved {
+        recipe_id: other_recipe,
+        ..
+    } = save_recipe(&db, &actor, None, None, &other).await
+    else {
+        panic!("other recipe fixture");
+    };
+    other.title = "Other recipe two".into();
+    assert_eq!(
+        save_recipe(&db, &actor, Some(&other_recipe), Some(1), &other).await,
+        RecipeSaveOutcome::Saved {
+            recipe_id: other_recipe.clone(),
+            revision: 2
+        }
+    );
+    other.title = "Other recipe three".into();
+    assert_eq!(
+        save_recipe(&db, &actor, Some(&other_recipe), Some(2), &other).await,
+        RecipeSaveOutcome::Saved {
+            recipe_id: other_recipe.clone(),
+            revision: 3
+        }
+    );
+    assert_eq!(
+        summary(
+            &db,
+            &actor,
+            ProcessSummarySelection::Draft {
+                recipe_id: Some(recipe_id.clone()),
+                base_revision: Some(3),
+                document: unsaved.clone(),
+            },
+        )
+        .await,
+        ProcessSummaryOutcome::NotFound,
+        "a revision from another recipe must not label this draft"
+    );
+
     // Incomplete drafts still produce an honest sheet with diagnostics and no invented targets.
     let incomplete = RecipeDocumentV1 {
         title: "Incomplete draft".into(),
@@ -483,12 +579,26 @@ async fn exercise(db: DbPool) {
             &db,
             &actor,
             ProcessSummarySelection::Saved {
-                recipe_id: foreign_recipe,
+                recipe_id: foreign_recipe.clone(),
                 revision: 1,
             },
         )
         .await,
         ProcessSummaryOutcome::NotFound
+    );
+    assert_eq!(
+        summary(
+            &db,
+            &actor,
+            ProcessSummarySelection::Draft {
+                recipe_id: Some(foreign_recipe),
+                base_revision: Some(1),
+                document: draft.clone(),
+            },
+        )
+        .await,
+        ProcessSummaryOutcome::NotFound,
+        "a foreign draft source identity must not be labelled"
     );
     let cross_workspace_profile = RecipeDocumentV1 {
         title: "Cross-workspace profile".into(),

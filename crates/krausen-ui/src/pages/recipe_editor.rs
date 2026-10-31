@@ -1051,8 +1051,16 @@ fn PrintRecipe(
         status.set("Preparing the print summary…".into());
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
+                // The editor may have been unmounted while the context request
+                // was in flight; never touch disposed signals after an await.
+                if context_visible.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
+                return;
+            }
+            if context_visible.try_get_untracked().is_none() {
                 return;
             }
             let result =
@@ -1070,13 +1078,22 @@ fn PrintRecipe(
             } else {
                 result
             };
+            if context_visible.try_get_untracked().is_none() {
+                return;
+            }
             if !current_context_matches(&expected).await {
+                if context_visible.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
                 return;
             }
+            if context_visible.try_get_untracked().is_none() {
+                return;
+            }
             if draft_generation.is_some_and(|generation| {
-                draft.with_untracked(|draft| draft.generation) != generation
+                draft.try_with_untracked(|draft| draft.generation) != Some(generation)
             }) {
                 busy.set(false);
                 status.set("The draft changed. Prepare the print summary again.".into());
