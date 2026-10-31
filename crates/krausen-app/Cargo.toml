@@ -18,7 +18,6 @@ base64.workspace = true
 sha2.workspace = true
 hmac = "0.12"
 subtle = "2"
-base64.workspace = true
 url.workspace = true
 uuid.workspace = true
 chrono.workspace = true
