@@ -451,9 +451,12 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
   await page.waitForTimeout(2000);
   await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toHaveCount(0);
   // The mutation response must not be applied to a disposed editor: the
-  // library entry exists, but no ingredient row is copied into a new recipe.
-  await page.goto('/recipe-editor/new');
-  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  // library entry exists, but no recipe was created or copied.
+  expect(
+    db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(entryName)}`),
+  ).toBe('1');
+  expect(
+    db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(`Disposed recipe ${unique}`)}`),
+  ).toBe('0');
   expect(errors).toEqual([]);
 });
