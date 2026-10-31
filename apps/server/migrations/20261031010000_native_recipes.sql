@@ -2,13 +2,14 @@
 CREATE UNIQUE INDEX recipes_workspace_identity ON recipes(workspace_id, recipe_id);
 ALTER TABLE recipes ADD COLUMN native_head_revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE recipes ADD COLUMN metadata_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE recipes ADD COLUMN native_migration_error TEXT;
 
 CREATE FUNCTION guard_native_recipe_legacy_write() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.native_head_revision > 0 AND NEW.document IS DISTINCT FROM OLD.document THEN
+    IF (OLD.native_head_revision > 0 OR OLD.native_migration_error IS NOT NULL) AND NEW.document IS DISTINCT FROM OLD.document THEN
         RAISE EXCEPTION 'native recipe cannot be edited as legacy document';
     END IF;
-    IF OLD.native_head_revision > 0 AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at
+    IF (OLD.native_head_revision > 0 OR OLD.native_migration_error IS NOT NULL) AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at
        AND NEW.metadata_revision = OLD.metadata_revision THEN
         RAISE EXCEPTION 'native recipe archive requires revision guard';
     END IF;

@@ -130,7 +130,10 @@ fn parse_one(beerxml: &str) -> Result<krausen_beerxml::Recipe, ServerFnError> {
 
 #[cfg(feature = "ssr")]
 fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
-    let (derived, warnings) = summarise(&stored.document);
+    let (derived, mut warnings) = summarise(&stored.document);
+    if let Some(error) = &stored.native_migration_error {
+        warnings.push(format!("Native migration failed: {error}. This legacy record is read-only."));
+    }
     RecipeDetail {
         recipe_id: stored.recipe_id,
         name: stored.name,
@@ -140,6 +143,7 @@ fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
         warnings,
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // Read
@@ -180,7 +184,10 @@ pub async fn get_recipe(recipe_id: String) -> Result<Option<RecipeDetail>, Serve
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "get_recipe failed");
-            ServerFnError::new("Could not load that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not load that recipe"),
+            }
         })?;
 
     Ok(stored.map(detail))
@@ -222,23 +229,9 @@ pub async fn search_recipes(query: String) -> Result<Vec<RecipeListItem>, Server
 /// Store a recipe given as BeerXML.
 #[server(prefix = "/leptos-api")]
 pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnError> {
-    let ac = AuthenticatedContext::extract().await?;
-    let document = parse_one(&beerxml)?;
-
-    let stored = krausen_brewery::recipe_service::create_recipe(
-        &ac.ctx.db,
-        &ac.ws_id,
-        &document,
-        krausen_brewery::RecipeSource::Krausen,
-        Some(&ac.auth.user_id),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "create_recipe failed");
-        ServerFnError::new("Could not save that recipe")
-    })?;
-
-    Ok(detail(stored))
+    let _ = AuthenticatedContext::extract().await?;
+    let _ = beerxml;
+    Err(ServerFnError::new("Recipe creation is unavailable while native authoring is being introduced"))
 }
 
 /// Import a BeerXML file, which may hold several recipes.
@@ -246,40 +239,9 @@ pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnErro
 /// Returns what was stored, so the caller can say how many arrived.
 #[server(prefix = "/leptos-api")]
 pub async fn import_beerxml(beerxml: String) -> Result<Vec<RecipeListItem>, ServerFnError> {
-    let ac = AuthenticatedContext::extract().await?;
-
-    let doc = krausen_beerxml::parse(&beerxml)
-        .map_err(|e| ServerFnError::new(format!("could not read that BeerXML: {e}")))?;
-    if doc.recipes.is_empty() {
-        return Err(ServerFnError::new("that file contains no recipes"));
-    }
-
-    let mut imported = Vec::new();
-    for document in &doc.recipes {
-        let stored = krausen_brewery::recipe_service::create_recipe(
-            &ac.ctx.db,
-            &ac.ws_id,
-            document,
-            krausen_brewery::RecipeSource::BeerXml,
-            Some(&ac.auth.user_id),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "import_beerxml failed");
-            ServerFnError::new("Could not save an imported recipe")
-        })?;
-
-        imported.push(RecipeListItem {
-            recipe_id: stored.recipe_id,
-            name: stored.name,
-            style_name: stored.style_name,
-            batch_size_l: stored.batch_size_l,
-            boil_minutes: stored.boil_minutes,
-            source: stored.source.as_str().to_string(),
-            updated_at: stored.updated_at.to_rfc3339(),
-        });
-    }
-    Ok(imported)
+    let _ = AuthenticatedContext::extract().await?;
+    let _ = beerxml;
+    Err(ServerFnError::new("Recipe import is unavailable while native authoring is being introduced"))
 }
 
 /// Replace a recipe with the BeerXML given.
@@ -296,7 +258,10 @@ pub async fn update_recipe(
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "update_recipe failed");
-                ServerFnError::new("Could not save that recipe")
+                match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not save that recipe"),
+            }
             })?;
 
     Ok(stored.map(detail))
@@ -311,7 +276,10 @@ pub async fn delete_recipe(recipe_id: String) -> Result<bool, ServerFnError> {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "delete_recipe failed");
-            ServerFnError::new("Could not delete that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not delete that recipe"),
+            }
         })
 }
 
@@ -324,6 +292,9 @@ pub async fn restore_recipe(recipe_id: String) -> Result<bool, ServerFnError> {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "restore_recipe failed");
-            ServerFnError::new("Could not restore that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not restore that recipe"),
+            }
         })
 }

@@ -15,6 +15,29 @@ async fn revisions_are_workspace_scoped_and_append_only() {
         .unwrap();
     sqlx::query("INSERT INTO workspaces (workspace_id, name, owner_user_id) VALUES ('a', 'A', 'u'), ('b', 'B', 'u')").execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document) VALUES ('a', 'r', 'Recipe', '{}')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document, native_migration_error) VALUES ('a', 'failed', 'Broken', 'unreadable legacy data', 'Migration failed; recovery required')").execute(&pool).await.unwrap();
+    let failed_db = krausen_core::DbPool::Sqlite(pool.clone());
+    let recovered = krausen_brewery::recipe_service::get_legacy_recovery(&failed_db, "a", "failed")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.document, "unreadable legacy data");
+    assert!(
+        krausen_brewery::recipe_service::get_legacy_recovery(&failed_db, "b", "failed")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        krausen_brewery::recipe_service::update_recipe(
+            &failed_db,
+            "a",
+            "failed",
+            &krausen_beerxml::Recipe::default()
+        )
+        .await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
     let insert = "INSERT INTO recipe_revisions (workspace_id, recipe_id, revision, schema_version, document, content_digest) VALUES (?, 'r', 1, 1, '{}', 'digest')";
     sqlx::query(insert).bind("a").execute(&pool).await.unwrap();
     sqlx::query("UPDATE recipes SET native_head_revision = 1 WHERE recipe_id = 'r'")
