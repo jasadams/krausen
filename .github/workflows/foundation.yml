@@ -46,7 +46,7 @@ jobs:
       - run: FRONTEND_URL=https://localhost cargo test -p krausen-server --test https_proxy
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
-      - run: cargo test -p krausen-server --test bootstrap --test migration_orders --test mcp_auth --test invitation_proof --test session_security
+      - run: RUST_LOG=trace,rmcp=trace cargo test -p krausen-server --test bootstrap --test migration_orders --test mcp_auth --test invitation_proof --test session_security
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-app --test formulation_preview
       - run: cargo test -p krausen-app --test equipment_profiles

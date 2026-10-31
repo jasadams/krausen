@@ -602,6 +602,7 @@ impl ServerHandler for McpHandler {
         let input = serde_json::Value::Object(request.arguments.unwrap_or_default());
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
+        tracing::info!(operation = operation.id, "MCP tool request");
         let result = match operation.id {
             "beerxml.preview.v1" => {
                 let input: BeerXmlPreview = serde_json::from_value(input)

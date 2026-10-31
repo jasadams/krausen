@@ -4,7 +4,7 @@
 
 use krausen_core::Config;
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, filter::filter_fn, prelude::*};
 
 fn main() {
     tokio::runtime::Builder::new_multi_thread()
@@ -15,9 +15,13 @@ fn main() {
 }
 
 async fn serve() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .json()
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_filter(filter_fn(krausen_server::logging::allow_metadata)),
+        )
         .init();
 
     let config = Config::from_env();
@@ -146,7 +150,14 @@ async fn serve() {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
         loop {
             interval.tick().await;
-            if let Err(error) = krausen_server::invitation_delivery::deliver_pending(&delivery_db, &delivery_base, delivery_key.as_bytes(), &mail).await {
+            if let Err(error) = krausen_server::invitation_delivery::deliver_pending(
+                &delivery_db,
+                &delivery_base,
+                delivery_key.as_bytes(),
+                &mail,
+            )
+            .await
+            {
                 tracing::error!(%error, "invitation proof delivery failed");
             }
         }

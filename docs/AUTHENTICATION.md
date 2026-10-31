@@ -7,6 +7,13 @@ recipes and password or passkey methods are retained. Refresh tokens rotate;
 reusing an earlier token revokes its credential family, so the user must sign in
 again or reconnect the MCP client.
 
+The server independently excludes the MCP SDK's internal logging targets from
+its output sink, even when `RUST_LOG` enables them. The SDK can emit complete
+caller-controlled requests, notifications and responses at multiple levels;
+application-owned transport logs record fixed operation identifiers instead.
+The HTTP/SDK regression runs with `RUST_LOG=trace,rmcp=trace` and checks that
+sentinel credentials and request/response payloads do not reach the sink.
+
 For an empty installation, a local operator can initialize the first owner by
 running the server binary with `bootstrap-owner EMAIL` and providing the new
 password on standard input. This operation is one-time and refuses an existing

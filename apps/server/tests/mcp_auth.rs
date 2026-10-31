@@ -16,9 +16,53 @@ use rmcp::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use tracing_subscriber::{EnvFilter, filter::filter_fn, prelude::*};
+
+const PASSWORD_SENTINEL: &str = "password-sentinel-never-log-81f";
+const PROOF_SENTINEL: &str = "proof-sentinel-never-log-629";
+const TOKEN_SENTINEL: &str = "token-sentinel-never-log-43d";
+const RESPONSE_SENTINEL: &str = "response-sentinel-never-log-b67";
+
+#[derive(Clone)]
+struct LogCapture(Arc<Mutex<Vec<u8>>>);
+impl std::io::Write for LogCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+    type Writer = LogCapture;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+fn capture_logs() -> &'static Arc<Mutex<Vec<u8>>> {
+    static CAPTURE: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+    CAPTURE.get_or_init(|| {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("trace,rmcp=trace"));
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(LogCapture(buffer.clone()))
+                    .with_filter(filter_fn(krausen_server::logging::allow_metadata)),
+            )
+            .try_init()
+            .expect("install regression log capture");
+        buffer
+    })
+}
 
 async fn exercise(db: DbPool) {
+    let logs = capture_logs();
     let _ = krausen_core::constants::load_with_fallback();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://localhost:{}", listener.local_addr().unwrap().port());
@@ -63,7 +107,7 @@ async fn exercise(db: DbPool) {
         &ws
     )
     .unwrap();
-    krausen_core::db_execute!(&db, "INSERT INTO recipes (workspace_id,recipe_id,name,document,native_migration_error) VALUES ($1,$2,'Broken','original source','Recovery required')", &ws, format!("r-{suffix}")).unwrap();
+    krausen_core::db_execute!(&db, "INSERT INTO recipes (workspace_id,recipe_id,name,document,native_migration_error) VALUES ($1,$2,'Broken',$3,'Recovery required')", &ws, format!("r-{suffix}"), RESPONSE_SENTINEL).unwrap();
     let device = DeviceInfo {
         user_agent: None,
         ip_address: None,
@@ -368,6 +412,37 @@ async fn exercise(db: DbPool) {
             .any(|t| t.name == "workspace_rename")
     );
     let discovered = modern.list_tools(None).await.unwrap();
+    let secret_argument = json!({"password":PASSWORD_SENTINEL})
+        .as_object()
+        .unwrap()
+        .clone();
+    assert!(
+        modern
+            .call_tool(
+                CallToolRequestParams::new("account_security_status")
+                    .with_arguments(secret_argument)
+            )
+            .await
+            .is_err()
+    );
+    let proof_argument = json!({"interaction_id":PROOF_SENTINEL})
+        .as_object()
+        .unwrap()
+        .clone();
+    let bad_proof = modern
+        .call_tool(
+            CallToolRequestParams::new("invitation_response_status").with_arguments(proof_argument),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_proof.is_error, Some(true));
+    let bad_token = reqwest::Client::new()
+        .post(&req.resource)
+        .bearer_auth(TOKEN_SENTINEL)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_token.status(), reqwest::StatusCode::UNAUTHORIZED);
     let preview_tool = discovered
         .tools
         .iter()
@@ -1927,7 +2002,7 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(
         recovered.structured_content.unwrap()["source"],
-        "original source"
+        RESPONSE_SENTINEL
     );
     for tool in ["recipe_create", "recipe_import"] {
         let valid = json!({"workspace_id":ws, "beerxml":"<RECIPES/>"})
@@ -2112,6 +2187,22 @@ async fn exercise(db: DbPool) {
             .is_err()
     );
     server.abort();
+    let captured = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+    assert!(
+        captured.contains("MCP tool request"),
+        "sanitized application diagnostics missing"
+    );
+    for sentinel in [
+        PASSWORD_SENTINEL,
+        PROOF_SENTINEL,
+        TOKEN_SENTINEL,
+        RESPONSE_SENTINEL,
+    ] {
+        assert!(
+            !captured.contains(sentinel),
+            "sensitive transport payload appeared in logs"
+        );
+    }
 }
 #[tokio::test]
 async fn sqlite_sdk_clients() {

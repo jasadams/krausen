@@ -4,6 +4,7 @@
 
 pub mod invitation_delivery;
 pub mod leptos_frontend;
+pub mod logging;
 pub mod middleware;
 pub mod routes;
 pub mod state;
