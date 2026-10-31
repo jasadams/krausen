@@ -22,12 +22,16 @@ CREATE TABLE recipe_revisions (
     saved_at TEXT,
     migrated_at TEXT,
     summary TEXT,
+    restored_from_revision INTEGER CHECK (restored_from_revision IS NULL OR restored_from_revision < revision),
     PRIMARY KEY (workspace_id, recipe_id, revision),
-    FOREIGN KEY (workspace_id, recipe_id) REFERENCES recipes(workspace_id, recipe_id)
+    FOREIGN KEY (workspace_id, recipe_id) REFERENCES recipes(workspace_id, recipe_id),
+    FOREIGN KEY (workspace_id, recipe_id, restored_from_revision)
+        REFERENCES recipe_revisions(workspace_id, recipe_id, revision)
 );
 
 CREATE TABLE recipe_import_provenance (
     workspace_id TEXT NOT NULL,
+    provenance_id TEXT NOT NULL,
     recipe_id TEXT NOT NULL,
     revision INTEGER NOT NULL,
     format TEXT NOT NULL,
@@ -37,6 +41,7 @@ CREATE TABLE recipe_import_provenance (
     mapping_version TEXT NOT NULL,
     diagnostics TEXT NOT NULL,
     PRIMARY KEY (workspace_id, recipe_id, revision),
+    UNIQUE (workspace_id, provenance_id),
     FOREIGN KEY (workspace_id, recipe_id, revision)
         REFERENCES recipe_revisions(workspace_id, recipe_id, revision)
 );

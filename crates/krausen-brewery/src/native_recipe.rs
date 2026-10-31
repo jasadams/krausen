@@ -43,9 +43,13 @@ pub fn encode_document(document: &RecipeDocumentV1) -> Result<(String, String), 
 
 /// Preserve the parsed legacy record and report ambiguity; no actor or source
 /// bytes are invented when the original database did not store them.
-pub fn prepare_backfill(legacy_json: &str) -> Result<PreparedBackfill, BackfillError> {
+pub fn prepare_backfill(
+    legacy_json: &str,
+    provenance_id: &str,
+) -> Result<PreparedBackfill, BackfillError> {
     let legacy: krausen_beerxml::Recipe = serde_json::from_str(legacy_json)?;
-    let converted = krausen_beerxml::native::from_legacy(&legacy)?;
+    let mut converted = krausen_beerxml::native::from_legacy(&legacy)?;
+    converted.document.import_provenance_id = Some(provenance_id.to_owned());
     let (document_json, content_digest) = encode_document(&converted.document)?;
     Ok(PreparedBackfill {
         document_json,
@@ -113,7 +117,7 @@ mod tests {
                 .recipes
                 .remove(0);
         let source = serde_json::to_string(&recipe).unwrap();
-        let prepared = prepare_backfill(&source).unwrap();
+        let prepared = prepare_backfill(&source, "provenance-1").unwrap();
         assert_eq!(
             read_document(&prepared.document_json).unwrap().title,
             "Legacy"
@@ -128,6 +132,6 @@ mod tests {
                 .diagnostics_json
                 .contains("original_bytes_unavailable")
         );
-        assert!(prepare_backfill("not json").is_err());
+        assert!(prepare_backfill("not json", "provenance-1").is_err());
     }
 }

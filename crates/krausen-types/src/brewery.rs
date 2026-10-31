@@ -19,6 +19,7 @@ pub struct RecipeRevisionV1 {
     pub saved_at: Option<String>,
     pub migrated_at: Option<String>,
     pub summary: Option<String>,
+    pub restored_from_revision: Option<u64>,
 }
 
 /// A recipe's editable content; identity and authorship live in its revision.

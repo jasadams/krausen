@@ -52,7 +52,7 @@ async fn revisions_are_workspace_scoped_and_append_only() {
             .await
             .is_err()
     );
-    sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('a', 'r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, provenance_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('a', 'provenance-a', 'r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
     assert!(
         sqlx::query("UPDATE recipe_import_provenance SET diagnostics = 'changed'")
             .execute(&pool)
@@ -131,7 +131,7 @@ async fn postgres_revisions_are_workspace_scoped_and_append_only() {
             .await
             .is_err()
     );
-    sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('native-test-a', 'native-test-r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, provenance_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('native-test-a', 'native-test-p', 'native-test-r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
     assert!(sqlx::query("UPDATE recipe_import_provenance SET diagnostics = 'changed' WHERE recipe_id = 'native-test-r'").execute(&pool).await.is_err());
     assert!(
         sqlx::query(insert)
