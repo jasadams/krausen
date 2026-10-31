@@ -559,3 +559,17 @@ test('a failed sign-out is reported after choosing to discard', async ({ page })
   await expect(page.getByRole('alert')).toContainText('Could not sign out.');
   await expect(page).toHaveURL(/recipe-editor/);
 });
+
+test('sign-out waits for an explicit dirty draft decision', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Draft before confirmed sign-out');
+  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Draft before confirmed sign-out');
+  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/login/);
+});
