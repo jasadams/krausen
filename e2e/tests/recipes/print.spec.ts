@@ -166,6 +166,37 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
   expect(errors).toEqual([]);
 });
 
+test('a delayed summary denial redacts a mounted editor even after a draft edit', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const title = `Print retained denial ${Date.now()}`;
+  await importRecipe(
+    page,
+    `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>5</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>`,
+  );
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/leptos-api/request_process_summary*', async (route) => {
+    started();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+    } catch {
+      // The assertion below still checks the mounted-editor redaction if the
+      // request is cancelled.
+    }
+  });
+  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await requestStarted;
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Edited during print');
+  await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
+  await expect(name).toBeHidden();
+  await expect(page.locator('.print-sheet')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+  expect(errors).toEqual([]);
+});
+
 test('print uses the light paper palette in dark mode and the print class never leaks', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
   await page.goto('/recipe-editor/new');

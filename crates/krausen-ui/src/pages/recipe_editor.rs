@@ -1066,6 +1066,9 @@ fn PrintRecipe(
             let result =
                 crate::server_fns::process_summary::request_process_summary_shared(request.clone())
                     .await;
+            if context_visible.try_get_untracked().is_none() {
+                return;
+            }
             #[cfg(target_arch = "wasm32")]
             let result = if result
                 .as_ref()
@@ -1090,6 +1093,17 @@ fn PrintRecipe(
                 return;
             }
             if context_visible.try_get_untracked().is_none() {
+                return;
+            }
+            // Authority denial must invalidate a mounted editor even when the
+            // draft changed during the request. Stale successful data may be
+            // ignored, but forbidden/context-changed may not.
+            if matches!(
+                &result,
+                Ok(ProcessSummaryOutcome::Forbidden | ProcessSummaryOutcome::ContextChanged)
+            ) {
+                context_visible.set(false);
+                busy.set(false);
                 return;
             }
             if draft_generation.is_some_and(|generation| {
