@@ -65,6 +65,7 @@ pub fn register_server_functions() {
     register_explicit::<SaveRecipe>();
 
     register_explicit::<server_fns::equipment::ExecuteEquipmentCommand>();
+    register_explicit::<server_fns::recipe_library::ExecuteLibraryCommand>();
 
     // Profile
     use server_fns::profile::*;

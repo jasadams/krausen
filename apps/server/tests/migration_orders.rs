@@ -6,11 +6,15 @@ use std::borrow::Cow;
 const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
 const EQUIPMENT: i64 = 20261031040000;
+const RECIPE_ARCHIVE: i64 = 20261031060000;
 fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
     Migrator {
         migrations: Cow::Owned(
             all.iter()
-                .filter(|m| Some(m.version) != skip)
+                .filter(|m| {
+                    Some(m.version) != skip
+                        && !(skip == Some(NATIVE) && m.version == RECIPE_ARCHIVE)
+                })
                 .cloned()
                 .collect(),
         ),
@@ -66,11 +70,28 @@ async fn exercise(db: DbPool, all: &Migrator, skip: Option<i64>) {
             .unwrap(),
     };
     assert_eq!(profiles, 0);
+    let archives: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM recipe_archive_events")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM recipe_archive_events")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(archives, 0);
 }
 #[tokio::test]
 async fn sqlite_empty_and_both_upgrade_orders() {
     let all = sqlx::migrate!("./migrations-sqlite");
-    for skip in [None, Some(NATIVE), Some(CREDENTIALS), Some(EQUIPMENT)] {
+    for skip in [
+        None,
+        Some(NATIVE),
+        Some(CREDENTIALS),
+        Some(EQUIPMENT),
+        Some(RECIPE_ARCHIVE),
+    ] {
         let p = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -85,7 +106,13 @@ async fn postgres_empty_and_both_upgrade_orders() {
         std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
     let all = sqlx::migrate!("./migrations");
-    for skip in [None, Some(NATIVE), Some(CREDENTIALS), Some(EQUIPMENT)] {
+    for skip in [
+        None,
+        Some(NATIVE),
+        Some(CREDENTIALS),
+        Some(EQUIPMENT),
+        Some(RECIPE_ARCHIVE),
+    ] {
         let name = format!("krausen_migration_{}", uuid::Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE DATABASE {name}"))
             .execute(&admin)

@@ -115,11 +115,39 @@ pub const EQUIPMENT_REVISION: Operation = Operation {
     input_contract: "EquipmentRevisionQuery",
     output_contract: "EquipmentOutcome",
 };
+pub const RECIPE_LIST: Operation = Operation {
+    id: "recipe.list.v1",
+    mcp_tool: "recipe_list",
+    input_contract: "LibraryQuery",
+    output_contract: "LibraryOutcome",
+};
+pub const RECIPE_HISTORY: Operation = Operation {
+    id: "recipe.history.v1",
+    mcp_tool: "recipe_history",
+    input_contract: "HistoryQuery",
+    output_contract: "LibraryOutcome",
+};
+pub const RECIPE_REVISION: Operation = Operation {
+    id: "recipe.revision.v1",
+    mcp_tool: "recipe_revision",
+    input_contract: "RevisionQuery",
+    output_contract: "LibraryOutcome",
+};
+pub const RECIPE_ARCHIVE: Operation = Operation {
+    id: "recipe.archive.v1",
+    mcp_tool: "recipe_archive",
+    input_contract: "ArchiveRecipe",
+    output_contract: "LibraryOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
     BEERXML_EXPORT,
     BEERXML_ORIGINAL,
+    RECIPE_LIST,
+    RECIPE_HISTORY,
+    RECIPE_REVISION,
+    RECIPE_ARCHIVE,
     EQUIPMENT_SAVE,
     EQUIPMENT_ARCHIVE,
     EQUIPMENT_GET,
