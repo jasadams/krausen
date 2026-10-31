@@ -597,7 +597,7 @@ async fn exercise(db: DbPool) {
     };
     let list = EquipmentListQuery {
         intent: intent.clone(),
-        after: String::new(),
+        cursor: None,
         limit: 20,
         include_archived: false,
     };
@@ -647,6 +647,69 @@ async fn exercise(db: DbPool) {
         let browser_result: serde_json::Value = response.json().await.unwrap();
         assert_eq!(a.structured_content.unwrap()["outcome"], browser_result);
     }
+    let mut second_profile = equipment_request.clone();
+    second_profile.profile_id = uuid::Uuid::new_v4().to_string();
+    second_profile.request_id = uuid::Uuid::new_v4().to_string();
+    second_profile.name = "Second shared equipment".into();
+    let second_args = json!({"workspace_id":ws,"request":second_profile})
+        .as_object()
+        .unwrap()
+        .clone();
+    let second_save = modern
+        .call_tool(CallToolRequestParams::new("equipment_save").with_arguments(second_args))
+        .await
+        .unwrap();
+    assert!(second_save.structured_content.unwrap()["outcome"]["Profile"].is_object());
+    let first_query = EquipmentListQuery {
+        intent: intent.clone(),
+        cursor: None,
+        limit: 1,
+        include_archived: false,
+    };
+    let first_args = json!({"workspace_id":ws,"request":first_query})
+        .as_object()
+        .unwrap()
+        .clone();
+    let first_result = modern
+        .call_tool(CallToolRequestParams::new("equipment_list").with_arguments(first_args))
+        .await
+        .unwrap();
+    let first_outcome = first_result.structured_content.unwrap();
+    let next = first_outcome["outcome"]["Profiles"]["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let next_query = EquipmentListQuery {
+        cursor: Some(next),
+        ..first_query
+    };
+    let next_args = json!({"workspace_id":ws,"request":next_query})
+        .as_object()
+        .unwrap()
+        .clone();
+    let next_result = legacy
+        .call_tool(CallToolRequestParams::new("equipment_list").with_arguments(next_args))
+        .await
+        .unwrap();
+    let next_outcome = next_result.structured_content.unwrap();
+    assert_ne!(
+        first_outcome["outcome"]["Profiles"]["items"][0]["profile_id"],
+        next_outcome["outcome"]["Profiles"]["items"][0]["profile_id"]
+    );
+    let next_http = reqwest::Client::new()
+        .post(format!("{base}{equipment_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "command_json",
+            serde_json::to_string(&EquipmentCommand::List(next_query)).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_http.json::<serde_json::Value>().await.unwrap(),
+        next_outcome["outcome"]
+    );
     // The saved profile is usable by recipe save and preview through the
     // browser and both MCP protocol clients under the same verified principal.
     let linked_document = krausen_types::brewery::RecipeDocumentV1 {

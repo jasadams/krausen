@@ -16,6 +16,7 @@ struct Row {
     profile_id: String,
     name: String,
     current_revision: i64,
+    created_at: i64,
     metadata_revision: i64,
     archived: i64,
     settings_json: String,
@@ -32,6 +33,7 @@ impl Row {
         Ok(EquipmentProfile {
             workspace_id: self.workspace_id,
             profile_id: self.profile_id,
+            created_at: self.created_at,
             name: self.name,
             revision: self.current_revision,
             metadata_revision: self.metadata_revision,
@@ -43,7 +45,7 @@ impl Row {
         })
     }
 }
-const SELECT: &str = "SELECT p.workspace_id,p.profile_id,p.name,p.current_revision,p.metadata_revision,CAST(CASE WHEN p.archived THEN 1 ELSE 0 END AS BIGINT) AS archived,r.settings_json,r.provenance_json,r.actor_id,r.recorded_at FROM equipment_profiles p JOIN equipment_revisions r ON r.workspace_id=p.workspace_id AND r.profile_id=p.profile_id AND r.revision=p.current_revision";
+const SELECT: &str = "SELECT p.workspace_id,p.profile_id,initial.recorded_at AS created_at,p.name,p.current_revision,p.metadata_revision,CAST(CASE WHEN p.archived THEN 1 ELSE 0 END AS BIGINT) AS archived,r.settings_json,r.provenance_json,r.actor_id,r.recorded_at FROM equipment_profiles p JOIN equipment_revisions r ON r.workspace_id=p.workspace_id AND r.profile_id=p.profile_id AND r.revision=p.current_revision JOIN equipment_revisions initial ON initial.workspace_id=p.workspace_id AND initial.profile_id=p.profile_id AND initial.revision=1";
 /// Load an aggregate by workspace and ID, optionally locking the source row.
 pub async fn load(
     tx: &mut DbTx<'_>,
@@ -86,18 +88,20 @@ pub async fn load(
 pub async fn list(
     tx: &mut DbTx<'_>,
     workspace: &str,
-    after: &str,
+    after_created_at: i64,
+    after_id: &str,
     limit: i64,
     include_archived: bool,
 ) -> Result<Vec<EquipmentProfile>> {
     let sql = format!(
-        "{SELECT} WHERE p.workspace_id=$1 AND p.profile_id>$2 AND ($3 OR p.archived=FALSE) ORDER BY p.profile_id LIMIT $4"
+        "{SELECT} WHERE p.workspace_id=$1 AND (initial.recorded_at>$2 OR (initial.recorded_at=$2 AND p.profile_id>$3)) AND ($4 OR p.archived=FALSE) ORDER BY initial.recorded_at,p.profile_id LIMIT $5"
     );
     let rows = match &mut *tx {
         DbTx::Postgres(t) => {
             sqlx::query_as::<_, Row>(&sql)
                 .bind(workspace)
-                .bind(after)
+                .bind(after_created_at)
+                .bind(after_id)
                 .bind(include_archived)
                 .bind(limit)
                 .fetch_all(&mut **t)
@@ -106,7 +110,8 @@ pub async fn list(
         DbTx::Sqlite(t) => {
             sqlx::query_as::<_, Row>(&sql)
                 .bind(workspace)
-                .bind(after)
+                .bind(after_created_at)
+                .bind(after_id)
                 .bind(include_archived)
                 .bind(limit)
                 .fetch_all(&mut **t)

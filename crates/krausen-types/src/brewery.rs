@@ -250,6 +250,7 @@ pub struct EquipmentProvenance {
 pub struct EquipmentProfile {
     pub workspace_id: String,
     pub profile_id: String,
+    pub created_at: i64,
     pub name: String,
     pub revision: i64,
     pub metadata_revision: i64,

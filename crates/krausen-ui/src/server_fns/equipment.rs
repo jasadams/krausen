@@ -40,7 +40,15 @@ pub async fn execute(
             equipment::project_get(equipment::get(db, actor, &c.intent, &c.profile_id).await)
         }
         EquipmentCommand::List(c) => equipment::project_list(
-            equipment::list(db, actor, &c.intent, &c.after, c.limit, c.include_archived).await,
+            equipment::list(
+                db,
+                actor,
+                &c.intent,
+                c.cursor.as_deref(),
+                c.limit,
+                c.include_archived,
+            )
+            .await,
         ),
         EquipmentCommand::Revision(c) => equipment::project_revision(
             equipment::get_revision(db, actor, &c.intent, &c.profile_id, c.revision).await,

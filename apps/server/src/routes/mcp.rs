@@ -315,7 +315,7 @@ impl ServerHandler for McpHandler {
                                 &self.db,
                                 &actor,
                                 &c.request.intent,
-                                &c.request.after,
+                                c.request.cursor.as_deref(),
                                 c.request.limit,
                                 c.request.include_archived,
                             )

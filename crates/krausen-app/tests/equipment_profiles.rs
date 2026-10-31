@@ -282,9 +282,10 @@ async fn exercise(db: DbPool) {
         archived
     );
     assert!(
-        equipment::list(&db, &actor, &intent, "", 20, false)
+        equipment::list(&db, &actor, &intent, None, 20, false)
             .await
             .unwrap()
+            .items
             .is_empty()
     );
     assert!(matches!(
@@ -293,11 +294,12 @@ async fn exercise(db: DbPool) {
             .unwrap(),
         PreviewOutcome::UnresolvedProfile
     ));
-    let archived_list = equipment::list(&db, &actor, &intent, "", 20, true)
+    let archived_list = equipment::list(&db, &actor, &intent, None, 20, true)
         .await
         .unwrap();
     assert!(
         archived_list
+            .items
             .iter()
             .any(|profile| profile.profile_id == id && profile.archived)
     );
@@ -456,6 +458,105 @@ async fn exercise(db: DbPool) {
     assert!(matches!(
         equipment::save(&db, &actor, stale).await,
         Err(Error::Conflict { actual: 4, .. })
+    ));
+    // More than one page remains reachable in stable creation/ID order, and
+    // cursors cannot be reused in another workspace or with another filter.
+    let mut archived_paged_id = String::new();
+    for index in 0..101 {
+        let mut item = rollback.clone();
+        item.profile_id = uuid::Uuid::new_v4().to_string();
+        item.request_id = uuid::Uuid::new_v4().to_string();
+        item.expected_revision = 0;
+        item.expected_metadata_revision = 0;
+        item.name = format!("Paged profile {index}");
+        archived_paged_id = item.profile_id.clone();
+        equipment::save(&db, &actor, item).await.unwrap();
+    }
+    equipment::set_archived(
+        &db,
+        &actor,
+        ArchiveEquipment {
+            intent: intent.clone(),
+            profile_id: archived_paged_id.clone(),
+            archived: true,
+            expected_metadata_revision: 1,
+            request_id: uuid::Uuid::new_v4().to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    let first_page = equipment::list(&db, &actor, &intent, None, 50, false)
+        .await
+        .unwrap();
+    assert_eq!(first_page.items.len(), 50);
+    let cursor = first_page.next_cursor.clone().expect("more profiles");
+    assert!(matches!(
+        equipment::list(&db, &actor, &intent, Some(&cursor), 50, true).await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        equipment::list(
+            &db,
+            &foreign_actor,
+            &foreign_intent,
+            Some(&cursor),
+            50,
+            false
+        )
+        .await,
+        Err(Error::Invalid(_))
+    ));
+    let second_page = equipment::list(&db, &actor, &intent, Some(&cursor), 50, false)
+        .await
+        .unwrap();
+    let third_page = equipment::list(
+        &db,
+        &actor,
+        &intent,
+        second_page.next_cursor.as_deref(),
+        50,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(third_page.next_cursor.is_none());
+    let all: Vec<_> = first_page
+        .items
+        .into_iter()
+        .chain(second_page.items)
+        .chain(third_page.items)
+        .collect();
+    assert_eq!(all.len(), 101);
+    assert!(
+        !all.iter()
+            .any(|profile| profile.profile_id == archived_paged_id)
+    );
+    let mut cursor = None;
+    let mut include_all = Vec::new();
+    loop {
+        let page = equipment::list(&db, &actor, &intent, cursor.as_deref(), 50, true)
+            .await
+            .unwrap();
+        include_all.extend(page.items);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(include_all.len(), 102);
+    assert!(
+        include_all
+            .iter()
+            .any(|profile| profile.profile_id == archived_paged_id && profile.archived)
+    );
+    assert!(
+        all.windows(2)
+            .all(|pair| (pair[0].created_at, &pair[0].profile_id)
+                < (pair[1].created_at, &pair[1].profile_id))
+    );
+    assert!(matches!(
+        equipment::list(&db, &actor, &intent, Some("not-a-cursor"), 50, false).await,
+        Err(Error::Invalid(_))
     ));
     run!(
         "UPDATE auth_credentials SET revoked_at=$1 WHERE credential_id=$2",

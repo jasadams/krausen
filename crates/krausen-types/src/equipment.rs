@@ -28,7 +28,7 @@ pub struct ArchiveEquipment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EquipmentOutcome {
     Profile(EquipmentProfile),
-    Profiles(Vec<EquipmentProfile>),
+    Profiles(EquipmentPage),
     Revision(EquipmentRevision),
     NotFound,
     Archived,
@@ -41,6 +41,14 @@ pub enum EquipmentOutcome {
     Unavailable,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EquipmentPage {
+    pub items: Vec<EquipmentProfile>,
+    pub next_cursor: Option<String>,
+}
+fn default_limit() -> i64 {
+    50
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EquipmentQuery {
@@ -58,7 +66,9 @@ pub struct EquipmentRevisionQuery {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EquipmentListQuery {
     pub intent: OperationIntent,
-    pub after: String,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default = "default_limit")]
     pub limit: i64,
     #[serde(default)]
     pub include_archived: bool,

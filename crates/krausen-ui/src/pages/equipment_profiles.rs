@@ -31,36 +31,61 @@ pub fn EquipmentProfiles(
     let chilling = RwSignal::new(String::new());
     let pending = RwSignal::new(None::<EquipmentCommand>);
     let busy = RwSignal::new(false);
-    Effect::new(move |_| {
-        let _ = reload.get();
-        if !context_visible.get() {
-            return;
+    let blocked = RwSignal::new(false);
+    let next_cursor = RwSignal::new(None::<String>);
+    let list_generation = RwSignal::new(0_u64);
+    let loading_more = RwSignal::new(false);
+    let load_page = Callback::new(move |cursor: Option<String>| {
+        if cursor.is_none() {
+            list_generation.update(|n| *n += 1);
         }
+        let generation = list_generation.get_untracked();
+        let append = cursor.is_some();
+        loading_more.set(true);
         let expected = identity.get_untracked();
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
+                loading_more.set(false);
                 return;
             }
             let outcome = equipment_command_shared(EquipmentCommand::List(EquipmentListQuery {
                 intent: expected.clone(),
-                after: String::new(),
+                cursor,
                 limit: 100,
                 include_archived: true,
             }))
             .await;
+            if list_generation.try_get_untracked() != Some(generation) {
+                return;
+            }
+            loading_more.set(false);
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
                 return;
             }
             match outcome {
-                Ok(EquipmentOutcome::Profiles(items)) => profiles.set(items),
+                Ok(EquipmentOutcome::Profiles(page)) => {
+                    if append {
+                        profiles.update(|items| items.extend(page.items));
+                    } else {
+                        profiles.set(page.items);
+                    }
+                    next_cursor.set(page.next_cursor);
+                }
                 Ok(EquipmentOutcome::ContextChanged | EquipmentOutcome::Forbidden) => {
                     context_visible.set(false)
                 }
                 _ => status.set("Unable to load equipment profiles.".into()),
             }
         });
+    });
+    Effect::new(move |_| {
+        let _ = reload.get();
+        if !context_visible.get() {
+            return;
+        }
+        load_page.run(None);
     });
     let selection = Signal::derive(move || {
         draft.with(|d| {
@@ -82,7 +107,17 @@ pub fn EquipmentProfiles(
         raw.set(
             values(&initial)
                 .into_iter()
-                .map(|n| n.map(|v| v.to_string()).unwrap_or_default())
+                .enumerate()
+                .map(|(i, n)| {
+                    n.map(|v| {
+                        if i < 2 {
+                            (v * 100.0).to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    })
+                    .unwrap_or_default()
+                })
                 .collect(),
         );
         chilling.set(
@@ -134,6 +169,13 @@ pub fn EquipmentProfiles(
                 Ok(EquipmentOutcome::ContextChanged | EquipmentOutcome::Forbidden) => {
                     context_visible.set(false)
                 }
+                Ok(EquipmentOutcome::Unavailable) => {
+                    status.set("The result is uncertain. Retry the same request.".into());
+                }
+                Ok(EquipmentOutcome::ResultExpired | EquipmentOutcome::RequestIdentityConflict) => {
+                    blocked.set(true);
+                    status.set("The previous request cannot be confirmed. Review the profile list before continuing.".into());
+                }
                 Ok(EquipmentOutcome::Conflict { .. }) => {
                     pending.set(None);
                     status.set(
@@ -153,6 +195,9 @@ pub fn EquipmentProfiles(
         });
     });
     let save = move |_| {
+        if blocked.get_untracked() {
+            return;
+        }
         if let Some(command) = pending.get_untracked() {
             execute.run(command);
             return;
@@ -174,6 +219,9 @@ pub fn EquipmentProfiles(
             }
         }
         let mut value = settings.get_untracked();
+        for value in parsed.iter_mut().take(2).flatten() {
+            *value /= 100.0;
+        }
         assign_values(&mut value, &parsed);
         value.chilling = match chilling.get_untracked().as_str() {
             "natural" => Some(krausen_types::brewery::ChillingV1::Natural),
@@ -218,6 +266,9 @@ pub fn EquipmentProfiles(
         }));
     };
     let archive = move |_| {
+        if blocked.get_untracked() {
+            return;
+        }
         if let Some(command) = pending.get_untracked() {
             execute.run(command);
             return;
@@ -244,8 +295,9 @@ pub fn EquipmentProfiles(
                 options.extend(profiles.get().into_iter().filter(|p| !p.archived).map(|p| (p.profile_id, p.name)));
                 view! { <BreweryDraftSelect id="equipment-profile-select" label="Equipment profile" value=selection on_change=choose options=options/> }
             }}
-            {move || { let items = profiles.get(); let selected = selection.get(); (!selected.is_empty() && !items.iter().any(|p| p.profile_id == selected && !p.archived)).then(|| view! { <BreweryNotice title="Equipment profile unavailable" body="Choose an active profile or use draft settings." warning=true/> }) }}
+            {move || { let items = profiles.get(); let selected = selection.get(); (!selected.is_empty() && !items.iter().any(|p| p.profile_id == selected && !p.archived)).then(|| view! { <BreweryNotice title=if next_cursor.get().is_some() { "Equipment profile not loaded" } else { "Equipment profile unavailable" } body="Load more profiles, choose an active profile or use draft settings." warning=true/> }) }}
         </div>
+        <Show when=move || next_cursor.get().is_some()><Button variant=ButtonVariant::Secondary disabled=loading_more on:click=move |_| load_page.run(next_cursor.get_untracked())>"Load more profiles"</Button></Show>
         <div class="k-disclosure__body"><p>"Create or edit workspace equipment. Recipe overrides remain separate."</p>
             <fieldset disabled=move || busy.get() || pending.get().is_some()><div class="recipe-editor__fields">
                 {move || { let mut options = vec![(String::new(), "New profile".into())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id.clone(), if p.archived { format!("{} (archived)", p.name) } else { p.name }))); let selected = Signal::derive(move || editing.get().map(|p| p.profile_id).unwrap_or_default()); let change = Callback::new(move |id: String| { if pending.get_untracked().is_some() { status.set("Retry the previous request before changing profiles.".into()); return; } let item = profiles.with_untracked(|list| list.iter().find(|p| p.profile_id == id).cloned()); prepare.run(item); }); view! { <BreweryDraftSelect id="equipment-profile-edit" label="Manage profile" value=selected on_change=change options=options/> } }}
@@ -253,19 +305,15 @@ pub fn EquipmentProfiles(
                 <BreweryDraftSelect id="profile-chilling" label="Profile chilling" value=Signal::derive(move || chilling.get()) on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { chilling.set(v); } }) options=vec![("".into(), "Not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
                 {FIELDS.iter().enumerate().map(|(index, (id, label, unit))| { let value = Signal::derive(move || raw.with(|v| v[index].clone())); let change = Callback::new(move |text| { if pending.get_untracked().is_none() { raw.update(|v| v[index] = text); } }); view! { <BreweryDraftField id=*id label=*label unit=*unit value=value on_change=change numeric=true/> } }).collect_view()}
             </div></fieldset>
-            <Button disabled=busy on:click=save>{move || if pending.get().is_some() { "Retry previous request" } else { "Save profile" }}</Button>
-            <Show when=move || editing.with(|p| p.is_some())><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || pending.get().is_some()) on:click=archive>{move || if editing.with(|p| p.as_ref().is_some_and(|p| p.archived)) { "Unarchive" } else { "Archive" }}</Button></Show>
+            <Button disabled=Signal::derive(move || busy.get() || blocked.get()) on:click=save>{move || if pending.get().is_some() { "Retry previous request" } else { "Save profile" }}</Button>
+            <Show when=move || editing.with(|p| p.is_some())><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || blocked.get() || pending.get().is_some()) on:click=archive>{move || if editing.with(|p| p.as_ref().is_some_and(|p| p.archived)) { "Unarchive" } else { "Archive" }}</Button></Show>
             <p role="status">{move || status.get()}</p>
         </div>
     }
 }
 const FIELDS: [(&str, &str, &str); 14] = [
-    (
-        "profile-efficiency-override",
-        "Brewhouse efficiency",
-        "fraction",
-    ),
-    ("profile-mash-efficiency", "Mash efficiency", "fraction"),
+    ("profile-efficiency-override", "Brewhouse efficiency", "%"),
+    ("profile-mash-efficiency", "Mash efficiency", "%"),
     ("profile-boil-off", "Boil-off", "L/h"),
     ("profile-transfer-loss", "Transfer loss", "L"),
     ("profile-deadspace", "Pre-boil deadspace", "L"),

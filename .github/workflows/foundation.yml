@@ -61,3 +61,13 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix e2e
+      - run: npx --prefix e2e playwright install --with-deps chromium
+      - run: npm install --global @tailwindcss/cli@4.2.2
+      - run: cargo install trunk --version 0.21.14 --locked
+      - run: cargo build -p krausen-server
+      - run: cd crates/krausen-ui && trunk build
+      - run: e2e/scripts/profile-browser.sh

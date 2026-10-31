@@ -7,7 +7,9 @@ use crate::{
 use krausen_core::{DbPool, DbTx, canonical_json};
 use krausen_types::{
     brewery::{EquipmentSettingsV1, RecipeDocumentV1},
-    equipment::{ArchiveEquipment, EquipmentOutcome, EquipmentProfile, SaveEquipment},
+    equipment::{
+        ArchiveEquipment, EquipmentOutcome, EquipmentPage, EquipmentProfile, SaveEquipment,
+    },
     request_context::OperationIntent,
     validation::Readiness,
 };
@@ -82,32 +84,85 @@ pub async fn get(
     tx.commit().await.map_err(crate::boundary_error)?;
     Ok(profile)
 }
-/// Stable bounded list; callers retain the last profile ID as cursor.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileCursor {
+    version: u8,
+    workspace_id: String,
+    include_archived: bool,
+    order: String,
+    created_at: i64,
+    profile_id: String,
+}
+
+/// Return a bounded page with an opaque cursor scoped to workspace and filter.
 pub async fn list(
     pool: &DbPool,
     actor: &ActorContext,
     intent: &OperationIntent,
-    after: &str,
+    cursor: Option<&str>,
     limit: i64,
     include_archived: bool,
-) -> Result<Vec<EquipmentProfile>, Error> {
+) -> Result<EquipmentPage, Error> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     if !(1..=100).contains(&limit) {
         return Err(Error::Invalid("list limit"));
     }
     let mut tx = pool.begin_write().await.map_err(crate::boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
     check_intent(actor, intent)?;
-    let profiles = krausen_brewery::equipment_store::list(
+    let (created_at, after_id) = if let Some(encoded) = cursor {
+        if encoded.len() > 1024 {
+            return Err(Error::Invalid("cursor"));
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| Error::Invalid("cursor"))?;
+        let cursor: ProfileCursor =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Invalid("cursor"))?;
+        if cursor.version != 1
+            || cursor.workspace_id != actor.workspace_id
+            || cursor.include_archived != include_archived
+            || cursor.order != "created_at,id"
+            || uuid::Uuid::parse_str(&cursor.profile_id).is_err()
+        {
+            return Err(Error::Invalid("cursor"));
+        }
+        (cursor.created_at, cursor.profile_id)
+    } else {
+        (i64::MIN, String::new())
+    };
+    let mut profiles = krausen_brewery::equipment_store::list(
         &mut tx,
         &actor.workspace_id,
-        after,
-        limit,
+        created_at,
+        &after_id,
+        limit + 1,
         include_archived,
     )
     .await
     .map_err(crate::boundary_error)?;
+    let has_more = profiles.len() > limit as usize;
+    profiles.truncate(limit as usize);
+    let next_cursor = if has_more {
+        let last = profiles.last().ok_or(Error::Invalid("cursor"))?;
+        let next = ProfileCursor {
+            version: 1,
+            workspace_id: actor.workspace_id.clone(),
+            include_archived,
+            order: "created_at,id".into(),
+            created_at: last.created_at,
+            profile_id: last.profile_id.clone(),
+        };
+        Some(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&next)?))
+    } else {
+        None
+    };
     tx.commit().await.map_err(crate::boundary_error)?;
-    Ok(profiles)
+    Ok(EquipmentPage {
+        items: profiles,
+        next_cursor,
+    })
 }
 /// Create at revision zero or append a guarded complete settings revision.
 pub async fn save(
@@ -399,7 +454,7 @@ pub fn project_get(result: Result<Option<EquipmentProfile>, Error>) -> Equipment
         Err(error) => project(Err(error)),
     }
 }
-pub fn project_list(result: Result<Vec<EquipmentProfile>, Error>) -> EquipmentOutcome {
+pub fn project_list(result: Result<EquipmentPage, Error>) -> EquipmentOutcome {
     match result {
         Ok(profiles) => EquipmentOutcome::Profiles(profiles),
         Err(error) => project(Err(error)),

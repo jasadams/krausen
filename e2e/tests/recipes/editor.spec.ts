@@ -176,18 +176,26 @@ test('a dirty new recipe remains private to its original account and workspace',
 });
 
 test('equipment profiles can be saved, selected, edited and recovered', async ({ page }) => {
+  const previews: any[] = [];
+  page.on('response', async response => {
+    if (response.url().includes('/preview_formulation') && response.ok()) {
+      try { previews.push(await response.json()); } catch { /* Ignore non-JSON transport failures. */ }
+    }
+  });
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(`Profile recipe ${Date.now()}`);
   await page.getByText('Equipment settings', { exact: true }).click();
   const name = `Profile ${Date.now()}`;
   await page.getByLabel('Profile name').fill(name);
-  await page.getByLabel('Mash efficiency (fraction)').fill('0.75');
+  await page.getByLabel('Mash efficiency (%)').first().fill('75');
   await page.getByLabel('Boil-off (L/h)', { exact: true }).first().fill('3');
   await page.getByRole('button', { name: 'Save profile' }).click();
   const selector = page.getByLabel('Equipment profile', { exact: true });
   await expect(selector.getByRole('option', { name })).toBeAttached();
   await selector.selectOption({ label: name });
   const profileId = await selector.inputValue();
+  await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1)).toBe(true);
+  const originalDigest = previews.find(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1).Preview.context_digest;
   await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
@@ -196,12 +204,69 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
   const manage = page.getByLabel('Manage profile');
   await manage.selectOption({ label: name });
-  await page.getByLabel('Mash efficiency (fraction)').fill('0.8');
+  await page.getByLabel('Mash efficiency (%)').first().fill('80');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
-  await expect(page.getByLabel('Mash efficiency (fraction)')).toHaveValue('0.8');
+  await expect(page.getByLabel('Mash efficiency (%)').first()).toHaveValue('80');
+  await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 2 && result.Preview.context_digest !== originalDigest)).toBe(true);
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
   await expect(page.getByText('Equipment profile unavailable')).toBeVisible();
+  await expect.poll(() => previews.includes('UnresolvedProfile')).toBe(true);
   await page.getByRole('button', { name: 'Unarchive' }).click();
   await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
+});
+
+
+test('an uncertain equipment save retries the identical request', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const name = `Retry profile ${Date.now()}`;
+  await page.getByLabel('Profile name').fill(name);
+  const requests: { profile_id: string, request_id: string }[] = [];
+  await page.route('**/leptos-api/execute_equipment_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Save) {
+      requests.push(command.Save);
+      if (requests.length === 1) {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: JSON.stringify('Unavailable') });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByText('The result is uncertain. Retry the same request.')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[1].request_id).toBe(requests[0].request_id);
+  expect(requests[1].profile_id).toBe(requests[0].profile_id);
+  const selector = page.getByLabel('Equipment profile', { exact: true });
+  await expect(selector.getByRole('option', { name })).toHaveCount(1);
+});
+
+test('profile pagination exposes later active and archived profiles', async ({ page }) => {
+  const workspace = getDefaultWorkspaceId();
+  const user = getDefaultUserId();
+  const inserts: string[] = ['BEGIN'];
+  for (let i = 0; i < 102; i++) {
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+    const name = `Paged profile ${i}`;
+    const archived = i === 101 ? 1 : 0;
+    inserts.push(`INSERT INTO equipment_profiles(workspace_id,profile_id,name,current_revision,metadata_revision,archived) VALUES ('${workspace}','${id}','${name}',1,1,${archived})`);
+    inserts.push(`INSERT INTO equipment_revisions(workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ('${workspace}','${id}',1,'${name}',1,'{"schema_version":1}','{"source":"test","assumptions":[]}','fixture','${user}',1700000000)`);
+  }
+  inserts.push('COMMIT');
+  db.exec(inserts.join(';'));
+  walCheckpoint();
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const manage = page.getByLabel('Manage profile');
+  await expect(manage.getByRole('option', { name: 'Paged profile 101 (archived)' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load more profiles' }).click();
+  await expect(manage.getByRole('option', { name: 'Paged profile 101 (archived)' })).toBeAttached();
+  await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 100' })).toBeAttached();
+  await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 101 (archived)' })).toHaveCount(0);
 });
