@@ -257,3 +257,44 @@ test('denied archive hides displayed history and rejects a late revision respons
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toHaveCount(0);
   await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
 });
+
+test('a stale denied revision response still redacts the current selection', async ({ page }) => {
+  test.setTimeout(60_000);
+  const a = `Denied stale A ${Date.now()}`;
+  const b = `Denied stale B ${Date.now()}`;
+  for (const title of [a, b]) {
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Recipe name', { exact: true }).fill(title);
+    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  }
+  await page.goto('/recipes');
+  await expect(page.getByRole('heading', { name: a })).toBeVisible();
+  await expect(page.getByRole('heading', { name: b })).toBeVisible();
+  let started!: () => void;
+  let release!: () => void;
+  const startedPromise = new Promise<void>(resolve => { started = resolve; });
+  const releasePromise = new Promise<void>(resolve => { release = resolve; });
+  let first = true;
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (first && command?.Revision) {
+      first = false;
+      started();
+      await releasePromise;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.getByRole('button', { name: `History for ${a}` }).click();
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await startedPromise;
+  await page.getByRole('button', { name: `History for ${b}` }).click();
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${b}` })).toBeVisible();
+  release();
+  await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${b}` })).toHaveCount(0);
+});

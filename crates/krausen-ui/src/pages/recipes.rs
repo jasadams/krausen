@@ -17,6 +17,14 @@ use krausen_types::{
 };
 use leptos::prelude::*;
 
+fn authority_failed(result: &Result<LibraryOutcome, ServerFnError>) -> bool {
+    match result {
+        Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => true,
+        Err(error) => crate::utils::auth_refresh::is_auth_error(&error.to_string()),
+        _ => false,
+    }
+}
+
 #[component]
 pub fn RecipesPage() -> impl IntoView {
     let context =
@@ -119,6 +127,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         loading.set(true);
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::List(query)).await;
+            if authority_failed(&response) {
+                invalidate_context.run(());
+                return;
+            }
             if generation.try_get_untracked() != Some(sequence) {
                 return;
             }
@@ -178,6 +190,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             history_name.set(name);
             leptos::task::spawn_local(async move {
                 let response = library_command_shared(LibraryCommand::History(query)).await;
+                if authority_failed(&response) {
+                    invalidate_context.run(());
+                    return;
+                }
                 if history_generation.try_get_untracked() != Some(sequence) {
                     return;
                 }
@@ -221,6 +237,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         };
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::Recover(query)).await;
+            if authority_failed(&response) {
+                invalidate_context.run(());
+                return;
+            }
             if detail_generation.try_get_untracked() != Some(sequence)
                 || context_valid.try_get_untracked() != Some(true)
             {
@@ -254,6 +274,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         };
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::Revision(query)).await;
+            if authority_failed(&response) {
+                invalidate_context.run(());
+                return;
+            }
             if detail_generation.try_get_untracked() != Some(sequence)
                 || context_valid.try_get_untracked() != Some(true)
                 || history
