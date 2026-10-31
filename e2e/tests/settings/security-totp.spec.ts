@@ -1,9 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 import { authenticator } from 'otplib';
-import { gotoAuthenticated, waitForWasm, db, isPersonalMode } from '../../helpers/test-helpers';
+import {
+  DEFAULT_TEST_USER,
+  gotoAuthenticated,
+  waitForWasm,
+  isPersonalMode,
+} from '../../helpers/test-helpers';
 
 const SECURITY_URL = '/settings/security';
-const USER_PASSWORD = 'TotpTestPassword1!';
+// The disposable fixture bootstraps local@localhost with this credential.
+const USER_PASSWORD = DEFAULT_TEST_USER.password;
 
 async function navigateToSecurity(page: Page) {
   await gotoAuthenticated(page, SECURITY_URL);
@@ -149,7 +155,7 @@ test.describe('TC-012: Security - TOTP Two-Factor Authentication', () => {
     await page.getByRole('button', { name: 'Enable 2FA' }).click();
     await expect(page.getByText('2FA has been successfully enabled')).toBeVisible({ timeout: 10000 });
 
-    const userEmail = db.query("SELECT email FROM users LIMIT 1")[0];
+    const userEmail = DEFAULT_TEST_USER.email;
     expect(userEmail).toBeTruthy();
 
     const newContext = await page.context().browser()!.newContext();
