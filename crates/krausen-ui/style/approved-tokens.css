@@ -118,3 +118,27 @@
   --k-shadow-overlay: 0 24px 100px rgb(0 0 0 / 40%);
   --k-shadow-focus: 0 0 0 3px rgb(228 163 126 / 20%);
 }
+
+/* Print always uses the approved light surface, even when the screen theme is
+   dark. Values mirror the approved light palette above. */
+@media print {
+  :root,
+  :root.dark {
+    color-scheme: light;
+    --k-color-background: #ffffff;
+    --k-color-surface: #ffffff;
+    --k-color-surface-raised: #ffffff;
+    --k-color-foreground: #292c25;
+    --k-color-muted: #6d7166;
+    --k-color-subtle: #8a8d82;
+    --k-color-border: #dedfd4;
+    --k-color-border-strong: #c2c6b7;
+    --k-color-primary: #a34728;
+    --k-color-primary-foreground: #fffdf8;
+    --k-color-accent: #f4e7da;
+    --k-color-accent-foreground: #8d4328;
+    --k-color-olive: #59664b;
+    --k-color-warning: #8c6319;
+    --k-color-warning-soft: #f8efd8;
+  }
+}

@@ -61,6 +61,12 @@ pub const RECIPE_SAVE: Operation = Operation {
     input_contract: "recipe-save.v1",
     output_contract: "RecipeSaveOutcome",
 };
+pub const RECIPE_PROCESS_SUMMARY: Operation = Operation {
+    id: "recipe.process-summary.v1",
+    mcp_tool: "recipe_process_summary",
+    input_contract: "ProcessSummaryRequest",
+    output_contract: "ProcessSummaryOutcome",
+};
 pub const BEERXML_PREVIEW: Operation = Operation {
     id: "beerxml.preview.v1",
     mcp_tool: "beerxml_preview",
@@ -162,6 +168,7 @@ pub const OPERATIONS: &[Operation] = &[
     STYLE_LIST,
     RECIPE_READ,
     RECIPE_SAVE,
+    RECIPE_PROCESS_SUMMARY,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

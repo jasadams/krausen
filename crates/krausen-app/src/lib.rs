@@ -430,3 +430,4 @@ pub mod recipe_editor;
 pub mod equipment;
 
 pub mod recipe_library;
+pub mod process_summary;

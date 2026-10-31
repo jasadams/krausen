@@ -88,6 +88,12 @@ struct RecipeSave {
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct ProcessSummaryQuery {
+    workspace_id: String,
+    request: krausen_types::process_summary::ProcessSummaryRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct BeerXmlPreview {
     workspace_id: String,
     request: krausen_types::interchange::ImportRequest,
@@ -310,6 +316,11 @@ impl ServerHandler for McpHandler {
                 operations::RECIPE_SAVE.mcp_tool,
                 "Create or explicitly save a native recipe using its observed revision and a stable request UUID",
                 typed_schema::<RecipeSave>(),
+            ),
+            Tool::new(
+                operations::RECIPE_PROCESS_SUMMARY.mcp_tool,
+                "Return the authorized structured process summary for a saved revision or an unsaved draft",
+                typed_schema::<ProcessSummaryQuery>(),
             ),
         ]))
     }
@@ -769,6 +780,29 @@ impl ServerHandler for McpHandler {
                 let success = matches!(
                     outcome,
                     krausen_types::recipe_editor::RecipeSaveOutcome::Saved { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe.process-summary.v1" => {
+                let input: ProcessSummaryQuery = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid recipe process summary", None)
+                })?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::process_summary::read(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::process_summary::ProcessSummaryOutcome::Summary(_)
                 );
                 let value = json!({"outcome": outcome});
                 if success {

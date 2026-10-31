@@ -67,6 +67,10 @@ pub fn register_server_functions() {
     register_explicit::<server_fns::equipment::ExecuteEquipmentCommand>();
     register_explicit::<server_fns::recipe_library::ExecuteLibraryCommand>();
 
+    // Structured process summary for printing and export
+    use server_fns::process_summary::RequestProcessSummary;
+    register_explicit::<RequestProcessSummary>();
+
     // Profile
     use server_fns::profile::*;
     register_explicit::<GetProfile>();
