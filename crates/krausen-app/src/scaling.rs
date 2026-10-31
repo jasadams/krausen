@@ -1218,7 +1218,7 @@ mod tests {
         };
         let intent = OperationIntent {
             account_id: user,
-            workspace_id,
+            workspace_id: workspace,
         };
         let profile = equipment::save(
             &db,
