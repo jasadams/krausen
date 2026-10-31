@@ -289,3 +289,171 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
 });
+
+test('an unavailable create keeps the pending command locked and retries identically', async ({ page }) => {
+  const unique = Date.now();
+  const entryName = `E2E unavailable malt ${unique}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  const create = page.getByRole('dialog', { name: 'A fermentable of your own' });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  await expect(create).toBeVisible();
+  await create.getByLabel('Fermentable name').fill(entryName);
+  await create.getByLabel('Colour (EBC)').fill('4.5');
+  await create.getByLabel('Potential yield (%)').fill('80');
+
+  const requests: any[] = [];
+  let unavailableAttempt = 0;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Save) requests.push(command.Save);
+    if (unavailableAttempt === 0 && command?.Save) {
+      unavailableAttempt += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify('Unavailable'),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await create.getByRole('button', { name: 'Save to library' }).click();
+  await expect(create.getByText('Save may not have completed')).toBeVisible();
+  await expect(create.getByLabel('Fermentable name')).toBeDisabled();
+  await expect(create.getByLabel('Colour (EBC)')).toBeDisabled();
+  await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+  const retrySearch = waitForCatalogueSearch(page);
+  await create.getByRole('button', { name: 'Retry previous request' }).click();
+  await retrySearch;
+  await page.unroute('**/leptos-api/execute_ingredient_command*');
+  await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
+  expect(requests).toHaveLength(2);
+  expect(requests[1].request_id).toBe(requests[0].request_id);
+  expect(requests[1].document).toEqual(requests[0].document);
+});
+
+test('a stale catalogue search denial still redacts the mounted editor', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/recipe-editor/new');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let held = false;
+  let started!: () => void;
+  const requestStarted = new Promise<void>(resolve => { started = resolve; });
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Search && !held) {
+      held = true;
+      started();
+      await gate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify('Forbidden'),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker).toBeVisible();
+  await requestStarted;
+  const libraryFilter = picker.getByRole('button', { name: 'Your library', exact: true });
+  await libraryFilter.click();
+  await expect(libraryFilter).toHaveAttribute('aria-pressed', 'true');
+  release();
+  await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a delayed catalogue search denial cannot touch a disposed picker', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/recipe-editor/new');
+  let started!: () => void;
+  const requestStarted = new Promise<void>(resolve => { started = resolve; });
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Search) {
+      started();
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify('Forbidden'),
+        });
+      } catch {
+        // Navigation may cancel the in-flight request; the app still must not
+        // touch disposed signals when its future resolves.
+      }
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker).toBeVisible();
+  await requestStarted;
+  await page.goto('/recipes');
+  await expect(page).toHaveURL(/\/recipes$/);
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('a delayed catalogue save response cannot copy data into a disposed editor', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const unique = Date.now();
+  const entryName = `E2E disposed malt ${unique}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Disposed recipe ${unique}`);
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  const create = page.getByRole('dialog', { name: 'A fermentable of your own' });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  await expect(create).toBeVisible();
+  await create.getByLabel('Fermentable name').fill(entryName);
+  await create.getByLabel('Colour (EBC)').fill('4.5');
+  await create.getByLabel('Potential yield (%)').fill('80');
+  let started!: () => void;
+  const requestStarted = new Promise<void>(resolve => { started = resolve; });
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Save) {
+      started();
+      try {
+        const response = await route.fetch();
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await route.fulfill({ response });
+      } catch {
+        // Navigation may cancel the in-flight request; see the search denial.
+      }
+      return;
+    }
+    await route.continue();
+  });
+  await create.getByRole('button', { name: 'Save to library' }).click();
+  await requestStarted;
+  await page.goto('/recipes');
+  await expect(page).toHaveURL(/\/recipes$/);
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toHaveCount(0);
+  // The mutation response must not be applied to a disposed editor: the
+  // library entry exists, but no ingredient row is copied into a new recipe.
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
