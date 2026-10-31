@@ -10,7 +10,8 @@ use crate::components::{
     Card, CardContent, CardDescription, CardHeader, CardTitle, INPUT_CLASS, Skeleton,
 };
 use crate::server_fns::workspace::*;
-use crate::types::{WorkspaceRenameOutcome, WorkspaceSettingsData};
+use crate::types::WorkspaceSettingsData;
+use krausen_types::workspace::WorkspaceRenameOutcome;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main page
@@ -108,8 +109,8 @@ fn WorkspaceNameCard(data: WorkspaceSettingsData) -> impl IntoView {
         let request = pending_request.get_untracked();
         let id = match request {
             Some((ref old, old_rev, ref id)) if *old == current && old_rev == rev => id.clone(),
-            _ => match web_sys::window().and_then(|w| w.crypto().ok()) {
-                Some(crypto) => crypto.random_uuid(),
+            _ => match crate::utils::request_id::new_request_id() {
+                Some(id) => id,
                 None => {
                     set_identity_error.set(true);
                     return;

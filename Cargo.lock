@@ -1890,12 +1890,14 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "krausen-core",
+ "krausen-types",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

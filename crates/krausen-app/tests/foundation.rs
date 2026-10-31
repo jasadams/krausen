@@ -286,3 +286,16 @@ async fn postgres_foundation() {
         .unwrap();
     exercise(DbPool::Postgres(pool)).await;
 }
+
+#[test]
+fn shared_projection_preserves_conflicts_and_redacts_internal_errors() {
+    use krausen_types::workspace::WorkspaceRenameOutcome as Outcome;
+    assert_eq!(
+        krausen_app::project_rename_result(Err(Error::Conflict { expected: 1, actual: 2 })),
+        Outcome::Conflict { expected: 1, actual: 2 }
+    );
+    assert_eq!(
+        krausen_app::project_rename_result(Err(Error::Database(krausen_core::Error::Internal("private detail".into())))),
+        Outcome::Unavailable
+    );
+}

@@ -29,5 +29,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-ui --features ssr --lib retry_preserves_browser_request_identity
+      - run: cargo test -p krausen-ui --features ssr --lib request_id::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown

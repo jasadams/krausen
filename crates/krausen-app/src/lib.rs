@@ -38,6 +38,28 @@ pub struct RenameResult {
     pub revision: i64,
 }
 
+/// Project the internal command result to the same sanitized adapter contract.
+pub fn project_rename_result(
+    result: Result<RenameResult, Error>,
+) -> krausen_types::workspace::WorkspaceRenameOutcome {
+    use krausen_types::workspace::WorkspaceRenameOutcome as Outcome;
+    match result {
+        Ok(result) => Outcome::Saved {
+            revision: result.revision,
+        },
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { resource_id }) => Outcome::ResultExpired { resource_id },
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(e) => {
+            tracing::error!(error = %e, "workspace rename failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct WorkspaceSnapshot {
     pub name: Option<String>,

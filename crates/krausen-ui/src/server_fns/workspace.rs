@@ -8,7 +8,8 @@
 
 use leptos::prelude::*;
 
-use crate::types::{WorkspaceRenameOutcome, WorkspaceSettingsData};
+use crate::types::WorkspaceSettingsData;
+use krausen_types::workspace::WorkspaceRenameOutcome;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (server-only)
@@ -95,26 +96,9 @@ async fn execute_rename(
         Ok(id) => id,
         Err(_) => return WorkspaceRenameOutcome::Invalid,
     };
-    use krausen_app::Error;
-    match krausen_app::rename_workspace(db, actor, name, expected_revision, request_id).await {
-        Ok(result) => WorkspaceRenameOutcome::Saved {
-            revision: result.revision,
-        },
-        Err(Error::Conflict { expected, actual }) => {
-            WorkspaceRenameOutcome::Conflict { expected, actual }
-        }
-        Err(Error::RequestIdentityConflict) => WorkspaceRenameOutcome::RequestIdentityConflict,
-        Err(Error::ResultExpired { resource_id }) => {
-            WorkspaceRenameOutcome::ResultExpired { resource_id }
-        }
-        Err(Error::Forbidden) => WorkspaceRenameOutcome::Forbidden,
-        Err(Error::Invalid(_)) => WorkspaceRenameOutcome::Invalid,
-        Err(Error::Retryable) => WorkspaceRenameOutcome::Retryable,
-        Err(e) => {
-            tracing::error!(error = %e, "workspace rename failed");
-            WorkspaceRenameOutcome::Unavailable
-        }
-    }
+    krausen_app::project_rename_result(
+        krausen_app::rename_workspace(db, actor, name, expected_revision, request_id).await,
+    )
 }
 
 // Helpers — delegate to shared extractors in parent module
