@@ -45,6 +45,7 @@ jobs:
       - run: cargo test -p krausen-app --lib style_reference
       - run: cargo test -p krausen-app --test recipe_editor
       - run: cargo test -p krausen-app --test interchange
+      - run: cargo test -p krausen-app --test recipe_library
       - run: cargo test -p krausen-beerxml -p krausen-types
       - run: cargo test -p krausen-calc
       - run: cargo test -p krausen-core --lib canonical_json

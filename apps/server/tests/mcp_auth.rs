@@ -1176,6 +1176,146 @@ async fn exercise(db: DbPool) {
         stale.structured_content.unwrap()["outcome"]["Conflict"]["actual"],
         2
     );
+    // Real browser and both SDK transports use the same library, retained
+    // history and guarded archive operations under the verified principal.
+    use krausen_types::recipe_library::{
+        ArchiveRecipe, HistoryQuery, LibraryCommand, LibraryQuery, RevisionQuery,
+    };
+    let library_query = LibraryQuery {
+        intent: intent.clone(),
+        search: "Browser edit".into(),
+        archived: false,
+        cursor: None,
+        limit: 50,
+    };
+    let history_query = HistoryQuery {
+        intent: intent.clone(),
+        recipe_id: native_id.clone(),
+        cursor: None,
+        limit: 50,
+    };
+    let revision_query = RevisionQuery {
+        intent: intent.clone(),
+        recipe_id: native_id.clone(),
+        revision: 1,
+    };
+    let library_path =
+        <krausen_ui::server_fns::recipe_library::ExecuteLibraryCommand as ServerFn>::PATH;
+    for (tool, request, command) in [
+        (
+            "recipe_list",
+            serde_json::to_value(&library_query).unwrap(),
+            LibraryCommand::List(library_query),
+        ),
+        (
+            "recipe_history",
+            serde_json::to_value(&history_query).unwrap(),
+            LibraryCommand::History(history_query.clone()),
+        ),
+        (
+            "recipe_revision",
+            serde_json::to_value(&revision_query).unwrap(),
+            LibraryCommand::Revision(revision_query),
+        ),
+    ] {
+        let args = json!({"workspace_id":ws,"request":request})
+            .as_object()
+            .unwrap()
+            .clone();
+        let a = modern
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(args.clone()))
+            .await
+            .unwrap();
+        let b = legacy
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(args))
+            .await
+            .unwrap();
+        assert_eq!(a.structured_content, b.structured_content);
+        let http = reqwest::Client::new()
+            .post(format!("{base}{library_path}"))
+            .bearer_auth(&browser.access_token)
+            .form(&[("command_json", serde_json::to_string(&command).unwrap())])
+            .send()
+            .await
+            .unwrap();
+        assert!(http.status().is_success());
+        assert_eq!(
+            http.json::<serde_json::Value>().await.unwrap(),
+            a.structured_content.unwrap()["outcome"]
+        );
+    }
+    let archive_recipe = ArchiveRecipe {
+        intent: intent.clone(),
+        recipe_id: native_id.clone(),
+        expected_metadata_revision: 0,
+        archived: true,
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let archive_args = json!({"workspace_id":ws,"request":archive_recipe})
+        .as_object()
+        .unwrap()
+        .clone();
+    let archive_a = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_archive").with_arguments(archive_args.clone()),
+        )
+        .await
+        .unwrap();
+    let archive_b = legacy
+        .call_tool(CallToolRequestParams::new("recipe_archive").with_arguments(archive_args))
+        .await
+        .unwrap();
+    assert_eq!(archive_a.structured_content, archive_b.structured_content);
+    let archive_http = reqwest::Client::new()
+        .post(format!("{base}{library_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "command_json",
+            serde_json::to_string(&LibraryCommand::Archive(archive_recipe.clone())).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        archive_http.json::<serde_json::Value>().await.unwrap(),
+        archive_a.structured_content.unwrap()["outcome"]
+    );
+    let history_args = json!({"workspace_id":ws,"request":history_query})
+        .as_object()
+        .unwrap()
+        .clone();
+    let archived_history = modern
+        .call_tool(CallToolRequestParams::new("recipe_history").with_arguments(history_args))
+        .await
+        .unwrap();
+    assert_eq!(
+        archived_history.structured_content.unwrap()["outcome"]["History"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let restore = ArchiveRecipe {
+        archived: false,
+        expected_metadata_revision: 1,
+        request_id: uuid::Uuid::new_v4().to_string(),
+        ..archive_recipe
+    };
+    let restored = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_archive").with_arguments(
+                json!({"workspace_id":ws,"request":restore})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        restored.structured_content.unwrap()["outcome"]["Archive"]["archived"],
+        false
+    );
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()
@@ -1325,6 +1465,35 @@ async fn exercise(db: DbPool) {
         krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await,
         krausen_types::formulation::StyleListOutcome::Forbidden
     ));
+    let revoked_library = LibraryQuery {
+        intent: intent.clone(),
+        search: String::new(),
+        archived: false,
+        cursor: None,
+        limit: 50,
+    };
+    assert!(matches!(
+        krausen_ui::server_fns::recipe_library::execute(
+            &db,
+            &browser_actor,
+            LibraryCommand::List(revoked_library.clone())
+        )
+        .await,
+        krausen_types::recipe_library::LibraryOutcome::Forbidden
+    ));
+    assert!(
+        modern
+            .call_tool(
+                CallToolRequestParams::new("recipe_list").with_arguments(
+                    json!({"workspace_id":ws,"request":revoked_library})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+            )
+            .await
+            .is_err()
+    );
     server.abort();
 }
 #[tokio::test]

@@ -176,3 +176,5 @@ pub mod recipe_editor;
 pub mod interchange;
 
 pub mod equipment;
+
+pub mod recipe_library;

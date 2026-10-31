@@ -428,3 +428,5 @@ mod style_reference;
 pub mod recipe_editor;
 
 pub mod equipment;
+
+pub mod recipe_library;

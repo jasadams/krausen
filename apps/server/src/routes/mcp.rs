@@ -134,6 +134,10 @@ equipment_request!(
     EquipmentRevision,
     krausen_types::equipment::EquipmentRevisionQuery
 );
+equipment_request!(RecipeList, krausen_types::recipe_library::LibraryQuery);
+equipment_request!(RecipeHistory, krausen_types::recipe_library::HistoryQuery);
+equipment_request!(RecipeRevision, krausen_types::recipe_library::RevisionQuery);
+equipment_request!(RecipeArchive, krausen_types::recipe_library::ArchiveRecipe);
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
 }
@@ -186,6 +190,26 @@ impl ServerHandler for McpHandler {
                 operations::BEERXML_ORIGINAL.mcp_tool,
                 "Retrieve the unedited imported source",
                 typed_schema::<BeerXmlOriginal>(),
+            ),
+            Tool::new(
+                operations::RECIPE_LIST.mcp_tool,
+                "Search and list recipes",
+                typed_schema::<RecipeList>(),
+            ),
+            Tool::new(
+                operations::RECIPE_HISTORY.mcp_tool,
+                "List retained recipe revisions",
+                typed_schema::<RecipeHistory>(),
+            ),
+            Tool::new(
+                operations::RECIPE_REVISION.mcp_tool,
+                "Read a retained recipe revision",
+                typed_schema::<RecipeRevision>(),
+            ),
+            Tool::new(
+                operations::RECIPE_ARCHIVE.mcp_tool,
+                "Archive or restore a recipe",
+                typed_schema::<RecipeArchive>(),
             ),
             Tool::new(
                 operations::EQUIPMENT_SAVE.mcp_tool,
@@ -395,6 +419,62 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured(json!({"outcome":outcome}))
                 } else {
                     CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "recipe.list.v1" | "recipe.history.v1" | "recipe.revision.v1" | "recipe.archive.v1" => {
+                macro_rules! parse_library {
+                    ($ty:ty) => {
+                        serde_json::from_value::<$ty>(input).map_err(|_| {
+                            ErrorData::invalid_params("Invalid recipe library request", None)
+                        })?
+                    };
+                }
+                macro_rules! library_actor {
+                    ($workspace:expr) => {
+                        krausen_app::ActorContext {
+                            actor_id: principal.user_id.clone(),
+                            credential_id: principal.credential_id.clone(),
+                            access_expires_at: principal.access_expires_at,
+                            workspace_id: $workspace,
+                        }
+                    };
+                }
+                let outcome = match operation.id {
+                    "recipe.list.v1" => {
+                        let c = parse_library!(RecipeList);
+                        let actor = library_actor!(c.workspace_id);
+                        krausen_app::recipe_library::list(&self.db, &actor, c.request).await
+                    }
+                    "recipe.history.v1" => {
+                        let c = parse_library!(RecipeHistory);
+                        let actor = library_actor!(c.workspace_id);
+                        krausen_app::recipe_library::history(&self.db, &actor, c.request).await
+                    }
+                    "recipe.revision.v1" => {
+                        let c = parse_library!(RecipeRevision);
+                        let actor = library_actor!(c.workspace_id);
+                        krausen_app::recipe_library::revision(&self.db, &actor, c.request).await
+                    }
+                    "recipe.archive.v1" => {
+                        let c = parse_library!(RecipeArchive);
+                        let actor = library_actor!(c.workspace_id);
+                        krausen_app::recipe_library::archive(&self.db, &actor, c.request).await
+                    }
+                    _ => unreachable!(),
+                };
+                let error = !matches!(
+                    outcome,
+                    krausen_types::recipe_library::LibraryOutcome::Recipes(_)
+                        | krausen_types::recipe_library::LibraryOutcome::History(_)
+                        | krausen_types::recipe_library::LibraryOutcome::Revision(_)
+                        | krausen_types::recipe_library::LibraryOutcome::Archive { .. }
+                        | krausen_types::recipe_library::LibraryOutcome::NotFound
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
                 }
             }
             "equipment.save.v1"
