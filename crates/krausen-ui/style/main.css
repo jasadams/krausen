@@ -2,6 +2,9 @@
    detection is CSS-only: source(none) disables CWD auto-scan, @source
    directives list what to scan explicitly. Do NOT add --content to Trunk.toml. */
 @import "tailwindcss" source(none);
+@import "./approved-tokens.css";
+@import "./local-fonts.css";
+@import "./kit.css";
 @source "../src";
 @plugin "@tailwindcss/typography";
 
@@ -29,51 +32,51 @@ html {
   /* === Design System Color Tokens ===
    * Reference: DESIGN.md */
 
-  --color-primary: #4f46e5;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #F5F3EF;
-  --color-secondary-foreground: #3D3835;
-  --color-accent: #FEF3C7;
-  --color-accent-foreground: #1C1917;
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #ffffff;
-  --color-muted: #F5F3EF;
-  --color-muted-foreground: #6B6660;
-  --color-background: #FAFAF8;
-  --color-foreground: #1C1917;
-  --color-card: #ffffff;
-  --color-card-foreground: #1C1917;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #1C1917;
-  --color-border: #E8E5DE;
-  --color-border-strong: #D4D0C8;
-  --color-input: #E8E5DE;
-  --color-ring: #4f46e5;
-  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-primary: var(--k-color-primary);
+  --color-primary-foreground: var(--k-color-primary-foreground);
+  --color-secondary: var(--k-color-surface-subtle);
+  --color-secondary-foreground: var(--k-color-foreground);
+  --color-accent: var(--k-color-accent);
+  --color-accent-foreground: var(--k-color-accent-foreground);
+  --color-destructive: var(--k-color-danger);
+  --color-destructive-foreground: var(--k-color-primary-foreground);
+  --color-muted: var(--k-color-surface-subtle);
+  --color-muted-foreground: var(--k-color-muted);
+  --color-background: var(--k-color-background);
+  --color-foreground: var(--k-color-foreground);
+  --color-card: var(--k-color-surface);
+  --color-card-foreground: var(--k-color-foreground);
+  --color-popover: var(--k-color-surface-raised);
+  --color-popover-foreground: var(--k-color-foreground);
+  --color-border: var(--k-color-border);
+  --color-border-strong: var(--k-color-border-strong);
+  --color-input: var(--k-color-border-strong);
+  --color-ring: var(--k-color-ring);
+  --color-overlay: var(--k-color-overlay);
 
   /* Status Colors */
-  --color-success: #F0FDF4;
-  --color-success-border: #BBF7D0;
-  --color-success-foreground: #15803D;
-  --color-warning: #FEFCE8;
-  --color-warning-border: #FDE68A;
-  --color-warning-foreground: #CA8A04;
-  --color-error: #FEF2F2;
-  --color-error-border: #FECDD3;
-  --color-error-foreground: #DC2626;
-  --color-info: #EFF6FF;
-  --color-info-border: #BFDBFE;
-  --color-info-foreground: #2563EB;
+  --color-success: var(--k-color-success-soft);
+  --color-success-border: var(--k-color-success);
+  --color-success-foreground: var(--k-color-success);
+  --color-warning: var(--k-color-warning-soft);
+  --color-warning-border: var(--k-color-warning);
+  --color-warning-foreground: var(--k-color-warning);
+  --color-error: var(--k-color-danger-soft);
+  --color-error-border: var(--k-color-danger);
+  --color-error-foreground: var(--k-color-danger);
+  --color-info: var(--k-color-info-soft);
+  --color-info-border: var(--k-color-info);
+  --color-info-foreground: var(--k-color-info);
 
   /* Sidebar — warm near-black, reuses the --color-foreground ramp.
    * Separate tokens so the sidebar can be re-skinned independently. */
-  --color-sidebar: #1C1917;
-  --color-sidebar-foreground: #F5F3EF;
-  --color-sidebar-foreground-secondary: #A8A29E;
-  --color-sidebar-foreground-muted: #78716C;
-  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
-  --color-sidebar-active: #2C241E;
-  --color-sidebar-border: rgba(255, 255, 255, 0.08);
+  --color-sidebar: var(--k-color-sidebar);
+  --color-sidebar-foreground: var(--k-color-foreground);
+  --color-sidebar-foreground-secondary: var(--k-color-muted);
+  --color-sidebar-foreground-muted: var(--k-color-subtle);
+  --color-sidebar-hover: var(--k-color-surface-subtle);
+  --color-sidebar-active: var(--k-color-surface);
+  --color-sidebar-border: var(--k-color-border);
 
   --radius: 0.5rem;
   --radius-sm: 0.25rem;  /* 4px — inputs, buttons, chips */
@@ -176,7 +179,7 @@ html {
  * Extracted from inline style= attrs per DESIGN.md "no inline styles
  * for color" rule — keeps theming greppable and theme-switchable. */
 .auth-brand-panel {
-  background-color: var(--color-sidebar);
+  background-color: var(--k-color-auth-surface);
 }
 
 .auth-brand-gradient-1 {
@@ -277,42 +280,6 @@ html {
 }
 
 /* === Dark Mode Color Overrides === */
-.dark {
-  --color-primary: #4f46e5;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #24201E;
-  --color-secondary-foreground: #A8A29E;
-  --color-accent: #451A03;
-  --color-accent-foreground: #F5F3EF;
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #ffffff;
-  --color-muted: #1C1917;
-  --color-muted-foreground: #A8A29E;
-  --color-background: #12100F;
-  --color-foreground: #F5F3EF;
-  --color-card: #24201E;
-  --color-card-foreground: #F5F3EF;
-  --color-popover: #2A2623;
-  --color-popover-foreground: #F5F3EF;
-  --color-border: #2E2925;
-  --color-input: #2E2925;
-  --color-ring: #4f46e5;
-  --color-overlay: rgba(0, 0, 0, 0.7);
-
-  --color-warning: #422006;
-  --color-warning-border: #4f46e5;
-  --color-warning-foreground: #f59e0b;
-  --color-error: #450a0a;
-  --color-error-border: #dc2626;
-  --color-error-foreground: #ef4444;
-  --color-success: #052e16;
-  --color-success-border: #16a34a;
-  --color-success-foreground: #22c55e;
-  --color-info: #101318;
-  --color-info-border: #2563eb;
-  --color-info-foreground: #3b82f6;
-}
-
 :root.dark { color-scheme: dark; }
 
 /* Interactive element defaults */

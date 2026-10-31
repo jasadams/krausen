@@ -3,6 +3,7 @@
 //! Shared UI components — no server-side dependencies.
 
 pub mod action_status;
+pub mod brewery_kit;
 pub mod layout;
 pub mod alert;
 pub mod badge;
@@ -46,3 +47,5 @@ pub use status_badge::{StatusBadge, StatusBadgeVariant};
 pub use switch::Switch;
 pub use theme::ThemeProvider;
 pub use tooltip::Tooltip;
+
+pub use brewery_kit::{BreweryDialog, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};

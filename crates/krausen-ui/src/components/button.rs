@@ -59,7 +59,7 @@ pub enum ButtonSize {
 // the default-enabled colors so disabled primary buttons read as neutral gray,
 // not "pale amber". Ghost / Link / Pill variants keep `opacity-50` for their
 // transparent disabled state.
-const BASE: &str = "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
+const BASE: &str = "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--k-radius-sm)] text-[length:var(--k-font-sm)] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
 
 fn variant_classes(variant: ButtonVariant) -> &'static str {
     match variant {
@@ -93,7 +93,7 @@ fn variant_classes(variant: ButtonVariant) -> &'static str {
 
 fn size_classes(size: ButtonSize) -> &'static str {
     match size {
-        ButtonSize::Default => "px-5 py-3",
+        ButtonSize::Default => "min-h-[var(--k-control-height)] px-4 py-0",
         // Small: 8px 14px (py-2 px-3.5), 13px font — py-2 gives ~36px height for touch accessibility
         ButtonSize::Sm => "px-3.5 py-2 text-[13px]",
         // Large

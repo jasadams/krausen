@@ -13,7 +13,7 @@ use crate::server_fns::sidebar::{get_sidebar_user, list_user_workspaces, switch_
 pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
     let (user_menu_open, set_user_menu_open) = signal(false);
-    let (mobile_sidebar_open, set_mobile_sidebar_open) = signal(false);
+    let mobile_sidebar_open = RwSignal::new(false);
 
     let auth_confirmed = RwSignal::new(false);
     let nav = leptos_router::hooks::use_navigate();
@@ -43,26 +43,19 @@ pub fn Layout() -> impl IntoView {
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
                 </div>
 
-                // Mobile sidebar overlay
-                <Show when=move || mobile_sidebar_open.get()>
-                    <div class="fixed inset-0 z-40 md:hidden">
-                        <div
-                            class="fixed inset-0 bg-black/50"
-                            on:click=move |_| set_mobile_sidebar_open.set(false)
-                        />
-                        <div class="fixed inset-y-0 left-0 z-50 w-64">
-                            <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
-                        </div>
-                    </div>
-                </Show>
+                <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
+                    <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
+                </crate::components::BreweryDialog>
 
                 <div class="flex-1 flex flex-col overflow-hidden">
                     // Mobile header bar
                     <div class="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background">
                         <button
                             class="p-2 rounded-md hover:bg-secondary transition-colors"
-                            on:click=move |_| set_mobile_sidebar_open.update(|v| *v = !*v)
+                            on:click=move |_| mobile_sidebar_open.set(true)
                             aria-label="Toggle menu"
+                            aria-controls="mobile-navigation"
+                            aria-expanded=move || mobile_sidebar_open.get().to_string()
                         >
                             <svg class="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
@@ -91,11 +84,12 @@ fn Sidebar(
 ) -> impl IntoView {
 
     view! {
-        <div class="w-64 bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
+        <div class="w-[var(--k-sidebar-width)] bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
             // Logo
             <div class="p-4 border-b border-[var(--color-sidebar-border)]">
                 <a href="/">
-                    <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-8"/>
+                    <img src="/public/krausen_full_logo.svg" alt="Krausen" class="h-8 dark:hidden"/>
+                    <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-8 hidden dark:block"/>
                 </a>
             </div>
 
