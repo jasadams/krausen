@@ -39,6 +39,13 @@ Repository documents are the durable design reference. Tracker records provide
 decision history and progress; later accepted changes must update the applicable
 documents and agent guidance together.
 
+## Independent reviews
+
+The [2026-10-31 boundary review](reviews/2026-10-31-boundaries.md) consolidates
+three independent reviews of all 14 Markdown documents at baseline `d4afe9a`.
+It records prioritized adoption findings and later refinements; it does not
+itself resolve them or reopen completed design-delivery tickets.
+
 ## Historical context
 
 [KRAUSEN.md](../KRAUSEN.md) records earlier product/calculation reasoning. Its
