@@ -1,5 +1,18 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+
+async function waitForCatalogueSearch(page: Page) {
+  await page.waitForResponse(response => {
+    if (!response.url().includes('execute_ingredient_command')) return false;
+    const payload = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+    if (!payload) return false;
+    try {
+      return JSON.parse(payload)?.Search !== undefined;
+    } catch {
+      return false;
+    }
+  });
+}
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -149,7 +162,9 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await create.getByRole('button', { name: 'Save to library' }).click();
   await expect(create.getByText('Save may not have completed')).toBeVisible();
   await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+  const retrySearch = waitForCatalogueSearch(page);
   await create.getByRole('button', { name: 'Retry previous request' }).click();
+  await retrySearch;
   await expect(picker).toBeVisible();
   await page.unroute('**/leptos-api/execute_ingredient_command*');
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
@@ -159,14 +174,18 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await picker.getByRole('button', { name: 'Edit library entry' }).click();
   await expect(edit).toBeVisible();
   await edit.getByLabel('Colour (EBC)').fill('9.5');
+  const editSearch = waitForCatalogueSearch(page);
   await edit.getByRole('button', { name: 'Save changes' }).click();
+  await editSearch;
   await expect(picker).toBeVisible();
   await expect(picker.getByRole('button', { name: /9\.5 EBC/ })).toHaveCount(1);
 
   // Archive keeps the entry discoverable in the workspace library, marked
   // Archived, and blocks adding it to a recipe until restored.
   await picker.getByRole('button', { name: entryName }).click();
+  const archiveSearch = waitForCatalogueSearch(page);
   await picker.getByRole('button', { name: 'Archive', exact: true }).click();
+  await archiveSearch;
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Archived'),
@@ -176,7 +195,9 @@ test('library entries support edit, archive, restore and lost-response retry', a
 
   // Restore returns it to the active library.
   await picker.getByRole('button', { name: entryName }).click();
+  const restoreSearch = waitForCatalogueSearch(page);
   await picker.getByRole('button', { name: 'Restore' }).click();
+  await restoreSearch;
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Your library'),
   ).toBeVisible();
