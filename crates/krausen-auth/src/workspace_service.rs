@@ -135,39 +135,6 @@ pub async fn get_workspace_settings_for_sync(
     }))
 }
 
-/// Update workspace display name.
-pub async fn update_workspace_name(
-    pool: &DbPool,
-    workspace_id: &str,
-    name: &str,
-) -> krausen_core::Result<bool> {
-    let is_pg = pool.is_postgres();
-    let now_expr = sql_compat::now(is_pg);
-    let sql = format!(
-        "UPDATE workspaces SET name = $1, updated_at = {now_expr} WHERE workspace_id = $2"
-    );
-    let result = krausen_core::db_execute!(pool, &sql, name, workspace_id)?;
-
-    // Sync log — best-effort: log a warning and continue on failure.
-    if result.rows_affected() > 0 {
-        let snapshot = fetch_workspace_settings_snapshot(pool, workspace_id).await;
-        if let Err(e) = sync_log_service::write_sync_entry(
-            pool,
-            entity_types::WORKSPACE_SETTINGS,
-            workspace_id,
-            workspace_id,
-            SyncActionType::Update,
-            snapshot,
-        )
-        .await
-        {
-            tracing::warn!(error = %e, workspace_id = %workspace_id, "Failed to write sync log entry");
-        }
-    }
-
-    Ok(result.rows_affected() > 0)
-}
-
 /// Update workspace settings JSON (full replace).
 ///
 /// `workspaces.settings` is a Postgres `json` column. Binding `$1` as text

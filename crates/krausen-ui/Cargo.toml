@@ -17,6 +17,7 @@ ssr = [
     "leptos_router/ssr",
     "leptos_meta/ssr",
     "dep:krausen-core",
+    "dep:krausen-app",
     "dep:krausen-auth",
     "dep:krausen-beerxml",
     "dep:krausen-brewery",
@@ -53,7 +54,7 @@ phosphor-leptos = "0.8"
 
 # Browser DOM access
 web-sys = { version = "0.3", features = [
-    "Window", "Document", "HtmlElement", "HtmlInputElement",
+    "Window", "Crypto", "Document", "HtmlElement", "HtmlInputElement",
     "Element", "EventTarget", "Node",
     "KeyboardEvent", "DomTokenList", "MediaQueryList", "Location",
     "Navigator", "Storage",
@@ -86,6 +87,7 @@ chrono = { workspace = true }
 
 # Internal crates (server-only — gated behind ssr feature)
 krausen-core = { workspace = true, optional = true }
+krausen-app = { workspace = true, optional = true }
 krausen-beerxml = { workspace = true, optional = true }
 krausen-brewery = { workspace = true, optional = true }
 krausen-calc = { workspace = true, optional = true }

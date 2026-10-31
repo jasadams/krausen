@@ -7,10 +7,10 @@
 use leptos::prelude::*;
 
 use crate::components::{
-    ActionStatus, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, INPUT_CLASS,
+    Card, CardContent, CardDescription, CardHeader, CardTitle, INPUT_CLASS, Skeleton,
 };
 use crate::server_fns::workspace::*;
-use crate::types::WorkspaceSettingsData;
+use crate::types::{WorkspaceRenameOutcome, WorkspaceSettingsData};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main page
@@ -82,16 +82,43 @@ pub fn WorkspacePage() -> impl IntoView {
 #[component]
 fn WorkspaceNameCard(data: WorkspaceSettingsData) -> impl IntoView {
     let (name, set_name) = signal(data.workspace_name.clone());
-    let save_action = Action::new(|name: &String| {
-        let name = name.clone();
-        async move { update_workspace_name(name).await }
+    let (revision, set_revision) = signal(data.revision);
+    let (identity_error, set_identity_error) = signal(false);
+    let pending_request = RwSignal::new(None::<(String, i64, String)>);
+    let save_action = Action::new(|input: &(String, i64, String)| {
+        let (name, revision, request_id) = input.clone();
+        async move { update_workspace_name(name, revision, request_id).await }
+    });
+    Effect::new(move |_| {
+        if let Some(Ok(WorkspaceRenameOutcome::Saved { revision })) = save_action.value().get() {
+            set_revision.set(revision);
+            pending_request.set(None);
+        }
     });
 
     let on_blur = move |_| {
-        let current = name.get();
-        if !current.trim().is_empty() {
-            save_action.dispatch(current);
+        if save_action.pending().get_untracked() {
+            return;
         }
+        let current = name.get();
+        let rev = revision.get_untracked();
+        if current.trim().is_empty() {
+            return;
+        }
+        let request = pending_request.get_untracked();
+        let id = match request {
+            Some((ref old, old_rev, ref id)) if *old == current && old_rev == rev => id.clone(),
+            _ => match web_sys::window().and_then(|w| w.crypto().ok()) {
+                Some(crypto) => crypto.random_uuid(),
+                None => {
+                    set_identity_error.set(true);
+                    return;
+                }
+            },
+        };
+        set_identity_error.set(false);
+        pending_request.set(Some((current.clone(), rev, id.clone())));
+        save_action.dispatch((current, rev, id));
     };
 
     view! {
@@ -104,7 +131,21 @@ fn WorkspaceNameCard(data: WorkspaceSettingsData) -> impl IntoView {
                             "Give your workspace a meaningful name to help identify it."
                         </CardDescription>
                     </div>
-                    <ActionStatus action=save_action/>
+                    <span class="text-sm">{move || {
+                        if identity_error.get() { return "Secure request identity unavailable; save did not start.".to_string(); }
+                        if save_action.pending().get() { return "Saving…".to_string(); }
+                        match save_action.value().get() {
+                            None => String::new(),
+                            Some(Ok(WorkspaceRenameOutcome::Saved { .. })) => "Saved".into(),
+                            Some(Ok(WorkspaceRenameOutcome::Conflict { expected, actual })) => format!("Changed elsewhere (expected revision {expected}, current {actual}); reload before saving."),
+                            Some(Ok(WorkspaceRenameOutcome::RequestIdentityConflict)) => "Save request conflicts with an earlier request.".into(),
+                            Some(Ok(WorkspaceRenameOutcome::ResultExpired { .. })) => "Save result expired; reload to check the workspace.".into(),
+                            Some(Ok(WorkspaceRenameOutcome::Forbidden)) => "Access denied.".into(),
+                            Some(Ok(WorkspaceRenameOutcome::Invalid)) => "Invalid workspace name or request.".into(),
+                            Some(Ok(WorkspaceRenameOutcome::Retryable)) => "Temporarily unavailable; retry the save.".into(),
+                            Some(Ok(WorkspaceRenameOutcome::Unavailable)) | Some(Err(_)) => "Save could not be confirmed; retry the same save.".into(),
+                        }
+                    }}</span>
                 </div>
             </CardHeader>
             <CardContent>
@@ -113,6 +154,7 @@ fn WorkspaceNameCard(data: WorkspaceSettingsData) -> impl IntoView {
                     class=INPUT_CLASS
                     placeholder="My Workspace"
                     prop:value=name
+                    prop:disabled=move || save_action.pending().get()
                     on:input=move |ev| set_name.set(event_target_value(&ev))
                     on:blur=on_blur
                 />
@@ -120,4 +162,3 @@ fn WorkspaceNameCard(data: WorkspaceSettingsData) -> impl IntoView {
         </Card>
     }
 }
-

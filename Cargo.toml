@@ -4,6 +4,7 @@ members = [
     "crates/krausen-brewery",
     "crates/krausen-calc",
     "crates/krausen-core",
+    "crates/krausen-app",
     "crates/krausen-auth",
     "crates/krausen-types",
     "crates/krausen-ui",
@@ -76,6 +77,7 @@ krausen-beerxml = { path = "crates/krausen-beerxml" }
 krausen-brewery = { path = "crates/krausen-brewery" }
 krausen-calc = { path = "crates/krausen-calc" }
 krausen-core = { path = "crates/krausen-core" }
+krausen-app = { path = "crates/krausen-app" }
 krausen-auth = { path = "crates/krausen-auth" }
 krausen-ui = { path = "crates/krausen-ui" }
 krausen-server = { path = "apps/server" }
