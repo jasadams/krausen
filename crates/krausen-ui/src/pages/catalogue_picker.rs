@@ -230,8 +230,16 @@ pub fn CataloguePicker(
         loading.set(true);
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
+                // The picker may have been unmounted while the context request
+                // was in flight; never touch disposed signals after an await.
+                if loading.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 loading.set(false);
+                return;
+            }
+            if loading.try_get_untracked().is_none() {
                 return;
             }
             let outcome = catalogue_command_shared(IngredientCommand::Search(SearchCatalogue {
@@ -243,12 +251,31 @@ pub fn CataloguePicker(
                 include_archived,
             }))
             .await;
+            if loading.try_get_untracked().is_none() {
+                return;
+            }
+            // A mounted denial must be handled before stale-generation
+            // filtering, or an older denied response is silently discarded.
+            if matches!(
+                &outcome,
+                Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)
+            ) {
+                context_visible.set(false);
+                loading.set(false);
+                return;
+            }
             if generation.try_get_untracked() != Some(generation_value) {
                 return;
             }
             loading.set(false);
             if !current_context_matches(&expected).await {
+                if loading.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
+                return;
+            }
+            if loading.try_get_untracked().is_none() {
                 return;
             }
             match outcome {
@@ -582,14 +609,31 @@ pub fn CataloguePicker(
         busy.set(true);
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
+                // The editor/picker may have been unmounted while the context
+                // request was in flight; never touch disposed signals.
+                if busy.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
                 return;
             }
+            if busy.try_get_untracked().is_none() {
+                return;
+            }
             let outcome = catalogue_command_shared(command).await;
+            if busy.try_get_untracked().is_none() {
+                return;
+            }
             if !current_context_matches(&expected).await {
+                if busy.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
+                return;
+            }
+            if busy.try_get_untracked().is_none() {
                 return;
             }
             busy.set(false);
@@ -642,6 +686,16 @@ pub fn CataloguePicker(
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
                     pending_save.set(None);
                     context_visible.set(false)
+                }
+                Ok(IngredientOutcome::Unavailable) => {
+                    // Completion is unknown: retain the full command and keep
+                    // the form locked so the retry replays it verbatim.
+                    retrying.set(true);
+                    notice.set(Some((
+                        "Save may not have completed".to_owned(),
+                        "The server could not confirm whether the save completed. Retry the previous request; the same request cannot duplicate data.".to_owned(),
+                        true,
+                    )));
                 }
                 Ok(other) => {
                     retrying.set(false);
@@ -701,14 +755,31 @@ pub fn CataloguePicker(
         busy.set(true);
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
+                // The picker may have been unmounted while the context request
+                // was in flight; never touch disposed signals after an await.
+                if busy.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
                 return;
             }
+            if busy.try_get_untracked().is_none() {
+                return;
+            }
             let outcome = catalogue_command_shared(command).await;
+            if busy.try_get_untracked().is_none() {
+                return;
+            }
             if !current_context_matches(&expected).await {
+                if busy.try_get_untracked().is_none() {
+                    return;
+                }
                 context_visible.set(false);
                 busy.set(false);
+                return;
+            }
+            if busy.try_get_untracked().is_none() {
                 return;
             }
             busy.set(false);
@@ -732,6 +803,16 @@ pub fn CataloguePicker(
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
                     pending_archive.set(None);
                     context_visible.set(false)
+                }
+                Ok(IngredientOutcome::Unavailable) => {
+                    // Completion is unknown: retain the full command and keep
+                    // the retry enabled for a verbatim replay.
+                    archive_retrying.set(true);
+                    notice.set(Some((
+                        "Change may not have completed".to_owned(),
+                        "The server could not confirm whether the change completed. Retry the previous request; the same request cannot apply twice.".to_owned(),
+                        true,
+                    )));
                 }
                 Ok(other) => {
                     archive_retrying.set(false);
