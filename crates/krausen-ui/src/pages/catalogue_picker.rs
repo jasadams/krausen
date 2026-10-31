@@ -123,6 +123,58 @@ enum PickerView {
     Edit,
 }
 
+/// Selected-fermentable summary and the guarded library management actions.
+///
+/// This is the real picker block, shared with the component tests so the
+/// Edit/Archive/Restore gating cannot be reimplemented only in test code.
+#[component]
+fn CataloguePickerSelection(
+    selected: RwSignal<Option<IngredientEntry>>,
+    amount: RwSignal<String>,
+    archive_retrying: RwSignal<bool>,
+    on_edit: Callback<()>,
+    on_archive: Callback<bool>,
+) -> impl IntoView {
+    let selected_name = Signal::derive(move || {
+        selected
+            .get()
+            .map(|entry| entry.name().to_owned())
+            .unwrap_or_else(|| "Choose a fermentable".to_owned())
+    });
+    let selected_workspace = Signal::derive(move || {
+        selected
+            .get()
+            .as_ref()
+            .is_some_and(|entry| entry.scope == CatalogueScope::Workspace)
+    });
+    let selected_archived = Signal::derive(move || {
+        selected
+            .get()
+            .as_ref()
+            .is_some_and(|entry| entry.archived)
+    });
+    view! {
+        <div class="k-catalogue-selection">
+            <div>
+                <span class="note-caption">"SELECTED FERMENTABLE"</span>
+                <strong>{move || selected_name.get()}</strong>
+            </div>
+            <BreweryDraftField id="catalogue-amount" label="Amount in recipe" value=Signal::from(amount) on_change=Callback::new(move |text| amount.set(text)) unit="kg" numeric=true/>
+        </div>
+        {move || selected_workspace.get().then(|| view! {
+            <div class="k-catalogue-manage">
+                <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || selected_archived.get()) on:click=move |_| on_edit.run(())>"Edit library entry"</Button>
+                <Show when=move || selected_archived.get() fallback=move || view! {
+                    <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| on_archive.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button>
+                }>
+                    <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| on_archive.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button>
+                </Show>
+            </div>
+        })}
+        <p class="note-caption">"Specifications are copied into your recipe, so later library changes cannot change what you brewed."</p>
+    }
+}
+
 #[component]
 pub fn CataloguePicker(
     open: RwSignal<bool>,
@@ -641,24 +693,6 @@ pub fn CataloguePicker(
         });
     });
 
-    let selected_name = Signal::derive(move || {
-        selected
-            .get()
-            .map(|entry| entry.name().to_owned())
-            .unwrap_or_else(|| "Choose a fermentable".to_owned())
-    });
-    let selected_workspace = Signal::derive(move || {
-        selected
-            .get()
-            .as_ref()
-            .is_some_and(|entry| entry.scope == CatalogueScope::Workspace)
-    });
-    let selected_archived = Signal::derive(move || {
-        selected
-            .get()
-            .as_ref()
-            .is_some_and(|entry| entry.archived)
-    });
     let can_add = Signal::derive(move || {
         let text = amount.get();
         selected
@@ -752,24 +786,13 @@ pub fn CataloguePicker(
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm disabled=Signal::derive(move || loading.get()) on:click=move |_| load_page.run(Some(cursor.clone()))>"Load more"</Button>
             </div>
         })}
-        <div class="k-catalogue-selection">
-            <div>
-                <span class="note-caption">"SELECTED FERMENTABLE"</span>
-                <strong>{move || selected_name.get()}</strong>
-            </div>
-            <BreweryDraftField id="catalogue-amount" label="Amount in recipe" value=Signal::from(amount) on_change=Callback::new(move |text| amount.set(text)) unit="kg" numeric=true/>
-        </div>
-        {move || selected_workspace.get().then(|| view! {
-            <div class="k-catalogue-manage">
-                <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || selected_archived.get()) on:click=move |_| begin_edit.run(())>"Edit library entry"</Button>
-                <Show when=move || selected_archived.get() fallback=move || view! {
-                    <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button>
-                }>
-                    <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button>
-                </Show>
-            </div>
-        })}
-        <p class="note-caption">"Specifications are copied into your recipe, so later library changes cannot change what you brewed."</p>
+        <CataloguePickerSelection
+            selected=selected
+            amount=amount
+            archive_retrying=archive_retrying
+            on_edit=Callback::new(move |()| begin_edit.run(()))
+            on_archive=Callback::new(move |archived| archive_entry.run(archived))
+        />
     };
 
     let form_view = move || view! {
@@ -867,6 +890,56 @@ mod tests {
         }
     }
 
+    fn workspace_entry() -> IngredientEntry {
+        let mut entry = starter_entry();
+        entry.scope = CatalogueScope::Workspace;
+        entry.workspace_id = Some("ws".into());
+        entry
+    }
+
+    fn render_selection(entry: Option<IngredientEntry>, retrying: bool) -> String {
+        let owner = Owner::new();
+        owner.with(|| {
+            let selected = RwSignal::new(entry);
+            let amount = RwSignal::new("4.5".to_owned());
+            let archive_retrying = RwSignal::new(retrying);
+            view! {
+                <BreweryDialog
+                    id="ingredient-picker-test"
+                    title="Build your grain bill"
+                    description="Find a fermentable in the starter catalogue, or add one to your own library."
+                    open=RwSignal::new(false)
+                    wide=true
+                >
+                    <CataloguePickerSelection
+                        selected=selected
+                        amount=amount
+                        archive_retrying=archive_retrying
+                        on_edit=Callback::new(move |()| {})
+                        on_archive=Callback::new(move |_| {})
+                    />
+                </BreweryDialog>
+            }
+            .to_html()
+        })
+    }
+
+    fn button_open_tag<'a>(html: &'a str, label: &str) -> &'a str {
+        let label_at = html.find(label).expect("rendered button label");
+        let button_at = html[..label_at]
+            .rfind("<button")
+            .expect("rendered button element");
+        &html[button_at..label_at]
+    }
+
+    fn button_is_disabled(html: &str, label: &str) -> bool {
+        // The shared Button class list contains Tailwind `disabled:` variants,
+        // so look for the boolean attribute token, not the substring.
+        button_open_tag(html, label).split_whitespace().any(|part| {
+            part == "disabled" || part == "disabled=\"\"" || part == "disabled=\"true\""
+        })
+    }
+
     #[test]
     fn picker_details_format_specs_and_selection_copy() {
         let owner = Owner::new();
@@ -914,28 +987,34 @@ mod tests {
     }
 
     #[test]
-    fn composed_dialog_renders_management_actions_for_workspace_entries() {
-        let owner = Owner::new();
-        owner.with(|| {
-            let selected = RwSignal::new(None::<IngredientEntry>);
-            let workspace_entry = starter_entry();
-            selected.set(Some(workspace_entry));
-            let selected_workspace = Signal::derive(move || {
-                selected
-                    .get()
-                    .as_ref()
-                    .is_some_and(|entry| entry.scope == CatalogueScope::Workspace)
-            });
-            let selected_archived = Signal::derive(move || {
-                selected.get().as_ref().is_some_and(|entry| entry.archived)
-            });
-            let html = view! {
-                <Show when=move || selected_workspace.get() fallback=|| view! { <span>"none"</span> }>
-                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || selected_archived.get())>"Edit library entry"</Button>
-                </Show>
-            }
-            .to_html();
-            assert!(html.contains("Edit library entry"));
-        });
+    fn composed_picker_renders_real_management_actions_by_scope_and_archive_state() {
+        let workspace = render_selection(Some(workspace_entry()), false);
+        assert!(workspace.contains("Build your grain bill"));
+        assert!(workspace.contains("Edit library entry"));
+        assert!(workspace.contains("Archive"));
+        assert!(!workspace.contains("Restore"));
+        assert!(!button_is_disabled(&workspace, "Edit library entry"));
+
+        // The public starter catalogue is read-only: no library management.
+        let starter = render_selection(Some(starter_entry()), false);
+        assert!(!starter.contains("Edit library entry"));
+        assert!(!starter.contains("Archive"));
+        assert!(!starter.contains("Restore"));
+
+        // Archived workspace entries can be restored, but not edited or
+        // archived again until the restore commits.
+        let mut archived = workspace_entry();
+        archived.archived = true;
+        let archived_html = render_selection(Some(archived), false);
+        assert!(archived_html.contains("Edit library entry"));
+        assert!(button_is_disabled(&archived_html, "Edit library entry"));
+        assert!(archived_html.contains("Restore"));
+        assert!(!archived_html.contains("Archive"));
+        assert!(!button_is_disabled(&archived_html, "Restore"));
+
+        // An uncertain archive outcome retains and disables the retry action.
+        let retrying = render_selection(Some(workspace_entry()), true);
+        assert!(retrying.contains("Retry previous request"));
+        assert!(button_is_disabled(&retrying, "Retry previous request"));
     }
 }
