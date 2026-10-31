@@ -26,6 +26,7 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.locator('#recipe-efficiency').fill('75');
   await page.locator('#recipe-boil-off').fill('3');
   await page.locator('#recipe-loss').fill('2');
+  await page.locator('#recipe-deadspace').fill('0');
   await page.locator('#recipe-absorption').fill('0.8');
   await page.locator('#recipe-capacity').fill('30');
   await page.getByRole('button', { name: 'Save recipe' }).click();
@@ -63,7 +64,7 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
 
   await page.getByRole('button', { name: 'Duplicate…' }).click();
-  await expect(page.getByRole('heading', { name: 'Duplicate recipe' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Duplicate recipe', exact: true })).toBeVisible();
   await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
