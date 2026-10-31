@@ -866,6 +866,16 @@ async fn exercise(db: DbPool) {
             entry_id: entry_id.clone(),
             version: Some(version),
         });
+        // Pin the guard itself: the full save may reject the same integer
+        // earlier during canonical JSON encoding.
+        let mut tx = db.begin_write().await.unwrap();
+        assert!(
+            !catalogue::resolve_draft_sources(&mut tx, &workspace_a, &overflow, None)
+                .await
+                .unwrap(),
+            "out-of-range source version must not resolve"
+        );
+        tx.rollback().await.unwrap();
         assert!(matches!(
             recipe_editor::save(
                 &db,
@@ -877,7 +887,7 @@ async fn exercise(db: DbPool) {
                 uuid::Uuid::new_v4()
             )
             .await,
-            RecipeSaveOutcome::UnresolvedIngredientSource
+            RecipeSaveOutcome::UnresolvedIngredientSource | RecipeSaveOutcome::InvalidRequest
         ));
     }
     // Failed source resolution must commit nothing: every rejected attempt
