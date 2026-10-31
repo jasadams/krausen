@@ -32,3 +32,4 @@ cd e2e
 ./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'equipment profiles can be saved|an uncertain equipment save|profile pagination exposes' --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/beerxml.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/library.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/recipes/print.spec.ts --reporter=line

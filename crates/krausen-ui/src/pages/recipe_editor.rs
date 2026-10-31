@@ -4,12 +4,16 @@ use crate::{
     components::{
         BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
         BreweryDraftSelect, BreweryNotice, BreweryPanel, Button,
+        printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
     server_fns::recipe_editor::{read_recipe, save_recipe},
 };
 use krausen_types::{
     brewery::RecipeDocumentV1,
+    process_summary::{
+        ProcessSummary, ProcessSummaryOutcome, ProcessSummaryRequest, ProcessSummarySelection,
+    },
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome, RecipeSnapshot},
 };
 use leptos::prelude::*;
@@ -204,6 +208,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let pending = RwSignal::new(false);
     let retry = RwSignal::new(None::<PendingRecipeSave>);
     let conflict = RwSignal::new(None::<RecipeSnapshot>);
+    let print_preview = RwSignal::new(None::<ProcessSummary>);
     let editor_guard = expect_context::<crate::components::layout::EditorGuard>();
     #[cfg(target_arch = "wasm32")]
     {
@@ -920,6 +925,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         }
         recovery_choice.update(|records| records.retain(|(candidate, _)| candidate != &key));
     });
+    Effect::new(move |_| {
+        if !context_visible.get() {
+            print_preview.set(None);
+        }
+    });
+    let close_print = Callback::new(move |()| print_preview.set(None));
     view! { <Show when=move || !context_visible.get()><BreweryNotice title="Recipe held in its original workspace" body="Return to the account and workspace where you opened this draft to continue." warning=true/></Show>
         <Show when=move || context_visible.get() && !recovery_choice.get().is_empty()>
             <section class="recipe-editor"><BreweryNotice title="A retained draft is available" body="Local drafts are not saved recipe revisions. Restore one or discard them before continuing."/>
@@ -938,7 +949,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             let remote_for_reload = current.clone();
             let remote_for_reapply = current.document.clone();
             let remote_display = comparison_text(&current.document);
-            view! { <section aria-label="Save conflict" class="k-panel">
+            view! { <section aria-label="Save conflict" class="k-panel print-hide">
                 <h2>"A newer saved revision is available"</h2>
                 <p>{format!("Your draft is based on revision {}; the current saved revision is {}.", revision.get().map(|v| v.to_string()).unwrap_or_else(|| "new".into()), revision_number)}</p>
                 <details><summary>"Compare saved revision and your draft"</summary><h3>"Current saved revision"</h3><pre class="overflow-auto">{remote_display}</pre><h3>"Your retained draft"</h3><pre class="overflow-auto">{move || draft.with(|d| comparison_text(d.document()))}</pre><p>{move || draft.with(|d| d.unfinished_inputs().into_iter().map(|(path, text)| format!("{}: {text}", path.replace('_', " "))).collect::<Vec<_>>().join("; "))}</p></details>
@@ -965,6 +976,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         </div>
         <div class="recipe-editor__layout"><div class="recipe-editor__sections">
             <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
+            <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
             <IngredientEditor draft=draft/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>
@@ -998,6 +1010,208 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             </div></BreweryDisclosure>
         </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation/></aside></div>
     </div> }
+    {
+        move || {
+            print_preview
+                .get()
+                .filter(|_| context_visible.get())
+                .map(|summary| view! { <PrintPreview summary=summary on_close=close_print/> })
+        }
+    }
+}
+
+#[component]
+fn PrintRecipe(
+    identity: RwSignal<EditorIdentity>,
+    context_visible: RwSignal<bool>,
+    recipe_id: RwSignal<Option<String>>,
+    revision: RwSignal<Option<i64>>,
+    draft: RwSignal<RecipeDraft>,
+    preview: RwSignal<Option<ProcessSummary>>,
+) -> impl IntoView {
+    let status = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let run = Callback::new(move |selection: ProcessSummarySelection| {
+        if busy.get_untracked() || !context_visible.get_untracked() {
+            return;
+        }
+        let draft_generation = match &selection {
+            ProcessSummarySelection::Draft { .. } => {
+                Some(draft.with_untracked(|draft| draft.generation))
+            }
+            ProcessSummarySelection::Saved { .. } => None,
+        };
+        let expected = identity.get_untracked();
+        let request = ProcessSummaryRequest {
+            intent: expected.clone(),
+            selection,
+        };
+        busy.set(true);
+        status.set("Preparing the print summary…".into());
+        leptos::task::spawn_local(async move {
+            if !current_context_matches(&expected).await {
+                context_visible.set(false);
+                busy.set(false);
+                return;
+            }
+            let result =
+                crate::server_fns::process_summary::request_process_summary_shared(request.clone())
+                    .await;
+            #[cfg(target_arch = "wasm32")]
+            let result = if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                && crate::utils::auth_refresh::try_refresh().await
+                && current_context_matches(&expected).await
+            {
+                crate::server_fns::process_summary::request_process_summary_shared(request).await
+            } else {
+                result
+            };
+            if !current_context_matches(&expected).await {
+                context_visible.set(false);
+                busy.set(false);
+                return;
+            }
+            if draft_generation.is_some_and(|generation| {
+                draft.with_untracked(|draft| draft.generation) != generation
+            }) {
+                busy.set(false);
+                status.set("The draft changed. Prepare the print summary again.".into());
+                return;
+            }
+            busy.set(false);
+            match result {
+                Ok(ProcessSummaryOutcome::Summary(summary)) => {
+                    status.set("Review the sheet, then print or save it as a PDF.".into());
+                    preview.set(Some(summary));
+                }
+                Ok(ProcessSummaryOutcome::NotFound) => status.set(
+                    "This saved revision is not available in this workspace. Save the recipe before printing it."
+                        .into(),
+                ),
+                Ok(ProcessSummaryOutcome::Forbidden | ProcessSummaryOutcome::ContextChanged) => {
+                    context_visible.set(false)
+                }
+                Ok(ProcessSummaryOutcome::UnresolvedEquipmentProfile) => status.set(
+                    "The selected equipment profile is unavailable. Select a valid profile or use draft settings."
+                        .into(),
+                ),
+                Ok(ProcessSummaryOutcome::UnresolvedStyle) => status.set(
+                    "The selected style reference is unavailable. Choose a supported style or clear it."
+                        .into(),
+                ),
+                Ok(ProcessSummaryOutcome::Invalid(validation)) => {
+                    let detail = validation
+                        .diagnostics
+                        .first()
+                        .map(diagnostic_message)
+                        .unwrap_or_else(|| "Correct the invalid inputs.".into());
+                    status.set(format!("{detail} Correct the recipe before printing."));
+                }
+                Ok(ProcessSummaryOutcome::InvalidRequest) => {
+                    status.set("The print request was invalid.".into())
+                }
+                Ok(ProcessSummaryOutcome::UnsupportedRevision { schema_version }) => status.set(
+                    format!(
+                        "This saved revision uses unsupported recipe schema version {schema_version}."
+                    ),
+                ),
+                _ => status.set(
+                    "Unable to prepare the print summary. Your draft remains open; try again when the connection is available."
+                        .into(),
+                ),
+            }
+        });
+    });
+    let saved = move |_| {
+        let (Some(id), Some(number)) = (recipe_id.get_untracked(), revision.get_untracked()) else {
+            status.set("Save the recipe before printing a saved revision.".into());
+            return;
+        };
+        run.run(ProcessSummarySelection::Saved {
+            recipe_id: id,
+            revision: number,
+        });
+    };
+    let unsaved = move |_| {
+        let document = match draft.with_untracked(|draft| draft.snapshot()) {
+            Ok(document) => document,
+            Err(_) => {
+                status.set("Complete invalid number fields before printing the draft.".into());
+                return;
+            }
+        };
+        run.run(ProcessSummarySelection::Draft {
+            recipe_id: recipe_id.get_untracked(),
+            base_revision: revision.get_untracked(),
+            document,
+        });
+    };
+    view! {
+        <BreweryPanel
+            title="Print recipe"
+            description="Print the current saved revision or this unsaved draft. The sheet names its source and resolved equipment and context."
+        >
+            <p>"The browser print dialog handles paper size, margins and saving as PDF. A draft is labelled Unsaved and never replaces saved history."</p>
+            <div class="recipe-editor__actions">
+                <Button on:click=saved disabled=busy>"Preview saved revision"</Button>
+                <Button variant=crate::components::ButtonVariant::Secondary on:click=unsaved disabled=busy>"Preview unsaved draft"</Button>
+            </div>
+            <p role="status">{move || status.get()}</p>
+        </BreweryPanel>
+    }
+}
+
+#[component]
+fn PrintPreview(summary: ProcessSummary, on_close: Callback<()>) -> impl IntoView {
+    let status = RwSignal::new(String::new());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let body = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.body());
+        if let Some(body) = &body {
+            if body.class_list().add_1("krausen-printing").is_err() {
+                tracing::warn!("Unable to prepare the print-only page state");
+                status.set("The print layout may include the application controls.".into());
+            }
+        }
+        on_cleanup(move || {
+            if let Some(body) = body {
+                if body.class_list().remove_1("krausen-printing").is_err() {
+                    tracing::warn!("Unable to clear the print-only page state");
+                }
+            }
+        });
+    }
+    let print = move |_| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(window) = web_sys::window() {
+            if window.print().is_err() {
+                status.set("The browser print dialog could not open.".into());
+            }
+        }
+    };
+    view! {
+        <section class="print-preview" aria-label="Print preview">
+            <div class="print-preview__toolbar">
+                <div>
+                    <p class="kit-showcase__eyebrow">"Print preview"</p>
+                    <p class="print-preview__hint">"Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins."</p>
+                </div>
+                <div class="recipe-editor__actions">
+                    <Button on:click=print>"Print / Save as PDF"</Button>
+                    <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| on_close.run(())>"Back to editor"</Button>
+                </div>
+                <p role="status">{move || status.get()}</p>
+            </div>
+            <div class="print-preview__sheet">
+                <crate::components::PrintableRecipe summary=summary/>
+            </div>
+        </section>
+    }
 }
 
 #[component]
@@ -1019,34 +1233,6 @@ fn NumberField(
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
-}
-
-fn diagnostic_message(diagnostic: &krausen_types::validation::Diagnostic) -> String {
-    let subject = if diagnostic.path.starts_with("fermentables[") {
-        "Fermentable"
-    } else if diagnostic.path.starts_with("hops[") {
-        "Hop addition"
-    } else if diagnostic.path.starts_with("yeast[") {
-        "Yeast"
-    } else if diagnostic.path.starts_with("ingredients[") {
-        "Ingredient"
-    } else if diagnostic.path.starts_with("process.") {
-        "Process"
-    } else if diagnostic.path.starts_with("equipment") {
-        "Equipment"
-    } else {
-        "Recipe"
-    };
-    let message = match diagnostic.code.as_str() {
-        "missing" => "needs more information",
-        "unfinished_quantity" => "needs a quantity",
-        "negative" => "contains a negative value",
-        "out_of_range" => "contains a value outside its allowed range",
-        "non_finite" => "contains an invalid number",
-        "invalid_row_id" => "has an invalid addition",
-        _ => "needs attention",
-    };
-    format!("{subject} {message}.")
 }
 
 #[derive(Clone, Copy)]

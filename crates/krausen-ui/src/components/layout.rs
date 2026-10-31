@@ -306,7 +306,7 @@ pub fn Layout() -> impl IntoView {
         >
             <div class="h-dvh flex bg-background">
                 // Desktop sidebar
-                <div class="hidden md:block">
+                <div class="hidden md:block print-hide">
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
                 </div>
 
@@ -329,7 +329,7 @@ pub fn Layout() -> impl IntoView {
 
                 <div class="flex-1 flex flex-col overflow-hidden">
                     // Mobile header bar
-                    <div class="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background">
+                    <div class="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background print-hide">
                         <button
                             class="p-2 rounded-md hover:bg-secondary transition-colors"
                             on:click=move |_| mobile_sidebar_open.set(true)

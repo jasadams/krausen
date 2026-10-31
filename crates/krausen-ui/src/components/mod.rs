@@ -17,6 +17,7 @@ pub mod label;
 pub mod modal;
 pub mod navigation_progress;
 pub mod popover;
+pub mod printable_recipe;
 pub mod search_input;
 pub mod select;
 pub mod skeleton;
@@ -49,3 +50,5 @@ pub use theme::ThemeProvider;
 pub use tooltip::Tooltip;
 
 pub use brewery_kit::{BreweryAddition, BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
+
+pub use printable_recipe::PrintableRecipe;

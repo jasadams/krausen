@@ -1166,6 +1166,99 @@ async fn exercise(db: DbPool) {
         native_read.structured_content.unwrap()["outcome"]["Found"]["document"]["title"],
         "Browser edit"
     );
+    // The structured print/process summary is the same shared query through MCP
+    // and the browser adapter: saved revision and unsaved draft remain distinct.
+    let saved_summary_request = krausen_types::process_summary::ProcessSummaryRequest {
+        intent: intent.clone(),
+        selection: krausen_types::process_summary::ProcessSummarySelection::Saved {
+            recipe_id: native_id.clone(),
+            revision: 2,
+        },
+    };
+    let saved_summary_args = json!({
+        "workspace_id": ws,
+        "request": saved_summary_request.clone(),
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let saved_summary = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_process_summary").with_arguments(saved_summary_args),
+        )
+        .await
+        .unwrap();
+    assert_ne!(saved_summary.is_error, Some(true));
+    let saved_summary = saved_summary.structured_content.unwrap();
+    assert_eq!(saved_summary["outcome"]["Summary"]["title"], "Browser edit");
+    assert_eq!(saved_summary["outcome"]["Summary"]["source"]["revision"], 2);
+    assert_eq!(
+        saved_summary["outcome"]["Summary"]["source"]["kind"],
+        "saved"
+    );
+    let browser_summary = krausen_ui::server_fns::process_summary::execute_process_summary(
+        &db,
+        &browser_actor,
+        saved_summary_request,
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_value(browser_summary).unwrap()["Summary"],
+        saved_summary["outcome"]["Summary"]
+    );
+
+    let mut draft_document = native.clone();
+    draft_document.title = "Draft print".into();
+    let draft_summary_request = krausen_types::process_summary::ProcessSummaryRequest {
+        intent: intent.clone(),
+        selection: krausen_types::process_summary::ProcessSummarySelection::Draft {
+            recipe_id: Some(native_id.clone()),
+            base_revision: Some(2),
+            document: draft_document,
+        },
+    };
+    let draft_summary_args = json!({
+        "workspace_id": ws,
+        "request": draft_summary_request,
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let draft_summary = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_process_summary").with_arguments(draft_summary_args),
+        )
+        .await
+        .unwrap();
+    assert_ne!(draft_summary.is_error, Some(true));
+    let draft_summary = draft_summary.structured_content.unwrap();
+    assert_eq!(draft_summary["outcome"]["Summary"]["title"], "Draft print");
+    assert_eq!(
+        draft_summary["outcome"]["Summary"]["source"]["kind"],
+        "unsaved_draft"
+    );
+    let denied_summary_args = json!({
+        "workspace_id": "not-a-member",
+        "request": {
+            "intent": intent.clone(),
+            "selection": {"kind":"saved","recipe_id":native_id,"revision":2}
+        }
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let denied_summary = modern
+        .call_tool(
+            CallToolRequestParams::new("recipe_process_summary")
+                .with_arguments(denied_summary_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_summary.is_error, Some(true));
+    assert_eq!(
+        denied_summary.structured_content.unwrap()["outcome"],
+        "Forbidden"
+    );
     let stale_args = json!({"workspace_id":ws,"intent":intent,"recipe_id":native_id,"expected_revision":1,"document":native,"request_id":uuid::Uuid::new_v4()}).as_object().unwrap().clone();
     let stale = modern
         .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(stale_args))
