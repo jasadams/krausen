@@ -112,7 +112,6 @@ pub enum ScaleProblem {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ScalePreview {
     pub recipe_id: String,
     pub source_revision: i64,
