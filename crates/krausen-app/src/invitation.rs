@@ -663,8 +663,17 @@ pub async fn status(
             proof.outbox_id.as_deref()
         )
         .map_err(db_error)?;
+        let failed: i64 = krausen_core::dbtx_fetch_scalar!(
+            &mut tx,
+            i64,
+            "SELECT COUNT(*) FROM app_outbox WHERE outbox_id=$1 AND delivered_at IS NULL AND last_delivery_failed=1",
+            proof.outbox_id.as_deref()
+        )
+        .map_err(db_error)?;
         if delivered > 0 {
             "awaiting_recipient"
+        } else if failed > 0 {
+            "delivery_failed"
         } else {
             "delivery_pending"
         }

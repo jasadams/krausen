@@ -15,6 +15,8 @@ CREATE TABLE account_action_proofs (
 );
 ALTER TABLE users ADD COLUMN account_revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE auth_credentials ADD COLUMN revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE app_outbox ADD COLUMN delivery_attempts BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE app_outbox ADD COLUMN last_delivery_failed BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE account_password_request_bindings (
  actor_id TEXT NOT NULL REFERENCES users(user_id),
  operation TEXT NOT NULL,

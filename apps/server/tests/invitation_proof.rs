@@ -412,8 +412,16 @@ async fn exercise(db: DbPool) {
             .await
             .unwrap()
             .state,
-        "delivery_pending"
+        "delivery_failed"
     );
+    let attempts: i64 = krausen_core::db_fetch_scalar!(
+        &db,
+        i64,
+        "SELECT delivery_attempts FROM app_outbox WHERE outbox_id=(SELECT outbox_id FROM account_action_proofs WHERE proof_id=$1)",
+        &pending.interaction_id
+    )
+    .unwrap();
+    assert_eq!(attempts, 1);
     let successes = captured.clone();
     krausen_server::invitation_delivery::deliver_pending_with(
         &db,
@@ -436,6 +444,14 @@ async fn exercise(db: DbPool) {
             .state,
         "awaiting_recipient"
     );
+    let attempts: i64 = krausen_core::db_fetch_scalar!(
+        &db,
+        i64,
+        "SELECT delivery_attempts FROM app_outbox WHERE outbox_id=(SELECT outbox_id FROM account_action_proofs WHERE proof_id=$1)",
+        &pending.interaction_id
+    )
+    .unwrap();
+    assert_eq!(attempts, 2);
     let delivered: Vec<_> = captured
         .lock()
         .unwrap()

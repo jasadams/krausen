@@ -14,6 +14,20 @@ struct Recipient {
     email: String,
 }
 
+// Persist only the outcome, never transport errors, addresses, or message contents.
+async fn record_attempt(db: &DbPool, outbox_id: &str, delivered: bool) -> krausen_core::Result<()> {
+    let failed = i64::from(!delivered);
+    let delivered_at = delivered.then(|| chrono::Utc::now().timestamp());
+    krausen_core::db_execute!(
+        db,
+        "UPDATE app_outbox SET delivery_attempts=delivery_attempts+1,last_delivery_failed=$1,delivered_at=$2 WHERE outbox_id=$3 AND delivered_at IS NULL",
+        failed,
+        delivered_at,
+        outbox_id
+    )?;
+    Ok(())
+}
+
 pub async fn deliver_pending(
     db: &DbPool,
     base_url: &str,
@@ -74,7 +88,9 @@ where
             let mut url = url::Url::parse(base_url)
                 .map_err(|_| krausen_core::Error::Internal("invalid delivery origin".into()))?;
             url.set_path(&format!("/accept-ownership/{id}"));
-            send(recipient.email, url.to_string()).await
+            let delivered = send(recipient.email, url.to_string()).await;
+            record_attempt(db, &record.outbox_id, delivered).await?;
+            delivered
         } else {
             true
         };
@@ -123,7 +139,9 @@ where
             let mut url = url::Url::parse(base_url)
                 .map_err(|_| krausen_core::Error::Internal("invalid delivery origin".into()))?;
             url.set_path("/settings/profile");
-            send(recipient.email, url.to_string()).await
+            let delivered = send(recipient.email, url.to_string()).await;
+            record_attempt(db, &record.outbox_id, delivered).await?;
+            delivered
         } else {
             true
         };
@@ -187,14 +205,8 @@ where
             proof.proof_id, token
         )));
         let url = url.to_string();
-        if send(proof.recipient_email.clone(), url).await {
-            krausen_core::db_execute!(
-                db,
-                "UPDATE app_outbox SET delivered_at=$1 WHERE outbox_id=$2 AND delivered_at IS NULL",
-                chrono::Utc::now().timestamp(),
-                &record.outbox_id
-            )?;
-        }
+        let delivered = send(proof.recipient_email.clone(), url).await;
+        record_attempt(db, &record.outbox_id, delivered).await?;
     }
     Ok(())
 }
