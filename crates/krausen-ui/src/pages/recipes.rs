@@ -142,6 +142,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             let append = cursor.is_some();
             if !append {
                 history_generation.update(|n| *n += 1);
+                history.set(None);
             }
             let sequence = history_generation.get_untracked();
             let query = HistoryQuery {
