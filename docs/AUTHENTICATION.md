@@ -39,3 +39,11 @@ configuration when Secure cookies are disabled. Host and forwarding
 headers do not determine the issuer or grant a loopback exception. HTTP is
 accepted only for a configured loopback origin as a development convenience;
 that mode is not evidence of HTTPS protocol conformance.
+
+Browser refresh is coordinated across tabs with the Web Locks API. A browser
+without cross-tab locks cannot silently refresh and must sign in again when its
+access token expires; this can affect HTTP LAN origins where the browser does
+not expose secure-context APIs. Configure HTTPS for normal browser use.
+
+Public passkey enrollment is temporarily unavailable until account ownership
+can be proven. Existing authenticated passkey management is unchanged.

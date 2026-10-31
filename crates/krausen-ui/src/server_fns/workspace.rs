@@ -15,21 +15,6 @@ use krausen_types::workspace::WorkspaceRenameOutcome;
 // Helpers (server-only)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reject non-workspace-admin users.
-///
-/// Mirrors `require_workspace_admin()` in `apps/server/src/routes/workspaces.rs`.
-#[cfg(feature = "ssr")]
-fn require_workspace_admin(auth: &krausen_auth::middleware::AuthUser) -> Result<(), ServerFnError> {
-    if !auth
-        .workspace
-        .workspace_roles
-        .contains(&krausen_core::enums::WorkspaceRole::WorkspaceAdmin)
-    {
-        return Err(ServerFnError::new("Workspace admin access required"));
-    }
-    Ok(())
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Read operations
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,8 +25,6 @@ fn require_workspace_admin(auth: &krausen_auth::middleware::AuthUser) -> Result<
 #[server(prefix = "/leptos-api")]
 pub async fn get_workspace_settings() -> Result<WorkspaceSettingsData, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    require_workspace_admin(&ac.auth)?;
-
     let actor = super::verified_actor(&ac.auth)?;
     let workspace = krausen_app::workspace_snapshot(ac.db(), &actor)
         .await

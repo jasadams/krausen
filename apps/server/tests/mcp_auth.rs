@@ -367,6 +367,17 @@ async fn exercise(db: DbPool) {
             .iter()
             .any(|t| t.name == "workspace_rename")
     );
+    let discovered = modern.list_tools(None).await.unwrap();
+    assert_eq!(
+        discovered.tools.len(),
+        krausen_types::operations::OPERATIONS.len()
+    );
+    assert!(
+        discovered
+            .tools
+            .iter()
+            .all(|tool| krausen_types::operations::by_tool(&tool.name).is_some())
+    );
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()
@@ -393,6 +404,26 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(first.structured_content, retry.structured_content);
     assert_eq!(first.structured_content.unwrap()["Saved"]["revision"], 1);
+    krausen_core::db_execute!(&db, "UPDATE workspace_users SET role = 'workspace_user' WHERE workspace_id = $1 AND user_id = $2", &ws, &principal.user_id).unwrap();
+    let actor = krausen_app::ActorContext {
+        actor_id: principal.user_id.clone(),
+        workspace_id: ws.clone(),
+        credential_id: principal.credential_id.clone(),
+        access_expires_at: principal.access_expires_at,
+    };
+    assert!(matches!(
+        krausen_app::workspace_snapshot(&db, &actor).await,
+        Err(krausen_app::Error::Forbidden)
+    ));
+    let denied = modern
+        .call_tool(
+            CallToolRequestParams::new("workspace_get")
+                .with_arguments(json!({"workspace_id":ws}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.is_error, Some(true));
+    krausen_core::db_execute!(&db, "UPDATE workspace_users SET role = 'workspace_admin' WHERE workspace_id = $1 AND user_id = $2", &ws, &principal.user_id).unwrap();
     let http = reqwest::Client::new();
     assert_eq!(
         http.post(&req.resource).send().await.unwrap().status(),

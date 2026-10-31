@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use krausen_auth::oauth_service::{self, Principal};
+use krausen_types::operations;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
@@ -90,35 +91,35 @@ impl ServerHandler for McpHandler {
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
             Tool::new(
-                "workspace_get",
+                operations::WORKSPACE_GET.mcp_tool,
                 "Read workspace settings",
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}),
                 ),
             ),
             Tool::new(
-                "workspace_rename",
+                operations::WORKSPACE_RENAME.mcp_tool,
                 "Rename a workspace using its observed revision and a stable request UUID",
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"},"name":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","name","expected_revision","request_id"],"additionalProperties":false}),
                 ),
             ),
             Tool::new(
-                "recipe_recover_legacy",
+                operations::RECIPE_RECOVER.mcp_tool,
                 "Recover the original source and diagnostic for a failed native recipe migration",
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"},"recipe_id":{"type":"string"}},"required":["workspace_id","recipe_id"],"additionalProperties":false}),
                 ),
             ),
             Tool::new(
-                "recipe_create",
+                operations::RECIPE_CREATE.mcp_tool,
                 "Create a recipe from BeerXML; currently unavailable during native migration",
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"},"beerxml":{"type":"string"}},"required":["workspace_id","beerxml"],"additionalProperties":false}),
                 ),
             ),
             Tool::new(
-                "recipe_import",
+                operations::RECIPE_IMPORT.mcp_tool,
                 "Import BeerXML recipes; currently unavailable during native migration",
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"},"beerxml":{"type":"string"}},"required":["workspace_id","beerxml"],"additionalProperties":false}),
@@ -137,8 +138,10 @@ impl ServerHandler for McpHandler {
             .and_then(|p| p.extensions.get::<Principal>())
             .ok_or_else(|| ErrorData::invalid_request("Authenticated principal required", None))?;
         let input = serde_json::Value::Object(request.arguments.unwrap_or_default());
-        let result = match request.name.as_ref() {
-            "workspace_get" => {
+        let operation = operations::by_tool(request.name.as_ref())
+            .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
+        let result = match operation.id {
+            "workspace.get.v1" => {
                 let input: WorkspaceQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
                 let actor = krausen_app::ActorContext {
@@ -156,7 +159,7 @@ impl ServerHandler for McpHandler {
                     ),
                 }
             }
-            "workspace_rename" => {
+            "workspace.rename.v1" => {
                 let input: Rename = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace rename", None))?;
                 let actor = krausen_app::ActorContext {
@@ -187,7 +190,7 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured_error(value)
                 }
             }
-            "recipe_recover_legacy" => {
+            "recipe.recover-legacy.v1" => {
                 let input: Recovery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid recovery query", None))?;
                 let actor = krausen_app::ActorContext {
@@ -212,7 +215,7 @@ impl ServerHandler for McpHandler {
                     ),
                 }
             }
-            "recipe_create" | "recipe_import" => {
+            "recipe_create" | "recipe.import-legacy.v1" => {
                 let input: LegacyAuthoring = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid recipe input", None))?;
                 let _ = input.beerxml;

@@ -1138,92 +1138,10 @@ pub struct PasskeyRegisterStartParams<'a> {
 pub async fn passkey_register_start_service(
     params: PasskeyRegisterStartParams<'_>,
 ) -> krausen_core::Result<PasskeyRegisterStartServiceResult> {
-    let PasskeyRegisterStartParams {
-        db,
-        kv,
-        webauthn,
-        email,
-        name,
-        device_name,
-        ip,
-        self_hosted,
-        smtp_configured,
-        frontend_url,
-    } = params;
-    // Rate limit
-    let rate = crate::rate_limiter::check_rate_limit(kv, ip, "signup", None).await?;
-    if !rate.allowed {
-        return Ok(PasskeyRegisterStartServiceResult::RateLimited {
-            retry_after_secs: rate.retry_after_secs,
-        });
-    }
-
-    // Get or create user
-    let existing_user = crate::user_service::get_user_by_email(db, email).await?;
-    let user = match existing_user {
-        Some(u) if u.verified => u,
-        Some(_) => return Ok(PasskeyRegisterStartServiceResult::UnverifiedEmail),
-        None => {
-            let smtp_less_self_hosted = self_hosted && !smtp_configured;
-            if smtp_less_self_hosted {
-                crate::user_service::create_user(db, email, Some(name), true).await?
-            } else {
-                // Mint the link and stop. No `users` row until the token comes
-                // back — `passkey_signup_complete_service` creates the account.
-                let raw_token =
-                    crate::token_service::create_verification_token(db, email, "signup").await?;
-                let signup_url = format!(
-                    "{}/auth/passkey-signup?token={raw_token}",
-                    frontend_url.trim_end_matches('/')
-                );
-                tracing::info!("Passkey signup link for {email}: {signup_url}");
-                spawn_verification_email(email.to_string(), name.to_string(), signup_url);
-                return Ok(PasskeyRegisterStartServiceResult::VerificationEmailSent);
-            }
-        }
-    };
-
-    // Generate WebAuthn registration challenge
-    let user_unique_id = webauthn_user_id(email);
-    let display_name = user.name.as_deref().unwrap_or(email);
-
-    let creds = crate::user_service::get_passkey_credentials(db, &user.user_id).await?;
-    let exclude_ids = build_exclude_ids(&creds);
-    let exclude_opt = if exclude_ids.is_empty() {
-        None
-    } else {
-        Some(exclude_ids)
-    };
-
-    let (ccr, reg_state) = crate::webauthn::start_registration(
-        webauthn,
-        user_unique_id,
-        email,
-        display_name,
-        exclude_opt,
-    )
-    .map_err(|e| krausen_core::Error::Internal(e.to_string()))?;
-
-    let challenge_id = crate::redis_ops::generate_token();
-    let reg_state_json = serde_json::to_value(&reg_state)
-        .map_err(|e| krausen_core::Error::Internal(format!("Serialize reg state: {e}")))?;
-    let challenge_data = serde_json::json!({
-        "registration_state": reg_state_json,
-        "email": email,
-        "user_name": display_name,
-        "user_id": user.user_id,
-        "device_name": device_name,
-        "is_signup": true,
-    });
-    crate::redis_ops::store_webauthn_challenge(kv, &challenge_id, &challenge_data).await?;
-
-    let creation_challenge = serde_json::to_string(&ccr)
-        .map_err(|e| krausen_core::Error::Internal(format!("Serialize creation challenge: {e}")))?;
-
-    Ok(PasskeyRegisterStartServiceResult::Success {
-        challenge_id,
-        creation_challenge,
-    })
+    let _ = params;
+    Err(krausen_core::Error::ServiceUnavailable(
+        "Public passkey enrollment is unavailable until account ownership can be verified".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,78 +1160,18 @@ pub async fn passkey_register_complete_service(
     credential_json: &str,
     device: &DeviceInfo,
 ) -> krausen_core::Result<AuthenticatedSession> {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use webauthn_rs::prelude::*;
-
-    let credential: RegisterPublicKeyCredential = serde_json::from_str(credential_json)
-        .map_err(|e| krausen_core::Error::Internal(format!("Invalid credential JSON: {e}")))?;
-
-    // Get and delete challenge
-    let challenge_data = crate::redis_ops::get_webauthn_challenge(kv, challenge_id)
-        .await?
-        .ok_or_else(|| krausen_core::Error::Internal("Invalid or expired challenge".into()))?;
-    crate::redis_ops::delete_webauthn_challenge(kv, challenge_id).await?;
-
-    // Extract challenge state
-    let reg_state: PasskeyRegistration =
-        serde_json::from_value(challenge_data["registration_state"].clone())
-            .map_err(|e| krausen_core::Error::Internal(format!("Deserialize reg state: {e}")))?;
-    let email = challenge_data["email"]
-        .as_str()
-        .ok_or_else(|| krausen_core::Error::Internal("Missing email in challenge".into()))?;
-    let user_id = challenge_data["user_id"]
-        .as_str()
-        .ok_or_else(|| krausen_core::Error::Internal("Missing user_id in challenge".into()))?;
-    let device_name = challenge_data["device_name"]
-        .as_str()
-        .unwrap_or("Unknown Device");
-
-    // Verify credential
-    let passkey = crate::webauthn::finish_registration(webauthn, &credential, &reg_state)
-        .map_err(|e| krausen_core::Error::Internal(e.to_string()))?;
-
-    // Extract and encode credential ID
-    let cred_id_bytes: &[u8] = passkey.cred_id().as_ref();
-    let credential_id_b64 = URL_SAFE_NO_PAD.encode(cred_id_bytes);
-
-    // Serialize passkey
-    let passkey_json = serde_json::to_value(&passkey)
-        .map_err(|e| krausen_core::Error::Internal(format!("Serialize passkey: {e}")))?;
-    let public_key_b64 = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&passkey)
-            .map_err(|e| krausen_core::Error::Internal(format!("Serialize passkey bytes: {e}")))?,
-    );
-    let initial_counter = passkey_json
-        .get("cred")
-        .and_then(|c| c.get("counter"))
-        .and_then(|c| c.as_u64())
-        .unwrap_or(0) as u32;
-
-    // Store credential
-    crate::user_service::add_passkey_to_user(
+    let _ = (
         db,
-        user_id,
-        &credential_id_b64,
-        &public_key_b64,
-        initial_counter,
-        device_name,
-        &passkey_json,
-    )
-    .await?;
-
-    // Get user and create session
-    let user = crate::user_service::get_user_by_id(db, user_id)
-        .await?
-        .ok_or_else(|| krausen_core::Error::Internal("User not found".into()))?;
-
-    let sess = create_authenticated_session(db, kv, jwt_secret, &user, device).await?;
-    tracing::info!(
-        user_id = %user.user_id,
-        email = %email,
-        credential_id = %credential_id_b64,
-        "Passkey registered and user auto-logged in"
+        kv,
+        jwt_secret,
+        webauthn,
+        challenge_id,
+        credential_json,
+        device,
     );
-    Ok(sess)
+    Err(krausen_core::Error::ServiceUnavailable(
+        "Public passkey enrollment is unavailable until account ownership can be verified".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@
 //! krausen-ui, and the server binary.
 
 pub mod brewery;
+pub mod operations;
 pub mod sync;
 pub mod workspace;
 

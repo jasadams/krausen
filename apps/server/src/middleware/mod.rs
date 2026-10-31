@@ -2,9 +2,7 @@
 
 //! Middleware stack — CORS, security headers, transparent access-token auto-refresh.
 
-pub mod auth_refresh;
 
-pub use auth_refresh::auth_refresh_middleware;
 
 use axum::{
     body::Body,

@@ -26,6 +26,64 @@ async fn exercise(db: DbPool) {
         oauth_client_id: None,
     };
     let kv = krausen_core::kv_store_memory::InMemoryKVStore::new_pool();
+    // Neither claimed email nor an old unbound challenge can enroll a passkey.
+    let webauthn = krausen_auth::webauthn::build_webauthn(
+        "localhost",
+        "test",
+        &url::Url::parse("http://localhost").unwrap(),
+    )
+    .unwrap();
+    for claimed_email in [email.as_str(), "new-unverified@example.test"] {
+        let result = krausen_auth::auth_service::passkey_register_start_service(
+            krausen_auth::auth_service::PasskeyRegisterStartParams {
+                db: &db,
+                kv: &kv,
+                webauthn: &webauthn,
+                email: claimed_email,
+                name: "Claimed",
+                device_name: "Device",
+                ip: "test",
+                self_hosted: true,
+                smtp_configured: false,
+                frontend_url: "http://localhost",
+            },
+        )
+        .await;
+        assert!(result.is_err());
+    }
+    assert!(
+        user_service::get_user_by_email(&db, "new-unverified@example.test")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    krausen_auth::redis_ops::store_webauthn_challenge(
+        &kv,
+        "old-unbound",
+        &serde_json::json!({"user_id":user.user_id,"email":email}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        krausen_auth::auth_service::passkey_register_complete_service(
+            &db,
+            &kv,
+            "test-secret-at-least-32-bytes-long",
+            &webauthn,
+            "old-unbound",
+            "{}",
+            &device
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        user_service::get_passkey_credentials(&db, &user.user_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     let issued = session::create_authenticated_session(
         &db,
         &kv,
