@@ -52,6 +52,17 @@ pub fn register_server_functions() {
     register_explicit::<UpdateRecipe>();
     register_explicit::<DeleteRecipe>();
     register_explicit::<RestoreRecipe>();
+    register_explicit::<RecoverLegacyRecipe>();
+
+    // Shared formulation preview and styles
+    use server_fns::formulation::{ListFormulationStyles, PreviewFormulation};
+    register_explicit::<PreviewFormulation>();
+    register_explicit::<ListFormulationStyles>();
+
+    // Native recipe editor
+    use server_fns::recipe_editor::{ReadRecipe, SaveRecipe};
+    register_explicit::<ReadRecipe>();
+    register_explicit::<SaveRecipe>();
 
     // Profile
     use server_fns::profile::*;

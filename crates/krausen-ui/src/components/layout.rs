@@ -8,12 +8,35 @@ use leptos_router::components::Outlet;
 use crate::components::Spinner;
 use crate::server_fns::sidebar::{get_sidebar_user, list_user_workspaces, switch_workspace, SidebarUser};
 
+/// A cross-tab invalidation signal; it contains no account or credential data.
+pub const CONTEXT_CHANGED_KEY: &str = "krausen-context-changed";
+
+/// Prevent an in-progress recipe draft from being discarded by workspace switching.
+#[derive(Clone, Copy)]
+pub struct EditorGuard {
+    pub dirty: RwSignal<bool>,
+    pub notice: RwSignal<bool>,
+}
+
 /// Main authenticated layout with sidebar and content area.
 #[component]
 pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
     let (user_menu_open, set_user_menu_open) = signal(false);
-    let (mobile_sidebar_open, set_mobile_sidebar_open) = signal(false);
+    let mobile_sidebar_open = RwSignal::new(false);
+    let editor_guard = EditorGuard { dirty: RwSignal::new(false), notice: RwSignal::new(false) };
+    provide_context(editor_guard);
+
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |_| {
+        if matches!(user_info.get(), Some(Ok(_))) {
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                if let Err(error) = storage.set_item(CONTEXT_CHANGED_KEY, &js_sys::Date::now().to_string()) {
+                    tracing::warn!(error = ?error, "Unable to notify other tabs of context change");
+                }
+            }
+        }
+    });
 
     let auth_confirmed = RwSignal::new(false);
     let nav = leptos_router::hooks::use_navigate();
@@ -43,35 +66,29 @@ pub fn Layout() -> impl IntoView {
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
                 </div>
 
-                // Mobile sidebar overlay
-                <Show when=move || mobile_sidebar_open.get()>
-                    <div class="fixed inset-0 z-40 md:hidden">
-                        <div
-                            class="fixed inset-0 bg-black/50"
-                            on:click=move |_| set_mobile_sidebar_open.set(false)
-                        />
-                        <div class="fixed inset-y-0 left-0 z-50 w-64">
-                            <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
-                        </div>
-                    </div>
-                </Show>
+                <crate::components::BreweryDialog id="workspace-draft-warning" title="Save your recipe first" description="Your unsaved recipe stays open in this workspace." open=editor_guard.notice>
+                    <p>"Save your recipe before switching workspaces or signing out."</p>
+                </crate::components::BreweryDialog>
+
+                <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
+                    <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
+                </crate::components::BreweryDialog>
 
                 <div class="flex-1 flex flex-col overflow-hidden">
                     // Mobile header bar
                     <div class="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background">
                         <button
                             class="p-2 rounded-md hover:bg-secondary transition-colors"
-                            on:click=move |_| set_mobile_sidebar_open.update(|v| *v = !*v)
+                            on:click=move |_| mobile_sidebar_open.set(true)
                             aria-label="Toggle menu"
+                            aria-controls="mobile-navigation"
+                            aria-expanded=move || mobile_sidebar_open.get().to_string()
                         >
                             <svg class="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                             </svg>
                         </button>
-                        <a href="/">
-                            <img src="/public/krausen_full_logo.svg" alt="Krausen" class="h-6 dark:hidden"/>
-                            <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-6 hidden dark:block"/>
-                        </a>
+                        <crate::components::BreweryBrand/>
                     </div>
                     <main class="flex-1 overflow-y-auto">
                         <Outlet/>
@@ -89,14 +106,13 @@ fn Sidebar(
     user_menu_open: ReadSignal<bool>,
     set_user_menu_open: WriteSignal<bool>,
 ) -> impl IntoView {
+    let editor_guard = expect_context::<EditorGuard>();
 
     view! {
-        <div class="w-64 bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
+        <div class="w-[var(--k-sidebar-width)] bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
             // Logo
             <div class="p-4 border-b border-[var(--color-sidebar-border)]">
-                <a href="/">
-                    <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-8"/>
-                </a>
+                <crate::components::BreweryBrand/>
             </div>
 
             // Navigation
@@ -155,6 +171,11 @@ fn Sidebar(
                                         <button
                                             class="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
                                             on:click=move |_| {
+                                                if editor_guard.dirty.get_untracked() {
+                                                    editor_guard.notice.set(true);
+                                                    set_user_menu_open.set(false);
+                                                    return;
+                                                }
                                                 set_user_menu_open.set(false);
                                                 leptos::task::spawn_local(async move {
                                                     let _ = crate::server_fns::security::logout().await;
@@ -183,6 +204,7 @@ fn Sidebar(
 /// Workspace switcher — shows list of workspaces, allows switching.
 #[component]
 fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
+    let editor_guard = expect_context::<EditorGuard>();
     let workspaces = LocalResource::new(list_user_workspaces);
 
     view! {
@@ -204,6 +226,11 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                         class="w-full text-left px-4 py-2 text-sm hover:bg-secondary transition-colors flex items-center gap-2"
                                         disabled=is_current
                                         on:click=move |_| {
+                                            if editor_guard.dirty.get_untracked() {
+                                                editor_guard.notice.set(true);
+                                                set_user_menu_open.set(false);
+                                                return;
+                                            }
                                             let ws_id = ws_id.clone();
                                             set_user_menu_open.set(false);
                                             leptos::task::spawn_local(async move {

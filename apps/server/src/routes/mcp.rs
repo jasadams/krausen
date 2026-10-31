@@ -69,6 +69,27 @@ struct LegacyAuthoring {
     workspace_id: String,
     beerxml: String,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RecipeRead {
+    workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
+    recipe_id: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RecipeSave {
+    workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
+    recipe_id: Option<String>,
+    expected_revision: Option<i64>,
+    document: krausen_types::brewery::RecipeDocumentV1,
+    request_id: String,
+}
+fn typed_schema<T: schemars::JsonSchema>() -> serde_json::Map<String, serde_json::Value> {
+    let value = serde_json::to_value(schemars::schema_for!(T)).expect("shared input schema");
+    schema(value)
+}
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
 }
@@ -151,6 +172,16 @@ impl ServerHandler for McpHandler {
                 schema(
                     json!({"type":"object","properties":{"workspace_id":{"type":"string"},"beerxml":{"type":"string"}},"required":["workspace_id","beerxml"],"additionalProperties":false}),
                 ),
+            ),
+            Tool::new(
+                operations::RECIPE_READ.mcp_tool,
+                "Read the current native recipe revision in a workspace",
+                typed_schema::<RecipeRead>(),
+            ),
+            Tool::new(
+                operations::RECIPE_SAVE.mcp_tool,
+                "Create or explicitly save a native recipe using its observed revision and a stable request UUID",
+                typed_schema::<RecipeSave>(),
             ),
         ]))
     }
@@ -311,6 +342,66 @@ impl ServerHandler for McpHandler {
                     _ => CallToolResult::structured_error(
                         json!({"error":"unavailable_or_forbidden"}),
                     ),
+                }
+            }
+            "recipe.read.v1" => {
+                let input: RecipeRead = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid recipe query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::recipe_editor::read(
+                    &self.db,
+                    &actor,
+                    &input.intent,
+                    &input.recipe_id,
+                )
+                .await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::recipe_editor::RecipeReadOutcome::Found(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe.save.v1" => {
+                let input: RecipeSave = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid recipe save", None))?;
+                let Ok(request_id) = uuid::Uuid::parse_str(&input.request_id) else {
+                    return Ok(CallToolResult::structured_error(json!({"outcome": krausen_types::recipe_editor::RecipeSaveOutcome::InvalidRequest})).into());
+                };
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::recipe_editor::save(
+                    &self.db,
+                    &actor,
+                    &input.intent,
+                    input.recipe_id.as_deref(),
+                    input.expected_revision,
+                    &input.document,
+                    request_id,
+                )
+                .await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::recipe_editor::RecipeSaveOutcome::Saved { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
                 }
             }
             _ => return Err(ErrorData::invalid_params("Unknown tool", None)),

@@ -2,13 +2,8 @@
 
 //! Server functions for recipes.
 //!
-//! Thin wrappers: extract the caller's workspace, call the service, return.
-//! All the storage reasoning lives in [`krausen_brewery::recipe_service`].
-//!
-//! Recipes cross the wire as BeerXML rather than as a serialised internal
-//! model. That keeps one representation instead of two, means the browser can
-//! hand a file straight to the server and get one straight back, and stops the
-//! wire format quietly becoming a second schema that has to be kept in step.
+//! Legacy recipe reads and migration recovery. Native authoring and estimates
+//! use the shared recipe editor and formulation operations.
 
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -29,7 +24,7 @@ pub struct RecipeListItem {
     pub updated_at: String,
 }
 
-/// One recipe, as BeerXML, together with what the engine makes of it.
+/// Legacy recipe read retained for source recovery and transition screens.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecipeDetail {
     pub recipe_id: String,
@@ -38,7 +33,7 @@ pub struct RecipeDetail {
     /// The complete recipe. Everything the file had, including what Krausen
     /// does not model.
     pub beerxml: String,
-    /// What the engine derives, or the reason it could not.
+    /// Retained for legacy transport compatibility; estimates use shared preview.
     pub derived: Option<DerivedSummary>,
     /// What conversion could not do faithfully — §3.5 wants these visible.
     pub warnings: Vec<String>,
@@ -63,62 +58,6 @@ pub struct DerivedSummary {
 }
 
 #[cfg(feature = "ssr")]
-fn describe(warning: &krausen_beerxml::convert::Warning) -> String {
-    use krausen_beerxml::convert::Warning;
-    match warning {
-        Warning::UnmodelledHopUse { hop, use_ } => {
-            format!("{hop}: “{use_}” additions are not modelled and were treated as boil additions")
-        }
-        Warning::MissingField { field, assumed } => {
-            format!("{field} was missing; assumed {assumed}")
-        }
-        Warning::UnreadableValue { field, raw } => {
-            format!("{field} could not be read as a number: “{raw}”")
-        }
-        Warning::NoWhirlpoolData => {
-            "BeerXML carries no whirlpool time or temperature, so no hop stand is modelled".into()
-        }
-        Warning::EquipmentIncomplete { missing } => {
-            format!("the equipment profile has no {}", missing.join(", "))
-        }
-        Warning::ColourUnitAssumed => "malt colour was assumed to be in Lovibond".into(),
-    }
-}
-
-/// Derive a stored recipe, reporting rather than hiding what went wrong.
-#[cfg(feature = "ssr")]
-fn summarise(document: &krausen_beerxml::Recipe) -> (Option<DerivedSummary>, Vec<String>) {
-    let converted = krausen_beerxml::convert::to_calc(document);
-    let mut warnings: Vec<String> = converted.warnings.iter().map(describe).collect();
-
-    let equipment = converted.equipment.clone().unwrap_or_default();
-    match krausen_calc::derive(&converted.recipe, &equipment) {
-        Ok(d) => (
-            Some(DerivedSummary {
-                original_gravity: d.original_gravity.sg(),
-                final_gravity: d.final_gravity.sg(),
-                pre_boil_gravity: d.pre_boil_gravity.sg(),
-                abv_percent: d.abv_percent,
-                colour_ebc: d.colour_ebc,
-                ibu_total: d.ibu_total,
-                ibu_boil_only: d.ibu_boil_only,
-                pre_boil_l: d.volumes.pre_boil_l,
-                post_boil_l: d.volumes.post_boil_l,
-                mash_water_l: d.volumes.mash_water_l,
-                sparge_water_l: d.volumes.sparge_water_l,
-            }),
-            warnings,
-        ),
-        Err(e) => {
-            // A recipe that cannot be derived is still a recipe worth keeping
-            // and showing. Say why rather than showing nothing.
-            warnings.push(format!("could not derive: {e}"));
-            (None, warnings)
-        }
-    }
-}
-
-#[cfg(feature = "ssr")]
 fn parse_one(beerxml: &str) -> Result<krausen_beerxml::Recipe, ServerFnError> {
     let mut doc = krausen_beerxml::parse(beerxml)
         .map_err(|e| ServerFnError::new(format!("could not read that BeerXML: {e}")))?;
@@ -130,7 +69,8 @@ fn parse_one(beerxml: &str) -> Result<krausen_beerxml::Recipe, ServerFnError> {
 
 #[cfg(feature = "ssr")]
 fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
-    let (derived, mut warnings) = summarise(&stored.document);
+    // Calculation is available only through the shared formulation preview.
+    let mut warnings = Vec::new();
     if let Some(error) = &stored.native_migration_error {
         warnings.push(format!(
             "Native migration failed: {error}. This legacy record is read-only."
@@ -141,7 +81,7 @@ fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
         name: stored.name,
         source: stored.source.as_str().to_string(),
         beerxml: krausen_beerxml::write_recipe_document(&stored.document),
-        derived,
+        derived: None,
         warnings,
     }
 }
@@ -176,7 +116,7 @@ pub async fn list_recipes() -> Result<Vec<RecipeListItem>, ServerFnError> {
         .collect())
 }
 
-/// One recipe, with its derived figures.
+/// Read a legacy recipe or recover its original source.
 /// Recover the stored legacy payload when migration cannot parse it.
 #[server(prefix = "/leptos-api")]
 pub async fn recover_legacy_recipe(
@@ -189,7 +129,7 @@ pub async fn recover_legacy_recipe(
         .map_err(|_| ServerFnError::new("Could not recover that recipe"))
 }
 
-/// One recipe, with its derived figures.
+/// Read a legacy recipe or recover its original source.
 #[server(prefix = "/leptos-api")]
 pub async fn get_recipe(recipe_id: String) -> Result<Option<RecipeDetail>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;

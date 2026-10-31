@@ -23,6 +23,8 @@ use crate::pages::auth::{
 use crate::pages::accept_ownership::AcceptOwnershipPage;
 use crate::pages::onboarding::OnboardingPage;
 use crate::pages::recipes::RecipesPage;
+use crate::pages::recipe_editor::RecipeEditorPage;
+use crate::pages::design_system::DesignSystemPage;
 use crate::pages::welcome::WelcomePage;
 use crate::pages::settings::{
     profile::ProfilePage,
@@ -98,6 +100,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=|| view! { <Redirect path="/recipes"/> }/>
                     <Route path=path!("/onboarding") view=OnboardingPage/>
                     <Route path=path!("/recipes") view=RecipesPage/>
+                    <Route path=path!("/recipe-editor/:id") view=RecipeEditorPage/>
+                    <Route path=path!("/design-system") view=DesignSystemPage/>
                     <Route path=path!("/accept-ownership/:transfer_id") view=AcceptOwnershipPage/>
 
                     // Settings
