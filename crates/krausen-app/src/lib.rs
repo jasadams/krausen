@@ -5,6 +5,8 @@ use krausen_core::{DbPool, DbTx};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod account;
+pub mod invitation;
 pub mod recipe_migration;
 
 /// Constructed only by an authenticated adapter; workspace selection is not authority.
@@ -46,6 +48,8 @@ pub enum Error {
     Invalid(&'static str),
     #[error("retry transaction")]
     Retryable,
+    #[error("proof delivery unavailable")]
+    DeliveryUnavailable,
     #[error("legacy recipe authoring is unavailable during native migration")]
     LegacyAuthoringUnavailable,
     #[error(transparent)]
@@ -75,6 +79,7 @@ pub fn project_rename_result(
         Err(Error::Forbidden) => Outcome::Forbidden,
         Err(Error::Invalid(_)) => Outcome::Invalid,
         Err(Error::Retryable) => Outcome::Retryable,
+        Err(Error::DeliveryUnavailable) => Outcome::Unavailable,
         Err(e) => {
             tracing::error!(error = %e, "workspace rename failed");
             Outcome::Unavailable
@@ -193,10 +198,9 @@ pub async fn record_change(
     Ok(())
 }
 
-/// Lock and recheck current authority inside the caller's write transaction.
-/// The adapter is responsible for verifying the credential before constructing
-/// this context; a workspace ID alone never grants authority.
-pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Result<String, Error> {
+/// Lock the current account and verified credential inside the caller's transaction.
+/// This account-only boundary also permits an invited user who is not yet a member.
+pub async fn authorize_account(tx: &mut DbTx<'_>, actor: &ActorContext) -> Result<(), Error> {
     let pg = matches!(tx, DbTx::Postgres(_));
     let account_sql = if pg {
         "SELECT user_id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
@@ -227,6 +231,32 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
     {
         return Err(Error::Forbidden);
     }
+    if actor.access_expires_at <= chrono::Utc::now().timestamp()
+        || scalar!(
+            tx,
+            String,
+            credential_sql,
+            &actor.credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        )
+        .map_err(db_error)?
+        .is_none()
+    {
+        return Err(Error::Forbidden);
+    }
+    Ok(())
+}
+
+/// Lock and recheck account, credential and workspace membership.
+pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Result<String, Error> {
+    authorize_account(tx, actor).await?;
+    let pg = matches!(tx, DbTx::Postgres(_));
+    let credential_sql = if pg {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3 FOR SHARE"
+    } else {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3"
+    };
     let member_sql = if pg {
         "SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2 AND active = TRUE FOR SHARE"
     } else {

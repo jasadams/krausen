@@ -263,22 +263,8 @@ pub async fn invite_member(email: String, role: String) -> Result<(), ServerFnEr
 #[server(prefix = "/leptos-api")]
 pub async fn cancel_invitation(invitation_id: String) -> Result<(), ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    require_workspace_admin(&ac.auth)?;
-
-    let invitation =
-        krausen_auth::workspace_service::get_invitation_in_workspace(ac.db(), &invitation_id, &ac.ws_id)
-            .await
-            .into_sfn()?
-            .ok_or_else(|| ServerFnError::new("Invitation not found"))?;
-
-    if invitation.status != krausen_core::enums::InvitationStatus::Pending {
-        return Err(ServerFnError::new("Can only cancel pending invitations"));
-    }
-
-    krausen_auth::workspace_service::update_invitation_status(ac.db(), &invitation_id, "cancelled")
-        .await
-        .into_sfn()?;
-
+    let actor = super::verified_actor(&ac.auth)?;
+    krausen_app::invitation::cancel(ac.db(), &actor, &invitation_id).await.map_err(|_| ServerFnError::new("Invitation cancellation unavailable"))?;
     Ok(())
 }
 

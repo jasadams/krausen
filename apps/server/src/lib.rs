@@ -2,6 +2,7 @@
 
 //! krausen-server — Axum HTTP server for the Krausen backend.
 
+pub mod invitation_delivery;
 pub mod leptos_frontend;
 pub mod middleware;
 pub mod routes;
@@ -29,6 +30,7 @@ pub fn build_router(state: state::AppState) -> Router {
         .nest("/api/v1/auth", routes::auth_google_oauth::routes())
         .nest("/mcp", routes::mcp::routes(state.clone()))
         .merge(routes::oauth::well_known_routes(state.clone()))
+        .merge(routes::account_proof::routes())
         .nest("/api/v1/oauth", routes::oauth::routes(state.clone()))
         .route("/ws/{user_id}", axum::routing::get(routes::websocket::ws_handler))
         // Leptos server functions

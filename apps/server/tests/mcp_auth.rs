@@ -1409,6 +1409,14 @@ async fn exercise(db: DbPool) {
         restored.structured_content.unwrap()["outcome"]["Archive"]["archived"],
         false
     );
+    let profile = modern
+        .call_tool(CallToolRequestParams::new("account_profile_get"))
+        .await
+        .unwrap();
+    assert_eq!(
+        profile.structured_content.unwrap()["user_id"],
+        principal.user_id
+    );
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()

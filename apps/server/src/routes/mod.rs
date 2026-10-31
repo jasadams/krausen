@@ -7,3 +7,5 @@ pub mod auth_token;
 pub mod mcp;
 pub mod oauth;
 pub mod websocket;
+
+pub mod account_proof;

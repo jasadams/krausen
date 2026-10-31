@@ -5,6 +5,7 @@
 //! This crate holds cross-crate types used by krausen-core, krausen-auth,
 //! krausen-ui, and the server binary.
 
+pub mod account;
 pub mod brewery;
 pub mod operations;
 pub mod sync;

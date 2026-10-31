@@ -40,6 +40,22 @@ async fn exercise(db: DbPool) {
         credential_id: credential,
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
+    let no_workspace = ActorContext {
+        workspace_id: String::new(),
+        ..actor.clone()
+    };
+    let profile = krausen_app::account::profile(&db, &no_workspace)
+        .await
+        .unwrap();
+    assert_eq!(profile.user_id, actor.actor_id);
+    let wrong_credential = ActorContext {
+        credential_id: "foreign-credential".into(),
+        ..no_workspace.clone()
+    };
+    assert!(matches!(
+        krausen_app::account::profile(&db, &wrong_credential).await,
+        Err(krausen_app::Error::Forbidden)
+    ));
     let expired_actor = ActorContext {
         access_expires_at: chrono::Utc::now().timestamp() - 1,
         ..actor.clone()

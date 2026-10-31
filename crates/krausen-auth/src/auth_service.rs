@@ -187,25 +187,20 @@ pub struct SignupStartParams<'a> {
 /// [`passkey_signup_complete_service`]. There is no unverified-user state, and
 /// nothing downstream should have to ask whether a row is "real yet".
 ///
-/// The one exception is a self-hosted server with no mailer configured: there
-/// is no link to send, so the account is made here and the caller is signed
-/// straight in.
+/// Without a mailer, remote signup is unavailable; a local operator initializes
+/// the first owner instead.
 pub async fn signup_start_service(
     params: SignupStartParams<'_>,
 ) -> krausen_core::Result<SignupStartServiceResult> {
     let SignupStartParams {
         db,
         kv,
-        jwt_secret,
         email,
-        name,
-        password,
         ip,
-        device,
         self_hosted,
         smtp_configured,
         frontend_url,
-        config,
+        ..
     } = params;
     // Rate limit
     let rate = crate::rate_limiter::check_rate_limit(kv, ip, "signup", None).await?;
@@ -226,129 +221,9 @@ pub async fn signup_start_service(
         });
     }
 
-    // Look up existing user
-    let existing_user = crate::user_service::get_user_by_email(db, email).await?;
-
-    // Self-hosted without SMTP: only first user or invited users may register
-    if smtp_less_self_hosted
-        && existing_user.is_none()
-        && crate::user_service::has_any_users(db).await?
-    {
-        let pending =
-            crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
-        if pending.is_empty() {
-            return Ok(SignupStartServiceResult::Error {
-                message: "Registration is closed. Ask your administrator to invite you."
-                    .to_string(),
-            });
-        }
-    }
-
-    match existing_user {
-        None if smtp_less_self_hosted => {
-            // No mailer, so there is no link to send. The account is made here
-            // and the caller is signed straight in.
-            signup_smtp_less_new_user(SmtpLessNewUserParams {
-                db,
-                kv,
-                jwt_secret,
-                email,
-                name,
-                password,
-                device,
-                config,
-            })
-            .await
-        }
-        // Known or unknown, the answer is the same: a link goes to the mailbox
-        // and the response says so. Anything that distinguished the two cases
-        // would let a stranger enumerate who has an account.
-        _ => {
-            send_signup_link(db, email, frontend_url).await?;
-            Ok(SignupStartServiceResult::VerificationRequired)
-        }
-    }
-}
-
-struct SmtpLessNewUserParams<'a> {
-    db: &'a DbPool,
-    kv: &'a KVPool,
-    jwt_secret: &'a str,
-    email: &'a str,
-    name: Option<&'a str>,
-    password: Option<&'a str>,
-    device: &'a DeviceInfo,
-    config: Option<&'a krausen_core::Config>,
-}
-
-/// Inner helper: self-hosted SMTP-less signup for a brand new user.
-async fn signup_smtp_less_new_user(
-    params: SmtpLessNewUserParams<'_>,
-) -> krausen_core::Result<SignupStartServiceResult> {
-    let SmtpLessNewUserParams {
-        db,
-        kv,
-        jwt_secret,
-        email,
-        name,
-        password,
-        device,
-        config,
-    } = params;
-    let name_str = name.unwrap_or("").trim();
-    let password_str = password.unwrap_or("");
-    if name_str.is_empty() || password_str.is_empty() {
-        return Ok(SignupStartServiceResult::Error {
-            message: "Name and password are required for self-hosted signup".to_string(),
-        });
-    }
-    if password_str.len() < 8 {
-        return Ok(SignupStartServiceResult::Error {
-            message: "Password must be at least 8 characters".to_string(),
-        });
-    }
-
-    let user = crate::user_service::create_user(db, email, Some(name_str), true).await?;
-
-    let hash = crate::password::hash_password(password_str)
-        .map_err(|e| krausen_core::Error::Internal(format!("Failed to hash password: {e}")))?;
-    crate::user_service::upsert_auth_method(
-        db,
-        &user.user_id,
-        "password",
-        &serde_json::json!({"hash": hash}),
-    )
-    .await?;
-
-    // Check for pending invitations
-    let pending = crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
-    if let Some(inv) = pending.first() {
-        crate::workspace_service::accept_invitation_for_user(db, &inv.invitation_id, &user.user_id)
-            .await?;
-        crate::user_service::update_last_workspace(db, &user.user_id, &inv.workspace_id).await?;
-    } else {
-        crate::user_service::create_workspace_for_user(
-            db,
-            &user.user_id,
-            Some(name_str),
-            email,
-            config,
-        )
-        .await?;
-    }
-
-    // Re-fetch user after workspace setup
-    let user = crate::user_service::get_user_by_email(db, email)
-        .await?
-        .ok_or_else(|| krausen_core::Error::Internal("User not found after creation".into()))?;
-
-    let sess = create_authenticated_session(db, kv, jwt_secret, &user, device).await?;
-    tracing::info!(
-        email = %email,
-        user_id = %user.user_id,
-        "Self-hosted SMTP-less: one-step signup complete"
-    );
-    Ok(SignupStartServiceResult::AccountCreated(Box::new(sess)))
+    // Identical response for known and unknown accounts avoids enumeration.
+    send_signup_link(db, email, frontend_url).await?;
+    Ok(SignupStartServiceResult::VerificationRequired)
 }
 
 /// Mint a signup link and email it. Writes no `users` row.
@@ -513,15 +388,9 @@ async fn place_user_in_workspace(
         return Ok(());
     }
 
-    let pending = crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
-    if let Some(inv) = pending.first() {
-        crate::workspace_service::accept_invitation_for_user(db, &inv.invitation_id, user_id)
-            .await?;
-        crate::user_service::update_last_workspace(db, user_id, &inv.workspace_id).await?;
-    } else {
-        crate::user_service::create_workspace_for_user(db, user_id, user_name, email, config)
-            .await?;
-    }
+    // A signup email verification does not authorize an invitation response.
+    // The recipient must complete the action-bound invitation workflow separately.
+    crate::user_service::create_workspace_for_user(db, user_id, user_name, email, config).await?;
     Ok(())
 }
 

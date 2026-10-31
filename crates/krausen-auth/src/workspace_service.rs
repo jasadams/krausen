@@ -7,12 +7,10 @@
 //! `get_workspace_user`) live in `user_service.rs`.
 
 use chrono::Utc;
-use krausen_core::enums::TransferStatus;
-use krausen_core::models::{
-    OwnershipTransfer, Workspace, WorkspaceInvitation, WorkspaceUser,
-};
-use krausen_core::sql_compat;
 use krausen_core::DbPool;
+use krausen_core::enums::TransferStatus;
+use krausen_core::models::{OwnershipTransfer, Workspace, WorkspaceInvitation, WorkspaceUser};
+use krausen_core::sql_compat;
 use serde::{Deserialize, Serialize};
 
 use crate::sync_log_service;
@@ -38,10 +36,7 @@ pub async fn get_workspace_users(
 }
 
 /// Count active members in a workspace.
-pub async fn count_workspace_users(
-    pool: &DbPool,
-    workspace_id: &str,
-) -> krausen_core::Result<i64> {
+pub async fn count_workspace_users(pool: &DbPool, workspace_id: &str) -> krausen_core::Result<i64> {
     let is_pg = pool.is_postgres();
     let bt = sql_compat::bool_true(is_pg);
     let sql = format!(
@@ -73,7 +68,8 @@ pub async fn get_user_workspaces(
     let mut results = Vec::with_capacity(memberships.len());
     for wu in memberships {
         let ws = krausen_core::db_fetch_optional!(
-            pool, Workspace,
+            pool,
+            Workspace,
             "SELECT * FROM workspaces WHERE workspace_id = $1",
             &wu.workspace_id
         )?;
@@ -157,9 +153,7 @@ pub async fn update_workspace_settings(
             "UPDATE workspaces SET settings = $1::json, updated_at = {now} WHERE workspace_id = $2"
         )
     } else {
-        format!(
-            "UPDATE workspaces SET settings = $1, updated_at = {now} WHERE workspace_id = $2"
-        )
+        format!("UPDATE workspaces SET settings = $1, updated_at = {now} WHERE workspace_id = $2")
     };
     let result = krausen_core::db_execute!(pool, &sql, &settings_str, workspace_id)?;
 
@@ -193,13 +187,13 @@ pub async fn get_workspace_full(
     workspace_id: &str,
 ) -> krausen_core::Result<Option<Workspace>> {
     let ws = krausen_core::db_fetch_optional!(
-        pool, Workspace,
+        pool,
+        Workspace,
         "SELECT * FROM workspaces WHERE workspace_id = $1",
         workspace_id
     )?;
     Ok(ws)
 }
-
 
 // ===========================================================================
 // Phase 4D — Member management
@@ -271,16 +265,14 @@ pub async fn remove_member(
         pool,
         "DELETE FROM workspace_users \
          WHERE workspace_id = $1 AND user_id = $2",
-        workspace_id, user_id
+        workspace_id,
+        user_id
     )?;
     Ok(result.rows_affected() > 0)
 }
 
 /// Count admins in a workspace.
-pub async fn count_admins(
-    pool: &DbPool,
-    workspace_id: &str,
-) -> krausen_core::Result<i64> {
+pub async fn count_admins(pool: &DbPool, workspace_id: &str) -> krausen_core::Result<i64> {
     let is_pg = pool.is_postgres();
     let bt = sql_compat::bool_true(is_pg);
     let sql = format!(
@@ -327,7 +319,12 @@ pub async fn create_invitation(
         "INSERT INTO workspace_invitations \
          (invitation_id, workspace_id, email, role, invited_by_user_id, status, expires_at) \
          VALUES ($1, $2, $3, $4, $5, 'pending', $6)",
-        invitation_id, workspace_id, email, role, invited_by, &expires_at
+        invitation_id,
+        workspace_id,
+        email,
+        role,
+        invited_by,
+        &expires_at
     )?;
 
     get_invitation(pool, invitation_id)
@@ -341,7 +338,8 @@ pub async fn get_invitation(
     invitation_id: &str,
 ) -> krausen_core::Result<Option<WorkspaceInvitation>> {
     let inv = krausen_core::db_fetch_optional!(
-        pool, WorkspaceInvitation,
+        pool,
+        WorkspaceInvitation,
         "SELECT * FROM workspace_invitations WHERE invitation_id = $1",
         invitation_id
     )?;
@@ -355,10 +353,12 @@ pub async fn get_invitation_in_workspace(
     workspace_id: &str,
 ) -> krausen_core::Result<Option<WorkspaceInvitation>> {
     let inv = krausen_core::db_fetch_optional!(
-        pool, WorkspaceInvitation,
+        pool,
+        WorkspaceInvitation,
         "SELECT * FROM workspace_invitations \
          WHERE invitation_id = $1 AND workspace_id = $2",
-        invitation_id, workspace_id
+        invitation_id,
+        workspace_id
     )?;
     Ok(inv)
 }
@@ -369,7 +369,8 @@ pub async fn get_pending_invitations_for_workspace(
     workspace_id: &str,
 ) -> krausen_core::Result<Vec<WorkspaceInvitation>> {
     let invitations = krausen_core::db_fetch_all!(
-        pool, WorkspaceInvitation,
+        pool,
+        WorkspaceInvitation,
         "SELECT * FROM workspace_invitations \
          WHERE workspace_id = $1 AND status = 'pending' \
          ORDER BY created_at DESC",
@@ -403,7 +404,8 @@ pub async fn count_pending_invitations(
     workspace_id: &str,
 ) -> krausen_core::Result<i64> {
     let count: i64 = krausen_core::db_fetch_scalar!(
-        pool, i64,
+        pool,
+        i64,
         "SELECT COUNT(*) as count FROM workspace_invitations \
          WHERE workspace_id = $1 AND status = 'pending'",
         workspace_id
@@ -435,62 +437,14 @@ pub async fn check_pending_invitation(
     email: &str,
 ) -> krausen_core::Result<bool> {
     let count: i64 = krausen_core::db_fetch_scalar!(
-        pool, i64,
+        pool,
+        i64,
         "SELECT COUNT(*) as count FROM workspace_invitations \
          WHERE workspace_id = $1 AND LOWER(email) = LOWER($2) AND status = 'pending'",
-        workspace_id, email
+        workspace_id,
+        email
     )?;
     Ok(count > 0)
-}
-
-/// Update an invitation's status.
-pub async fn update_invitation_status(
-    pool: &DbPool,
-    invitation_id: &str,
-    status: &str,
-) -> krausen_core::Result<bool> {
-    let result = krausen_core::db_execute!(
-        pool,
-        "UPDATE workspace_invitations SET status = $1 WHERE invitation_id = $2",
-        status, invitation_id
-    )?;
-    Ok(result.rows_affected() > 0)
-}
-
-/// Accept an invitation: set status to 'accepted', record who accepted and when.
-pub async fn accept_invitation(
-    pool: &DbPool,
-    invitation_id: &str,
-    user_id: &str,
-) -> krausen_core::Result<bool> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let sql = format!(
-        "UPDATE workspace_invitations SET \
-         status = 'accepted', accepted_at = {now}, accepted_by_user_id = $1 \
-         WHERE invitation_id = $2"
-    );
-    let result = krausen_core::db_execute!(pool, &sql, user_id, invitation_id)?;
-    Ok(result.rows_affected() > 0)
-}
-
-/// Accept an invitation for a newly-created user (self-hosted SMTP-less flow).
-///
-/// Adds the user to the workspace and marks the invitation as accepted.
-/// Used during one-step signup when the user has a pending invitation.
-pub async fn accept_invitation_for_user(
-    pool: &DbPool,
-    invitation_id: &str,
-    user_id: &str,
-) -> krausen_core::Result<()> {
-    let invitation = get_invitation(pool, invitation_id)
-        .await?
-        .ok_or_else(|| krausen_core::Error::NotFound("Invitation not found".into()))?;
-
-    let db_role = invitation.role.as_ref();
-    create_workspace_user(pool, &invitation.workspace_id, user_id, db_role).await?;
-    accept_invitation(pool, invitation_id, user_id).await?;
-    Ok(())
 }
 
 // ===========================================================================
@@ -511,7 +465,11 @@ pub async fn create_ownership_transfer(
         "INSERT INTO ownership_transfers \
          (transfer_id, workspace_id, from_user_id, to_user_id, status, expires_at) \
          VALUES ($1, $2, $3, $4, 'pending', $5)",
-        transfer_id, workspace_id, from_user_id, to_user_id, &expires_at
+        transfer_id,
+        workspace_id,
+        from_user_id,
+        to_user_id,
+        &expires_at
     )?;
 
     get_ownership_transfer(pool, transfer_id)
@@ -525,7 +483,8 @@ pub async fn get_ownership_transfer(
     transfer_id: &str,
 ) -> krausen_core::Result<Option<OwnershipTransfer>> {
     let transfer = krausen_core::db_fetch_optional!(
-        pool, OwnershipTransfer,
+        pool,
+        OwnershipTransfer,
         "SELECT * FROM ownership_transfers WHERE transfer_id = $1",
         transfer_id
     )?;
@@ -538,7 +497,8 @@ pub async fn get_pending_transfer_for_workspace(
     workspace_id: &str,
 ) -> krausen_core::Result<Option<OwnershipTransfer>> {
     let transfer = krausen_core::db_fetch_optional!(
-        pool, OwnershipTransfer,
+        pool,
+        OwnershipTransfer,
         "SELECT * FROM ownership_transfers \
          WHERE workspace_id = $1 AND status = 'pending' \
          ORDER BY created_at DESC LIMIT 1",
@@ -553,7 +513,8 @@ pub async fn get_pending_transfers_for_user(
     user_id: &str,
 ) -> krausen_core::Result<Vec<OwnershipTransfer>> {
     let transfers = krausen_core::db_fetch_all!(
-        pool, OwnershipTransfer,
+        pool,
+        OwnershipTransfer,
         "SELECT * FROM ownership_transfers \
          WHERE to_user_id = $1 AND status = 'pending' \
          ORDER BY created_at DESC",
@@ -609,27 +570,37 @@ pub async fn complete_ownership_transfer(
         krausen_core::db::DbPool::Postgres(pg) => {
             let mut tx = pg.begin().await?;
             sqlx::query(&update_owner_sql)
-                .bind(new_owner_id).bind(workspace_id)
-                .execute(&mut *tx).await?;
+                .bind(new_owner_id)
+                .bind(workspace_id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(&update_role_sql)
-                .bind(workspace_id).bind(new_owner_id)
-                .execute(&mut *tx).await?;
+                .bind(workspace_id)
+                .bind(new_owner_id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(&update_transfer_sql)
                 .bind(transfer_id)
-                .execute(&mut *tx).await?;
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
         }
         krausen_core::db::DbPool::Sqlite(sq) => {
             let mut tx = sq.begin().await?;
             sqlx::query(&update_owner_sql)
-                .bind(new_owner_id).bind(workspace_id)
-                .execute(&mut *tx).await?;
+                .bind(new_owner_id)
+                .bind(workspace_id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(&update_role_sql)
-                .bind(workspace_id).bind(new_owner_id)
-                .execute(&mut *tx).await?;
+                .bind(workspace_id)
+                .bind(new_owner_id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(&update_transfer_sql)
                 .bind(transfer_id)
-                .execute(&mut *tx).await?;
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
         }
     }
@@ -700,8 +671,7 @@ pub async fn get_transfer_for_recipient(
         .and_then(|w| w.name)
         .unwrap_or_else(|| "Unnamed Workspace".to_string());
 
-    let from_user =
-        crate::user_service::get_user_by_id(pool, &transfer.from_user_id).await?;
+    let from_user = crate::user_service::get_user_by_id(pool, &transfer.from_user_id).await?;
     let from_user_email = from_user.map(|u| u.email).unwrap_or_default();
 
     Ok(Some(OwnershipTransferDetail {
@@ -738,7 +708,8 @@ pub async fn remove_workspace_member(
         }
     }
 
-    let target = crate::user_service::get_workspace_user(pool, workspace_id, target_user_id).await?;
+    let target =
+        crate::user_service::get_workspace_user(pool, workspace_id, target_user_id).await?;
     if target.is_none() {
         return Err(krausen_core::Error::NotFound(
             "Member not found in workspace".into(),
@@ -768,7 +739,14 @@ pub async fn invite_workspace_member(
     params: InviteWorkspaceMemberParams<'_>,
 ) -> krausen_core::Result<()> {
     let InviteWorkspaceMemberParams {
-        pool, workspace_id, email, db_role, invited_by, invitation_id, expires_at, user_limit,
+        pool,
+        workspace_id,
+        email,
+        db_role,
+        invited_by,
+        invitation_id,
+        expires_at,
+        user_limit,
     } = params;
     let is_member = check_existing_member_by_email(pool, workspace_id, email).await?;
     if is_member {
@@ -789,8 +767,7 @@ pub async fn invite_workspace_member(
         let pending = count_pending_invitations(pool, workspace_id).await?;
         if current_users + pending >= limit {
             return Err(krausen_core::Error::BadRequest(
-                "Workspace user limit reached. Upgrade your plan to add more users."
-                    .into(),
+                "Workspace user limit reached. Upgrade your plan to add more users.".into(),
             ));
         }
     }
@@ -834,28 +811,25 @@ pub async fn list_ownership_transfers_for_user(
 ) -> krausen_core::Result<Vec<ResolvedTransfer>> {
     let mut transfers = get_pending_transfers_for_user(pool, user_id).await?;
 
-    if let Some(initiated) =
-        get_pending_transfer_for_workspace(pool, workspace_id).await?
+    if let Some(initiated) = get_pending_transfer_for_workspace(pool, workspace_id).await?
         && !transfers
             .iter()
             .any(|t| t.transfer_id == initiated.transfer_id)
-        {
-            transfers.push(initiated);
-        }
+    {
+        transfers.push(initiated);
+    }
 
     let mut result = Vec::with_capacity(transfers.len());
     for transfer in &transfers {
-        let from_email =
-            crate::user_service::get_user_by_id(pool, &transfer.from_user_id)
-                .await?
-                .map(|u| u.email)
-                .unwrap_or_default();
+        let from_email = crate::user_service::get_user_by_id(pool, &transfer.from_user_id)
+            .await?
+            .map(|u| u.email)
+            .unwrap_or_default();
 
-        let to_email =
-            crate::user_service::get_user_by_id(pool, &transfer.to_user_id)
-                .await?
-                .map(|u| u.email)
-                .unwrap_or_default();
+        let to_email = crate::user_service::get_user_by_id(pool, &transfer.to_user_id)
+            .await?
+            .map(|u| u.email)
+            .unwrap_or_default();
 
         result.push(ResolvedTransfer {
             transfer_id: transfer.transfer_id.clone(),

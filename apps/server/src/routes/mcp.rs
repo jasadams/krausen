@@ -31,6 +31,32 @@ use std::{borrow::Cow, sync::Arc};
 #[derive(Clone)]
 struct McpHandler {
     db: krausen_core::DbPool,
+    mail_available: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvitationBegin {
+    discovery_id: String,
+    workspace_id: String,
+    invitation_id: String,
+    action: krausen_app::invitation::InvitationAction,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoveryBegin {
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InteractionQuery {
+    interaction_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvitationCancel {
+    workspace_id: String,
+    invitation_id: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -271,6 +297,46 @@ impl ServerHandler for McpHandler {
                 schema(
                     serde_json::to_value(schemars::schema_for!(StyleQuery)).expect("style schema"),
                 ),
+            ),
+            Tool::new(
+                operations::INVITATION_CANCEL.mcp_tool,
+                "Cancel a pending workspace invitation",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"invitation_id":{"type":"string"}},"required":["workspace_id","invitation_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::INVITATION_DISCOVERY_BEGIN.mcp_tool,
+                "Begin mailbox verification for invitation discovery",
+                schema(
+                    json!({"type":"object","properties":{"request_id":{"type":"string","format":"uuid"}},"required":["request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::INVITATION_LIST.mcp_tool,
+                "List invitations after mailbox verification",
+                schema(
+                    json!({"type":"object","properties":{"interaction_id":{"type":"string"}},"required":["interaction_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::INVITATION_PROOF_BEGIN.mcp_tool,
+                "Begin recipient mailbox proof for an invitation response",
+                schema(
+                    json!({"type":"object","properties":{"discovery_id":{"type":"string"},"workspace_id":{"type":"string"},"invitation_id":{"type":"string"},"action":{"type":"string","enum":["accept","decline"]},"request_id":{"type":"string","format":"uuid"}},"required":["discovery_id","workspace_id","invitation_id","action","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::INVITATION_PROOF_STATUS.mcp_tool,
+                "Check the current account interaction",
+                schema(
+                    json!({"type":"object","properties":{"interaction_id":{"type":"string"}},"required":["interaction_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::ACCOUNT_PROFILE_GET.mcp_tool,
+                "Read the authenticated account profile",
+                schema(json!({"type":"object", "properties":{}, "additionalProperties":false})),
             ),
             Tool::new(
                 operations::WORKSPACE_GET.mcp_tool,
@@ -632,6 +698,145 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured(value)
                 }
             }
+            "account.invitation.cancel.v1" => {
+                let input: InvitationCancel = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid invitation", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::invitation::cancel(&self.db, &actor, &input.invitation_id).await
+                {
+                    Ok(()) => CallToolResult::structured(json!({"status":"cancelled"})),
+                    Err(krausen_app::Error::Conflict { .. }) => {
+                        CallToolResult::structured_error(json!({"error":"conflict"}))
+                    }
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.invitation.discovery.begin.v1" => {
+                let input: DiscoveryBegin = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid discovery request", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::invitation::begin_discovery(
+                    &self.db,
+                    &actor,
+                    input.request_id,
+                    self.mail_available,
+                )
+                .await
+                {
+                    Ok(pending) => CallToolResult::structured(
+                        serde_json::to_value(pending)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(krausen_app::Error::DeliveryUnavailable) => {
+                        CallToolResult::structured_error(json!({"error":"delivery_unavailable"}))
+                    }
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.invitation.list.v1" => {
+                let input: InteractionQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid interaction", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::invitation::list(&self.db, &actor, &input.interaction_id).await {
+                    Ok(invitations) => {
+                        CallToolResult::structured(json!({"invitations":invitations}))
+                    }
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.invitation.proof.begin.v1" => {
+                let input: InvitationBegin = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid invitation response", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::invitation::begin(
+                    &self.db,
+                    &actor,
+                    &input.invitation_id,
+                    &input.discovery_id,
+                    input.action,
+                    input.request_id,
+                    self.mail_available,
+                )
+                .await
+                {
+                    Ok(pending) => CallToolResult::structured(
+                        serde_json::to_value(pending)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(krausen_app::Error::DeliveryUnavailable) => {
+                        CallToolResult::structured_error(json!({"error":"delivery_unavailable"}))
+                    }
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.invitation.proof.status.v1" => {
+                let input: InteractionQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid interaction", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::invitation::status(&self.db, &actor, &input.interaction_id).await
+                {
+                    Ok(status) => CallToolResult::structured(
+                        serde_json::to_value(status)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.profile.get.v1" => {
+                if input.as_object().is_none_or(|object| !object.is_empty()) {
+                    return Err(ErrorData::invalid_params("Invalid profile query", None));
+                }
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::account::profile(&self.db, &actor).await {
+                    Ok(profile) => CallToolResult::structured(
+                        serde_json::to_value(profile)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
             "workspace.get.v1" => {
                 let input: WorkspaceQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
@@ -819,6 +1024,10 @@ impl ServerHandler for McpHandler {
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let db = state.db.clone();
+    let mail_available = krausen_app::invitation::delivery_available(
+        krausen_auth::email_service::EmailService::from_env().is_configured(),
+        &state.config.base_url,
+    );
     let base = url::Url::parse(&state.config.base_url).expect("valid BASE_URL for MCP");
     let front = url::Url::parse(&state.config.frontend_url).expect("valid FRONTEND_URL for MCP");
     let host = base.host_str().expect("BASE_URL host");
@@ -831,7 +1040,12 @@ pub fn routes(state: AppState) -> Router<AppState> {
     config.allowed_origins = vec![front.origin().ascii_serialization()];
     config = config.enforce_origin_validation();
     let service = StreamableHttpService::new(
-        move || Ok(McpHandler { db: db.clone() }),
+        move || {
+            Ok(McpHandler {
+                db: db.clone(),
+                mail_available,
+            })
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     );

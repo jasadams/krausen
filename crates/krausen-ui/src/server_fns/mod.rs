@@ -84,6 +84,12 @@ pub(crate) fn workspace_id(
     })
 }
 
+/// Account-only operations do not require a selected workspace.
+#[cfg(feature = "ssr")]
+pub(crate) fn verified_account_actor(auth: &krausen_auth::middleware::AuthUser) -> Result<krausen_app::ActorContext, leptos::prelude::ServerFnError> {
+    Ok(krausen_app::ActorContext { actor_id: auth.user_id.clone(), workspace_id: auth.workspace.workspace_id.clone().unwrap_or_default(), credential_id: auth.credential_id.clone(), access_expires_at: auth.token_exp.ok_or_else(|| leptos::prelude::ServerFnError::new("Authentication required"))? })
+}
+
 /// Only an identity produced by JWT verification may cross into shared app operations.
 #[cfg(feature = "ssr")]
 pub(crate) fn verified_actor(

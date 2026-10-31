@@ -7,7 +7,7 @@
 use leptos::prelude::*;
 
 use crate::components::{
-    ActionStatus, Card, CardContent, CardDescription, CardHeader, CardTitle, Label,
+    ActionStatus, Button, ButtonSize, Card, CardContent, CardDescription, CardHeader, CardTitle, Label,
     SettingsPageSkeleton, INPUT_CLASS,
 };
 use crate::server_fns::profile::*;
@@ -21,7 +21,11 @@ use crate::types::ProfileData;
 pub fn ProfilePage() -> impl IntoView {
     let profile = Resource::new(|| (), |_| get_profile());
     // Auth error handling (expired access_token) is done globally in Layout.
-    let invitations = Resource::new(|| (), |_| get_pending_invitations());
+    let query = leptos_router::hooks::use_query_map();
+    let discovery = move || query.with(|q| q.get("invitation_discovery"));
+    let invitations = Resource::new(discovery, |proof| async move {
+        match proof { Some(proof) => get_pending_invitations(proof).await, None => Ok(Vec::new()) }
+    });
 
     view! {
         <div class="p-4 sm:p-6">
@@ -39,7 +43,7 @@ pub fn ProfilePage() -> impl IntoView {
                                 .unwrap_or_default();
 
                             let is_personal = data.is_personal_mode;
-                            let has_invitations = !inv_list.is_empty();
+                            let discovery_id = discovery();
                             let data_profile = data.clone();
                             let data_appearance = data.clone();
                             view! {
@@ -49,9 +53,8 @@ pub fn ProfilePage() -> impl IntoView {
                                     </Show>
                                     <AppearanceCard data=data_appearance/>
                                     <McpConnectionCard is_personal=is_personal/>
-                                    <Show when=move || !is_personal && has_invitations>
-                                        <InvitationsCard invitations=inv_list.clone()/>
-                                    </Show>
+                                    <InvitationsCard invitations=inv_list.clone() discovery_id=discovery_id.clone()/>
+
                                 </div>
                             }.into_any()
                         },
@@ -453,127 +456,55 @@ fn CopyButton(text: String) -> impl IntoView {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[component]
-fn InvitationsCard(invitations: Vec<crate::types::InvitationData>) -> impl IntoView {
-    let (inv_list, set_inv_list) = signal(invitations);
-
-    let accept_action = Action::new(|id: &String| {
-        let id = id.clone();
-        async move { accept_invitation(id).await }
+fn InvitationsCard(invitations: Vec<crate::types::InvitationData>, discovery_id: Option<String>) -> impl IntoView {
+    let discovery_request = RwSignal::new(None::<String>);
+    let response_requests = RwSignal::new(std::collections::HashMap::<String, String>::new());
+    let identity_error = RwSignal::new(false);
+    let discovery_action = Action::new(|request: &String| { let request = request.clone(); async move { begin_invitation_discovery(request).await } });
+    let response_action = Action::new(|args: &(String, String, String, krausen_types::account::InvitationAction, String)| {
+        let (workspace, invitation, proof, action, request) = args.clone();
+        async move { begin_invitation_response(workspace, invitation, proof, action, request).await }
     });
-    let decline_action = Action::new(|id: &String| {
-        let id = id.clone();
-        async move { decline_invitation(id).await }
-    });
-
-    view! {
-        <Card>
-            <CardHeader>
-                <CardTitle>"Pending Invitations"</CardTitle>
-                <CardDescription>"Workspace invitations waiting for your response."</CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div class="space-y-3">
-                    <For
-                        each=move || inv_list.get()
-                        key=|inv| inv.invitation_id.clone()
-                        let:inv
-                    >
-                        {
-                            let inv_id_accept = inv.invitation_id.clone();
-                            let inv_id_decline = inv.invitation_id.clone();
-                            let inv_id_remove = inv.invitation_id.clone();
-                            view! {
-                                <div class="flex items-center justify-between p-4 border border-border rounded-lg">
-                                    <div>
-                                        <p class="text-sm font-medium text-foreground">
-                                            "Workspace: " {inv.workspace_id.clone()}
-                                        </p>
-                                        <p class="text-xs text-muted-foreground">
-                                            "Role: " {inv.role.clone()}
-                                        </p>
-                                    </div>
-                                    <div class="flex gap-2">
-                                        <button
-                                            class="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                                            on:click={
-                                                let set_list = set_inv_list;
-                                                let id = inv_id_accept.clone();
-                                                let remove_id = inv_id_remove.clone();
-                                                move |_| {
-                                                    accept_action.dispatch(id.clone());
-                                                    set_list.update(|list| list.retain(|i| i.invitation_id != remove_id));
-                                                }
-                                            }
-                                        >
-                                            "Accept"
-                                        </button>
-                                        <button
-                                            class="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
-                                            on:click={
-                                                let set_list = set_inv_list;
-                                                let id = inv_id_decline.clone();
-                                                let remove_id = inv_id_remove;
-                                                move |_| {
-                                                    decline_action.dispatch(id.clone());
-                                                    set_list.update(|list| list.retain(|i| i.invitation_id != remove_id));
-                                                }
-                                            }
-                                        >
-                                            "Decline"
-                                        </button>
-                                    </div>
-                                </div>
-                            }
-                        }
-                    </For>
-                </div>
-            </CardContent>
-        </Card>
-    }
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Clear local data — wipes IndexedDB cache and reloads
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[component]
-fn ClearLocalDataCard() -> impl IntoView {
-    #[cfg(target_arch = "wasm32")]
-    {
-        use leptos::task::spawn_local;
-
-        let on_clear = move |_: leptos::ev::MouseEvent| {
-            spawn_local(async move {
-                // TODO: implement client-side cache clearing
-                let _ = web_sys::window()
-                    .and_then(|w| w.location().reload().ok());
-            });
+    let proof = discovery_id.clone();
+    let begin_discovery = move |_| {
+        let request = match discovery_request.get_untracked().or_else(crate::utils::request_id::new_request_id) {
+            Some(request) => request,
+            None => { identity_error.set(true); return; }
         };
-
-        view! {
-            <Card>
-                <CardHeader>
-                    <CardTitle>"Local Data"</CardTitle>
-                    <CardDescription>
-                        "Clear cached data stored in your browser. Use this if data appears missing or stale. Your account data is not affected."
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <crate::components::Button
-                        variant=crate::components::ButtonVariant::Secondary
-                        size=crate::components::ButtonSize::Sm
-                        on:click=on_clear
-                    >
-                        "Clear local data and reload"
-                    </crate::components::Button>
-                </CardContent>
-            </Card>
-        }.into_any()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        view! { <span></span> }.into_any()
+        identity_error.set(false); discovery_request.set(Some(request.clone())); discovery_action.dispatch(request);
+    };
+    view! {
+        <Card><CardHeader><CardTitle>"Workspace invitations"</CardTitle>
+            <CardDescription>"Verify your mailbox to view and respond to invitations."</CardDescription></CardHeader>
+            <CardContent>
+                <Button size=ButtonSize::Sm on:click=begin_discovery>"Verify mailbox"</Button>
+                {move || identity_error.get().then(|| view! { <p>"Unable to create a secure request identity."</p> })}
+                {move || discovery_action.value().get().map(|result| match result {
+                    Ok(_) => view! { <p>"Confirmation is pending. Check your email when delivery is available; no invitation response has been made."</p> }.into_any(),
+                    Err(error) => view! { <p>{error.to_string()}</p> }.into_any(),
+                })}
+                {move || response_action.value().get().map(|result| match result {
+                    Ok(_) => view! { <p>"Confirmation is pending. Check your email when delivery is available; your invitation remains pending."</p> }.into_any(),
+                    Err(error) => view! { <p>{error.to_string()}</p> }.into_any(),
+                })}
+                <div class="space-y-3">
+                {invitations.into_iter().map(|inv| {
+                    let invite_id = inv.invitation_id.clone(); let workspace = inv.workspace_id.clone();
+                    let proof = proof.clone().unwrap_or_default();
+                    let send = move |action: krausen_types::account::InvitationAction| {
+                        let key = format!("{}:{}", action.as_str(), invite_id);
+                        let request = response_requests.get_untracked().get(&key).cloned().or_else(crate::utils::request_id::new_request_id);
+                        let Some(request) = request else { identity_error.set(true); return; };
+                        response_requests.update(|items| { items.insert(key, request.clone()); });
+                        response_action.dispatch((workspace.clone(), invite_id.clone(), proof.clone(), action, request));
+                    };
+                    let send_decline = send.clone();
+                    view! { <div class="flex items-center justify-between p-4 border border-border rounded-lg">
+                        <div><p>"Workspace: " {inv.workspace_id}</p><p>"Role: " {inv.role}</p></div>
+                        <div class="flex gap-2"><Button size=ButtonSize::Sm on:click=move |_| send(krausen_types::account::InvitationAction::Accept)>"Accept"</Button>
+                        <Button size=ButtonSize::Sm on:click=move |_| send_decline(krausen_types::account::InvitationAction::Decline)>"Decline"</Button></div></div> }
+                }).collect_view()}
+                </div>
+            </CardContent></Card>
     }
 }

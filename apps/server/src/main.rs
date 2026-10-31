@@ -138,6 +138,20 @@ async fn serve() {
     // MCP session manager
     let mcp_sessions = krausen_auth::mcp_session_manager::MCPSessionManager::new(kv.clone());
 
+    let delivery_db = db.clone();
+    let delivery_base = config.base_url.clone();
+    let delivery_key = config.jwt_secret.clone();
+    tokio::spawn(async move {
+        let mail = krausen_auth::email_service::EmailService::from_env();
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            if let Err(error) = krausen_server::invitation_delivery::deliver_pending(&delivery_db, &delivery_base, delivery_key.as_bytes(), &mail).await {
+                tracing::error!(%error, "invitation proof delivery failed");
+            }
+        }
+    });
+
     let state = krausen_server::state::AppState {
         db: db.clone(),
         kv: kv.clone(),

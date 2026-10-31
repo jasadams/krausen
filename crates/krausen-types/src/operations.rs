@@ -37,6 +37,42 @@ pub const RECIPE_IMPORT: Operation = Operation {
     input_contract: "legacy-authoring.v1",
     output_contract: "legacy-authoring-unavailable.v1",
 };
+pub const ACCOUNT_PROFILE_GET: Operation = Operation {
+    id: "account.profile.get.v1",
+    mcp_tool: "account_profile_get",
+    input_contract: "empty.v1",
+    output_contract: "account-profile.v1",
+};
+pub const INVITATION_PROOF_BEGIN: Operation = Operation {
+    id: "account.invitation.proof.begin.v1",
+    mcp_tool: "invitation_response_begin",
+    input_contract: "invitation-response-begin.v1",
+    output_contract: "pending-interaction.v1",
+};
+pub const INVITATION_PROOF_STATUS: Operation = Operation {
+    id: "account.invitation.proof.status.v1",
+    mcp_tool: "invitation_response_status",
+    input_contract: "interaction-id.v1",
+    output_contract: "interaction-status.v1",
+};
+pub const INVITATION_DISCOVERY_BEGIN: Operation = Operation {
+    id: "account.invitation.discovery.begin.v1",
+    mcp_tool: "invitation_discovery_begin",
+    input_contract: "request-id.v1",
+    output_contract: "pending-interaction.v1",
+};
+pub const INVITATION_LIST: Operation = Operation {
+    id: "account.invitation.list.v1",
+    mcp_tool: "invitation_list",
+    input_contract: "interaction-id.v1",
+    output_contract: "invitation-list.v1",
+};
+pub const INVITATION_CANCEL: Operation = Operation {
+    id: "account.invitation.cancel.v1",
+    mcp_tool: "invitation_cancel",
+    input_contract: "workspace-invitation-id.v1",
+    output_contract: "invitation-cancel.v1",
+};
 pub const FORMULATION_PREVIEW: Operation = Operation {
     id: "formulation.preview.v1",
     mcp_tool: "formulation_preview",
@@ -159,6 +195,12 @@ pub const OPERATIONS: &[Operation] = &[
     EQUIPMENT_GET,
     EQUIPMENT_LIST,
     EQUIPMENT_REVISION,
+    INVITATION_CANCEL,
+    INVITATION_DISCOVERY_BEGIN,
+    INVITATION_LIST,
+    INVITATION_PROOF_BEGIN,
+    INVITATION_PROOF_STATUS,
+    ACCOUNT_PROFILE_GET,
     WORKSPACE_GET,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,

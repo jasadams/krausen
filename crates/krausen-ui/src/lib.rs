@@ -77,8 +77,8 @@ pub fn register_server_functions() {
     register_explicit::<GetPendingInvitations>();
     register_explicit::<UpdateProfileName>();
     register_explicit::<UpdateTheme>();
-    register_explicit::<AcceptInvitation>();
-    register_explicit::<DeclineInvitation>();
+    register_explicit::<BeginInvitationDiscovery>();
+    register_explicit::<BeginInvitationResponse>();
 
     // Security
     use server_fns::security::*;

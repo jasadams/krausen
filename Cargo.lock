@@ -2068,6 +2068,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "hmac",
  "krausen-beerxml",
  "krausen-brewery",
  "krausen-calc",
@@ -2077,9 +2078,11 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
