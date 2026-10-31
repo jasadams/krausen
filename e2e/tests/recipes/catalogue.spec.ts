@@ -34,7 +34,7 @@ test('the starter catalogue search copies a resolved specification into the reci
   await picker.getByRole('button', { name: /Weyermann Vienna/ }).click();
   await expect(picker.locator('.k-catalogue-selection strong')).toHaveText('Weyermann Vienna');
   await page.getByLabel('Amount in recipe (kg)').fill('4.5');
-  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await picker.getByRole('button', { name: 'Add ingredient' }).click();
   await expect(picker).toBeHidden();
 
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Weyermann Vienna');
@@ -77,11 +77,13 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Your library'),
   ).toBeVisible();
-  await expect(picker.getByRole('button', { name: /4\.5 EBC · 80% yield/ })).toHaveCount(1);
+  await expect(
+    picker.locator('.k-catalogue-item', { hasText: entryName }).getByText(/4\.5 EBC · 80% yield/),
+  ).toBeVisible();
   await picker.getByRole('button', { name: entryName }).click();
   await expect(picker.locator('.k-catalogue-selection strong')).toHaveText(entryName);
   await expect(picker.getByRole('button', { name: 'Add ingredient' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await picker.getByRole('button', { name: 'Add ingredient' }).click();
   await expect(picker).toBeHidden();
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue(entryName);
 
@@ -128,11 +130,12 @@ test('library entries support edit, archive, restore and lost-response retry', a
   // request identity instead of minting a second entry.
   let saveAttempt = 0;
   await page.route('**/leptos-api/execute_ingredient_command*', async route => {
-    const postData = route.request().postData() ?? '';
-    if (saveAttempt === 0 && postData.includes('Save')) {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (saveAttempt === 0 && command?.Save) {
       saveAttempt += 1;
       await route.fetch();
-      await route.fulfill({ status: 599, body: 'response lost' });
+      await route.fulfill({ status: 503, body: 'response lost' });
       return;
     }
     await route.continue();
@@ -143,7 +146,7 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await page.getByLabel('Producer').fill('E2E managed maltster');
   await page.getByLabel('Colour (EBC)').fill('4.5');
   await page.getByLabel('Potential yield (%)').fill('80');
-  await page.getByRole('button', { name: 'Save to library' }).click();
+  await create.getByRole('button', { name: 'Save to library' }).click();
   await expect(create.getByText('Save may not have completed')).toBeVisible();
   await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
   await create.getByRole('button', { name: 'Retry previous request' }).click();
