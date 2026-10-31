@@ -30,25 +30,11 @@ pub fn BreweryField(
     #[prop(optional, into)] error: Option<String>,
     #[prop(default = false)] disabled: bool,
 ) -> impl IntoView {
-    let description_id = format!("{id}-description");
-    let described_by = if hint.is_some() || error.is_some() {
-        Some(description_id.clone())
-    } else {
-        None
-    };
-    let aria_invalid = if error.is_some() { "true" } else { "false" };
-    let description = error.clone().or(hint);
-    let has_error = error.is_some();
-    view! {
-        <div class="k-field">
-            <label class="k-field__label" for=id.clone()>{label}{unit.as_ref().map(|u| format!(" ({u})"))}</label>
-            <div class="k-field__control">
-                <input id=id type=input_type prop:value=move || value.get() on:input=move |ev| value.set(event_target_value(&ev)) aria-invalid=aria_invalid aria-describedby=described_by disabled=disabled />
-                {unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
-            </div>
-            {description.map(|text| view! { <span id=description_id class=if has_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
-        </div>
-    }
+    view! { <BreweryDraftField id=id label=label value=Signal::from(value)
+        on_change=Callback::new(move |next| value.set(next)) input_type=input_type
+        unit=unit.unwrap_or_default() hint=MaybeProp::from(hint)
+        error=MaybeProp::from(error) disabled=disabled/> }
+
 }
 
 /// The application's style comparison, displayed without inferring validation.
@@ -245,16 +231,10 @@ pub fn BrewerySelect(
     options: Vec<(String, String)>,
     #[prop(optional, into)] hint: Option<String>,
 ) -> impl IntoView {
-    let hint_id = format!("{id}-hint");
-    let described_by = hint.as_ref().map(|_| hint_id.clone());
-    view! {
-        <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label>
-            <div class="k-field__control k-select"><select id=id prop:value=move || value.get() aria-describedby=described_by on:change=move |ev| value.set(event_target_value(&ev))>
-                {options.into_iter().map(|(v, label)| view! { <option value=v>{label}</option> }).collect_view()}
-            </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
-            {hint.map(|text| view! { <span id=hint_id class="k-field__hint">{text}</span> })}
-        </div>
-    }
+    view! { <BreweryDraftSelect id=id label=label value=Signal::from(value)
+        on_change=Callback::new(move |next| value.set(next)) options=options
+        hint=MaybeProp::from(hint)/> }
+
 }
 
 #[component]
@@ -264,9 +244,9 @@ pub fn BreweryTextArea(
     value: RwSignal<String>,
     #[prop(optional, into)] hint: Option<String>,
 ) -> impl IntoView {
-    let hint_id = format!("{id}-hint");
-    let described_by = hint.as_ref().map(|_| hint_id.clone());
-    view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label><div class="k-field__control"><textarea id=id rows="3" prop:value=move || value.get() aria-describedby=described_by on:input=move |ev| value.set(event_target_value(&ev))></textarea></div>{hint.map(|text| view! { <span id=hint_id class="k-field__hint">{text}</span> })}</div> }
+    view! { <BreweryDraftArea id=id label=label value=Signal::from(value)
+        on_change=Callback::new(move |next| value.set(next)) hint=MaybeProp::from(hint)/> }
+
 }
 
 #[cfg(all(test, feature = "ssr"))]
@@ -285,6 +265,27 @@ mod tests {
             assert!(html.contains("aria-describedby=\"amount-description\""));
             assert!(html.contains("Enter a non-negative amount"));
             assert!(html.contains("kg"));
+        });
+    }
+
+    #[test]
+    fn controlled_choices_and_notes_expose_descriptions_and_disabled_state() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let value = RwSignal::new("a".to_owned());
+            let html = view! {
+                <BreweryDraftSelect id="style" label="Style" value=Signal::from(value)
+                    on_change=Callback::new(move |next| value.set(next))
+                    options=vec![("a".into(), "A".into())] hint="Choose a style" disabled=true/>
+                <BreweryDraftArea id="notes" label="Notes" value=Signal::from(value)
+                    on_change=Callback::new(move |next| value.set(next)) error="Notes required" disabled=true/>
+            }.to_html();
+            assert!(html.contains("aria-describedby=\"style-description\""));
+            assert!(html.contains("Choose a style"));
+            assert!(html.contains("aria-describedby=\"notes-description\""));
+            assert!(html.contains("Notes required"));
+            assert!(html.contains("aria-invalid=\"true\""));
+            assert!(html.matches("disabled").count() >= 2);
         });
     }
 
@@ -416,22 +417,28 @@ pub fn BreweryDraftField(
     #[prop(into)] label: String,
     value: Signal<String>,
     on_change: Callback<String>,
-    #[prop(optional, into)] unit: Option<String>,
+    #[prop(optional, into)] unit: String,
     #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(optional, into)] hint: MaybeProp<String>,
     #[prop(default = false)] numeric: bool,
+    #[prop(default = false)] disabled: bool,
+    #[prop(default = "text")] input_type: &'static str,
 ) -> impl IntoView {
     let description_id = format!("{id}-description");
     let described = description_id.clone();
+    let label_unit = (!unit.is_empty()).then(|| format!(" ({unit})"));
+    let display_unit = (!unit.is_empty()).then_some(unit);
     view! {
         <div class="k-field">
-            <label class="k-field__label" for=id.clone()>{label}{unit.as_ref().map(|u| format!(" ({u})"))}</label>
+            <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
-                <input id=id type="text" inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || error.get().map(|_| described.clone()) />
-                {unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
+                <input id=id type=input_type inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled />
+                {display_unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
             </div>
-            {move || error.get().map(|text| view! { <span id=description_id.clone() class="k-field__error">{text}</span> })}
+            {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
         </div>
     }
+
 }
 
 /// Controlled choice without coupling a caller's model to presentation state.
@@ -442,14 +449,21 @@ pub fn BreweryDraftSelect(
     value: Signal<String>,
     on_change: Callback<String>,
     options: Vec<(String, String)>,
+    #[prop(optional, into)] hint: MaybeProp<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(default = false)] disabled: bool,
 ) -> impl IntoView {
     let known = options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
+    let description_id = format!("{id}-description");
+    let described = description_id.clone();
     view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label>
-        <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev))>
+        <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev)) disabled=disabled aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone())>
             {move || { let selected = value.get(); (!selected.is_empty() && !known.contains(&selected)).then(|| view! { <option value=selected.clone()>{format!("Unrecognized: {selected}")}</option> }) }}
             {options.into_iter().map(|(v, label)| view! { <option value=v>{label}</option> }).collect_view()}
         </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
+        {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
     </div> }
+
 }
 
 /// Approved local mark and wordmark, shared by desktop and mobile navigation.
@@ -471,8 +485,16 @@ pub fn BreweryDraftArea(
     #[prop(into)] label: String,
     value: Signal<String>,
     on_change: Callback<String>,
+    #[prop(optional, into)] hint: MaybeProp<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(default = false)] disabled: bool,
 ) -> impl IntoView {
-    view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label><div class="k-field__control"><textarea id=id rows="3" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev))></textarea></div></div> }
+    let description_id = format!("{id}-description");
+    let described = description_id.clone();
+    view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label><div class="k-field__control"><textarea id=id rows="3" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) disabled=disabled aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone())></textarea></div>
+        {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
+    </div> }
+
 }
 
 /// A compact editable addition with shared spacing and separation.

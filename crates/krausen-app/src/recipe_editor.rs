@@ -138,10 +138,11 @@ async fn save_inner(
     } else {
         "SELECT revision FROM workspaces WHERE workspace_id = $1 AND status = 'active'"
     };
-    if scalar!(&mut tx, i64, ws_sql, &actor.workspace_id)
-        .map_err(db_error)?
-        .is_none()
-    {
+    let workspace = scalar!(&mut tx, i64, ws_sql, &actor.workspace_id).map_err(db_error)?;
+    // The row lock can wait past access or credential expiry. Recheck under
+    // the same transaction before returning a stored result or writing.
+    authorize_workspace(&mut tx, actor).await?;
+    if workspace.is_none() {
         return Err(Error::Forbidden);
     }
     let validation = validate_draft(document, &document.equipment_overrides);
@@ -194,9 +195,9 @@ async fn save_inner(
             } else {
                 "SELECT native_head_revision FROM recipes WHERE workspace_id = $1 AND recipe_id = $2 AND deleted_at IS NULL"
             };
-            let Some(actual) =
-                scalar!(&mut tx, i64, sql, &actor.workspace_id, id).map_err(db_error)?
-            else {
+            let actual = scalar!(&mut tx, i64, sql, &actor.workspace_id, id).map_err(db_error)?;
+            authorize_workspace(&mut tx, actor).await?;
+            let Some(actual) = actual else {
                 return Ok(RecipeSaveOutcome::NotFound);
             };
             if actual != expected {
