@@ -177,7 +177,9 @@ pub fn BreweryDialog(
         if let Some(element) = dialog.get() {
             let native: &web_sys::HtmlDialogElement = element.unchecked_ref();
             if is_open && !native.open() {
-                let _ = native.show_modal();
+                if let Err(error) = native.show_modal() {
+                    tracing::warn!(error = ?error, "Unable to open dialog");
+                }
             }
             if !is_open && native.open() {
                 native.close();
@@ -416,6 +418,7 @@ pub fn BreweryDraftField(
     on_change: Callback<String>,
     #[prop(optional, into)] unit: Option<String>,
     #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(default = false)] numeric: bool,
 ) -> impl IntoView {
     let description_id = format!("{id}-description");
     let described = description_id.clone();
@@ -423,7 +426,7 @@ pub fn BreweryDraftField(
         <div class="k-field">
             <label class="k-field__label" for=id.clone()>{label}{unit.as_ref().map(|u| format!(" ({u})"))}</label>
             <div class="k-field__control">
-                <input id=id type="text" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || error.get().map(|_| described.clone()) />
+                <input id=id type="text" inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || error.get().map(|_| described.clone()) />
                 {unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
             </div>
             {move || error.get().map(|text| view! { <span id=description_id.clone() class="k-field__error">{text}</span> })}

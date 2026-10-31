@@ -15,25 +15,92 @@ use krausen_types::{
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
+#[derive(Clone)]
+struct EditorIdentity {
+    account_id: String,
+    workspace_id: String,
+}
+
+async fn current_context_matches(expected: &EditorIdentity) -> bool {
+    let result = crate::server_fns::context::get_user_context().await;
+    #[cfg(target_arch = "wasm32")]
+    let result = if result
+        .as_ref()
+        .err()
+        .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+        && crate::utils::auth_refresh::try_refresh().await
+    {
+        crate::server_fns::context::get_user_context().await
+    } else {
+        result
+    };
+    result.is_ok_and(|ctx| {
+        ctx.user_id == expected.account_id
+            && ctx.workspace_id.as_deref() == Some(expected.workspace_id.as_str())
+    })
+}
+
 #[component]
 pub fn RecipeEditorPage() -> impl IntoView {
     let params = use_params_map();
     let load = LocalResource::new(move || {
         let id = params.read().get("id").unwrap_or_default();
         async move {
-            if id == "new" {
-                Ok(None)
+            let context = crate::server_fns::context::get_user_context().await;
+            #[cfg(target_arch = "wasm32")]
+            let context = if context
+                .as_ref()
+                .err()
+                .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                && crate::utils::auth_refresh::try_refresh().await
+            {
+                crate::server_fns::context::get_user_context().await
             } else {
-                read_recipe(id).await.map(Some)
-            }
+                context
+            };
+            let context = context?;
+            let identity = EditorIdentity {
+                account_id: context.user_id,
+                workspace_id: context
+                    .workspace_id
+                    .ok_or_else(|| ServerFnError::new("Workspace required"))?,
+            };
+            let result = if id == "new" {
+                None
+            } else {
+                let result = read_recipe(
+                    identity.account_id.clone(),
+                    identity.workspace_id.clone(),
+                    id.clone(),
+                )
+                .await;
+                #[cfg(target_arch = "wasm32")]
+                let result = if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                    && crate::utils::auth_refresh::try_refresh().await
+                {
+                    read_recipe(
+                        identity.account_id.clone(),
+                        identity.workspace_id.clone(),
+                        id,
+                    )
+                    .await
+                } else {
+                    result
+                };
+                Some(result?)
+            };
+            Ok::<_, ServerFnError>((identity, result))
         }
     });
     view! { <Suspense fallback=|| view! { <p>"Loading recipe…"</p> }>
         {move || Suspend::new(async move { match load.await {
-            Ok(None) => view! { <RecipeForm initial=None/> }.into_any(),
-            Ok(Some(RecipeReadOutcome::Found(snapshot))) => view! { <RecipeForm initial=Some(snapshot)/> }.into_any(),
-            Ok(Some(RecipeReadOutcome::NotFound)) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
-            Ok(Some(RecipeReadOutcome::Forbidden)) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
+            Ok((identity, None)) => view! { <RecipeForm identity=identity initial=None/> }.into_any(),
+            Ok((identity, Some(RecipeReadOutcome::Found(snapshot)))) => view! { <RecipeForm identity=identity initial=Some(snapshot)/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::NotFound))) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::Forbidden))) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
             _ => view! { <BreweryNotice title="Unable to load recipe" body="Try again when the connection is available." warning=true/> }.into_any(),
         } })}
     </Suspense> }
@@ -49,14 +116,55 @@ struct PendingRecipeSave {
 }
 
 #[component]
-fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
+fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
+    let identity = RwSignal::new(identity);
+    let context_visible = RwSignal::new(true);
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
     let draft = RwSignal::new(RecipeDraft::new(
         initial.map(|s| s.document).unwrap_or_default(),
     ));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let check_generation = RwSignal::new(0_u64);
+        let recheck = Callback::new(move |()| {
+            context_visible.set(false);
+            draft.update(|d| {
+                d.preview.invalidate();
+            });
+            let generation = check_generation
+                .get_untracked()
+                .checked_add(1)
+                .expect("context check generation exhausted");
+            check_generation.set(generation);
+            let expected = identity.get_untracked();
+            leptos::task::spawn_local(async move {
+                let matches = current_context_matches(&expected).await;
+                if check_generation.try_get_untracked() == Some(generation) {
+                    context_visible.set(matches);
+                }
+            });
+        });
+        let focus = window_event_listener(leptos::ev::focus, move |_| recheck.run(()));
+        let storage = window_event_listener(leptos::ev::storage, move |event| {
+            if event.key().as_deref() == Some(crate::components::layout::CONTEXT_CHANGED_KEY) {
+                recheck.run(());
+            }
+        });
+        on_cleanup(move || {
+            focus.remove();
+            storage.remove();
+        });
+    }
     let status = RwSignal::new(String::new());
     let pending = RwSignal::new(false);
+    let editor_guard = expect_context::<crate::components::layout::EditorGuard>();
+    Effect::new(move |_| {
+        editor_guard
+            .dirty
+            .set(draft.with(|d| d.dirty) || pending.get())
+    });
+    on_cleanup(move || editor_guard.dirty.set(false));
     let retry = RwSignal::new(None::<PendingRecipeSave>);
     let title = Signal::derive(move || draft.with(|d| d.document().title.clone()));
     let title_change =
@@ -117,7 +225,7 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
         })
     });
     let save = move |_| {
-        if pending.get_untracked() {
+        if pending.get_untracked() || !context_visible.get_untracked() {
             return;
         }
         let attempt = if let Some(attempt) = retry.get_untracked() {
@@ -147,13 +255,45 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
         leptos::task::spawn_local(async move {
             #[cfg(target_arch = "wasm32")]
             let creating = attempt.recipe_id.is_none();
+            let identity = identity.get_untracked();
+            if !current_context_matches(&identity).await {
+                context_visible.set(false);
+                pending.set(false);
+                return;
+            }
             let result = save_recipe(
-                attempt.recipe_id,
+                identity.account_id.clone(),
+                identity.workspace_id.clone(),
+                attempt.recipe_id.clone(),
                 attempt.expected,
-                attempt.document,
-                attempt.request_id,
+                attempt.document.clone(),
+                attempt.request_id.clone(),
             )
             .await;
+            #[cfg(target_arch = "wasm32")]
+            let result = if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                && crate::utils::auth_refresh::try_refresh().await
+            {
+                if !current_context_matches(&identity).await {
+                    context_visible.set(false);
+                    pending.set(false);
+                    return;
+                }
+                save_recipe(
+                    identity.account_id,
+                    identity.workspace_id,
+                    attempt.recipe_id,
+                    attempt.expected,
+                    attempt.document,
+                    attempt.request_id,
+                )
+                .await
+            } else {
+                result
+            };
             pending.set(false);
             match result {
                 Ok(RecipeSaveOutcome::Saved {
@@ -228,6 +368,7 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
                     status.set("The save request was invalid. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::Forbidden) => {
+                    context_visible.set(false);
                     status.set("You no longer have access to this workspace.".into())
                 }
                 Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile) => {
@@ -241,6 +382,12 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
                     retry.set(None);
                     status.set("An ingredient or import reference could not be verified.".into());
                 }
+                Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    context_visible.set(false);
+                    status.set(
+                        "Your session expired. Sign in again; your draft is still open.".into(),
+                    );
+                }
                 _ => status.set(
                     "Save failed. Retry to confirm the previous save; your draft is still open."
                         .into(),
@@ -248,7 +395,7 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
             }
         });
     };
-    view! { <div class="recipe-editor">
+    view! { <Show when=move || !context_visible.get()><BreweryNotice title="Recipe held in its original workspace" body="Return to the account and workspace where you opened this draft to continue." warning=true/></Show><div class="recipe-editor" hidden=move || !context_visible.get()>
         <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>"Recipe editor"</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { "Unsaved changes".to_owned() } else { message }
@@ -313,7 +460,7 @@ fn NumberField(
     let value = Signal::derive(move || draft.with(|d| d.number_text(path, read(d.document()))));
     let error = Signal::derive(move || draft.with(|d| d.number_error(path).map(str::to_owned)));
     let change = Callback::new(move |text| draft.update(|d| d.edit_number(path, text, write)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
 }
 
 fn diagnostic_message(diagnostic: &krausen_types::validation::Diagnostic) -> String {
@@ -684,7 +831,7 @@ fn IngredientNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -873,7 +1020,7 @@ fn AdditionalNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=if attenuation {"Yeast attenuation (informational)"} else {"Amount"} value=value error=error on_change=change/> }
+    view! { <BreweryDraftField id=input_id label=if attenuation {"Yeast attenuation (informational)"} else {"Amount"} value=value error=error on_change=change numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -1028,5 +1175,5 @@ fn StepNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change numeric=true/> }
 }

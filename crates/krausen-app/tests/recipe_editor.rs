@@ -34,10 +34,40 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
+    let credential = format!("c-{suffix}");
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+        &credential,
+        &user,
+        chrono::Utc::now().timestamp() + 3600
+    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
+        credential_id: credential,
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
+    let expired = ActorContext {
+        access_expires_at: chrono::Utc::now().timestamp() - 1,
+        ..actor.clone()
+    };
+    assert_eq!(
+        read(&db, &expired, "missing").await,
+        RecipeReadOutcome::Forbidden
+    );
+    run!(
+        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
+        chrono::Utc::now().timestamp(),
+        &actor.credential_id
+    );
+    assert_eq!(
+        read(&db, &actor, "missing").await,
+        RecipeReadOutcome::Forbidden
+    );
+    run!(
+        "UPDATE auth_credentials SET revoked_at = NULL WHERE credential_id = $1",
+        &actor.credential_id
+    );
     let mut draft = RecipeDocumentV1 {
         title: "An incomplete recipe".into(),
         ..Default::default()
@@ -52,6 +82,23 @@ async fn exercise(db: DbPool) {
         panic!("{created:?}");
     };
     assert_eq!(save(&db, &actor, None, None, &draft, key).await, created);
+    let refreshed_credential = format!("refresh-{suffix}");
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+        &refreshed_credential,
+        &user,
+        chrono::Utc::now().timestamp() + 3600
+    );
+    let refreshed_actor = ActorContext {
+        credential_id: refreshed_credential,
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
+        ..actor.clone()
+    };
+    assert_eq!(
+        save(&db, &refreshed_actor, None, None, &draft, key).await,
+        created
+    );
+
     draft.title = "Revised".into();
     assert_eq!(
         save(&db, &actor, None, None, &draft, key).await,
@@ -106,6 +153,7 @@ async fn exercise(db: DbPool) {
     let foreign_actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: foreign_workspace,
+        ..actor.clone()
     };
     assert_eq!(
         read(&db, &foreign_actor, recipe_id).await,

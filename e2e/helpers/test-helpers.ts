@@ -3,7 +3,9 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 
-const DB_PATH = path.resolve(__dirname, '../../data/krausen.db');
+const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
+  ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
+  : path.resolve(__dirname, '../../data/krausen.db');
 
 /**
  * Run one statement against the test database.

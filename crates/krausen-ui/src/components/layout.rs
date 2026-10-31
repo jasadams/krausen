@@ -8,12 +8,35 @@ use leptos_router::components::Outlet;
 use crate::components::Spinner;
 use crate::server_fns::sidebar::{get_sidebar_user, list_user_workspaces, switch_workspace, SidebarUser};
 
+/// A cross-tab invalidation signal; it contains no account or credential data.
+pub const CONTEXT_CHANGED_KEY: &str = "krausen-context-changed";
+
+/// Prevent an in-progress recipe draft from being discarded by workspace switching.
+#[derive(Clone, Copy)]
+pub struct EditorGuard {
+    pub dirty: RwSignal<bool>,
+    pub notice: RwSignal<bool>,
+}
+
 /// Main authenticated layout with sidebar and content area.
 #[component]
 pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
     let (user_menu_open, set_user_menu_open) = signal(false);
     let mobile_sidebar_open = RwSignal::new(false);
+    let editor_guard = EditorGuard { dirty: RwSignal::new(false), notice: RwSignal::new(false) };
+    provide_context(editor_guard);
+
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |_| {
+        if matches!(user_info.get(), Some(Ok(_))) {
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                if let Err(error) = storage.set_item(CONTEXT_CHANGED_KEY, &js_sys::Date::now().to_string()) {
+                    tracing::warn!(error = ?error, "Unable to notify other tabs of context change");
+                }
+            }
+        }
+    });
 
     let auth_confirmed = RwSignal::new(false);
     let nav = leptos_router::hooks::use_navigate();
@@ -42,6 +65,10 @@ pub fn Layout() -> impl IntoView {
                 <div class="hidden md:block">
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
                 </div>
+
+                <crate::components::BreweryDialog id="workspace-draft-warning" title="Save your recipe first" description="Your unsaved recipe stays open in this workspace." open=editor_guard.notice>
+                    <p>"Save your recipe before switching workspaces or signing out."</p>
+                </crate::components::BreweryDialog>
 
                 <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
@@ -79,6 +106,7 @@ fn Sidebar(
     user_menu_open: ReadSignal<bool>,
     set_user_menu_open: WriteSignal<bool>,
 ) -> impl IntoView {
+    let editor_guard = expect_context::<EditorGuard>();
 
     view! {
         <div class="w-[var(--k-sidebar-width)] bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
@@ -143,6 +171,11 @@ fn Sidebar(
                                         <button
                                             class="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
                                             on:click=move |_| {
+                                                if editor_guard.dirty.get_untracked() {
+                                                    editor_guard.notice.set(true);
+                                                    set_user_menu_open.set(false);
+                                                    return;
+                                                }
                                                 set_user_menu_open.set(false);
                                                 leptos::task::spawn_local(async move {
                                                     let _ = crate::server_fns::security::logout().await;
@@ -171,6 +204,7 @@ fn Sidebar(
 /// Workspace switcher — shows list of workspaces, allows switching.
 #[component]
 fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
+    let editor_guard = expect_context::<EditorGuard>();
     let workspaces = LocalResource::new(list_user_workspaces);
 
     view! {
@@ -192,6 +226,11 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                         class="w-full text-left px-4 py-2 text-sm hover:bg-secondary transition-colors flex items-center gap-2"
                                         disabled=is_current
                                         on:click=move |_| {
+                                            if editor_guard.dirty.get_untracked() {
+                                                editor_guard.notice.set(true);
+                                                set_user_menu_open.set(false);
+                                                return;
+                                            }
                                             let ws_id = ws_id.clone();
                                             set_user_menu_open.set(false);
                                             leptos::task::spawn_local(async move {

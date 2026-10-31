@@ -49,6 +49,18 @@ pub const STYLE_LIST: Operation = Operation {
     input_contract: "formulation-style-query.v1",
     output_contract: "StyleListOutcome",
 };
+pub const RECIPE_READ: Operation = Operation {
+    id: "recipe.read.v1",
+    mcp_tool: "recipe_read",
+    input_contract: "recipe-read.v1",
+    output_contract: "RecipeReadOutcome",
+};
+pub const RECIPE_SAVE: Operation = Operation {
+    id: "recipe.save.v1",
+    mcp_tool: "recipe_save",
+    input_contract: "recipe-save.v1",
+    output_contract: "RecipeSaveOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     WORKSPACE_GET,
     WORKSPACE_RENAME,
@@ -57,6 +69,8 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_IMPORT,
     FORMULATION_PREVIEW,
     STYLE_LIST,
+    RECIPE_READ,
+    RECIPE_SAVE,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

@@ -10,14 +10,23 @@ use leptos::prelude::*;
 use leptos::server_fn::codec::Json;
 
 #[server(prefix = "/leptos-api")]
-pub async fn read_recipe(recipe_id: String) -> Result<RecipeReadOutcome, ServerFnError> {
+pub async fn read_recipe(
+    account_id: String,
+    workspace_id: String,
+    recipe_id: String,
+) -> Result<RecipeReadOutcome, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let actor = super::verified_actor(&ac.auth)?;
+    if actor.actor_id != account_id || actor.workspace_id != workspace_id {
+        return Ok(RecipeReadOutcome::Forbidden);
+    }
     Ok(krausen_app::recipe_editor::read(ac.db(), &actor, &recipe_id).await)
 }
 
 #[server(prefix = "/leptos-api", input = Json)]
 pub async fn save_recipe(
+    account_id: String,
+    workspace_id: String,
     recipe_id: Option<String>,
     expected_revision: Option<i64>,
     document: RecipeDocumentV1,
@@ -25,6 +34,9 @@ pub async fn save_recipe(
 ) -> Result<RecipeSaveOutcome, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let actor = super::verified_actor(&ac.auth)?;
+    if actor.actor_id != account_id || actor.workspace_id != workspace_id {
+        return Ok(RecipeSaveOutcome::Forbidden);
+    }
     let Ok(request_id) = uuid::Uuid::parse_str(&request_id) else {
         return Ok(RecipeSaveOutcome::InvalidRequest);
     };

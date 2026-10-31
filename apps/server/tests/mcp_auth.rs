@@ -619,6 +619,110 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(denied.is_error, Some(true));
     assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
+    let recipe_tool = discovered
+        .tools
+        .iter()
+        .find(|tool| tool.name == "recipe_save")
+        .unwrap();
+    assert!(recipe_tool.input_schema.get("$defs").is_some());
+    assert!(
+        recipe_tool.input_schema["properties"]["document"]["properties"]
+            .get("fermentables")
+            .is_some()
+    );
+    // Both protocol versions and the browser-facing app use the same native
+    // operation and revision contract, including request replay and authority.
+    let mut native = krausen_types::brewery::RecipeDocumentV1::default();
+    native.title = "MCP recipe".into();
+    let invalid_args = json!({"workspace_id": ws, "document": native, "request_id": "invalid"})
+        .as_object()
+        .unwrap()
+        .clone();
+    let invalid = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(invalid_args))
+        .await
+        .unwrap();
+    assert_eq!(invalid.is_error, Some(true));
+    assert_eq!(
+        invalid.structured_content.unwrap()["outcome"],
+        "InvalidRequest"
+    );
+    let denied_args = json!({"workspace_id": "not-a-member", "document": native, "request_id": uuid::Uuid::new_v4()}).as_object().unwrap().clone();
+    let denied = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(denied_args))
+        .await
+        .unwrap();
+    assert_eq!(denied.is_error, Some(true));
+    assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
+    let save_key = uuid::Uuid::new_v4();
+    let save_args = json!({"workspace_id": ws, "document": native, "request_id": save_key})
+        .as_object()
+        .unwrap()
+        .clone();
+    let native_first = legacy
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(save_args.clone()))
+        .await
+        .unwrap();
+    let native_retry = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(save_args))
+        .await
+        .unwrap();
+    assert_eq!(
+        native_first.structured_content,
+        native_retry.structured_content
+    );
+    let native_result = native_first.structured_content.unwrap();
+    let native_id = native_result["outcome"]["Saved"]["recipe_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(native_result["outcome"]["Saved"]["revision"], 1);
+    let actor_for_recipe = krausen_app::ActorContext {
+        actor_id: principal.user_id.clone(),
+        credential_id: principal.credential_id.clone(),
+        access_expires_at: principal.access_expires_at,
+        workspace_id: ws.clone(),
+    };
+    let snapshot = krausen_app::recipe_editor::read(&db, &actor_for_recipe, &native_id).await;
+    assert!(
+        matches!(snapshot, krausen_types::recipe_editor::RecipeReadOutcome::Found(ref snapshot) if snapshot.document == native && snapshot.revision == 1)
+    );
+    native.title = "Browser edit".into();
+    let saved = krausen_app::recipe_editor::save(
+        &db,
+        &actor_for_recipe,
+        Some(&native_id),
+        Some(1),
+        &native,
+        uuid::Uuid::new_v4(),
+    )
+    .await;
+    assert!(matches!(
+        saved,
+        krausen_types::recipe_editor::RecipeSaveOutcome::Saved { revision: 2, .. }
+    ));
+    let read_args = json!({"workspace_id":ws,"recipe_id":native_id})
+        .as_object()
+        .unwrap()
+        .clone();
+    let native_read = modern
+        .call_tool(CallToolRequestParams::new("recipe_read").with_arguments(read_args))
+        .await
+        .unwrap();
+    assert_eq!(
+        native_read.structured_content.unwrap()["outcome"]["Found"]["document"]["title"],
+        "Browser edit"
+    );
+    let stale_args = json!({"workspace_id":ws,"recipe_id":native_id,"expected_revision":1,"document":native,"request_id":uuid::Uuid::new_v4()}).as_object().unwrap().clone();
+    let stale = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(stale_args))
+        .await
+        .unwrap();
+    assert_eq!(stale.is_error, Some(true));
+    assert_eq!(
+        stale.structured_content.unwrap()["outcome"]["Conflict"]["actual"],
+        2
+    );
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()
