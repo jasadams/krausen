@@ -1889,6 +1889,7 @@ name = "krausen-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "krausen-brewery",
  "krausen-core",
  "krausen-types",
  "serde",
@@ -1940,9 +1941,11 @@ name = "krausen-beerxml"
 version = "0.1.0"
 dependencies = [
  "krausen-calc",
+ "krausen-types",
  "quick-xml",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
 ]
 
@@ -1954,9 +1957,11 @@ dependencies = [
  "krausen-beerxml",
  "krausen-calc",
  "krausen-core",
+ "krausen-types",
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -1983,7 +1988,10 @@ dependencies = [
  "rand 0.9.4",
  "redis",
  "serde",
+ "serde-value",
  "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -2004,6 +2012,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures-util",
+ "krausen-app",
  "krausen-auth",
  "krausen-core",
  "krausen-types",
@@ -2698,6 +2707,15 @@ name = "or_poisoned"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
+
+[[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "p256"
@@ -3626,6 +3644,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3718,6 +3742,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float",
+ "serde",
+]
+
+[[package]]
 name = "serde_cbor_2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3758,6 +3792,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_json_canonicalizer"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe52319a927259afbfa5180c5157cd8167edfd3e8c254f9558c7fef44c5649f2"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -10,11 +10,13 @@ license = { workspace = true }
 krausen-beerxml = { workspace = true }
 krausen-calc = { workspace = true }
 krausen-core = { workspace = true }
+krausen-types = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

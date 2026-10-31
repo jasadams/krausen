@@ -360,7 +360,7 @@ async fn another_workspace_cannot_update_or_delete_it() {
 
 #[tokio::test]
 async fn a_whole_beerxml_file_imports() {
-    const EXAMPLES: &str = include_str!("../../krausen-beerxml/tests/data/beerxml_com_examples.xml");
+    const EXAMPLES: &str = include_str!("../../krausen-beerxml/tests/fixtures/synthetic.xml");
 
     let db = test_db().await;
     let doc = krausen_beerxml::parse(EXAMPLES).expect("parses");

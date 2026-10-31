@@ -5,6 +5,8 @@ use krausen_core::{DbPool, DbTx};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod recipe_migration;
+
 /// Constructed only by an authenticated adapter; workspace selection is not authority.
 #[derive(Debug, Clone)]
 pub struct ActorContext {
@@ -26,6 +28,8 @@ pub enum Error {
     Invalid(&'static str),
     #[error("retry transaction")]
     Retryable,
+    #[error("legacy recipe authoring is unavailable during native migration")]
+    LegacyAuthoringUnavailable,
     #[error(transparent)]
     Database(#[from] krausen_core::Error),
     #[error(transparent)]

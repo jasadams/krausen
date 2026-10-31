@@ -42,14 +42,7 @@ pub async fn get_workspace_settings() -> Result<WorkspaceSettingsData, ServerFnE
     let ac = AuthenticatedContext::extract().await?;
     require_workspace_admin(&ac.auth)?;
 
-    if ac.auth.token_exp.is_none() {
-        return Err(ServerFnError::new("Authentication required"));
-    }
-
-    let actor = krausen_app::ActorContext {
-        actor_id: ac.auth.user_id.clone(),
-        workspace_id: ac.ws_id.clone(),
-    };
+    let actor = super::verified_actor(&ac.auth)?;
     let workspace = krausen_app::workspace_snapshot(ac.db(), &actor)
         .await
         .map_err(|e| {
@@ -74,13 +67,7 @@ pub async fn update_workspace_name(
     request_id: String,
 ) -> Result<WorkspaceRenameOutcome, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    if ac.auth.token_exp.is_none() {
-        return Err(ServerFnError::new("Authentication required"));
-    }
-    let actor = krausen_app::ActorContext {
-        actor_id: ac.auth.user_id.clone(),
-        workspace_id: ac.ws_id.clone(),
-    };
+    let actor = super::verified_actor(&ac.auth)?;
     Ok(execute_rename(ac.db(), &actor, &name, expected_revision, &request_id).await)
 }
 

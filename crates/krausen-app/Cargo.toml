@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 krausen-core.workspace = true
 krausen-types.workspace = true
+krausen-brewery.workspace = true
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true

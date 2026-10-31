@@ -14,7 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use krausen_beerxml::Recipe as RecipeDocument;
-use krausen_core::{db_execute, db_fetch_all, db_fetch_optional, sql_compat, DbPool};
+use krausen_core::{DbPool, db_execute, db_fetch_all, db_fetch_optional, sql_compat};
 use serde::{Deserialize, Serialize};
 
 /// Where a recipe came from.
@@ -58,6 +58,7 @@ pub struct Recipe {
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub native_migration_error: Option<String>,
 }
 
 /// A recipe as the list view needs it — everything but the document.
@@ -75,6 +76,28 @@ pub struct RecipeSummary {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Recoverable legacy payload for a row whose native migration failed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LegacyRecovery {
+    pub document: String,
+    pub native_migration_error: String,
+}
+
+pub async fn get_legacy_recovery(
+    pool: &DbPool,
+    workspace_id: &str,
+    recipe_id: &str,
+) -> krausen_core::Result<Option<LegacyRecovery>> {
+    let sql = "SELECT document, native_migration_error FROM recipes WHERE workspace_id = $1 AND recipe_id = $2 AND native_head_revision = 0 AND native_migration_error IS NOT NULL";
+    Ok(db_fetch_optional!(
+        pool,
+        LegacyRecovery,
+        sql,
+        workspace_id,
+        recipe_id
+    )?)
+}
+
 /// The row shape shared by both queries, before the document is parsed.
 #[derive(sqlx::FromRow)]
 struct RecipeRow {
@@ -89,6 +112,8 @@ struct RecipeRow {
     created_by: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    native_head_revision: i64,
+    native_migration_error: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -106,6 +131,12 @@ impl TryFrom<RecipeRow> for Recipe {
     type Error = krausen_core::Error;
 
     fn try_from(row: RecipeRow) -> Result<Self, Self::Error> {
+        if row.native_head_revision > 0 {
+            return Err(krausen_core::Error::Conflict(
+                "This recipe uses native revisions and cannot be opened by the legacy editor"
+                    .into(),
+            ));
+        }
         let document: RecipeDocument = serde_json::from_str(&row.document).map_err(|e| {
             krausen_core::Error::Internal(format!(
                 "recipe {} has an unreadable document: {e}",
@@ -125,6 +156,7 @@ impl TryFrom<RecipeRow> for Recipe {
             created_by: row.created_by,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            native_migration_error: row.native_migration_error,
         })
     }
 }
@@ -233,7 +265,7 @@ pub async fn get_recipe(
     recipe_id: &str,
 ) -> krausen_core::Result<Option<Recipe>> {
     let sql = "SELECT recipe_id, workspace_id, name, style_name, batch_size_l, \
-                      boil_minutes, document, source, created_by, created_at, updated_at \
+                      boil_minutes, document, source, created_by, created_at, updated_at, native_head_revision, native_migration_error \
                FROM recipes \
                WHERE recipe_id = $1 AND workspace_id = $2 AND deleted_at IS NULL";
 
@@ -302,7 +334,7 @@ pub async fn update_recipe(
         "UPDATE recipes SET \
             name = $1, style_name = $2, batch_size_l = $3, boil_minutes = $4, \
             document = $5, updated_at = {now} \
-         WHERE recipe_id = $6 AND workspace_id = $7 AND deleted_at IS NULL"
+         WHERE recipe_id = $6 AND workspace_id = $7 AND deleted_at IS NULL AND native_head_revision = 0 AND native_migration_error IS NULL"
     );
 
     let affected = db_execute!(
@@ -318,6 +350,7 @@ pub async fn update_recipe(
     )?;
 
     if affected.rows_affected() == 0 {
+        reject_native_legacy_write(pool, workspace_id, recipe_id).await?;
         return Ok(None);
     }
     get_recipe(pool, workspace_id, recipe_id).await
@@ -340,10 +373,13 @@ pub async fn delete_recipe(
     let now = sql_compat::now(is_pg);
     let sql = format!(
         "UPDATE recipes SET deleted_at = {now} \
-         WHERE recipe_id = $1 AND workspace_id = $2 AND deleted_at IS NULL"
+         WHERE recipe_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND native_head_revision = 0 AND native_migration_error IS NULL"
     );
 
     let affected = db_execute!(pool, &sql, recipe_id, workspace_id)?;
+    if affected.rows_affected() == 0 {
+        reject_native_legacy_write(pool, workspace_id, recipe_id).await?;
+    }
     Ok(affected.rows_affected() > 0)
 }
 
@@ -354,8 +390,38 @@ pub async fn restore_recipe(
     recipe_id: &str,
 ) -> krausen_core::Result<bool> {
     let sql = "UPDATE recipes SET deleted_at = NULL \
-               WHERE recipe_id = $1 AND workspace_id = $2 AND deleted_at IS NOT NULL";
+               WHERE recipe_id = $1 AND workspace_id = $2 AND deleted_at IS NOT NULL AND native_head_revision = 0 AND native_migration_error IS NULL";
 
     let affected = db_execute!(pool, sql, recipe_id, workspace_id)?;
+    if affected.rows_affected() == 0 {
+        reject_native_legacy_write(pool, workspace_id, recipe_id).await?;
+    }
     Ok(affected.rows_affected() > 0)
+}
+
+#[derive(sqlx::FromRow)]
+struct NativeHead {
+    native_head_revision: i64,
+    native_migration_error: Option<String>,
+}
+
+/// The legacy editor cannot update or archive a native revisioned recipe.
+async fn reject_native_legacy_write(
+    pool: &DbPool,
+    workspace_id: &str,
+    recipe_id: &str,
+) -> krausen_core::Result<()> {
+    let row = db_fetch_optional!(
+        pool,
+        NativeHead,
+        "SELECT native_head_revision, native_migration_error FROM recipes WHERE workspace_id = $1 AND recipe_id = $2",
+        workspace_id,
+        recipe_id
+    )?;
+    if row.is_some_and(|r| r.native_head_revision > 0 || r.native_migration_error.is_some()) {
+        return Err(krausen_core::Error::Conflict(
+            "This recipe uses native revisions and is read-only in the legacy editor".into(),
+        ));
+    }
+    Ok(())
 }

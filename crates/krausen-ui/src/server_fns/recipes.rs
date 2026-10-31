@@ -130,7 +130,10 @@ fn parse_one(beerxml: &str) -> Result<krausen_beerxml::Recipe, ServerFnError> {
 
 #[cfg(feature = "ssr")]
 fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
-    let (derived, warnings) = summarise(&stored.document);
+    let (derived, mut warnings) = summarise(&stored.document);
+    if let Some(error) = &stored.native_migration_error {
+        warnings.push(format!("Native migration failed: {error}. This legacy record is read-only."));
+    }
     RecipeDetail {
         recipe_id: stored.recipe_id,
         name: stored.name,
@@ -140,6 +143,7 @@ fn detail(stored: krausen_brewery::Recipe) -> RecipeDetail {
         warnings,
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // Read
@@ -172,6 +176,16 @@ pub async fn list_recipes() -> Result<Vec<RecipeListItem>, ServerFnError> {
 }
 
 /// One recipe, with its derived figures.
+/// Recover the stored legacy payload when migration cannot parse it.
+#[server(prefix = "/leptos-api")]
+pub async fn recover_legacy_recipe(recipe_id: String) -> Result<Option<(String, String)>, ServerFnError> {
+    let ac = AuthenticatedContext::extract().await?;
+    let actor = super::verified_actor(&ac.auth)?;
+    krausen_app::recipe_migration::recover_legacy_recipe(&ac.ctx.db, &actor, &recipe_id)
+        .await.map_err(|_| ServerFnError::new("Could not recover that recipe"))
+}
+
+/// One recipe, with its derived figures.
 #[server(prefix = "/leptos-api")]
 pub async fn get_recipe(recipe_id: String) -> Result<Option<RecipeDetail>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
@@ -180,7 +194,10 @@ pub async fn get_recipe(recipe_id: String) -> Result<Option<RecipeDetail>, Serve
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "get_recipe failed");
-            ServerFnError::new("Could not load that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not load that recipe"),
+            }
         })?;
 
     Ok(stored.map(detail))
@@ -223,22 +240,12 @@ pub async fn search_recipes(query: String) -> Result<Vec<RecipeListItem>, Server
 #[server(prefix = "/leptos-api")]
 pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    let document = parse_one(&beerxml)?;
-
-    let stored = krausen_brewery::recipe_service::create_recipe(
-        &ac.ctx.db,
-        &ac.ws_id,
-        &document,
-        krausen_brewery::RecipeSource::Krausen,
-        Some(&ac.auth.user_id),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "create_recipe failed");
-        ServerFnError::new("Could not save that recipe")
-    })?;
-
-    Ok(detail(stored))
+    let _ = beerxml;
+    let actor = super::verified_actor(&ac.auth)?;
+    match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
+        Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe creation is unavailable while native authoring is being introduced")),
+        _ => Err(ServerFnError::new("Recipe creation is unavailable")),
+    }
 }
 
 /// Import a BeerXML file, which may hold several recipes.
@@ -247,39 +254,12 @@ pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnErro
 #[server(prefix = "/leptos-api")]
 pub async fn import_beerxml(beerxml: String) -> Result<Vec<RecipeListItem>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-
-    let doc = krausen_beerxml::parse(&beerxml)
-        .map_err(|e| ServerFnError::new(format!("could not read that BeerXML: {e}")))?;
-    if doc.recipes.is_empty() {
-        return Err(ServerFnError::new("that file contains no recipes"));
+    let _ = beerxml;
+    let actor = super::verified_actor(&ac.auth)?;
+    match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
+        Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe import is unavailable while native authoring is being introduced")),
+        _ => Err(ServerFnError::new("Recipe import is unavailable")),
     }
-
-    let mut imported = Vec::new();
-    for document in &doc.recipes {
-        let stored = krausen_brewery::recipe_service::create_recipe(
-            &ac.ctx.db,
-            &ac.ws_id,
-            document,
-            krausen_brewery::RecipeSource::BeerXml,
-            Some(&ac.auth.user_id),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "import_beerxml failed");
-            ServerFnError::new("Could not save an imported recipe")
-        })?;
-
-        imported.push(RecipeListItem {
-            recipe_id: stored.recipe_id,
-            name: stored.name,
-            style_name: stored.style_name,
-            batch_size_l: stored.batch_size_l,
-            boil_minutes: stored.boil_minutes,
-            source: stored.source.as_str().to_string(),
-            updated_at: stored.updated_at.to_rfc3339(),
-        });
-    }
-    Ok(imported)
 }
 
 /// Replace a recipe with the BeerXML given.
@@ -296,7 +276,10 @@ pub async fn update_recipe(
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "update_recipe failed");
-                ServerFnError::new("Could not save that recipe")
+                match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not save that recipe"),
+            }
             })?;
 
     Ok(stored.map(detail))
@@ -311,7 +294,10 @@ pub async fn delete_recipe(recipe_id: String) -> Result<bool, ServerFnError> {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "delete_recipe failed");
-            ServerFnError::new("Could not delete that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not delete that recipe"),
+            }
         })
 }
 
@@ -324,6 +310,41 @@ pub async fn restore_recipe(recipe_id: String) -> Result<bool, ServerFnError> {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "restore_recipe failed");
-            ServerFnError::new("Could not restore that recipe")
+            match e {
+                krausen_core::Error::Conflict(message) => ServerFnError::new(message),
+                _ => ServerFnError::new("Could not restore that recipe"),
+            }
         })
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod principal_tests {
+    use axum::extract::FromRequestParts;
+    use krausen_auth::middleware::{AuthState, AuthUser};
+    use krausen_core::DbPool;
+
+    #[tokio::test]
+    async fn verified_browser_principal_is_required_for_recovery() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id, email) VALUES ('user-local', 'local@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id, name, owner_user_id) VALUES ('workspace-local', 'Local', 'user-local')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('workspace-local', 'user-local', 'workspace_admin')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document, native_migration_error) VALUES ('workspace-local', 'broken', 'Broken', 'original', 'Recovery required')").execute(&pool).await.unwrap();
+        let db = DbPool::Sqlite(pool);
+        let secret = "test-only-jwt-secret-for-principal-boundary";
+        let personal = AuthState { jwt_secret: secret.into(), db: db.clone(), is_personal: true };
+        let (mut parts, _) = axum::http::Request::builder().body(()).unwrap().into_parts();
+        let synthetic = AuthUser::from_request_parts(&mut parts, &personal).await.unwrap();
+        assert!(super::super::verified_actor(&synthetic).is_err());
+        let mut claims = std::collections::HashMap::new();
+        claims.insert("workspace_id".into(), serde_json::json!("workspace-local"));
+        let token = krausen_auth::jwt::create_access_token_str("user-local", secret, 10, claims).unwrap();
+        let state = AuthState { jwt_secret: secret.into(), db: db.clone(), is_personal: false };
+        let (mut parts, _) = axum::http::Request::builder().header("authorization", format!("Bearer {token}")).body(()).unwrap().into_parts();
+        let verified = AuthUser::from_request_parts(&mut parts, &state).await.unwrap();
+        let actor = super::super::verified_actor(&verified).unwrap();
+        let source = krausen_app::recipe_migration::recover_legacy_recipe(&db, &actor, "broken").await.unwrap().unwrap();
+        assert_eq!(source.0, "original");
+    }
 }

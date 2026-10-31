@@ -9,6 +9,9 @@ license = { workspace = true }
 # database, and depends on krausen-calc only to convert into its input types.
 [dependencies]
 krausen-calc = { workspace = true }
+krausen-types = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 quick-xml = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
