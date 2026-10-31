@@ -9,7 +9,7 @@
 use leptos::prelude::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use crate::components::{Button, ButtonVariant, Card, EmptyState, Spinner, INPUT_CLASS};
+use crate::components::{Button, ButtonLink, ButtonVariant, Card, EmptyState, Spinner, INPUT_CLASS};
 use crate::server_fns::recipes::{
     delete_recipe, get_recipe, import_beerxml, list_recipes, recover_legacy_recipe, RecipeDetail, RecipeListItem,
 };
@@ -89,9 +89,8 @@ pub fn RecipesPage() -> impl IntoView {
         <div class="p-6 max-w-6xl mx-auto space-y-6">
             <div>
                 <h1 class="text-2xl font-semibold">"Recipes"</h1>
-                <p class="text-muted-foreground mt-1">
-                    "Paste BeerXML to import. Every figure below is derived here, not read from the file."
-                </p>
+                <p class="text-muted-foreground mt-1">"Browse stored recipes and open the editor."</p>
+                <ButtonLink href="/recipe-editor/new">"New recipe"</ButtonLink>
             </div>
 
             {move || message.get().map(|m| view! {
@@ -205,6 +204,7 @@ fn recipe_row(r: RecipeListItem, set_selected: WriteSignal<Option<String>>) -> i
 
     view! {
         <li>
+            <ButtonLink href=format!("/recipe-editor/{}", r.recipe_id) variant=ButtonVariant::Ghost>"Edit recipe"</ButtonLink>
             <button
                 type="button"
                 class="w-full text-left py-2 px-2 rounded-md hover:bg-secondary transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

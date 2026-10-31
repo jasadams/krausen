@@ -53,6 +53,11 @@ pub fn register_server_functions() {
     register_explicit::<DeleteRecipe>();
     register_explicit::<RestoreRecipe>();
 
+    // Native recipe editor
+    use server_fns::recipe_editor::{ReadRecipe, SaveRecipe};
+    register_explicit::<ReadRecipe>();
+    register_explicit::<SaveRecipe>();
+
     // Profile
     use server_fns::profile::*;
     register_explicit::<GetProfile>();

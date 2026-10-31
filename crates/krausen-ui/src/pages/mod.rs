@@ -8,3 +8,7 @@ pub mod recipes;
 pub mod recipe_preview_gate;
 pub mod settings;
 pub mod welcome;
+
+pub mod recipe_draft;
+
+pub mod recipe_editor;

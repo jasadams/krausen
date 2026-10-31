@@ -406,3 +406,45 @@ pub fn TokenSwatch(role: SwatchRole) -> impl IntoView {
     let (label, token, class) = role.details();
     view! { <div class="k-swatch"><div class=class aria-hidden="true"></div><div class="k-swatch__label">{label}</div><div class="k-swatch__token">{token}</div></div> }
 }
+
+/// Controlled field for a caller-owned transient draft value and live diagnostics.
+#[component]
+pub fn BreweryDraftField(
+    #[prop(into)] id: String,
+    #[prop(into)] label: String,
+    value: Signal<String>,
+    on_change: Callback<String>,
+    #[prop(optional, into)] unit: Option<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+) -> impl IntoView {
+    let description_id = format!("{id}-description");
+    let described = description_id.clone();
+    view! {
+        <div class="k-field">
+            <label class="k-field__label" for=id.clone()>{label}{unit.as_ref().map(|u| format!(" ({u})"))}</label>
+            <div class="k-field__control">
+                <input id=id type="text" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || error.get().map(|_| described.clone()) />
+                {unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
+            </div>
+            {move || error.get().map(|text| view! { <span id=description_id.clone() class="k-field__error">{text}</span> })}
+        </div>
+    }
+}
+
+/// Controlled choice without coupling a caller's model to presentation state.
+#[component]
+pub fn BreweryDraftSelect(
+    #[prop(into)] id: String,
+    #[prop(into)] label: String,
+    value: Signal<String>,
+    on_change: Callback<String>,
+    options: Vec<(String, String)>,
+) -> impl IntoView {
+    let known = options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
+    view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label>
+        <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev))>
+            {move || { let selected = value.get(); (!selected.is_empty() && !known.contains(&selected)).then(|| view! { <option value=selected.clone()>{format!("Unrecognized: {selected}")}</option> }) }}
+            {options.into_iter().map(|(v, label)| view! { <option value=v>{label}</option> }).collect_view()}
+        </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
+    </div> }
+}

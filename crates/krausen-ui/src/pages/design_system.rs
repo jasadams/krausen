@@ -21,7 +21,7 @@ pub fn DesignSystemPage() -> impl IntoView {
     let active_tab = RwSignal::new("recipe".to_owned());
     let selected_item = RwSignal::new(false);
     view! {
-        <main class="kit-showcase">
+        <div class="kit-showcase">
             <header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Krausen design system"</p><h1>"A more considered brew day."</h1><p>"The shared controls, typography and calculation states used across your workspace."</p></header>
             <div class="kit-showcase__grid">
                 <BreweryPanel title="A grounded palette" description="Semantic tokens keep every surface consistent.">
@@ -61,6 +61,6 @@ pub fn DesignSystemPage() -> impl IntoView {
                 </BreweryPanel>
             </div>
             <BreweryDialog id="showcase-dialog" title="Keep your changes?" description="A saved recipe revision is separate from your draft." open=dialog><p>"You can return to this recipe before deciding."</p></BreweryDialog>
-        </main>
+        </div>
     }
 }
