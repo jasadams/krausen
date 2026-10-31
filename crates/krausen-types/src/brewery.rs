@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 /// Stored revision envelope. Legacy backfills may lack an observed actor/time;
 /// migration time is recorded separately rather than invented as authorship.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RecipeRevisionV1 {
     pub workspace_id: String,
     pub recipe_id: String,
@@ -24,6 +25,7 @@ pub struct RecipeRevisionV1 {
 
 /// A recipe's editable content; identity and authorship live in its revision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RecipeDocumentV1 {
     pub schema_version: u32,
     pub title: String,
@@ -68,6 +70,7 @@ impl Default for RecipeDocumentV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StyleReference {
     pub name: String,
     pub edition: Option<String>,
@@ -76,6 +79,7 @@ pub struct StyleReference {
 
 /// Sparse settings represent absence, including an explicit recipe override.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct EquipmentSettingsV1 {
     pub schema_version: u32,
@@ -117,6 +121,7 @@ impl Default for EquipmentSettingsV1 {
 
 /// Absent settings are distinct from an explicit choice of natural cooling.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum ChillingV1 {
     Natural,
@@ -130,6 +135,7 @@ pub enum ChillingV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientSource {
     pub scope: String,
     pub catalogue_id: Option<String>,
@@ -138,6 +144,7 @@ pub struct IngredientSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FermentableSpecification {
     pub name: Option<String>,
     pub producer: Option<String>,
@@ -148,12 +155,14 @@ pub struct FermentableSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AdditionStage {
     pub stage: String,
     pub time_minutes: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FermentableAddition {
     pub row_id: String,
     pub amount_kg: Option<f64>,
@@ -163,6 +172,7 @@ pub struct FermentableAddition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HopSpecification {
     pub name: Option<String>,
     pub producer: Option<String>,
@@ -170,6 +180,7 @@ pub struct HopSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HopAddition {
     pub row_id: String,
     pub amount_g: Option<f64>,
@@ -181,6 +192,7 @@ pub struct HopAddition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientSpecification {
     pub name: Option<String>,
     pub producer: Option<String>,
@@ -189,6 +201,7 @@ pub struct IngredientSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientAddition {
     pub row_id: String,
     pub amount: Option<f64>,
@@ -198,6 +211,7 @@ pub struct IngredientAddition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ProcessStep {
     pub row_id: String,
     pub name: Option<String>,
@@ -208,6 +222,7 @@ pub struct ProcessStep {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct ProcessV1 {
     /// Explicit apparent attenuation for the complete wort; never inferred from yeast rows.

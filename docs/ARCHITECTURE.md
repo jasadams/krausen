@@ -60,6 +60,14 @@ available through UI and MCP with the same inputs, workspace policy, equipment
 resolution, diagnostics and results. The UI refreshes that preview as the draft
 changes; an agent invokes the equivalent query. Neither action saves a revision.
 
+Preview and style-list requests carry an `OperationIntent` containing the
+account and workspace the caller observed. The app first authorizes the current
+verified actor in its transaction, then compares the intent and returns
+`ContextChanged` on mismatch. Intent never grants access. The browser retains
+and hides a draft during context revalidation before sending it again; MCP
+selects a workspace explicitly and uses the same precondition. Preview echoes a
+caller generation token so stale responses can be discarded.
+
 For example, the logical `CalculateRecipeDraft` query accepts an unsaved native
 draft and explicit calculation context, resolves authorized equipment/catalogue
 references, validates and calculates, then returns targets, assumptions,

@@ -368,6 +368,12 @@ async fn exercise(db: DbPool) {
             .any(|t| t.name == "workspace_rename")
     );
     let discovered = modern.list_tools(None).await.unwrap();
+    let preview_tool = discovered
+        .tools
+        .iter()
+        .find(|tool| tool.name == "formulation_preview")
+        .unwrap();
+    assert!(preview_tool.input_schema.contains_key("$defs"));
     assert_eq!(
         discovered.tools.len(),
         krausen_types::operations::OPERATIONS.len()
@@ -378,6 +384,241 @@ async fn exercise(db: DbPool) {
             .iter()
             .all(|tool| krausen_types::operations::by_tool(&tool.name).is_some())
     );
+    // The browser adapter and both supported SDK protocol revisions use the
+    // same shared preview and style operations for this account/workspace.
+    let browser_actor = krausen_app::ActorContext {
+        actor_id: principal.user_id.clone(),
+        credential_id: principal.credential_id.clone(),
+        access_expires_at: principal.access_expires_at,
+        workspace_id: ws.clone(),
+    };
+    let mut draft = krausen_types::brewery::RecipeDocumentV1::default();
+    draft.batch_size_l = Some(20.0);
+    draft.boil_minutes = Some(60.0);
+    draft
+        .fermentables
+        .push(krausen_types::brewery::FermentableAddition {
+            row_id: "grain".into(),
+            amount_kg: Some(4.0),
+            addition: krausen_types::brewery::AdditionStage {
+                stage: "mash".into(),
+                time_minutes: None,
+            },
+            specification: krausen_types::brewery::FermentableSpecification {
+                name: None,
+                producer: None,
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        });
+    draft.process.mash_water_method = Some("manual".into());
+    draft.process.mash_water_l = Some(12.0);
+    let mut equipment = krausen_types::brewery::EquipmentSettingsV1::default();
+    equipment.boil_off_l_per_hour = Some(3.0);
+    equipment.transfer_loss_l = Some(2.0);
+    equipment.pre_boil_deadspace_l = Some(0.0);
+    equipment.grain_absorption_l_per_kg = Some(0.8);
+    equipment.mash_efficiency_fraction = Some(0.75);
+    let request = krausen_types::formulation::PreviewRequest {
+        draft_generation: "test-generation".into(),
+        intent: krausen_types::request_context::OperationIntent {
+            account_id: browser_actor.actor_id.clone(),
+            workspace_id: ws.clone(),
+        },
+        draft,
+        equipment_draft: equipment,
+    };
+    let browser_preview =
+        krausen_ui::server_fns::formulation::execute_preview(&db, &browser_actor, request.clone())
+            .await;
+    // Exercise the actual browser server-function endpoint using the verified
+    // browser credential, not just its transport-independent helper.
+    use leptos::server_fn::ServerFn;
+    let ui_path = <krausen_ui::server_fns::formulation::PreviewFormulation as ServerFn>::PATH;
+    let ui_response = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[("request_json", serde_json::to_string(&request).unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        ui_response.status().is_success(),
+        "browser preview HTTP {}",
+        ui_response.status()
+    );
+    let ui_value: serde_json::Value = ui_response.json().await.unwrap();
+    assert_eq!(ui_value, serde_json::to_value(&browser_preview).unwrap());
+    let preview_args = json!({"workspace_id":ws,"request":request.clone()})
+        .as_object()
+        .unwrap()
+        .clone();
+    let a = legacy
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(preview_args.clone()),
+        )
+        .await
+        .unwrap();
+    let b = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(preview_args.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(a.structured_content, b.structured_content);
+    let result = b.structured_content.unwrap();
+    assert_eq!(
+        result["outcome"],
+        serde_json::to_value(browser_preview).unwrap()
+    );
+    assert_eq!(
+        result["outcome"]["Preview"]["draft_generation"],
+        "test-generation"
+    );
+    assert!(result["outcome"]["Preview"]["context"].is_object());
+    assert!(result["outcome"]["Preview"]["targets"]["original_sg"].is_number());
+    assert!(result["outcome"]["Preview"]["targets"]["final_sg"].is_null());
+    assert!(result["outcome"]["Preview"]["targets"]["total_water_l"].is_number());
+    let mut stale_request = request.clone();
+    stale_request.intent.account_id = "old-account".into();
+    let stale_browser = krausen_ui::server_fns::formulation::execute_preview(
+        &db,
+        &browser_actor,
+        stale_request.clone(),
+    )
+    .await;
+    let stale_http = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "request_json",
+            serde_json::to_string(&stale_request).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert!(stale_http.status().is_success());
+    let stale_http_value: serde_json::Value = stale_http.json().await.unwrap();
+    assert_eq!(
+        stale_http_value,
+        serde_json::to_value(&stale_browser).unwrap()
+    );
+    let stale_mcp = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(
+                json!({"workspace_id":ws,"request":stale_request})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stale_mcp.structured_content.unwrap()["outcome"],
+        serde_json::to_value(stale_browser).unwrap()
+    );
+    assert_eq!(stale_mcp.is_error, Some(true));
+    let mut denied_args = preview_args;
+    denied_args.insert("workspace_id".into(), json!("not-a-member"));
+    let denied_preview = modern
+        .call_tool(CallToolRequestParams::new("formulation_preview").with_arguments(denied_args))
+        .await
+        .unwrap();
+    let denied_actor = krausen_app::ActorContext {
+        workspace_id: "not-a-member".into(),
+        ..browser_actor.clone()
+    };
+    let denied_browser =
+        krausen_ui::server_fns::formulation::execute_preview(&db, &denied_actor, request).await;
+    assert_eq!(
+        denied_preview.structured_content.unwrap()["outcome"],
+        serde_json::to_value(denied_browser).unwrap()
+    );
+    assert_eq!(denied_preview.is_error, Some(true));
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id: browser_actor.actor_id.clone(),
+        workspace_id: ws.clone(),
+    };
+    let browser_styles =
+        krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await;
+    let style_path = <krausen_ui::server_fns::formulation::ListFormulationStyles as ServerFn>::PATH;
+    let style_response = reqwest::Client::new()
+        .post(format!("{base}{style_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("account_id", intent.account_id.as_str()),
+            ("workspace_id", intent.workspace_id.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(style_response.status().is_success());
+    let style_value: serde_json::Value = style_response.json().await.unwrap();
+    assert_eq!(style_value, serde_json::to_value(&browser_styles).unwrap());
+    let styles = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_styles").with_arguments(
+                json!({"workspace_id":ws,"intent":intent})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let legacy_styles = legacy
+        .call_tool(
+            CallToolRequestParams::new("formulation_styles").with_arguments(
+                json!({"workspace_id":ws,"intent":intent})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(styles.structured_content, legacy_styles.structured_content);
+    let mut stale_intent = intent.clone();
+    stale_intent.workspace_id = "old-workspace".into();
+    let stale_styles_browser =
+        krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &stale_intent)
+            .await;
+    let stale_styles_mcp = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_styles").with_arguments(
+                json!({"workspace_id":ws,"intent":stale_intent})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stale_styles_mcp.structured_content.unwrap()["outcome"],
+        serde_json::to_value(stale_styles_browser).unwrap()
+    );
+    assert_eq!(stale_styles_mcp.is_error, Some(true));
+    assert_eq!(
+        styles.structured_content.unwrap()["outcome"],
+        serde_json::to_value(browser_styles).unwrap()
+    );
+    let denied = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_styles").with_arguments(
+                json!({"workspace_id":"not-a-member","intent":intent})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.is_error, Some(true));
+    assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()
@@ -497,12 +738,36 @@ async fn exercise(db: DbPool) {
     assert!(
         modern
             .call_tool(
+                CallToolRequestParams::new("formulation_styles").with_arguments(
+                    json!({"workspace_id":ws,"intent":intent})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        modern
+            .call_tool(
                 CallToolRequestParams::new("workspace_get")
                     .with_arguments(json!({"workspace_id":ws}).as_object().unwrap().clone())
             )
             .await
             .is_err()
     );
+    krausen_core::db_execute!(
+        &db,
+        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
+        chrono::Utc::now().timestamp(),
+        &browser_actor.credential_id
+    )
+    .unwrap();
+    assert!(matches!(
+        krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await,
+        krausen_types::formulation::StyleListOutcome::Forbidden
+    ));
     server.abort();
 }
 #[tokio::test]

@@ -37,6 +37,18 @@ struct McpHandler {
 struct WorkspaceQuery {
     workspace_id: String,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct FormulationPreview {
+    workspace_id: String,
+    request: krausen_types::formulation::PreviewRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct StyleQuery {
+    workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rename {
@@ -91,6 +103,21 @@ impl ServerHandler for McpHandler {
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
             Tool::new(
+                operations::FORMULATION_PREVIEW.mcp_tool,
+                "Calculate an unsaved recipe draft",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(FormulationPreview))
+                        .expect("preview schema"),
+                ),
+            ),
+            Tool::new(
+                operations::STYLE_LIST.mcp_tool,
+                "List supported beer style identities",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(StyleQuery)).expect("style schema"),
+                ),
+            ),
+            Tool::new(
                 operations::WORKSPACE_GET.mcp_tool,
                 "Read workspace settings",
                 schema(
@@ -141,6 +168,55 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "formulation.preview.v1" => {
+                let input: FormulationPreview = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid formulation preview", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::formulation::project_preview(
+                    krausen_app::formulation::preview(&self.db, &actor, input.request).await,
+                );
+                let is_error = matches!(
+                    outcome,
+                    krausen_types::formulation::PreviewOutcome::Forbidden
+                        | krausen_types::formulation::PreviewOutcome::ContextChanged
+                        | krausen_types::formulation::PreviewOutcome::Invalid
+                        | krausen_types::formulation::PreviewOutcome::Unavailable
+                );
+                let value = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "formulation.styles.v1" => {
+                let input: StyleQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid style query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::formulation::project_styles(
+                    krausen_app::formulation::list_styles(&self.db, &actor, &input.intent).await,
+                );
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::formulation::StyleListOutcome::Styles(_)
+                );
+                let value = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
             "workspace.get.v1" => {
                 let input: WorkspaceQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;

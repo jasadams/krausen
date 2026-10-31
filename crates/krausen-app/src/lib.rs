@@ -17,10 +17,23 @@ pub struct ActorContext {
     pub access_expires_at: i64,
 }
 
+/// Compare caller expectations only after current authorization; intent never grants access.
+pub fn check_intent(
+    actor: &ActorContext,
+    intent: &krausen_types::request_context::OperationIntent,
+) -> Result<(), Error> {
+    if intent.account_id != actor.actor_id || intent.workspace_id != actor.workspace_id {
+        return Err(Error::ContextChanged);
+    }
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("access denied")]
     Forbidden,
+    #[error("operation context changed")]
+    ContextChanged,
     #[error("workspace revision conflict")]
     Conflict { expected: i64, actual: i64 },
     #[error("request identity reused with a different payload")]
@@ -405,3 +418,7 @@ pub async fn enqueue_outbox(
     query!(tx, "INSERT INTO app_outbox (outbox_id, workspace_id, operation, payload_json, created_at) VALUES ($1, $2, $3, $4, $5)", &id, workspace_id, operation, &payload, now).map_err(db_error)?;
     Ok(id)
 }
+
+pub mod formulation;
+
+mod style_reference;
