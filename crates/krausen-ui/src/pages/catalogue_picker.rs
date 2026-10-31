@@ -760,7 +760,17 @@ pub fn CataloguePicker(
             <div class="k-catalogue-list">
                 <For
                     each=move || items.get()
-                    key=|entry| entry.entry_id.clone()
+                    // Recreate the row when its revision, metadata or archive
+                    // state changes; otherwise the captured entry and copied
+                    // details would remain stale after an edit/archive.
+                    key=|entry| {
+                        (
+                            entry.entry_id.clone(),
+                            entry.revision,
+                            entry.metadata_revision,
+                            entry.archived,
+                        )
+                    }
                     children=move |entry: IngredientEntry| {
                         let entry_id = entry.entry_id.clone();
                         let selected_entry = selected;
