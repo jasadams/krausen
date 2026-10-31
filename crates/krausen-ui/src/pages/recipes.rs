@@ -127,6 +127,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         loading.set(true);
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::List(query)).await;
+            if context_valid.try_get_untracked().is_none() {
+                return;
+            }
             if authority_failed(&response) {
                 invalidate_context.run(());
                 return;
@@ -190,6 +193,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             history_name.set(name);
             leptos::task::spawn_local(async move {
                 let response = library_command_shared(LibraryCommand::History(query)).await;
+                if context_valid.try_get_untracked().is_none() {
+                    return;
+                }
                 if authority_failed(&response) {
                     invalidate_context.run(());
                     return;
@@ -237,6 +243,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         };
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::Recover(query)).await;
+            if context_valid.try_get_untracked().is_none() {
+                return;
+            }
             if authority_failed(&response) {
                 invalidate_context.run(());
                 return;
@@ -274,6 +283,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         };
         leptos::task::spawn_local(async move {
             let response = library_command_shared(LibraryCommand::Revision(query)).await;
+            if context_valid.try_get_untracked().is_none() {
+                return;
+            }
             if authority_failed(&response) {
                 invalidate_context.run(());
                 return;
@@ -309,6 +321,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         pending.set(Some(command.clone()));
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::Archive(command)).await;
+            if context_valid.try_get_untracked().is_none() {
+                return;
+            }
             saving.set(false);
             match result {
                 Ok(LibraryOutcome::Archive { .. }) => {

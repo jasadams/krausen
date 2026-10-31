@@ -298,3 +298,47 @@ test('a stale denied revision response still redacts the current selection', asy
   await expect(page.getByText('Workspace changed', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${b}` })).toHaveCount(0);
 });
+
+test('a delayed denial after leaving the library does not access disposed UI state', async ({ page }) => {
+  test.setTimeout(60_000);
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error' && /disposed|panic|RuntimeError/i.test(message.text())) errors.push(message.text());
+  });
+  const title = `Disposed library ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.goto('/recipes');
+  await page.getByLabel('Search recipes').fill(title);
+  await page.getByRole('button', { name: `History for ${title}` }).click();
+  let started!: () => void;
+  let release!: () => void;
+  let completed!: () => void;
+  const startedPromise = new Promise<void>(resolve => { started = resolve; });
+  const releasePromise = new Promise<void>(resolve => { release = resolve; });
+  const completedPromise = new Promise<void>(resolve => { completed = resolve; });
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Revision) {
+      const response = await route.fetch();
+      started();
+      await releasePromise;
+      await route.fulfill({ response, body: JSON.stringify('Forbidden') });
+      completed();
+    } else {
+      await route.continue();
+    }
+  });
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await startedPromise;
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/settings\/profile/);
+  release();
+  await completedPromise;
+  await page.waitForTimeout(300);
+  expect(errors).toEqual([]);
+});
