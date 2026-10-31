@@ -1728,12 +1728,21 @@ async fn exercise(db: DbPool) {
         .as_str()
         .unwrap()
         .to_owned();
+    let sdk_session_content = sdk_sessions
+        .structured_content
+        .expect("session inventory content");
     assert!(
-        sdk_sessions.structured_content.unwrap()["sessions"]
+        sdk_session_content["sessions"]
             .as_array()
             .unwrap()
             .iter()
             .any(|s| s["credential_id"] == extra_credential)
+    );
+    assert!(
+        !sdk_session_content["truncated"]
+            .as_bool()
+            .expect("ordinary accounts return an untruncated inventory"),
+        "ordinary accounts return a complete bounded inventory"
     );
     let revoke_path = <krausen_ui::server_fns::security::RevokeSession as ServerFn>::PATH;
     let revoke_id = uuid::Uuid::new_v4().to_string();

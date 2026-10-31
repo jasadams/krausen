@@ -191,8 +191,10 @@ pub async fn setup_totp(
 ) -> Result<krausen_types::account::TotpSetup, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     let pg = matches!(tx, DbTx::Postgres(_));
+    // Serialize enrollment setup with enable/disable so a concurrent setup
+    // cannot replace the pending secret while confirmation is in flight.
     let sql = if pg {
-        "SELECT account_revision FROM users WHERE user_id=$1 AND active=TRUE FOR SHARE"
+        "SELECT account_revision FROM users WHERE user_id=$1 AND active=TRUE FOR UPDATE"
     } else {
         "SELECT account_revision FROM users WHERE user_id=$1 AND active=TRUE"
     };
