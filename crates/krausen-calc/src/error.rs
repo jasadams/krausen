@@ -10,6 +10,11 @@ use std::fmt;
 /// without the number is a worse message than it needs to be.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CalcError {
+    /// An engine input is non-finite or outside its supported domain.
+    InvalidInput {
+        field: String,
+        reason: &'static str,
+    },
     /// No fermentables — there is nothing to derive a gravity from.
     EmptyGrist,
     NonPositiveBatchSize(f64),
@@ -35,12 +40,16 @@ pub enum CalcError {
 impl fmt::Display for CalcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidInput { field, reason } => write!(f, "invalid {field}: {reason}"),
             Self::EmptyGrist => write!(f, "recipe has no fermentables"),
             Self::NonPositiveBatchSize(v) => {
                 write!(f, "batch size must be greater than zero, got {v} L")
             }
             Self::NonPositiveGrainWeight(v) => {
-                write!(f, "total grain weight must be greater than zero, got {v} kg")
+                write!(
+                    f,
+                    "total grain weight must be greater than zero, got {v} kg"
+                )
             }
             Self::EfficiencyOutOfRange(v) => write!(
                 f,
