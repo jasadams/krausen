@@ -97,7 +97,7 @@ fn printable_example() -> krausen_types::process_summary::ProcessSummary {
             digest: Some("7d3c0f4ee4example".into()),
             engine_version: "krausen-calc-v1".into(),
             engine_build: "showcase".into(),
-            policy_version: "krausen-formulation-v1".into(),
+            policy_version: "krausen-formulation-v2".into(),
             native_schema_version: 1,
             result_schema_version: 1,
         },

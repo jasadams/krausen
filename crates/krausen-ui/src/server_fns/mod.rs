@@ -175,9 +175,10 @@ pub mod formulation;
 pub mod interchange;
 pub mod recipe_editor;
 
-pub mod equipment;
 pub mod catalogue;
+pub mod equipment;
 
+pub mod brew;
 pub mod process_summary;
 pub mod recipe_library;
 pub mod scaling;

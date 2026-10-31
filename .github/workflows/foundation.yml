@@ -58,13 +58,14 @@ jobs:
       - run: cargo test -p krausen-app --test recipe_library
       - run: cargo test -p krausen-app --test process_summary
       - run: cargo test -p krausen-app --test scaling
+      - run: cargo test -p krausen-app --test brew_start
       - run: cargo test -p krausen-beerxml -p krausen-types
       - run: cargo test -p krausen-calc
       - run: cargo test -p krausen-core --lib canonical_json
       - run: cargo test -p krausen-brewery --lib
       - run: cargo test -p krausen-brewery --test draft_validation
-      - run: cargo test -p krausen-brewery --test recipe_crud --test native_schema --test native_transactions
-      - run: cargo test -p krausen-brewery --test native_schema --test native_transactions -- --ignored
+      - run: cargo test -p krausen-brewery --test recipe_crud --test native_schema --test native_transactions --test brew_schema
+      - run: cargo test -p krausen-brewery --test native_schema --test native_transactions --test brew_schema -- --ignored
       - run: cargo test -p krausen-app --test recipe_migration
       - run: cargo test -p krausen-app --test recipe_migration -- --ignored
       - run: cargo test -p krausen-ui --features ssr --lib retry_preserves_browser_request_identity

@@ -1259,6 +1259,145 @@ async fn exercise(db: DbPool) {
         denied_summary.structured_content.unwrap()["outcome"],
         "Forbidden"
     );
+    // Brew start uses the same shared command through MCP and the browser,
+    // including immutable plan replay and the optional head guard.
+    let brew_profile_id = uuid::Uuid::new_v4().to_string();
+    let mut brew_profile_request = brew_test_profile(&intent, &brew_profile_id);
+    brew_profile_request.request_id = uuid::Uuid::new_v4().to_string();
+    krausen_app::equipment::save(&db, &browser_actor, brew_profile_request)
+        .await
+        .unwrap();
+    let brew_doc = brew_test_document(&brew_profile_id);
+    let krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
+        recipe_id: brew_recipe,
+        revision: 1,
+    } = krausen_app::recipe_editor::save(
+        &db,
+        &browser_actor,
+        &intent,
+        None,
+        None,
+        &brew_doc,
+        uuid::Uuid::new_v4(),
+    )
+    .await
+    else {
+        panic!("brew recipe fixture");
+    };
+    let brew_preview = match krausen_app::formulation::preview(
+        &db,
+        &browser_actor,
+        krausen_types::formulation::PreviewRequest {
+            draft_generation: "mcp-brew-start".into(),
+            intent: intent.clone(),
+            draft: brew_doc.clone(),
+            equipment_draft: Default::default(),
+        },
+    )
+    .await
+    .unwrap()
+    {
+        krausen_types::formulation::PreviewOutcome::Preview(preview) => preview,
+        other => panic!("brew preview unavailable: {other:?}"),
+    };
+    let brew_start_request = krausen_types::brew::StartBrewRequest {
+        intent: intent.clone(),
+        recipe_id: brew_recipe.clone(),
+        selected_recipe_revision: 1,
+        expected_head_revision: Some(1),
+        expected_calculation_context: brew_preview.context_digest.clone().unwrap(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let brew_start_args = json!({
+        "workspace_id": ws,
+        "request": brew_start_request.clone(),
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let brew_start = modern
+        .call_tool(CallToolRequestParams::new("brew_start").with_arguments(brew_start_args))
+        .await
+        .unwrap();
+    assert_ne!(brew_start.is_error, Some(true));
+    let brew_start = brew_start.structured_content.unwrap();
+    assert_eq!(
+        brew_start["outcome"]["Started"]["selected_recipe_revision"],
+        1
+    );
+    let browser_brew_start =
+        krausen_ui::server_fns::brew::execute_start_brew(&db, &browser_actor, brew_start_request)
+            .await;
+    assert_eq!(
+        serde_json::to_value(browser_brew_start).unwrap()["Started"],
+        brew_start["outcome"]["Started"]
+    );
+    let mut brew_edit = brew_doc.clone();
+    brew_edit.title = "Brew edit".into();
+    assert_eq!(
+        krausen_app::recipe_editor::save(
+            &db,
+            &browser_actor,
+            &intent,
+            Some(&brew_recipe),
+            Some(1),
+            &brew_edit,
+            uuid::Uuid::new_v4(),
+        )
+        .await,
+        krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
+            recipe_id: brew_recipe.clone(),
+            revision: 2
+        }
+    );
+    let head_conflict_request = krausen_types::brew::StartBrewRequest {
+        intent: intent.clone(),
+        recipe_id: brew_recipe.clone(),
+        selected_recipe_revision: 1,
+        expected_head_revision: Some(1),
+        expected_calculation_context: brew_preview.context_digest.unwrap(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let head_conflict_args = json!({
+        "workspace_id": ws,
+        "request": head_conflict_request,
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let head_conflict = modern
+        .call_tool(CallToolRequestParams::new("brew_start").with_arguments(head_conflict_args))
+        .await
+        .unwrap();
+    assert_eq!(head_conflict.is_error, Some(true));
+    assert_eq!(
+        head_conflict.structured_content.unwrap()["outcome"]["HeadConflict"]["actual_head"],
+        2
+    );
+    let zero_context = "0".repeat(64);
+    let denied_brew_args = json!({
+        "workspace_id": "not-a-member",
+        "request": {
+            "intent": intent.clone(),
+            "recipe_id": brew_recipe,
+            "selected_recipe_revision": 1,
+            "expected_head_revision": null,
+            "expected_calculation_context": zero_context,
+            "request_id": uuid::Uuid::new_v4().to_string()
+        }
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let denied_brew = modern
+        .call_tool(CallToolRequestParams::new("brew_start").with_arguments(denied_brew_args))
+        .await
+        .unwrap();
+    assert_eq!(denied_brew.is_error, Some(true));
+    assert_eq!(
+        denied_brew.structured_content.unwrap()["outcome"],
+        "Forbidden"
+    );
     let stale_args = json!({"workspace_id":ws,"intent":intent,"recipe_id":native_id,"expected_revision":1,"document":native,"request_id":uuid::Uuid::new_v4()}).as_object().unwrap().clone();
     let stale = modern
         .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(stale_args))
@@ -1787,4 +1926,72 @@ async fn postgres_sdk_clients() {
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     exercise(DbPool::Postgres(pool)).await;
+}
+
+fn brew_test_profile(
+    intent: &krausen_types::request_context::OperationIntent,
+    profile_id: &str,
+) -> krausen_types::equipment::SaveEquipment {
+    krausen_types::equipment::SaveEquipment {
+        intent: intent.clone(),
+        profile_id: profile_id.into(),
+        name: "MCP 20 L kettle".into(),
+        settings: krausen_types::brewery::EquipmentSettingsV1 {
+            mash_efficiency_fraction: Some(0.75),
+            boil_off_l_per_hour: Some(3.0),
+            transfer_loss_l: Some(2.0),
+            pre_boil_deadspace_l: Some(0.0),
+            grain_absorption_l_per_kg: Some(0.8),
+            mash_thickness_l_per_kg: Some(2.5),
+            kettle_capacity_l: Some(30.0),
+            kettle_diameter_cm: Some(35.0),
+            kettle_opening_cm: Some(30.0),
+            boil_temperature_c: Some(100.0),
+            chilling: Some(krausen_types::brewery::ChillingV1::Natural),
+            ..Default::default()
+        },
+        provenance: krausen_types::brewery::EquipmentProvenance {
+            source: "test fixture".into(),
+            assumptions: vec!["brewhouse_loss_calibrated".into()],
+        },
+        expected_revision: 0,
+        expected_metadata_revision: 0,
+        request_id: String::new(),
+    }
+}
+
+fn brew_test_document(profile_id: &str) -> krausen_types::brewery::RecipeDocumentV1 {
+    krausen_types::brewery::RecipeDocumentV1 {
+        schema_version: 1,
+        title: "MCP brew start".into(),
+        style: Some(krausen_types::brewery::StyleReference {
+            name: "Munich Helles".into(),
+            edition: Some("BJCP 2021".into()),
+            style_id: Some("4A".into()),
+        }),
+        batch_size_l: Some(20.0),
+        boil_minutes: Some(60.0),
+        equipment_profile_id: Some(profile_id.into()),
+        fermentables: vec![krausen_types::brewery::FermentableAddition {
+            row_id: "grain-1".into(),
+            amount_kg: Some(4.2),
+            addition: krausen_types::brewery::AdditionStage {
+                stage: "mash".into(),
+                time_minutes: None,
+            },
+            specification: krausen_types::brewery::FermentableSpecification {
+                name: Some("Pilsner malt".into()),
+                producer: Some("Weyermann".into()),
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        }],
+        process: krausen_types::brewery::ProcessV1 {
+            apparent_attenuation_fraction: Some(0.78),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }

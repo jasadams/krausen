@@ -67,10 +67,14 @@ comparison, persistence or context identity.
 
 ## Calculation policy V1
 
-Policy `krausen-formulation-v1` is the first native implementation target. Store
-policy, engine and native/result schema versions with contexts and brew plans.
-Numerical rule changes require a new policy or engine version and updated
-reference fixtures; old brew targets never change.
+Policy `krausen-formulation-v2` is the current native implementation target. V2
+extracts the same formulas, defaults and context envelope into one shared
+transaction-aware resolver so preview and brew start use one producer; it does
+not change calculation behaviour. Policy/source identity is versioned V2, so an
+accepted pre-V2 digest is rejected with a context conflict and a refreshed
+preview. Store policy, engine and native/result schema versions with contexts and
+brew plans. Numerical rule changes require a new policy or engine version and
+updated reference fixtures; old brew targets never change.
 
 ### Fermentables and efficiency
 
@@ -217,11 +221,13 @@ follows [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785), checked 2026-10-31;
 SHA-256 is a content identity here, not a signature or authorization credential.
 
 Start recomputes context under its application transaction; the digest is not
-authorization proof. Engine/default/profile/source/style changes require a
-context conflict or explicit acceptance of a refreshed preview. A selected
-historical revision and optional expected current head are distinct; see
-[data model](DATA_MODEL.md). Freeze complete effective inputs, assumptions,
-original outputs/diagnostics, style values, context ID and versions on the brew.
+authorization proof. The shared transaction-aware resolver is the sole producer,
+and start compares the complete accepted context before writing. Engine/default/
+profile/source/style changes require a context conflict or explicit acceptance of
+a refreshed preview. A selected historical revision and optional expected current
+head are distinct; see [data model](DATA_MODEL.md). Freeze complete effective
+inputs, assumptions, original outputs/diagnostics, style values, context ID and
+versions on the brew.
 
 V1 guarantees historical preservation/display, not indefinite execution of old
 engine binaries. Recalculation is an explicit current-policy comparison and
