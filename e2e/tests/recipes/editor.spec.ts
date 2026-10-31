@@ -77,6 +77,29 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
 });
 
+test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({ page }) => {
+  for (const theme of ['light', 'dark']) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(value => localStorage.setItem('krausen-theme', value), theme);
+      await page.goto('/design-system');
+      await expect(page.getByRole('heading', { name: 'A more considered brew day.' })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveAttribute('aria-invalid', 'true');
+      await page.getByRole('tab', { name: 'Recipe' }).focus();
+      await page.keyboard.press('ArrowRight');
+      await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
+      const opener = page.getByRole('button', { name: 'Open dialog' });
+      await opener.click();
+      const dialog = page.getByRole('dialog', { name: 'Keep your changes?' });
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(opener).toBeFocused();
+    }
+  }
+});
+
 test('a dirty new recipe remains private to its original account and workspace', async ({ page }) => {
   const ownerId = getDefaultUserId();
   const originalWorkspace = getDefaultWorkspaceId();
