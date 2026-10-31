@@ -178,7 +178,11 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await edit.getByRole('button', { name: 'Save changes' }).click();
   await editSearch;
   await expect(picker).toBeVisible();
-  await expect(picker.getByRole('button', { name: /9\.5 EBC/ })).toHaveCount(1);
+  // Scope to this entry's own row: earlier attempts can leave identically
+  // valued entries in the workspace, which would mask or fake a match.
+  await expect(
+    picker.locator('.k-catalogue-item', { hasText: entryName }).getByText(/9\.5 EBC/),
+  ).toBeVisible();
 
   // Archive keeps the entry discoverable in the workspace library, marked
   // Archived, and blocks adding it to a recipe until restored.
