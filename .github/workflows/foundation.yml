@@ -66,7 +66,8 @@ jobs:
           node-version: "22"
       - run: npm ci --prefix e2e
       - run: npx --prefix e2e playwright install --with-deps chromium
-      - run: npm install --global @tailwindcss/cli@4.2.2
+      - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2
+      - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
       - run: cargo install trunk --version 0.21.14 --locked
       - run: cargo build -p krausen-server
       - run: cd crates/krausen-ui && trunk build
