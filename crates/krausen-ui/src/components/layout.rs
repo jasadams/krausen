@@ -31,6 +31,7 @@ pub struct EditorGuard {
     pub saving_to_leave: RwSignal<bool>,
     pub pending: RwSignal<bool>,
     pub message: RwSignal<String>,
+    pub navigation_error: RwSignal<String>,
     pub current_url: RwSignal<String>,
 }
 
@@ -45,6 +46,7 @@ impl EditorGuard {
             saving_to_leave: RwSignal::new(false),
             pending: RwSignal::new(false),
             message: RwSignal::new(String::new()),
+            navigation_error: RwSignal::new(String::new()),
             current_url: RwSignal::new(String::new()),
         }
     }
@@ -60,9 +62,32 @@ impl EditorGuard {
                     return;
                 }
                 let Some(window) = web_sys::window() else {
+                    tracing::warn!("Browser window unavailable during history navigation");
                     return;
                 };
                 let Ok(destination) = window.location().href() else {
+                    tracing::warn!("Unable to read the browser navigation destination");
+                    event.stop_immediate_propagation();
+                    let previous = self.current_url.get_untracked();
+                    if window
+                        .history()
+                        .and_then(|history| {
+                            history.push_state_with_url(
+                                &wasm_bindgen::JsValue::NULL,
+                                "",
+                                Some(&previous),
+                            )
+                        })
+                        .is_err()
+                    {
+                        tracing::warn!(
+                            "Unable to restore the editor address after browser navigation"
+                        );
+                    }
+                    self.navigation_error.set(
+                        "Could not read the navigation destination. Your draft remains open."
+                            .into(),
+                    );
                     return;
                 };
                 let previous = self.current_url.get_untracked();
@@ -70,22 +95,42 @@ impl EditorGuard {
                     return;
                 }
                 event.stop_immediate_propagation();
-                if let Ok(history) = window.history() {
-                    let _ = history.push_state_with_url(
-                        &wasm_bindgen::JsValue::NULL,
-                        "",
-                        Some(&previous),
+                if window
+                    .history()
+                    .and_then(|history| {
+                        history.push_state_with_url(
+                            &wasm_bindgen::JsValue::NULL,
+                            "",
+                            Some(&previous),
+                        )
+                    })
+                    .is_err()
+                {
+                    tracing::warn!("Unable to restore the editor address after browser navigation");
+                    self.navigation_error.set(
+                        "Could not restore the editor address. Your draft remains open.".into(),
                     );
                 }
                 self.request(EditorDestination::Href(destination));
             },
         );
-        let _ = window.add_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref());
+        if window
+            .add_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref())
+            .is_err()
+        {
+            tracing::warn!("Unable to install the browser history guard");
+            self.navigation_error
+                .set("Browser Back protection is unavailable; keep this page open.".into());
+        }
         let listener = send_wrapper::SendWrapper::new((window, pop));
         on_cleanup(move || {
             let (window, pop) = &*listener;
-            let _ = window
-                .remove_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref());
+            if window
+                .remove_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref())
+                .is_err()
+            {
+                tracing::warn!("Unable to remove the browser history guard");
+            }
         });
     }
     pub fn request(self, destination: EditorDestination) {
@@ -97,6 +142,7 @@ impl EditorGuard {
         }
     }
     pub fn finish(self) {
+        self.navigation_error.set(String::new());
         self.saving_to_leave.set(false);
         self.notice.set(false);
         let Some(destination) = self.destination.get_untracked() else {
@@ -105,21 +151,32 @@ impl EditorGuard {
         self.destination.set(None);
         self.dirty.set(false);
         leptos::task::spawn_local(async move {
-            match destination {
-                EditorDestination::Href(href) => {
-                    let _ = web_sys::window().and_then(|w| w.location().set_href(&href).ok());
-                }
+            let failure = match destination {
+                EditorDestination::Href(href) => web_sys::window()
+                    .is_none_or(|w| w.location().set_href(&href).is_err())
+                    .then_some("Could not open that destination."),
                 EditorDestination::Workspace(id) => {
-                    if switch_workspace(id).await.is_ok() {
-                        let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    if switch_workspace(id).await.is_err() {
+                        Some("Could not switch workspaces.")
+                    } else {
+                        web_sys::window()
+                            .is_none_or(|w| w.location().reload().is_err())
+                            .then_some("Workspace changed, but the page could not reload.")
                     }
                 }
                 EditorDestination::Logout => {
-                    if crate::server_fns::security::logout().await.is_ok() {
-                        let _ =
-                            web_sys::window().and_then(|w| w.location().set_href("/login").ok());
+                    if crate::server_fns::security::logout().await.is_err() {
+                        Some("Could not sign out.")
+                    } else {
+                        web_sys::window()
+                            .is_none_or(|w| w.location().set_href("/login").is_err())
+                            .then_some("Signed out, but the login page could not open.")
                     }
                 }
+            };
+            if let Some(message) = failure {
+                tracing::warn!("Unable to complete a requested navigation or account action");
+                self.navigation_error.set(message.into());
             }
         });
     }
@@ -160,7 +217,13 @@ pub fn Layout() -> impl IntoView {
                 let Some(anchor) = event
                     .target()
                     .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                    .and_then(|element| element.closest("a[href]").ok().flatten())
+                    .and_then(|element| match element.closest("a[href]") {
+                        Ok(anchor) => anchor,
+                        Err(_) => {
+                            tracing::warn!("Unable to inspect a navigation link");
+                            None
+                        }
+                    })
                     .and_then(|element| element.dyn_into::<web_sys::HtmlAnchorElement>().ok())
                 else {
                     return;
@@ -178,19 +241,32 @@ pub fn Layout() -> impl IntoView {
                 event.stop_immediate_propagation();
                 editor_guard.request(EditorDestination::Href(anchor.href()));
             });
-        let _ = document.add_event_listener_with_callback_and_bool(
-            "click",
-            click.as_ref().unchecked_ref(),
-            true,
-        );
-        let listener = send_wrapper::SendWrapper::new((document, click));
-        on_cleanup(move || {
-            let (document, click) = &*listener;
-            let _ = document.remove_event_listener_with_callback_and_bool(
+        if document
+            .add_event_listener_with_callback_and_bool(
                 "click",
                 click.as_ref().unchecked_ref(),
                 true,
-            );
+            )
+            .is_err()
+        {
+            tracing::warn!("Unable to install the recipe navigation guard");
+            editor_guard
+                .navigation_error
+                .set("Navigation protection is unavailable; keep this page open.".into());
+        }
+        let listener = send_wrapper::SendWrapper::new((document, click));
+        on_cleanup(move || {
+            let (document, click) = &*listener;
+            if document
+                .remove_event_listener_with_callback_and_bool(
+                    "click",
+                    click.as_ref().unchecked_ref(),
+                    true,
+                )
+                .is_err()
+            {
+                tracing::warn!("Unable to remove the recipe navigation guard");
+            }
         });
     }
 
@@ -268,6 +344,9 @@ pub fn Layout() -> impl IntoView {
                         <crate::components::BreweryBrand/>
                     </div>
                     <main class="flex-1 overflow-y-auto">
+                        <Show when=move || !editor_guard.navigation_error.get().is_empty()>
+                            <p role="alert">{move || editor_guard.navigation_error.get()}</p>
+                        </Show>
                         <Outlet/>
                     </main>
                 </div>
