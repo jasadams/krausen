@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The escape hatch that makes round-tripping lossless.
+//! Structural representation for unrecognised elements.
 //!
 //! BeerXML in the wild is not only BeerXML. Exporters add their own elements,
 //! and a future version of the standard will add more. Anything this crate
-//! does not recognise is kept verbatim as a [`RawElement`] and written back
-//! out unchanged, so importing a recipe and exporting it again never quietly
-//! costs the brewer data they had before Krausen touched it.
+//! does not recognise can be retained as a [`RawElement`]. Attributes,
+//! mixed-content ordering and byte spelling require the separately retained
+//! original source. Edited exports report fragments that cannot be emitted.
 
 use serde::{Deserialize, Serialize};
 
-/// An element this crate does not model, preserved as it was found.
+/// A structural representation of an element this crate does not model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawElement {
     pub name: String,

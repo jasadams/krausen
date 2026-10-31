@@ -235,3 +235,19 @@ pub fn ButtonLink(
         </a>
     }
 }
+
+/// A download link using the same visual treatment as the shared button.
+#[component]
+pub fn DownloadLink(
+    href: Signal<String>,
+    #[prop(into)] filename: String,
+    children: Children,
+) -> impl IntoView {
+    let classes = format!(
+        "{} {} {}",
+        BASE,
+        variant_classes(ButtonVariant::Secondary),
+        size_classes(ButtonSize::Default)
+    );
+    view! { <a href=move || href.get() download=filename class=classes>{children()}</a> }
+}

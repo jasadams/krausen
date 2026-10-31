@@ -5,11 +5,12 @@
 //! Deliberately permissive about structure and strict about data. Real
 //! exports vary — unexpected elements, unexpected nesting, elements in a
 //! different order — and none of that is a reason to refuse a brewer's
-//! recipe. What is never done is discarding something: anything unrecognised
-//! becomes a [`RawElement`] and comes back out on export.
+//! recipe. Unrecognised elements can become [`RawElement`]s, but this parser
+//! is not byte-preserving and does not retain all XML attributes. Native
+//! imports retain original bytes separately.
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::{
     document::{BeerXml, Mash, Recipe},
@@ -47,6 +48,31 @@ pub fn parse(xml: &str) -> Result<BeerXml, ParseError> {
     Ok(doc)
 }
 
+fn validate_attributes(
+    element: &quick_xml::events::BytesStart<'_>,
+    position: u64,
+) -> Result<(), ParseError> {
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|error| ParseError::Xml {
+            position,
+            message: error.to_string(),
+        })?;
+        let value = attribute
+            .unescape_value()
+            .map_err(|error| ParseError::Xml {
+                position,
+                message: error.to_string(),
+            })?;
+        if !crate::native::valid_xml_characters(&value) {
+            return Err(ParseError::Xml {
+                position,
+                message: "attribute contains a character forbidden by XML 1.0".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Read the whole document into a generic element tree.
 ///
 /// Mapping onto typed records happens afterwards, which keeps the XML handling
@@ -68,9 +94,24 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                     message: e.to_string(),
                 });
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) => {
+                if !stack.is_empty() {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "unclosed element".into(),
+                    });
+                }
+                break;
+            }
 
             Ok(Event::Start(e)) => {
+                validate_attributes(&e, reader.buffer_position())?;
+                if stack.len() >= 96 {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "XML nesting limit exceeded".into(),
+                    });
+                }
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 stack.push(RawElement {
                     name,
@@ -80,6 +121,7 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
             }
 
             Ok(Event::Empty(e)) => {
+                validate_attributes(&e, reader.buffer_position())?;
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 let element = RawElement {
                     name,
@@ -88,28 +130,62 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                 };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(element),
-                    None => root = Some(element),
+                    None if root.is_none() => root = Some(element),
+                    None => {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "multiple root elements".into(),
+                        });
+                    }
                 }
             }
 
             Ok(Event::Text(e)) => {
                 if let Some(current) = stack.last_mut() {
-                    let text = e.unescape().map(|t| t.into_owned()).unwrap_or_default();
+                    let text =
+                        e.unescape()
+                            .map(|t| t.into_owned())
+                            .map_err(|error| ParseError::Xml {
+                                position: reader.buffer_position(),
+                                message: error.to_string(),
+                            })?;
+                    if !crate::native::valid_xml_characters(&text) {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "text contains a character forbidden by XML 1.0".into(),
+                        });
+                    }
                     if !text.is_empty() {
                         current.text = Some(match current.text.take() {
                             Some(existing) => existing + &text,
                             None => text,
                         });
                     }
+                } else if !e.as_ref().iter().all(u8::is_ascii_whitespace) {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "text outside root element".into(),
+                    });
                 }
             }
 
             Ok(Event::CData(e)) => {
                 if let Some(current) = stack.last_mut() {
                     let text = String::from_utf8_lossy(&e).into_owned();
+                    if !crate::native::valid_xml_characters(&text) {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "CDATA contains a character forbidden by XML 1.0".into(),
+                        });
+                    }
                     current.text = Some(match current.text.take() {
                         Some(existing) => existing + &text,
                         None => text,
+                    });
+                } else {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "CDATA outside root element".into(),
                     });
                 }
             }
@@ -118,8 +194,19 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                 if let Some(finished) = stack.pop() {
                     match stack.last_mut() {
                         Some(parent) => parent.children.push(finished),
-                        None => root = Some(finished),
+                        None if root.is_none() => root = Some(finished),
+                        None => {
+                            return Err(ParseError::Xml {
+                                position: reader.buffer_position(),
+                                message: "multiple root elements".into(),
+                            });
+                        }
                     }
+                } else {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "unexpected closing element".into(),
+                    });
                 }
             }
 
@@ -332,7 +419,10 @@ mod tests {
         .expect("parses");
 
         let mash = doc.recipes[0].mash.as_ref().expect("has a mash");
-        assert_eq!(mash.header.name().map(String::as_str), Some("Single Infusion"));
+        assert_eq!(
+            mash.header.name().map(String::as_str),
+            Some("Single Infusion")
+        );
         assert_eq!(mash.steps.len(), 2);
         assert_eq!(mash.steps[1].step_temp().copied(), Some(75.0));
     }
@@ -350,6 +440,26 @@ mod tests {
     fn malformed_xml_is_an_error_rather_than_a_guess() {
         assert!(parse("<RECIPES><RECIPE></RECIPES>").is_err());
         assert!(parse("").is_err());
+        assert!(parse("<RECIPE/><RECIPE/>").is_err());
+        assert!(parse("<RECIPES><RECIPE>").is_err());
+        assert!(parse("<RECIPE/>extra").is_err());
+        assert!(parse("<RECIPE><NAME>&unknown;</NAME></RECIPE>").is_err());
+    }
+
+    #[test]
+    fn numeric_references_must_decode_to_legal_xml_characters() {
+        for source in [
+            "<RECIPE><NAME>&#1;</NAME></RECIPE>",
+            "<RECIPE><NAME>&#x1;</NAME></RECIPE>",
+            "<RECIPE source=\"&#1;\"/>",
+            "<RECIPE><VENDOR source=\"&#x1;\"/></RECIPE>",
+        ] {
+            assert!(
+                parse(source).is_err(),
+                "accepted invalid decoded character: {source}"
+            );
+        }
+        assert!(parse("<RECIPE source=\"&#9;\"><NAME>&#xA;Valid</NAME></RECIPE>").is_ok());
     }
 
     #[test]

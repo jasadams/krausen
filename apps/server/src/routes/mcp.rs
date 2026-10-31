@@ -86,6 +86,32 @@ struct RecipeSave {
     document: krausen_types::brewery::RecipeDocumentV1,
     request_id: String,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BeerXmlPreview {
+    workspace_id: String,
+    request: krausen_types::interchange::ImportRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BeerXmlImport {
+    workspace_id: String,
+    request: krausen_types::interchange::ImportRequest,
+    request_id: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BeerXmlExport {
+    workspace_id: String,
+    request: krausen_types::interchange::ExportRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BeerXmlOriginal {
+    workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
+    recipe_id: String,
+}
 fn typed_schema<T: schemars::JsonSchema>() -> serde_json::Map<String, serde_json::Value> {
     let value = serde_json::to_value(schemars::schema_for!(T)).expect("shared input schema");
     schema(value)
@@ -141,6 +167,26 @@ impl ServerHandler for McpHandler {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(
+                operations::BEERXML_PREVIEW.mcp_tool,
+                "Preview a BeerXML import",
+                typed_schema::<BeerXmlPreview>(),
+            ),
+            Tool::new(
+                operations::BEERXML_IMPORT.mcp_tool,
+                "Commit a BeerXML import",
+                typed_schema::<BeerXmlImport>(),
+            ),
+            Tool::new(
+                operations::BEERXML_EXPORT.mcp_tool,
+                "Export current native data as BeerXML",
+                typed_schema::<BeerXmlExport>(),
+            ),
+            Tool::new(
+                operations::BEERXML_ORIGINAL.mcp_tool,
+                "Retrieve the unedited imported source",
+                typed_schema::<BeerXmlOriginal>(),
+            ),
             Tool::new(
                 operations::EQUIPMENT_SAVE.mcp_tool,
                 "Save a guarded equipment profile",
@@ -257,6 +303,100 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "beerxml.preview.v1" => {
+                let input: BeerXmlPreview = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid BeerXML preview", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::interchange::preview(&self.db, &actor, &input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::interchange::ImportPreviewOutcome::Preview(_)
+                );
+                if success {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "beerxml.import.v1" => {
+                let input: BeerXmlImport = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid BeerXML import", None))?;
+                let Ok(id) = uuid::Uuid::parse_str(&input.request_id) else {
+                    return Ok(CallToolResult::structured_error(json!({"outcome": krausen_types::interchange::ImportCommitOutcome::InvalidRequest})).into());
+                };
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::interchange::commit(&self.db, &actor, &input.request, id).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::interchange::ImportCommitOutcome::Imported { .. }
+                );
+                if success {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "beerxml.export.v1" => {
+                let input: BeerXmlExport = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid BeerXML export", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::interchange::export(&self.db, &actor, &input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::interchange::ExportOutcome::Exported { .. }
+                        | krausen_types::interchange::ExportOutcome::LossAcknowledgementRequired(_)
+                );
+                if success {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "beerxml.original.v1" => {
+                let input: BeerXmlOriginal = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid BeerXML original query", None)
+                })?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::interchange::original(
+                    &self.db,
+                    &actor,
+                    &input.intent,
+                    &input.recipe_id,
+                )
+                .await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::interchange::OriginalOutcome::Original { .. }
+                );
+                if success {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
             "equipment.save.v1"
             | "equipment.archive.v1"
             | "equipment.get.v1"

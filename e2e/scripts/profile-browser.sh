@@ -30,3 +30,4 @@ until curl --silent --fail "$BASE_URL/login" > /dev/null; do
 done
 cd e2e
 ./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'equipment profiles can be saved|an uncertain equipment save|profile pagination exposes' --reporter=line
+./node_modules/.bin/playwright test tests/recipes/beerxml.spec.ts --reporter=line

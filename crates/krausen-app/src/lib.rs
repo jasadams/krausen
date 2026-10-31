@@ -422,6 +422,7 @@ pub async fn enqueue_outbox(
 }
 
 pub mod formulation;
+pub mod interchange;
 
 mod style_reference;
 pub mod recipe_editor;

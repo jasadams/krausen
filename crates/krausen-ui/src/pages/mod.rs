@@ -14,3 +14,4 @@ mod recipe_recovery;
 
 pub mod equipment_profiles;
 pub mod recipe_editor;
+pub mod beerxml;

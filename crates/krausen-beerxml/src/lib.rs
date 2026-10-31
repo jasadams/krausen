@@ -3,15 +3,15 @@
 //! BeerXML import and export.
 //!
 //! Recipes come in from other brewing software and go back out to it, so this
-//! crate reads and writes BeerXML 1.0 in full.
+//! crate reads and writes BeerXML 1.0 records.
 //!
-//! # Nothing is thrown away
+//! # Source preservation
 //!
 //! The whole record set is modelled — mash schedules, water profiles, styles,
 //! fermentation stages — whether or not Krausen currently uses any of it, and
-//! anything the standard does not cover is preserved verbatim as a
-//! [`RawElement`]. Importing a recipe and exporting it again is therefore not
-//! a way to lose data a brewer already had.
+//! unrecognised elements can be represented structurally as a [`RawElement`].
+//! Native imports retain the original bytes separately; edited exports report
+//! information that cannot be safely emitted.
 //!
 //! That matters beyond tidiness. §4.6 requires a brew to embed the recipe it
 //! was brewed from, so an old brew can still render its own bench sheet. A
