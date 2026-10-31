@@ -935,7 +935,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
     let import_request = json!({
         "intent": intent,
-        "xml": "<RECIPES><RECIPE><NAME>SDK import</NAME></RECIPE></RECIPES>",
+        "xml": "<RECIPES><RECIPE><NAME>SDK import</NAME><HOPS><HOP><NAME>Fuggles</NAME><USE>Dry Hop</USE><TIME>10080</TIME><AMOUNT>0.03</AMOUNT></HOP></HOPS></RECIPE></RECIPES>",
         "recipe_index": 0,
         "choices": {"colour":null,"efficiency":null},
         "equipment_profile_id": null,
@@ -961,8 +961,13 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert!(browser_preview.status().is_success());
+    let preview_outcome = mcp_preview.structured_content.unwrap()["outcome"].clone();
     assert_eq!(
-        mcp_preview.structured_content.unwrap()["outcome"],
+        preview_outcome["Preview"]["document"]["hops"][0]["contact_minutes"],
+        10080.0
+    );
+    assert_eq!(
+        preview_outcome,
         browser_preview.json::<serde_json::Value>().await.unwrap()
     );
     let import_key = uuid::Uuid::new_v4().to_string();
@@ -1007,8 +1012,15 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert!(browser_export.status().is_success());
+    let export_outcome = exported.structured_content.unwrap()["outcome"].clone();
+    assert!(
+        export_outcome["Exported"]["xml"]
+            .as_str()
+            .unwrap()
+            .contains("<TIME>10080.0</TIME>")
+    );
     assert_eq!(
-        exported.structured_content.unwrap()["outcome"],
+        export_outcome,
         browser_export.json::<serde_json::Value>().await.unwrap()
     );
     let original_args = json!({"workspace_id":ws,"intent":intent,"recipe_id":imported_id})

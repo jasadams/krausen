@@ -48,6 +48,31 @@ pub fn parse(xml: &str) -> Result<BeerXml, ParseError> {
     Ok(doc)
 }
 
+fn validate_attributes(
+    element: &quick_xml::events::BytesStart<'_>,
+    position: u64,
+) -> Result<(), ParseError> {
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|error| ParseError::Xml {
+            position,
+            message: error.to_string(),
+        })?;
+        let value = attribute
+            .unescape_value()
+            .map_err(|error| ParseError::Xml {
+                position,
+                message: error.to_string(),
+            })?;
+        if !crate::native::valid_xml_characters(&value) {
+            return Err(ParseError::Xml {
+                position,
+                message: "attribute contains a character forbidden by XML 1.0".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Read the whole document into a generic element tree.
 ///
 /// Mapping onto typed records happens afterwards, which keeps the XML handling
@@ -80,6 +105,7 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
             }
 
             Ok(Event::Start(e)) => {
+                validate_attributes(&e, reader.buffer_position())?;
                 if stack.len() >= 96 {
                     return Err(ParseError::Xml {
                         position: reader.buffer_position(),
@@ -95,6 +121,7 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
             }
 
             Ok(Event::Empty(e)) => {
+                validate_attributes(&e, reader.buffer_position())?;
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 let element = RawElement {
                     name,
@@ -122,6 +149,12 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                                 position: reader.buffer_position(),
                                 message: error.to_string(),
                             })?;
+                    if !crate::native::valid_xml_characters(&text) {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "text contains a character forbidden by XML 1.0".into(),
+                        });
+                    }
                     if !text.is_empty() {
                         current.text = Some(match current.text.take() {
                             Some(existing) => existing + &text,
@@ -139,6 +172,12 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
             Ok(Event::CData(e)) => {
                 if let Some(current) = stack.last_mut() {
                     let text = String::from_utf8_lossy(&e).into_owned();
+                    if !crate::native::valid_xml_characters(&text) {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "CDATA contains a character forbidden by XML 1.0".into(),
+                        });
+                    }
                     current.text = Some(match current.text.take() {
                         Some(existing) => existing + &text,
                         None => text,
@@ -405,6 +444,22 @@ mod tests {
         assert!(parse("<RECIPES><RECIPE>").is_err());
         assert!(parse("<RECIPE/>extra").is_err());
         assert!(parse("<RECIPE><NAME>&unknown;</NAME></RECIPE>").is_err());
+    }
+
+    #[test]
+    fn numeric_references_must_decode_to_legal_xml_characters() {
+        for source in [
+            "<RECIPE><NAME>&#1;</NAME></RECIPE>",
+            "<RECIPE><NAME>&#x1;</NAME></RECIPE>",
+            "<RECIPE source=\"&#1;\"/>",
+            "<RECIPE><VENDOR source=\"&#x1;\"/></RECIPE>",
+        ] {
+            assert!(
+                parse(source).is_err(),
+                "accepted invalid decoded character: {source}"
+            );
+        }
+        assert!(parse("<RECIPE source=\"&#9;\"><NAME>&#xA;Valid</NAME></RECIPE>").is_ok());
     }
 
     #[test]

@@ -535,13 +535,7 @@ pub fn to_xml(document: &RecipeDocumentV1) -> NativeExport {
         };
         record.use_ = use_name.map(|value| Scalar::from_value(value.to_owned()));
         if use_name.is_some() {
-            record.time = row.contact_minutes.map(|v| {
-                Scalar::from_value(if row.stage == "dry_hop" {
-                    v / 1440.0
-                } else {
-                    v
-                })
-            });
+            record.time = row.contact_minutes.map(Scalar::from_value);
         }
         recipe.hops.push(record);
     }
@@ -1276,15 +1270,10 @@ pub fn from_legacy(recipe: &crate::Recipe) -> Result<NativeMigration, serde_json
             &mut warnings,
         );
         let source_stage = item.use_().cloned().unwrap_or_else(|| "unspecified".into());
-        // BeerXML dry-hop time is in days, unlike boil contact time in minutes.
-        let contact_minutes = if source_stage.eq_ignore_ascii_case("dry hop") {
-            scaled_number(
-                item.time.as_ref(),
-                1440.0,
-                &format!("hops[{index}].contact_minutes"),
-                &mut warnings,
-            )
-        } else if source_stage.eq_ignore_ascii_case("boil") {
+        // BeerXML HOP TIME is minutes for both boil and dry-hop additions.
+        let contact_minutes = if source_stage.eq_ignore_ascii_case("dry hop")
+            || source_stage.eq_ignore_ascii_case("boil")
+        {
             exact_number(item.time.as_ref())
         } else {
             if item.time.is_some() {
@@ -1666,14 +1655,14 @@ mod tests {
         );
         let overflow = from_xml("<RECIPES><RECIPE><HOPS><HOP><USE>Dry Hop</USE><TIME>1e308</TIME><AMOUNT>1e308</AMOUNT></HOP></HOPS></RECIPE></RECIPES>").unwrap().remove(0);
         assert_eq!(overflow.document.hops[0].amount_g, None);
-        assert_eq!(overflow.document.hops[0].contact_minutes, None);
+        assert_eq!(overflow.document.hops[0].contact_minutes, Some(1e308));
         assert_eq!(
             overflow
                 .warnings
                 .iter()
                 .filter(|w| w.code == "source_number_unmapped")
                 .count(),
-            2
+            1
         );
     }
 
@@ -1693,17 +1682,38 @@ mod tests {
     }
 
     #[test]
-    fn dry_hop_days_round_trip_without_turning_into_boil_minutes() {
-        let source = "<RECIPES><RECIPE><HOPS><HOP><NAME>Hop</NAME><USE>Dry Hop</USE><TIME>2.5</TIME></HOP></HOPS></RECIPE></RECIPES>";
+    fn beerxml_dry_hop_time_is_interpreted_as_minutes() {
+        // BeerXML 1.0 HOP TIME is minutes for all uses, including Dry Hop.
+        let source = "<RECIPES><RECIPE><HOPS><HOP><NAME>Fuggles</NAME><USE>Dry Hop</USE><TIME>10080.0</TIME></HOP></HOPS></RECIPE></RECIPES>";
         let document = from_xml(source).unwrap().remove(0).document;
         assert_eq!(document.hops[0].stage, "dry_hop");
-        assert_eq!(document.hops[0].contact_minutes, Some(3600.0));
+        assert_eq!(document.hops[0].contact_minutes, Some(10080.0));
+    }
+
+    #[test]
+    fn native_dry_hop_minutes_export_as_beerxml_minutes() {
+        let document = RecipeDocumentV1 {
+            hops: vec![HopAddition {
+                row_id: "native-hop".into(),
+                amount_g: Some(30.0),
+                stage: "dry_hop".into(),
+                contact_minutes: Some(10080.0),
+                temperature_c: None,
+                specification: HopSpecification {
+                    name: Some("Fuggles".into()),
+                    producer: None,
+                    alpha_fraction: Some(0.045),
+                },
+                source: None,
+            }],
+            ..Default::default()
+        };
         let output = crate::parse(&to_xml(&document).xml).unwrap();
         assert_eq!(
             output.recipes[0].hops[0].use_().map(String::as_str),
             Some("Dry Hop")
         );
-        assert_eq!(output.recipes[0].hops[0].time().copied(), Some(2.5));
+        assert_eq!(output.recipes[0].hops[0].time().copied(), Some(10080.0));
     }
 
     #[test]

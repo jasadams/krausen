@@ -55,7 +55,7 @@ async fn exercise(db: DbPool) {
         account_id: user,
         workspace_id: workspace,
     };
-    let xml = r#"<RECIPES vendor="x"><RECIPE><NAME>Original</NAME><BOIL_TIME>60.5</BOIL_TIME><EFFICIENCY>75</EFFICIENCY><FERMENTABLES><FERMENTABLE id="grain"><NAME>Malt</NAME><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>"#;
+    let xml = r#"<RECIPES vendor="x"><RECIPE><NAME>Original</NAME><BOIL_TIME>60.5</BOIL_TIME><EFFICIENCY>75</EFFICIENCY><FERMENTABLES><FERMENTABLE id="grain"><NAME>Malt</NAME><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Dry hop</NAME><USE>Dry Hop</USE><TIME>10080</TIME><AMOUNT>0.03</AMOUNT></HOP></HOPS></RECIPE></RECIPES>"#;
     let mut request = ImportRequest {
         intent: intent.clone(),
         xml: xml.into(),
@@ -71,6 +71,21 @@ async fn exercise(db: DbPool) {
         interchange::preview(&db, &actor, &request).await,
         ImportPreviewOutcome::Preview(_)
     ));
+    for invalid_xml in [
+        "<RECIPE><NAME>&#1;</NAME></RECIPE>",
+        "<RECIPE source=\"&#x1;\"/>",
+    ] {
+        let mut invalid = request.clone();
+        invalid.xml = invalid_xml.into();
+        assert_eq!(
+            interchange::preview(&db, &actor, &invalid).await,
+            ImportPreviewOutcome::InvalidSource
+        );
+        assert_eq!(
+            interchange::commit(&db, &actor, &invalid, Uuid::new_v4()).await,
+            ImportCommitOutcome::InvalidSource
+        );
+    }
     let mut too_large = request.clone();
     too_large.xml = "x".repeat(krausen_types::interchange::MAX_BEERXML_BYTES + 1);
     assert_eq!(
@@ -146,6 +161,7 @@ async fn exercise(db: DbPool) {
         panic!("imported revision missing");
     };
     assert_eq!(snapshot.document.boil_minutes, Some(60.5));
+    assert_eq!(snapshot.document.hops[0].contact_minutes, Some(10080.0));
     let summary: Option<i64> = match &db {
         DbPool::Postgres(p) => sqlx::query_scalar(
             "SELECT boil_minutes::BIGINT FROM recipes WHERE workspace_id = $1 AND recipe_id = $2",
@@ -248,6 +264,7 @@ async fn exercise(db: DbPool) {
     };
     assert!(rendered.contains("<NAME>Edited</NAME>"));
     assert!(rendered.contains("<BOIL_TIME>2147483648.0</BOIL_TIME>"));
+    assert!(rendered.contains("<TIME>10080.0</TIME>"));
     assert!(!rendered.contains("<NAME>Original</NAME>"));
     let foreign = ActorContext {
         workspace_id: other.clone(),

@@ -248,6 +248,8 @@ Original-file recovery is separate and labelled as unedited import. The current
 parser/serializer is not literally lossless; KRA-17 implements these contracts.
 
 Boundary conversions include hop kg→g, percentages→fractions and source colour→EBC.
+BeerXML HOP `TIME` is in minutes for every use, including `Dry Hop`; a
+display-formatted number of days is not an input duration.
 Ambiguous BeerXML `COLOR` requires a visible preview choice of Lovibond or SRM,
 retained with mapping version. Missing specifications stay absent, not zero.
 Preserve unsupported timing/process information instead of truncating, clamping

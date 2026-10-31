@@ -372,6 +372,20 @@ that cannot preserve required native information must remain recoverable and
 report diagnostics rather than silently discard or fabricate it. No prior brew
 plan or original target is invented by rerunning today's engine over old data.
 
+The earlier `native-v1` BeerXML mapping treated dry-hop `TIME` as days even
+though BeerXML 1.0 specifies minutes. Native revisions produced by that mapping
+may therefore contain an incorrect dry-hop duration. Existing immutable
+revisions are not rewritten. For an affected recipe, compare the duration with
+the separately downloadable unedited original when available, then deliberately
+edit the duration in minutes and save a new revision using the ordinary
+expected-revision check. Original file bytes were not available for legacy
+database backfills: an authorized operator can instead inspect the scoped
+`recipe_import_provenance.source_record` at revision 1 for mapping version
+`native-v1`; its parsed `hops[].time.raw` retains the source value. Compare that
+evidence with the current recipe before making any correction. New
+`legacy-native-v2` and `beerxml-native-v2` mappings interpret HOP `TIME` in
+minutes. No prior record is claimed to have been corrected automatically.
+
 Keep original immutable payloads when adding read migrations or newer schemas.
 Readers dispatch by stored schema version, rejecting unsupported versions with a
 typed error rather than misreading them as current. New calculations project
