@@ -866,13 +866,18 @@ pub fn CataloguePicker(
 
     let form_view = move || view! {
         {move || notice_view()}
-        <div class="k-catalogue-create">
-            <BreweryDraftField id="library-name" label="Fermentable name" value=Signal::from(name) on_change=Callback::new(move |text| name.set(text)) hint="e.g. Local maltster pale malt" disabled=busy.get()||retrying.get()/>
-            <BreweryDraftField id="library-producer" label="Producer" value=Signal::from(producer) on_change=Callback::new(move |text| producer.set(text)) hint="Maltster or supplier (optional)" disabled=busy.get()||retrying.get()/>
-            <BreweryDraftSelect id="library-category" label="Type" value=Signal::from(category) on_change=Callback::new(move |text| category.set(text)) options=CATEGORIES.iter().map(|option| ((*option).to_owned(), (*option).to_owned())).collect() disabled=busy.get()||retrying.get()/>
-            <BreweryDraftField id="library-colour" label="Colour" value=Signal::from(colour) on_change=Callback::new(move |text| colour.set(text)) unit="EBC" numeric=true hint="e.g. 3.5" disabled=busy.get()||retrying.get()/>
-            <BreweryDraftField id="library-yield" label="Potential yield" value=Signal::from(yield_percent) on_change=Callback::new(move |text| yield_percent.set(text)) unit="%" numeric=true hint="Use the extract yield from the supplier's specification." disabled=busy.get()||retrying.get()/>
-        </div>
+        {move || {
+            let disabled = busy.get() || retrying.get();
+            view! {
+                <div class="k-catalogue-create">
+                    <BreweryDraftField id="library-name" label="Fermentable name" value=Signal::from(name) on_change=Callback::new(move |text| name.set(text)) hint="e.g. Local maltster pale malt" disabled=disabled/>
+                    <BreweryDraftField id="library-producer" label="Producer" value=Signal::from(producer) on_change=Callback::new(move |text| producer.set(text)) hint="Maltster or supplier (optional)" disabled=disabled/>
+                    <BreweryDraftSelect id="library-category" label="Type" value=Signal::from(category) on_change=Callback::new(move |text| category.set(text)) options=CATEGORIES.iter().map(|option| ((*option).to_owned(), (*option).to_owned())).collect() disabled=disabled/>
+                    <BreweryDraftField id="library-colour" label="Colour" value=Signal::from(colour) on_change=Callback::new(move |text| colour.set(text)) unit="EBC" numeric=true hint="e.g. 3.5" disabled=disabled/>
+                    <BreweryDraftField id="library-yield" label="Potential yield" value=Signal::from(yield_percent) on_change=Callback::new(move |text| yield_percent.set(text)) unit="%" numeric=true hint="Use the extract yield from the supplier's specification." disabled=disabled/>
+                </div>
+            }
+        }}
         <p class="note-caption">"Stored in your workspace's ingredient library. It will not modify the starter catalogue."</p>
     };
 
