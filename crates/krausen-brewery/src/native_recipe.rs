@@ -134,4 +134,19 @@ mod tests {
         );
         assert!(prepare_backfill("not json", "provenance-1").is_err());
     }
+
+    #[test]
+    fn recipe_identity_rejects_non_finite_values_and_tracks_content() {
+        let mut document = RecipeDocumentV1::default();
+        let (_, first) = encode_document(&document).unwrap();
+        document.title = "Changed".into();
+        assert_ne!(first, encode_document(&document).unwrap().1);
+        document.batch_size_l = Some(f64::NAN);
+        assert!(matches!(
+            encode_document(&document),
+            Err(EncodeError::Canonical(
+                krausen_core::canonical_json::CanonicalError::NonFinite
+            ))
+        ));
+    }
 }
