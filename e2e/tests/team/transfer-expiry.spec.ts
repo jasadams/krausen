@@ -83,7 +83,7 @@ test.describe('TC-035: Team - Ownership Transfer Expiry', () => {
     const page = await context.newPage();
     try {
       await loginUser(page, recipientEmail, recipientPassword);
-      await page.goto(`/accept-ownership?transfer_id=${transferId}`);
+      await page.goto(`/accept-ownership/${transferId}`);
       await waitForWasm(page);
 
       // Should show an error/expired state rather than the accept form

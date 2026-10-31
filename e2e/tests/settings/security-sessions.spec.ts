@@ -98,12 +98,13 @@ test.describe('TC-014: Security - Session Management', () => {
     const sessionsTable = page.locator('table').last();
     await expect(sessionsTable).toBeVisible({ timeout: 10000 });
 
-    // Verify table headers exist
-    await expect(page.getByText('Device', { exact: false }).first()).toBeVisible();
-    await expect(page.getByText('Location')).toBeVisible();
-    await expect(page.getByText('Last Active')).toBeVisible();
-    await expect(page.getByText('Created')).toBeVisible();
-    await expect(page.getByText('Actions')).toBeVisible();
+    // Verify table headers exist (scope to the sessions table; the passkey
+    // table on the same page also has a Created column).
+    await expect(sessionsTable.getByText('Device')).toBeVisible();
+    await expect(sessionsTable.getByText('Location')).toBeVisible();
+    await expect(sessionsTable.getByText('Last Active')).toBeVisible();
+    await expect(sessionsTable.getByText('Created')).toBeVisible();
+    await expect(sessionsTable.getByText('Actions')).toBeVisible();
   });
 
   test('should revoke a secondary session', async ({ page, browser }) => {
@@ -126,7 +127,7 @@ test.describe('TC-014: Security - Session Management', () => {
     await disconnectBtn.click();
 
     await expect(page.getByText('Disconnect Session?')).toBeVisible({ timeout: 5000 });
-    await page.getByRole('button', { name: 'Disconnect' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Disconnect' }).click();
 
     await page.waitForTimeout(2000);
     const newRowCount = await sessionRows.count();
@@ -170,10 +171,13 @@ test.describe('TC-014: Security - Session Management', () => {
 
     await page.getByRole('button', { name: 'Log Out from All Devices' }).click();
 
-    await expect(page.getByText('Log Out From All Devices?')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText(/log out from all devices/i)).toBeVisible();
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm.getByRole('heading', { name: 'Log Out From All Devices?' })).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(confirm.getByText(/log out from all devices/i)).toBeVisible();
 
-    const cancelBtn = page.getByRole('button', { name: 'Cancel' });
+    const cancelBtn = confirm.getByRole('button', { name: 'Cancel' });
     await cancelBtn.click();
 
     await expect(page.getByText('Active Sessions')).toBeVisible();

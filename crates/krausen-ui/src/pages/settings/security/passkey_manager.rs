@@ -749,7 +749,9 @@ pub fn PasskeyManager() -> impl IntoView {
                                     <tbody class="bg-background divide-y divide-border">
                                         <For
                                             each=move || passkeys.get()
-                                            key=|pk| pk.credential_id.clone()
+                                            // Include the display name so a rename recreates
+                                            // the keyed row with its new value.
+                                            key=|pk| format!("{}:{}", pk.credential_id, pk.name)
                                             let:passkey
                                         >
                                             {

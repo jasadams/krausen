@@ -66,7 +66,7 @@ test.describe('TC-034: Team - Ownership Transfer Decline', () => {
     expect(owner).toBe(getDefaultUserId());
   });
 
-  test('recipient declines transfer via accept-ownership page', async ({ browser }) => {
+  test('recipient decline requires mailbox proof', async ({ browser }) => {
     test.skip(isPersonalMode(), 'Requires self_hosted mode');
     expect(transferId).not.toBeNull();
 
@@ -74,18 +74,24 @@ test.describe('TC-034: Team - Ownership Transfer Decline', () => {
     const page = await context.newPage();
     try {
       await loginUser(page, recipientEmail, recipientPassword);
-      await page.goto(`/accept-ownership?transfer_id=${transferId}`);
+      await page.goto(`/accept-ownership/${transferId}`);
       await waitForWasm(page);
 
       const declineBtn = page.getByRole('button', { name: /decline/i });
       const visible = await declineBtn.isVisible({ timeout: 10_000 }).catch(() => false);
       if (visible) {
         await declineBtn.click();
-        await page.waitForTimeout(3000);
       }
 
+      // The shared recipient proof flow never declines from a click alone.
+      // With this fixture's mailer disabled it reports unavailability; with a
+      // mailer it moves to a pending confirmation. Either way the transfer
+      // must stay pending until the proof completes.
+      await expect(
+        page.getByText(/confirmation is pending|email delivery is unavailable/i).first()
+      ).toBeVisible({ timeout: 10_000 });
       const status = db.getTransferStatus(transferId!);
-      expect(status).toBe('declined');
+      expect(status).toBe('pending');
 
       const owner = db.getWorkspaceOwner(getDefaultWorkspaceId());
       expect(owner).toBe(getDefaultUserId());

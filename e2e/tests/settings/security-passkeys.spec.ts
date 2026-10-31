@@ -74,7 +74,7 @@ test.describe('TC-013: Security - Passkey Management', () => {
 
       await addPasskeyViaModal(page, 'Test Virtual Authenticator');
 
-      await expect(page.getByText('Test Virtual Authenticator')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText('Test Virtual Authenticator', { exact: true })).toBeVisible({ timeout: 10000 });
     } finally {
       await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
     }

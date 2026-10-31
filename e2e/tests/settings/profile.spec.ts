@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { gotoAuthenticated } from '../../helpers/test-helpers';
+import { gotoAuthenticated, isPersonalMode } from '../../helpers/test-helpers';
 
 // In personal mode the ProfileInfoCard (name + email fields) is hidden behind
 // `<Show when=move || !is_personal>`. The Appearance card and MCP Connection
@@ -42,6 +42,7 @@ test.describe('TC-009: Profile Settings', () => {
   });
 
   test('MCP Connection card shows Claude Code section in personal mode', async ({ page }) => {
+    test.skip(!isPersonalMode(), 'Personal-mode only');
     await gotoAuthenticated(page, '/settings/profile');
 
     const claudeCodeHeading = page.locator('h4', { hasText: 'Claude Code' });
@@ -52,6 +53,7 @@ test.describe('TC-009: Profile Settings', () => {
   });
 
   test('MCP Connection card shows Claude Desktop section in personal mode', async ({ page }) => {
+    test.skip(!isPersonalMode(), 'Personal-mode only');
     await gotoAuthenticated(page, '/settings/profile');
 
     const claudeDesktopHeading = page.locator('h4', { hasText: 'Claude Desktop' });
@@ -72,6 +74,7 @@ test.describe('TC-009: Profile Settings', () => {
   });
 
   test('Profile Info card is hidden in personal mode', async ({ page }) => {
+    test.skip(!isPersonalMode(), 'Personal-mode only');
     await gotoAuthenticated(page, '/settings/profile');
 
     // ProfileInfoCard shows "Profile Information" title — should NOT be visible
