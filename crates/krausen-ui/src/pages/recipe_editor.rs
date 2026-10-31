@@ -452,7 +452,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                             ));
                             conflict.set(Some(snapshot));
                         } else {
-                            tracing::warn!("Unable to clear the retained draft after saving");
                             baseline.set(snapshot.document.clone());
                             revision.set(Some(snapshot.revision));
                             draft.update(|d| d.replace_saved(snapshot.document));
@@ -746,6 +745,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                                 editor_guard.finish();
                             }
                         } else {
+                            tracing::warn!("Unable to clear the retained draft after saving");
                             editor_guard.saving_to_leave.set(false);
                             status.set(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
                         }
