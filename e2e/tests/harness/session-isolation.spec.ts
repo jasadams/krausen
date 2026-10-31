@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { test, expect } from '@playwright/test';
+import { test, expect, request as playwrightRequest } from '@playwright/test';
 import { getAuthMode, openAuthenticatedContext } from '../../helpers/auth-session';
 import { db, isPersonalMode } from '../../helpers/test-helpers';
 
@@ -84,7 +84,7 @@ test.describe('harness: isolated auth session families', () => {
       // boundary, not an arbitrary retry delay.
       await new Promise((resolve) => setTimeout(resolve, 35_000));
 
-      const replayClient = await request.newContext({ baseURL });
+      const replayClient = await playwrightRequest.newContext({ baseURL });
       try {
         const replay = await replayClient.post('/api/v1/auth/refresh', {
           headers: { cookie: `refresh_token=${oldRefresh}` },
