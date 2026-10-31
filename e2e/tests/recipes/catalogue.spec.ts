@@ -95,19 +95,7 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await create.getByLabel('Producer').fill('E2E MALTSTER');
   await create.getByLabel('Colour (EBC)').fill('5');
   await create.getByLabel('Potential yield (%)').fill('79');
-  page.on('request', request => {
-    if (request.url().includes('execute_ingredient_command')) {
-      console.log('DUPLICATE REQUEST', request.postData());
-    }
-  });
-  page.on('response', async response => {
-    if (response.url().includes('execute_ingredient_command')) {
-      console.log('DUPLICATE RESPONSE', response.status(), await response.text().catch(() => '<no body>'));
-    }
-  });
   await page.getByRole('button', { name: 'Save to library' }).click();
-  await page.waitForTimeout(500);
-  console.log('DUPLICATE PAGE', await page.locator('body').innerText());
   await expect(create.getByText('That fermentable and producer are already in your library.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Back to catalogue' }).click();
@@ -158,19 +146,7 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await page.getByLabel('Producer').fill('E2E managed maltster');
   await page.getByLabel('Colour (EBC)').fill('4.5');
   await page.getByLabel('Potential yield (%)').fill('80');
-  page.on('request', request => {
-    if (request.url().includes('execute_ingredient_command')) {
-      console.log('LOST REQUEST', request.postData());
-    }
-  });
-  page.on('response', async response => {
-    if (response.url().includes('execute_ingredient_command')) {
-      console.log('LOST RESPONSE', response.status(), await response.text().catch(() => '<no body>'));
-    }
-  });
   await create.getByRole('button', { name: 'Save to library' }).click();
-  await page.waitForTimeout(500);
-  console.log('LOST PAGE', await page.locator('body').innerText());
   await expect(create.getByText('Save may not have completed')).toBeVisible();
   await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
   await create.getByRole('button', { name: 'Retry previous request' }).click();

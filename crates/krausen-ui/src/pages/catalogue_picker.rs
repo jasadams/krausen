@@ -249,7 +249,6 @@ pub fn CataloguePicker(
             }
             match outcome {
                 Ok(IngredientOutcome::Entries(page)) => {
-                    notice.set(None);
                     if append {
                         items.update(|current| current.extend(page.items));
                     } else {
@@ -322,6 +321,9 @@ pub fn CataloguePicker(
         if open.get() {
             was_open.set(true);
             let _filter = filter.get();
+            // User-initiated open/filter changes clear stale feedback here.
+            // Background search completion must not erase a form notice.
+            notice.set(None);
             load_page.run(None);
         } else if was_open.get_untracked() {
             was_open.set(false);
@@ -330,6 +332,7 @@ pub fn CataloguePicker(
     });
     let search_input = Callback::new(move |text: String| {
         query.set(text);
+        notice.set(None);
         search_generation.update(|n| *n += 1);
         let debounce_generation = search_generation.get_untracked();
         leptos::task::spawn_local(async move {
