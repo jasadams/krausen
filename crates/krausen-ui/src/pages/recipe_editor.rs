@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Recipe editor over the shared, authorized recipe operations.
 use crate::{
-    components::{BreweryDraftField, BreweryDraftSelect, BreweryNotice, BreweryPanel, Button},
+    components::{
+        BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryNotice,
+        BreweryPanel, Button,
+    },
     pages::recipe_draft::RecipeDraft,
     server_fns::recipe_editor::{read_recipe, save_recipe},
 };
@@ -60,6 +63,12 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
         Callback::new(move |value: String| draft.update(|d| d.edit(|doc| doc.title = value)));
     let notes =
         Signal::derive(move || draft.with(|d| d.document().notes.clone().unwrap_or_default()));
+    let description = Signal::derive(move || {
+        draft.with(|d| d.document().description.clone().unwrap_or_default())
+    });
+    let description_change = Callback::new(move |value: String| {
+        draft.update(|d| d.edit(|doc| doc.description = (!value.is_empty()).then_some(value)))
+    });
     let notes_change = Callback::new(move |value: String| {
         draft.update(|d| d.edit(|doc| doc.notes = (!value.is_empty()).then_some(value)))
     });
@@ -136,6 +145,8 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
         pending.set(true);
         status.set("Saving…".into());
         leptos::task::spawn_local(async move {
+            #[cfg(target_arch = "wasm32")]
+            let creating = attempt.recipe_id.is_none();
             let result = save_recipe(
                 attempt.recipe_id,
                 attempt.expected,
@@ -150,6 +161,21 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
                     revision: saved,
                 }) => {
                     retry.set(None);
+                    #[cfg(target_arch = "wasm32")]
+                    if creating {
+                        if let Some(window) = web_sys::window() {
+                            let result = window.history().and_then(|history| {
+                                history.replace_state_with_url(
+                                    &wasm_bindgen::JsValue::NULL,
+                                    "",
+                                    Some(&format!("/recipe-editor/{id}")),
+                                )
+                            });
+                            if result.is_err() {
+                                tracing::warn!("Could not update the saved recipe address");
+                            }
+                        }
+                    }
                     recipe_id.set(Some(id));
                     revision.set(Some(saved));
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
@@ -193,6 +219,10 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
                 Ok(RecipeSaveOutcome::RequestIdentityConflict) => {
                     status.set("The prior save request could not be verified. Reopen the recipe before saving again.".into());
                 }
+                Ok(RecipeSaveOutcome::NotFound) => {
+                    retry.set(None);
+                    status.set("This recipe is no longer available in this workspace. Your draft is still open.".into());
+                }
                 Ok(RecipeSaveOutcome::InvalidRequest) => {
                     retry.set(None);
                     status.set("The save request was invalid. Your draft is still open.".into());
@@ -218,24 +248,36 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
             }
         });
     };
-    view! { <div class="kit-showcase"><header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Recipe"</p><h1>"Recipe editor"</h1><p>"Changes are saved only when you choose Save."</p><Button disabled=pending on:click=save>"Save recipe"</Button><span role="status">{move || {
+    view! { <div class="recipe-editor">
+        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>"Recipe editor"</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { "Unsaved changes".to_owned() } else { message }
-        }}</span></header>
-        <div class="kit-showcase__grid">
-            <BreweryPanel title="Recipe details"><div class="kit-showcase__stack">
-                <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change/>
-                <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
-                <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
+        }}</span><Button disabled=pending on:click=save>"Save recipe"</Button></div></header>
+        <div class="recipe-editor__summary">
+            <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change/>
+            <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
+            <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
+        </div>
+        <div class="recipe-editor__layout"><div class="recipe-editor__sections">
+            <IngredientEditor draft=draft/>
+            <AdditionalIngredients draft=draft/>
+            <ProcessSteps draft=draft/>
+            <BreweryDisclosure title="Recipe process and notes"><div class="recipe-editor__fields">
                 <NumberField id="recipe-attenuation" label="Whole-wort apparent attenuation" unit="fraction" path="process.apparent_attenuation_fraction" draft=draft read=|d: &RecipeDocumentV1| d.process.apparent_attenuation_fraction write=|d: &mut RecipeDocumentV1,n| d.process.apparent_attenuation_fraction=n/>
-                <BreweryDraftField id="recipe-notes" label="Notes" value=notes on_change=notes_change/>
+                <BreweryDraftArea id="recipe-description" label="Description" value=description on_change=description_change/>
+                <BreweryDraftArea id="recipe-notes" label="Notes" value=notes on_change=notes_change/>
                 <BreweryDraftSelect id="recipe-mash-method" label="Mash water method" value=mash_method on_change=mash_method_change options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
                 <NumberField id="recipe-mash-water" label="Mash water" unit="L" path="process.mash_water_l" draft=draft read=|d: &RecipeDocumentV1| d.process.mash_water_l write=|d: &mut RecipeDocumentV1,n| d.process.mash_water_l=n/>
                 <NumberField id="recipe-top-up" label="Kettle top-up" unit="L" path="process.kettle_top_up_l" draft=draft read=|d: &RecipeDocumentV1| d.process.kettle_top_up_l write=|d: &mut RecipeDocumentV1,n| d.process.kettle_top_up_l=n/>
                 <NumberField id="recipe-whirlpool" label="Whirlpool time" unit="min" path="process.whirlpool_minutes" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_minutes write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_minutes=n/>
                 <NumberField id="recipe-whirlpool-temp" label="Whirlpool temperature" unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_temperature_c=n/>
-            </div></BreweryPanel>
-            <BreweryPanel title="Equipment"><div class="kit-showcase__stack">
+            </div></BreweryDisclosure>
+            <BreweryDisclosure title="Equipment settings">
+                <Show when=move || draft.with(|d| d.document().equipment_profile_id.is_some())>
+                    <BreweryNotice title="Equipment profile unavailable" body="The stored profile cannot be resolved yet. You may explicitly use the draft equipment settings instead." warning=true/>
+                    <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| draft.update(|d| d.edit(|doc| doc.equipment_profile_id=None))>"Use draft equipment settings"</Button>
+                </Show>
+                <div class="recipe-editor__fields">
                 <NumberField id="recipe-efficiency-override" label="Brewhouse efficiency override" unit="fraction" path="equipment_overrides.efficiency_override_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.efficiency_override_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.efficiency_override_fraction=n/>
                 <NumberField id="recipe-efficiency" label="Mash efficiency" unit="fraction" path="equipment_overrides.mash_efficiency_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_efficiency_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_efficiency_fraction=n/>
                 <NumberField id="recipe-boil-off" label="Boil-off" unit="L/h" path="equipment_overrides.boil_off_l_per_hour" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.boil_off_l_per_hour write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.boil_off_l_per_hour=n/>
@@ -250,12 +292,11 @@ fn RecipeForm(initial: Option<RecipeSnapshot>) -> impl IntoView {
                 <BreweryDraftSelect id="recipe-chilling" label="Chilling" value=chilling on_change=chilling_change options=vec![("".into(), "Not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
                 <Show when=move || chilling.get() == "forced"><NumberField id="recipe-chilling-rate" label="Cooling rate" unit="per min" path="equipment_overrides.chilling.rate_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..}) => *rate_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..})=&mut d.equipment_overrides.chilling { *rate_per_minute=n }/><NumberField id="recipe-chilling-plateau" label="Cooling plateau" unit="°C" path="equipment_overrides.chilling.plateau_c" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..}) => *plateau_c, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..})=&mut d.equipment_overrides.chilling { *plateau_c=n }/></Show>
                 <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
-            </div></BreweryPanel>
-            <BreweryPanel title="Diagnostics"><div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div></BreweryPanel>
-            <IngredientEditor draft=draft/>
-            <AdditionalIngredients draft=draft/>
-            <ProcessSteps draft=draft/>
-        </div>
+            </div></BreweryDisclosure>
+        </div><aside class="recipe-editor__preview"><BreweryPanel title="Your formulation" description="Estimates use the current draft.">
+            <p>"Awaiting preview."</p>
+            <div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
+        </BreweryPanel></aside></div>
     </div> }
 }
 
@@ -414,14 +455,16 @@ fn IngredientFields(
     let measure_id = id.clone();
     let extra_id = id.clone();
     let stage_detail_id = id.clone();
-    view! { <div class="kit-showcase__stack">
-        <IngredientTextField draft=draft id=name_id kind=kind field=IngredientText::Name label="Name"/>
-        {matches!(kind, IngredientKind::Fermentable).then(|| view! { <IngredientTextField draft=draft id=type_id kind=kind field=IngredientText::Kind label="Type (grain, extract or sugar)"/> })}
-        <IngredientTextField draft=draft id=stage_id kind=kind field=IngredientText::Stage label="Stage"/>
-        <IngredientNumberField draft=draft id=quantity_id kind=kind field=IngredientNumber::Amount label="Amount" unit=if matches!(kind, IngredientKind::Hop) {"g"} else {"kg"}/>
-        <IngredientNumberField draft=draft id=measure_id kind=kind field=IngredientNumber::YieldOrAlpha label=if matches!(kind, IngredientKind::Hop) {"Alpha acid"} else {"Yield"} unit="fraction"/>
-        <IngredientNumberField draft=draft id=extra_id kind=kind field=IngredientNumber::ColourOrTime label=if matches!(kind, IngredientKind::Hop) {"Contact time"} else {"Colour"} unit=if matches!(kind, IngredientKind::Hop) {"min"} else {"EBC"}/>
-        <IngredientNumberField draft=draft id=stage_detail_id kind=kind field=IngredientNumber::StageDetail label=if matches!(kind, IngredientKind::Hop) {"Whirlpool temperature"} else {"Boil addition time"} unit=if matches!(kind, IngredientKind::Hop) {"°C"} else {"min"}/>
+    view! { <div class="recipe-editor__addition">
+        <div class="recipe-editor__fields"><IngredientTextField draft=draft id=name_id kind=kind field=IngredientText::Name label="Name"/>
+        <IngredientNumberField draft=draft id=quantity_id kind=kind field=IngredientNumber::Amount label="Amount" unit=if matches!(kind, IngredientKind::Hop) {"g"} else {"kg"}/></div>
+        <BreweryDisclosure title="Addition details"><div class="recipe-editor__fields">
+            {matches!(kind, IngredientKind::Fermentable).then(|| view! { <IngredientTextField draft=draft id=type_id kind=kind field=IngredientText::Kind label="Type"/> })}
+            <IngredientTextField draft=draft id=stage_id kind=kind field=IngredientText::Stage label="Stage"/>
+            <IngredientNumberField draft=draft id=measure_id kind=kind field=IngredientNumber::YieldOrAlpha label=if matches!(kind, IngredientKind::Hop) {"Alpha acid"} else {"Yield"} unit="fraction"/>
+            <IngredientNumberField draft=draft id=extra_id kind=kind field=IngredientNumber::ColourOrTime label=if matches!(kind, IngredientKind::Hop) {"Contact time"} else {"Colour"} unit=if matches!(kind, IngredientKind::Hop) {"min"} else {"EBC"}/>
+            <IngredientNumberField draft=draft id=stage_detail_id kind=kind field=IngredientNumber::StageDetail label=if matches!(kind, IngredientKind::Hop) {"Whirlpool temperature"} else {"Boil addition time"} unit=if matches!(kind, IngredientKind::Hop) {"°C"} else {"min"}/>
+        </div></BreweryDisclosure>
         <Button variant=crate::components::ButtonVariant::GhostDestructive on:click=remove>"Remove addition"</Button>
     </div> }
 }

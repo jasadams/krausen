@@ -448,3 +448,26 @@ pub fn BreweryDraftSelect(
         </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
     </div> }
 }
+
+/// Approved local mark and wordmark, shared by desktop and mobile navigation.
+#[component]
+pub fn BreweryBrand() -> impl IntoView {
+    view! { <a href="/" class="k-brand"><img src="/public/brewery-mark.svg" alt=""/><span>"krausen"<span class="k-brand__dot">"."</span></span></a> }
+}
+
+/// A compact, keyboard-operable disclosure for secondary settings.
+#[component]
+pub fn BreweryDisclosure(#[prop(into)] title: String, children: Children) -> impl IntoView {
+    view! { <details class="k-disclosure"><summary>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
+}
+
+/// Controlled multiline text for descriptions and notes.
+#[component]
+pub fn BreweryDraftArea(
+    #[prop(into)] id: String,
+    #[prop(into)] label: String,
+    value: Signal<String>,
+    on_change: Callback<String>,
+) -> impl IntoView {
+    view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label><div class="k-field__control"><textarea id=id rows="3" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev))></textarea></div></div> }
+}

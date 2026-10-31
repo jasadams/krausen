@@ -61,10 +61,7 @@ pub fn Layout() -> impl IntoView {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                             </svg>
                         </button>
-                        <a href="/">
-                            <img src="/public/krausen_full_logo.svg" alt="Krausen" class="h-6 dark:hidden"/>
-                            <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-6 hidden dark:block"/>
-                        </a>
+                        <crate::components::BreweryBrand/>
                     </div>
                     <main class="flex-1 overflow-y-auto">
                         <Outlet/>
@@ -87,10 +84,7 @@ fn Sidebar(
         <div class="w-[var(--k-sidebar-width)] bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
             // Logo
             <div class="p-4 border-b border-[var(--color-sidebar-border)]">
-                <a href="/">
-                    <img src="/public/krausen_full_logo.svg" alt="Krausen" class="h-8 dark:hidden"/>
-                    <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-8 hidden dark:block"/>
-                </a>
+                <crate::components::BreweryBrand/>
             </div>
 
             // Navigation

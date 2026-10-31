@@ -48,4 +48,4 @@ pub use switch::Switch;
 pub use theme::ThemeProvider;
 pub use tooltip::Tooltip;
 
-pub use brewery_kit::{BreweryDialog, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
+pub use brewery_kit::{BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
