@@ -106,7 +106,8 @@ where
             jwt::BROWSER_AUDIENCE,
             Utc::now().timestamp()
         )?;
-        if credential.is_none() {
+        if credential.as_ref().map(|row| row.credential_id.as_str()) != Some(credential_id.as_str())
+        {
             return Err(krausen_core::Error::Unauthorized(
                 "Browser credential revoked or expired".into(),
             ));
@@ -194,7 +195,6 @@ where
 
 #[derive(sqlx::FromRow)]
 struct CredentialIdRow {
-    #[allow(dead_code)]
     credential_id: String,
 }
 
