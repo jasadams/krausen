@@ -216,10 +216,10 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect(page.getByLabel('Mash efficiency (%)').first()).toHaveValue('80');
   await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 2 && result.Preview.context_digest !== originalDigest)).toBe(true);
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
-  await expect(page.getByText('Equipment profile unavailable')).toBeVisible();
+  await expect(page.getByText('Equipment profile unavailable', { exact: true })).toBeVisible();
   await expect.poll(() => previews.includes('UnresolvedProfile')).toBe(true);
   await page.getByRole('button', { name: 'Unarchive' }).click();
-  await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
+  await expect(page.getByText('Equipment profile unavailable', { exact: true })).toHaveCount(0);
 });
 
 
