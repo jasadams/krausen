@@ -101,8 +101,13 @@ pub(crate) async fn resolve_in_tx(
         .unwrap_or(&request.equipment_draft);
     let e = effective(base, &request.draft.equipment_overrides);
     let mut validation = krausen_brewery::validation::validate_draft(&request.draft, &e);
-    let targets =
-        krausen_brewery::mapping::calculation::targets(&request.draft, &e, &mut validation);
+    let mut applied_defaults = Vec::new();
+    let targets = krausen_brewery::mapping::calculation::targets_with_defaults(
+        &request.draft,
+        &e,
+        &mut validation,
+        &mut applied_defaults,
+    );
     let engine_source_hash = engine_source_hash();
     let policy_source_hash = policy_source_hash();
     let mut assumptions = vec![
@@ -137,6 +142,7 @@ pub(crate) async fn resolve_in_tx(
         .into(),
         equipment_profile: profile,
         assumptions,
+        applied_defaults,
         engine_version: krausen_calc::formulation::ENGINE_VERSION.into(),
         engine_build: krausen_calc::formulation::ENGINE_BUILD.into(),
         engine_source_hash,

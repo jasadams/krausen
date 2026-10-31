@@ -57,6 +57,10 @@ fn complete_document(profile_id: &str, title: &str) -> RecipeDocumentV1 {
         }],
         process: ProcessV1 {
             apparent_attenuation_fraction: Some(0.78),
+            mash_water_l: Some(15.0),
+            mash_water_method: Some("manual".into()),
+            whirlpool_minutes: Some(15.0),
+            kettle_top_up_l: Some(0.0),
             ..Default::default()
         },
         ..Default::default()
@@ -383,6 +387,53 @@ async fn exercise(db: DbPool) {
     else {
         panic!("refreshed current start");
     };
+
+    // Engine fallbacks actually used are frozen explicitly, not left as nulls.
+    let mut defaults_doc = complete_document(&profile_id, "Defaults");
+    defaults_doc.process.kettle_top_up_l = None;
+    defaults_doc.process.whirlpool_minutes = None;
+    let RecipeSaveOutcome::Saved {
+        recipe_id: defaults_recipe,
+        ..
+    } = save_recipe(&db, &actor, None, None, &defaults_doc).await
+    else {
+        panic!("defaults fixture");
+    };
+    let defaults_preview = preview_document(&db, &actor, &defaults_doc).await;
+    let StartBrewOutcome::Started {
+        plan: defaults_plan,
+        ..
+    } = brew_start::start(
+        &db,
+        &actor,
+        start_request(
+            &actor,
+            &defaults_recipe,
+            1,
+            Some(1),
+            &defaults_preview.context_digest.unwrap(),
+        ),
+    )
+    .await
+    else {
+        panic!("defaults start");
+    };
+    assert!(
+        defaults_plan
+            .applied_defaults
+            .iter()
+            .any(|default| default.path == "process.kettle_top_up_l" && default.value == 0.0)
+    );
+    assert!(
+        defaults_plan
+            .applied_defaults
+            .iter()
+            .any(|default| default.path == "process.whirlpool_minutes" && default.value == 0.0)
+    );
+    assert_eq!(
+        defaults_plan.calculation_context.applied_defaults,
+        defaults_plan.applied_defaults
+    );
 
     // Saved but Incomplete recipes do not start.
     let mut incomplete = complete_document(&profile_id, "Incomplete");

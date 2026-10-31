@@ -1990,6 +1990,10 @@ fn brew_test_document(profile_id: &str) -> krausen_types::brewery::RecipeDocumen
         }],
         process: krausen_types::brewery::ProcessV1 {
             apparent_attenuation_fraction: Some(0.78),
+            mash_water_l: Some(15.0),
+            mash_water_method: Some("manual".into()),
+            whirlpool_minutes: Some(15.0),
+            kettle_top_up_l: Some(0.0),
             ..Default::default()
         },
         ..Default::default()

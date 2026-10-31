@@ -210,6 +210,7 @@ async fn start_inner(
             .map(|profile| profile.metadata_revision),
         original_targets: preview.targets.clone(),
         assumptions: context.assumptions.clone(),
+        applied_defaults: context.applied_defaults.clone(),
         diagnostics: preview.validation.diagnostics.clone(),
         style_reference: preview.style.clone(),
         style_comparison: preview.style_comparison.clone(),
@@ -225,7 +226,9 @@ async fn start_inner(
     };
     let (plan_json, plan_digest) = brew_store::encode_plan(&plan).map_err(|error| {
         tracing::error!(error = %error, "brew plan cannot be encoded");
-        Error::Internal("brew plan cannot be encoded")
+        Error::Database(krausen_core::Error::Internal(
+            "brew plan cannot be encoded".into(),
+        ))
     })?;
     let brew_id = Uuid::new_v4().to_string();
     let started_at = chrono::Utc::now().timestamp();
