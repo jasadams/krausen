@@ -647,6 +647,79 @@ async fn exercise(db: DbPool) {
         let browser_result: serde_json::Value = response.json().await.unwrap();
         assert_eq!(a.structured_content.unwrap()["outcome"], browser_result);
     }
+    // The saved profile is usable by recipe save and preview through the
+    // browser and both MCP protocol clients under the same verified principal.
+    let linked_document = krausen_types::brewery::RecipeDocumentV1 {
+        title: "Profile linked recipe".into(),
+        equipment_profile_id: Some(equipment_request.profile_id.clone()),
+        ..Default::default()
+    };
+    let linked_key = uuid::Uuid::new_v4().to_string();
+    let linked_args = json!({"workspace_id":ws,"intent":intent,"document":linked_document,"request_id":linked_key}).as_object().unwrap().clone();
+    let linked_a = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(linked_args.clone()))
+        .await
+        .unwrap();
+    let linked_b = legacy
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(linked_args))
+        .await
+        .unwrap();
+    assert_eq!(linked_a.structured_content, linked_b.structured_content);
+    let linked_outcome = linked_a.structured_content.unwrap();
+    assert_eq!(linked_outcome["outcome"]["Saved"]["revision"], 1);
+    let recipe_save_path = <krausen_ui::server_fns::recipe_editor::SaveRecipe as ServerFn>::PATH;
+    let linked_http = reqwest::Client::new().post(format!("{base}{recipe_save_path}"))
+        .bearer_auth(&browser.access_token).json(&json!({"account_id":intent.account_id,"workspace_id":ws,"recipe_id":null,"expected_revision":null,"document":linked_document,"request_id":linked_key}))
+        .send().await.unwrap();
+    assert!(linked_http.status().is_success());
+    assert_eq!(
+        linked_http.json::<serde_json::Value>().await.unwrap(),
+        linked_outcome["outcome"]
+    );
+    let linked_preview = krausen_types::formulation::PreviewRequest {
+        draft_generation: "profile-generation".into(),
+        intent: intent.clone(),
+        draft: linked_document.clone(),
+        equipment_draft: Default::default(),
+    };
+    let linked_preview_args = json!({"workspace_id":ws,"request":linked_preview})
+        .as_object()
+        .unwrap()
+        .clone();
+    let preview_a = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview")
+                .with_arguments(linked_preview_args.clone()),
+        )
+        .await
+        .unwrap();
+    let preview_b = legacy
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(linked_preview_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_a.structured_content, preview_b.structured_content);
+    let profile_preview = preview_a.structured_content.unwrap();
+    assert_eq!(
+        profile_preview["outcome"]["Preview"]["context"]["equipment_profile"]["profile_id"],
+        equipment_request.profile_id
+    );
+    let preview_http = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "request_json",
+            serde_json::to_string(&linked_preview).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert!(preview_http.status().is_success());
+    assert_eq!(
+        preview_http.json::<serde_json::Value>().await.unwrap(),
+        profile_preview["outcome"]
+    );
     let archive = krausen_types::equipment::ArchiveEquipment {
         intent: intent.clone(),
         profile_id: equipment_request.profile_id.clone(),
@@ -688,6 +761,37 @@ async fn exercise(db: DbPool) {
     assert_eq!(
         archived.structured_content.unwrap()["outcome"],
         archive_value
+    );
+    let archived_preview_args = json!({"workspace_id":ws,"request":linked_preview})
+        .as_object()
+        .unwrap()
+        .clone();
+    let archived_preview = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(archived_preview_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        archived_preview.structured_content.unwrap()["outcome"],
+        "UnresolvedProfile"
+    );
+    let archived_http_preview = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "request_json",
+            serde_json::to_string(&linked_preview).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        archived_http_preview
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        "UnresolvedProfile"
     );
     let browser_styles =
         krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await;

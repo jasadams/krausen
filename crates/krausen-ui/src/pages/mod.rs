@@ -4,11 +4,12 @@ pub mod accept_ownership;
 pub mod auth;
 pub mod design_system;
 pub mod onboarding;
-pub mod recipes;
 pub mod recipe_preview_gate;
+pub mod recipes;
 pub mod settings;
 pub mod welcome;
 
 pub mod recipe_draft;
 
+pub mod equipment_profiles;
 pub mod recipe_editor;

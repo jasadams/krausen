@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use krausen_app::{ActorContext, Error, equipment, formulation};
+use krausen_app::{ActorContext, Error, equipment, formulation, recipe_editor};
 use krausen_core::DbPool;
 use krausen_types::{
     brewery::*,
     equipment::{ArchiveEquipment, SaveEquipment},
     formulation::{PreviewOutcome, PreviewRequest},
+    recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome},
     request_context::OperationIntent,
 };
 
@@ -105,6 +106,25 @@ async fn exercise(db: DbPool) {
     };
     let created = equipment::save(&db, &actor, req.clone()).await.unwrap();
     assert_eq!((created.revision, created.metadata_revision), (1, 1));
+    let mut recipe = draft(intent.clone(), &id).draft;
+    recipe.title = "Profile-linked recipe".into();
+    let saved_recipe = recipe_editor::save(
+        &db,
+        &actor,
+        &intent,
+        None,
+        None,
+        &recipe,
+        uuid::Uuid::new_v4(),
+    )
+    .await;
+    let RecipeSaveOutcome::Saved {
+        recipe_id,
+        revision: 1,
+    } = saved_recipe
+    else {
+        panic!("profile-linked recipe save")
+    };
     assert_eq!(
         equipment::save(&db, &actor, req.clone()).await.unwrap(),
         created
@@ -199,10 +219,23 @@ async fn exercise(db: DbPool) {
             .is_none()
     );
     assert!(matches!(
-        formulation::preview(&db, &foreign_actor, draft(foreign_intent, &id))
+        formulation::preview(&db, &foreign_actor, draft(foreign_intent.clone(), &id))
             .await
             .unwrap(),
         PreviewOutcome::UnresolvedProfile
+    ));
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &foreign_actor,
+            &foreign_intent,
+            None,
+            None,
+            &recipe,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedEquipmentProfile
     ));
     let archive = ArchiveEquipment {
         intent: intent.clone(),
@@ -215,6 +248,29 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert!(archived.archived);
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor,
+            &intent,
+            Some(&recipe_id),
+            Some(1),
+            &recipe,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedEquipmentProfile
+    ));
+    let RecipeReadOutcome::Found(retained) =
+        recipe_editor::read(&db, &actor, &intent, &recipe_id).await
+    else {
+        panic!("recipe retained")
+    };
+    assert_eq!(retained.revision, 1);
+    assert_eq!(
+        retained.document.equipment_profile_id.as_deref(),
+        Some(id.as_str())
+    );
     let original = equipment::get_revision(&db, &actor, &intent, &id, 1)
         .await
         .unwrap()
@@ -259,6 +315,19 @@ async fn exercise(db: DbPool) {
     .await
     .unwrap();
     assert!(!restored.archived);
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor,
+            &intent,
+            Some(&recipe_id),
+            Some(1),
+            &recipe,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::Saved { revision: 1, .. }
+    ));
     assert_eq!(restored.revision, 2);
     let PreviewOutcome::Preview(after_restore) =
         formulation::preview(&db, &actor, draft(intent.clone(), &id))

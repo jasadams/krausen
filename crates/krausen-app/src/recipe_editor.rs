@@ -162,8 +162,16 @@ async fn save_inner(
     if let Some(result) = recover_request(&mut tx, &key).await? {
         return Ok(serde_json::from_value(result)?);
     }
-    if document.equipment_profile_id.is_some() {
-        return Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile);
+    if let Some(profile_id) = &document.equipment_profile_id {
+        let profile =
+            krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)
+                .await
+                .map_err(boundary_error)?;
+        // The source row lock can wait past the verified credential's expiry.
+        authorize_workspace(&mut tx, actor).await?;
+        if !profile.is_some_and(|profile| !profile.archived) {
+            return Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile);
+        }
     }
     if !validation.saveable() {
         return Ok(RecipeSaveOutcome::Invalid(validation));

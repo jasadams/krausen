@@ -174,3 +174,34 @@ test('a dirty new recipe remains private to its original account and workspace',
   await expect(title).toHaveValue('Private unsaved switch draft');
   await other.close();
 });
+
+test('equipment profiles can be saved, selected, edited and recovered', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Profile recipe ${Date.now()}`);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const name = `Profile ${Date.now()}`;
+  await page.getByLabel('Profile name').fill(name);
+  await page.getByLabel('Mash efficiency (fraction)').fill('0.75');
+  await page.getByLabel('Boil-off (L/h)', { exact: true }).first().fill('3');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  const selector = page.getByLabel('Equipment profile', { exact: true });
+  await expect(selector.getByRole('option', { name })).toBeAttached();
+  await selector.selectOption({ label: name });
+  const profileId = await selector.inputValue();
+  await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.reload();
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+  const manage = page.getByLabel('Manage profile');
+  await manage.selectOption({ label: name });
+  await page.getByLabel('Mash efficiency (fraction)').fill('0.8');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await expect(page.getByLabel('Mash efficiency (fraction)')).toHaveValue('0.8');
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.getByText('Equipment profile unavailable')).toBeVisible();
+  await page.getByRole('button', { name: 'Unarchive' }).click();
+  await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
+});
