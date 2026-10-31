@@ -18,6 +18,12 @@ calculated targets, save its history, and record what happened when it was
 brewed. UI and MCP are interfaces to the same application and user permissions.
 The interface makes brewing information readable and editing deliberate.
 
+Production recipe previews call the shared application calculation operation
+through the UI adapter. MCP exposes that same operation for unsaved drafts,
+including targets, assumptions, diagnostics and style comparisons. The local
+prototype's WASM bridge is a demonstration detail; it does not establish a
+UI-only production calculation path.
+
 ## Read this before changing the interface
 
 Read this document, `docs/CODING_STANDARDS.md`, and the applicable architecture,

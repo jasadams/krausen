@@ -31,34 +31,73 @@ WebSocket broadcasts, reconcile it with this proposal during KRA-5.
 - Actual measurements, corrections, notes and formulation deviations belong to
   the brew. Applying findings back to a recipe is an explicit new revision.
 
-## Proposed boundaries
+## Application architecture
 
-Keep a modular monolith and introduce a small `krausen-app` crate for shared
-commands, queries and policy orchestration. Reuse existing lower-level modules;
-no generic command bus, repository framework or separate service deployment is
-required.
+UI and MCP are two interfaces to one application. Every application capability,
+including calculation previews, is exposed through the same shared operations.
+Transport and presentation are the only interface-specific layers.
 
 ```mermaid
 flowchart TD
-    UI[Browser UI] --> Leptos[Leptos server-function adapter]
-    Agent[LLM agent] --> MCP[MCP transport and tool adapter]
-    Leptos --> App[krausen-app: shared commands, queries and policy]
-    MCP --> App
-    App --> Auth[krausen-auth: identity, sessions and membership primitives]
-    App --> Brewery[krausen-brewery: persistence and brewing workflows]
-    App --> Calc[krausen-calc: pure deterministic calculations]
-    App --> XML[krausen-beerxml: interchange]
-    App --> DB[Transaction and change-record persistence]
-    UI --> Preview[Browser calculation preview]
-    Preview --> Calc
-    Types[krausen-types: shared WASM-safe contracts] -.-> UI
-    Types -.-> MCP
-    Types -.-> App
+    UI[Browser UI] --> UIAdapter[UI transport adapter]
+    Agent[LLM agent] --> MCPAdapter[MCP transport adapter]
+    UIAdapter --> App
+    MCPAdapter --> App
+
+    subgraph Application[One shared application]
+        App[Commands and queries: same identity, permissions, validation and results]
+        App --> Recipes[Recipes, saved revisions and restore]
+        App --> Calculation[Draft validation, beer calculations, style ranges and scaling]
+        App --> Catalogue[Ingredient catalogue and custom library]
+        App --> Equipment[Equipment profiles and resolved settings]
+        App --> Brews[Brews, frozen plans, actuals and corrections]
+        App --> Accounts[Accounts, workspaces, membership and security]
+    end
 ```
 
 Arrows describe intended dependencies or calls, not separate deployed services.
-The browser executes a WASM build of the same calculation library. Authoritative
-save/start validation remains server-side.
+Both adapters invoke the same application calculation operation. Live recipe
+previews, including beer targets and style comparisons, are shared capabilities
+available through UI and MCP with the same inputs, workspace policy, equipment
+resolution, diagnostics and results. The UI refreshes that preview as the draft
+changes; an agent invokes the equivalent query. Neither action saves a revision.
+
+For example, the logical `CalculateRecipeDraft` query accepts an unsaved native
+draft and explicit calculation context, resolves authorized equipment/catalogue
+references, validates and calculates, then returns targets, assumptions,
+field diagnostics, style comparisons and engine/context versions. Both adapters
+call that operation. Save and start-brew also use the shared resolution and
+calculation pipeline, rechecking context before committing. Exact wire names
+remain an implementation detail.
+
+The current design prototype calls a local WASM bridge because it has no
+application backend. That is a prototype limitation, not the production
+application architecture or a UI-exclusive capability. The production baseline
+uses the shared application query for previews; no separate browser calculation
+path is required.
+
+## Supporting code boundaries
+
+The application diagram above defines capability access. The dependency diagram
+below maps its implementation to Rust crates; it does not add another client
+path. Keep a modular monolith and introduce a small `krausen-app` crate for
+shared commands, queries and policy orchestration. Reuse existing lower-level
+modules; no generic command bus, repository framework or separate service
+deployment is required.
+
+```mermaid
+flowchart TD
+    UIAdapter[Leptos server-function adapter] --> App[krausen-app]
+    MCPAdapter[MCP tool adapter] --> App
+    App --> Auth[krausen-auth]
+    App --> Brewery[krausen-brewery]
+    App --> Calc[krausen-calc]
+    App --> XML[krausen-beerxml]
+    App --> Core[krausen-core: transactions and change records]
+    Types[krausen-types: shared operation inputs and results] -.-> UIAdapter
+    Types -.-> MCPAdapter
+    Types -.-> App
+```
 
 | Boundary | Responsibility |
 | --- | --- |
@@ -117,7 +156,7 @@ with the same shared operation, policy, validation, side effects and result.
 | --- | --- | --- |
 | Identity/context | Get current user/context; list and select workspaces | Authenticated identity and current membership |
 | Recipes | List/search/filter/page; get inputs/assumptions; create/update/duplicate/delete; retrieve history and restore | Member; revision checks for mutable state |
-| Formulation | Validate draft; calculate preview; preview/apply batch scaling | Deterministic results; authoritative validation on save |
+| Formulation | Validate unsaved draft; calculate targets, assumptions, diagnostics and style comparisons; preview/apply batch scaling | Same shared application operations and resolved context for UI/MCP; preview is read-only; authoritative validation on save/start |
 | Interchange | Preview/commit BeerXML import; export recipe/process summary | Membership for stored data; structured preservation warnings |
 | Ingredients | Search/get catalogue entries; create/edit custom entries; resolve specifications | Workspace policy; resolved saved recipe inputs remain stable |
 | Equipment | List/get/create/edit/delete profiles; select/resolve effective settings | Member; future previews use current settings, historical snapshots remain fixed |

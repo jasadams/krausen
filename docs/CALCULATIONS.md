@@ -31,10 +31,21 @@ calculation, import/export and historical rules.
 
 ## Shared calculation boundary
 
-Keep `krausen-calc` pure and deterministic. Browser previews run the same Rust
-engine compiled to WASM; authoritative saves/start/import operations resolve and
-validate through the shared application layer. A client-supplied result is not
-the authoritative saved target. Avoid a parallel JavaScript calculator.
+Keep `krausen-calc` pure and deterministic. UI and MCP both invoke the same
+shared application calculation query for unsaved recipe previews. It resolves
+the authorized equipment/catalogue context, validates inputs and returns targets,
+assumptions, diagnostics, style comparisons and context/engine versions. Calling
+the query does not save a recipe revision. UI edits refresh this query; agents
+can evaluate the same draft through MCP.
+
+Save/start/import operations use the same resolution, validation and calculation
+pipeline, with current-context checks at persistence boundaries. Client-supplied
+outputs are not authoritative saved targets. There is no UI-exclusive brewing
+calculation capability or separate JavaScript calculator.
+
+The browser-local design prototype runs the Rust engine through WASM because it
+has no application backend. This demonstrates the engine and visual feedback;
+it does not prescribe a separate production preview path.
 
 Results need resolved inputs/context identifiers, derived values, assumptions,
 diagnostics and engine/schema versions. Draft previews must distinguish missing
