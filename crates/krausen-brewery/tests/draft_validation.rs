@@ -135,7 +135,8 @@ fn attenuation_is_explicit_and_never_inferred_from_yeast() {
     let result = validate_draft(&r, &e);
     assert_eq!(result.state, Readiness::Incomplete);
     assert!(!result.target_available(Target::Alcohol));
-    assert!(result.target_available(Target::Gravity));
+    assert!(!result.target_available(Target::FinalGravity));
+    assert!(result.target_available(Target::OriginalGravity));
     assert!(result.target_available(Target::Water));
     r.process.apparent_attenuation_fraction = Some(1.1);
     assert_eq!(validate_draft(&r, &e).state, Readiness::Invalid);
@@ -169,4 +170,57 @@ fn stage_vocabulary_retains_unsupported_inputs_and_checks_boil_remaining_time() 
     let result = validate_draft(&r, &e);
     assert_eq!(result.state, Readiness::Incomplete);
     assert_eq!(r.fermentables[0].addition.stage, "fermentation");
+}
+
+#[test]
+fn profile_thickness_and_top_up_must_fit_water_budget() {
+    let (mut r, mut e) = complete();
+    r.process.mash_water_method = Some("profile_thickness".into());
+    r.process.mash_water_l = None;
+    e.mash_thickness_l_per_kg = Some(100.0);
+    assert!(
+        validate_draft(&r, &e)
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "negative_sparge")
+    );
+    e.mash_thickness_l_per_kg = Some(3.0);
+    r.process.kettle_top_up_l = Some(100.0);
+    assert!(
+        validate_draft(&r, &e)
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "negative_sparge")
+    );
+}
+
+#[test]
+fn extract_only_needs_no_mash_inputs() {
+    let (mut r, mut e) = complete();
+    r.fermentables[0].specification.kind = Some("extract".into());
+    r.fermentables[0].addition.stage = "boil".into();
+    r.fermentables[0].addition.time_minutes = Some(60.0);
+    r.process.mash_water_method = None;
+    r.process.mash_water_l = None;
+    e.mash_efficiency_fraction = None;
+    e.grain_absorption_l_per_kg = None;
+    e.mash_thickness_l_per_kg = None;
+    assert_eq!(validate_draft(&r, &e).state, Readiness::Ready);
+}
+
+#[test]
+fn colour_and_yield_have_distinct_target_dependencies() {
+    let (mut r, e) = complete();
+    r.fermentables[0].specification.colour_ebc = None;
+    let v = validate_draft(&r, &e);
+    assert!(!v.target_available(Target::Colour));
+    assert!(v.target_available(Target::OriginalGravity));
+    assert!(v.target_available(Target::FinalGravity));
+    r.fermentables[0].specification.colour_ebc = Some(5.0);
+    r.fermentables[0].specification.yield_fraction = None;
+    let v = validate_draft(&r, &e);
+    assert!(!v.target_available(Target::OriginalGravity));
+    assert!(!v.target_available(Target::FinalGravity));
+    assert!(v.target_available(Target::Water));
+    assert!(v.target_available(Target::Colour));
 }

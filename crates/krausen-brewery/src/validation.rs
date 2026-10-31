@@ -3,51 +3,26 @@
 //! Validation of canonical drafts and resolved equipment, independent of adapters.
 
 use krausen_types::brewery::{ChillingV1, EquipmentSettingsV1, RecipeDocumentV1};
-use serde::{Deserialize, Serialize};
+pub use krausen_types::validation::{Diagnostic, Readiness, Target, Validation};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Readiness {
-    Ready,
-    Incomplete,
-    Invalid,
+trait ValidationOps {
+    fn add(
+        &mut self,
+        code: &'static str,
+        path: impl Into<String>,
+        severity: Readiness,
+        targets: &[Target],
+    );
+    fn number(
+        &mut self,
+        path: impl Into<String>,
+        value: Option<f64>,
+        required: bool,
+        rule: Rule,
+        targets: &[Target],
+    );
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Target {
-    Water,
-    Gravity,
-    Alcohol,
-    Colour,
-    Bitterness,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diagnostic {
-    pub code: String,
-    pub path: String,
-    pub severity: Readiness,
-    pub affected_targets: Vec<Target>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Validation {
-    pub state: Readiness,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-impl Validation {
-    pub fn saveable(&self) -> bool {
-        self.state != Readiness::Invalid
-    }
-    pub fn startable(&self) -> bool {
-        self.state == Readiness::Ready
-    }
-    pub fn target_available(&self, target: Target) -> bool {
-        !self
-            .diagnostics
-            .iter()
-            .any(|d| d.affected_targets.contains(&target))
-    }
+impl ValidationOps for Validation {
     fn add(
         &mut self,
         code: &'static str,
@@ -115,13 +90,15 @@ impl Rule {
 
 const ALL: &[Target] = &[
     Target::Water,
-    Target::Gravity,
+    Target::OriginalGravity,
+    Target::FinalGravity,
     Target::Alcohol,
     Target::Colour,
     Target::Bitterness,
 ];
 const EXTRACT: &[Target] = &[
-    Target::Gravity,
+    Target::OriginalGravity,
+    Target::FinalGravity,
     Target::Alcohol,
     Target::Colour,
     Target::Bitterness,
@@ -311,7 +288,12 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             row.specification.yield_fraction,
             true,
             Rule::PositiveFraction,
-            EXTRACT,
+            &[
+                Target::OriginalGravity,
+                Target::FinalGravity,
+                Target::Alcohol,
+                Target::Bitterness,
+            ],
         );
         v.number(
             format!("{path}.specification.colour_ebc"),
@@ -422,7 +404,7 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
         recipe.process.apparent_attenuation_fraction,
         true,
         Rule::Fraction,
-        &[Target::Alcohol],
+        &[Target::FinalGravity, Target::Alcohol],
     );
     for row in &recipe.yeast {
         v.number(
@@ -430,7 +412,7 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             row.specification.attenuation_fraction,
             false,
             Rule::Fraction,
-            &[Target::Alcohol],
+            &[Target::FinalGravity, Target::Alcohol],
         );
     }
     for row in recipe.yeast.iter().chain(&recipe.other_ingredients) {
@@ -485,10 +467,14 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
         Rule::Finite,
         IBU,
     );
+    let has_mashed_grain = recipe
+        .fermentables
+        .iter()
+        .any(|r| r.specification.kind.as_deref() == Some("grain") && r.addition.stage == "mash");
     v.number(
         "process.mash_water_l",
         recipe.process.mash_water_l,
-        recipe.process.mash_water_method.as_deref() == Some("manual"),
+        has_mashed_grain && recipe.process.mash_water_method.as_deref() == Some("manual"),
         Rule::Nonnegative,
         &[Target::Water],
     );
@@ -499,10 +485,12 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
         Rule::Nonnegative,
         &[Target::Water],
     );
-    if !matches!(
-        recipe.process.mash_water_method.as_deref(),
-        Some("manual" | "profile_thickness")
-    ) {
+    if has_mashed_grain
+        && !matches!(
+            recipe.process.mash_water_method.as_deref(),
+            Some("manual" | "profile_thickness")
+        )
+    {
         v.add(
             "missing_or_unsupported_mash_water_method",
             "process.mash_water_method",
@@ -600,20 +588,24 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             equipment.pre_boil_deadspace_l,
             &[Target::Water][..],
         ),
-        (
-            "equipment.grain_absorption_l_per_kg",
-            equipment.grain_absorption_l_per_kg,
-            &[Target::Water][..],
-        ),
     ] {
         if value.is_none() {
             v.add("missing", path, Readiness::Incomplete, targets);
         }
     }
-    if equipment
-        .efficiency_override_fraction
-        .or(equipment.mash_efficiency_fraction)
-        .is_none()
+    if has_mashed_grain && equipment.grain_absorption_l_per_kg.is_none() {
+        v.add(
+            "missing",
+            "equipment.grain_absorption_l_per_kg",
+            Readiness::Incomplete,
+            &[Target::Water],
+        );
+    }
+    if has_mashed_grain
+        && equipment
+            .efficiency_override_fraction
+            .or(equipment.mash_efficiency_fraction)
+            .is_none()
     {
         v.add(
             "missing",
@@ -622,7 +614,8 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             EXTRACT,
         );
     }
-    if recipe.process.mash_water_method.as_deref() == Some("profile_thickness")
+    if has_mashed_grain
+        && recipe.process.mash_water_method.as_deref() == Some("profile_thickness")
         && equipment.mash_thickness_l_per_kg.is_none()
     {
         v.add(
@@ -632,37 +625,40 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             &[Target::Water],
         );
     }
-    if let (
-        Some(batch),
-        Some(loss),
-        Some(rate),
-        Some(minutes),
-        Some(deadspace),
-        Some(absorption),
-        Some(mash),
-    ) = (
+    let grain: Option<f64> = recipe
+        .fermentables
+        .iter()
+        .filter(|r| r.specification.kind.as_deref() == Some("grain") && r.addition.stage == "mash")
+        .map(|r| r.amount_kg)
+        .sum();
+    if let (Some(batch), Some(loss), Some(rate), Some(minutes), Some(deadspace), Some(grain)) = (
         recipe.batch_size_l,
         equipment.transfer_loss_l,
         equipment.boil_off_l_per_hour,
         recipe.boil_minutes,
         equipment.pre_boil_deadspace_l,
-        equipment.grain_absorption_l_per_kg,
-        recipe.process.mash_water_l,
+        grain,
     ) {
-        let grain: Option<f64> = recipe
-            .fermentables
-            .iter()
-            .filter(|r| r.addition.stage == "mash")
-            .map(|r| r.amount_kg)
-            .sum();
-        if let Some(grain) = grain {
+        let absorption = if has_mashed_grain {
+            equipment.grain_absorption_l_per_kg
+        } else {
+            Some(0.0)
+        };
+        let mash = if !has_mashed_grain {
+            Some(0.0)
+        } else {
+            match recipe.process.mash_water_method.as_deref() {
+                Some("manual") => recipe.process.mash_water_l,
+                Some("profile_thickness") => equipment
+                    .mash_thickness_l_per_kg
+                    .map(|thickness| thickness * grain),
+                _ => None,
+            }
+        };
+        if let (Some(absorption), Some(mash)) = (absorption, mash) {
             let total = batch + loss + rate * minutes / 60.0 + deadspace + absorption * grain;
             let top_up = recipe.process.kettle_top_up_l.unwrap_or(0.0);
-            if recipe.process.mash_water_method.as_deref() == Some("manual")
-                && total.is_finite()
-                && mash.is_finite()
-                && top_up.is_finite()
-                && mash + top_up > total
+            if total.is_finite() && mash.is_finite() && top_up.is_finite() && mash + top_up > total
             {
                 v.add(
                     "negative_sparge",

@@ -47,6 +47,9 @@ Invalid. No hops legitimately means zero IBU; no selected style is not an error.
 Each diagnostic carries a stable code, field/row path, severity and affected
 targets. Unavailable IBU does not hide independently calculable water, but the
 overall state is not Ready.
+Validation exposes original gravity separately from final gravity and alcohol:
+missing wort attenuation affects the latter two, not original gravity or water.
+Yield affects gravity and bitterness; missing colour affects colour alone.
 
 Present batch volume and Ready addition quantities must be positive. Yield and
 mash efficiency are in `(0, 1]`; attenuation and alpha are in `[0, 1]`; colour,
