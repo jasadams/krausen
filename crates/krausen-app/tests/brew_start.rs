@@ -20,6 +20,10 @@ use krausen_types::{
 };
 use uuid::Uuid;
 
+/// Policy source identity of the pre-V2 formulation code at the KRA-20 base.
+const V1_POLICY_SOURCE_HASH: &str =
+    "c2195592083a8abe4b735d78aa22d7006adb773046d480b78b6462d2699d3bb9";
+
 fn intent(actor: &ActorContext) -> OperationIntent {
     OperationIntent {
         account_id: actor.actor_id.clone(),
@@ -375,6 +379,35 @@ async fn exercise(db: DbPool) {
         )
         .await,
         StartBrewOutcome::ContextConflict { .. }
+    ));
+    // A real V1 context envelope (V1 policy version/source hash, no applied
+    // defaults) is refused rather than silently accepted under V2.
+    let mut v1_context = preview2_new.context.clone().expect("v1 source context");
+    v1_context.policy_version = "krausen-formulation-v1".into();
+    v1_context.policy_source_hash = V1_POLICY_SOURCE_HASH.into();
+    v1_context.applied_defaults.clear();
+    let mut v1_value = serde_json::to_value(&v1_context).unwrap();
+    v1_value
+        .as_object_mut()
+        .expect("context object")
+        .remove("applied_defaults");
+    let v1_digest = krausen_core::canonical_json::from_serializable(&v1_value)
+        .ok()
+        .and_then(|value| krausen_core::canonical_json::sha256(&value).ok())
+        .expect("v1 context digest");
+    assert_ne!(v1_digest, digest2_new);
+    assert!(matches!(
+        brew_start::start(
+            &db,
+            &actor,
+            start_request(&actor, &recipe_id, 2, Some(2), &v1_digest)
+        )
+        .await,
+        StartBrewOutcome::ContextConflict { refreshed }
+            if refreshed
+                .context
+                .as_ref()
+                .is_some_and(|context| context.policy_version == "krausen-formulation-v2")
     ));
     let preview2_new = preview_document(&db, &actor, &doc2).await;
     let digest2_new = preview2_new.context_digest.clone().expect("new context");
