@@ -110,3 +110,76 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await page.reload();
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue(entryName);
 });
+
+test('library entries support edit, archive, restore and lost-response retry', async ({ page }) => {
+  const unique = Date.now();
+  const entryName = `E2E managed malt ${unique}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Managed recipe ${unique}`);
+
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  const create = page.getByRole('dialog', { name: 'A fermentable of your own' });
+  const edit = page.getByRole('dialog', { name: 'Edit your library entry' });
+  await expect(picker).toBeVisible();
+
+  // Create with a real lost response: the command commits server-side but the
+  // client never receives the result, so the retry must replay the SAME
+  // request identity instead of minting a second entry.
+  let saveAttempt = 0;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const postData = route.request().postData() ?? '';
+    if (saveAttempt === 0 && postData.includes('Save')) {
+      saveAttempt += 1;
+      await route.fetch();
+      await route.fulfill({ status: 599, body: 'response lost' });
+      return;
+    }
+    await route.continue();
+  });
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  await expect(create).toBeVisible();
+  await page.getByLabel('Fermentable name').fill(entryName);
+  await page.getByLabel('Producer').fill('E2E managed maltster');
+  await page.getByLabel('Colour (EBC)').fill('4.5');
+  await page.getByLabel('Potential yield (%)').fill('80');
+  await page.getByRole('button', { name: 'Save to library' }).click();
+  await expect(create.getByText('Save may not have completed')).toBeVisible();
+  await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+  await create.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(picker).toBeVisible();
+  await page.unroute('**/leptos-api/execute_ingredient_command*');
+  await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
+
+  // Edit the library entry through the guarded edit form.
+  await picker.getByRole('button', { name: entryName }).click();
+  await picker.getByRole('button', { name: 'Edit library entry' }).click();
+  await expect(edit).toBeVisible();
+  await edit.getByLabel('Colour (EBC)').fill('9.5');
+  await edit.getByRole('button', { name: 'Save changes' }).click();
+  await expect(picker).toBeVisible();
+  await expect(picker.getByRole('button', { name: /9\.5 EBC/ })).toHaveCount(1);
+
+  // Archive keeps the entry discoverable in the workspace library, marked
+  // Archived, and blocks adding it to a recipe until restored.
+  await picker.getByRole('button', { name: entryName }).click();
+  await picker.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
+  await expect(
+    picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Archived'),
+  ).toBeVisible();
+  await expect(picker.getByRole('button', { name: 'Add ingredient' })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: 'Edit library entry' })).toBeDisabled();
+
+  // Restore returns it to the active library.
+  await picker.getByRole('button', { name: entryName }).click();
+  await picker.getByRole('button', { name: 'Restore' }).click();
+  await expect(
+    picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Your library'),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+});

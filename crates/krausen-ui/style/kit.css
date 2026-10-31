@@ -185,6 +185,7 @@
 .k-catalogue-selection > .k-field { flex: 1 1 10rem; min-width: 0; }
 .k-catalogue-selection > div > .note-caption { display: block; }
 .k-catalogue-more { display: flex; justify-content: center; margin-top: var(--k-space-3); }
+.k-catalogue-manage { display: flex; flex-wrap: wrap; gap: var(--k-space-2); margin-top: var(--k-space-3); }
 .k-catalogue-create { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); }
 .k-catalogue-create > .k-field:first-child { grid-column: 1 / -1; }
 @media (max-width: 600px) { .k-catalogue-toolbar { align-items: stretch; } .k-catalogue-create { grid-template-columns: 1fr; } .k-catalogue-selection { flex-direction: column; align-items: stretch; } }

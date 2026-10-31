@@ -86,6 +86,10 @@ pub struct SearchCatalogue {
     pub cursor: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: i64,
+    /// Include archived workspace entries (discovery for restore). Starter
+    /// entries are never archived through workspace operations.
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

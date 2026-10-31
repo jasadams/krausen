@@ -49,6 +49,7 @@ fn search(intent: &OperationIntent, query: &str, filter: CatalogueFilter) -> Sea
         filter,
         cursor: None,
         limit: 100,
+        include_archived: false,
     }
 }
 
@@ -743,6 +744,133 @@ async fn exercise(db: DbPool) {
         .await,
         RecipeSaveOutcome::UnresolvedIngredientSource
     ));
+    // F3-style identity strictness for new/changed sources: the declared
+    // catalogue identity and a real version must match the scope, while
+    // recipe-specific specification edits are never part of validation.
+    let mut wrong_starter_catalogue = recipe_in_a.clone();
+    wrong_starter_catalogue.fermentables[0].row_id = "grain-6".into();
+    wrong_starter_catalogue.fermentables[0].source = Some(IngredientSource {
+        scope: "starter".into(),
+        catalogue_id: None,
+        entry_id: "starter-vienna".into(),
+        version: Some(1),
+    });
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor_a,
+            &intent_a,
+            Some(&recipe_a),
+            Some(third_revision),
+            &wrong_starter_catalogue,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedIngredientSource
+    ));
+    let mut starter_wrong_id = recipe_in_a.clone();
+    starter_wrong_id.fermentables[0].row_id = "grain-7".into();
+    starter_wrong_id.fermentables[0].source = Some(IngredientSource {
+        scope: "starter".into(),
+        catalogue_id: Some("someone-elses-catalogue".into()),
+        entry_id: "starter-vienna".into(),
+        version: Some(1),
+    });
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor_a,
+            &intent_a,
+            Some(&recipe_a),
+            Some(third_revision),
+            &starter_wrong_id,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedIngredientSource
+    ));
+    let mut workspace_with_catalogue_id = recipe_in_a.clone();
+    workspace_with_catalogue_id.fermentables[0].row_id = "grain-8".into();
+    workspace_with_catalogue_id.fermentables[0].source = Some(IngredientSource {
+        scope: "workspace".into(),
+        catalogue_id: Some("krausen-starter-catalogue-v1".into()),
+        entry_id: entry_id.clone(),
+        version: Some(3),
+    });
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor_a,
+            &intent_a,
+            Some(&recipe_a),
+            Some(third_revision),
+            &workspace_with_catalogue_id,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedIngredientSource
+    ));
+    let mut version_zero = recipe_in_a.clone();
+    version_zero.fermentables[0].row_id = "grain-9".into();
+    version_zero.fermentables[0].source = Some(IngredientSource {
+        scope: "starter".into(),
+        catalogue_id: Some("krausen-starter-catalogue-v1".into()),
+        entry_id: "starter-vienna".into(),
+        version: Some(0),
+    });
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor_a,
+            &intent_a,
+            Some(&recipe_a),
+            Some(third_revision),
+            &version_zero,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedIngredientSource
+    ));
+    let mut missing_version = recipe_in_a.clone();
+    missing_version.fermentables[0].row_id = "grain-10".into();
+    missing_version.fermentables[0].source = Some(IngredientSource {
+        scope: "starter".into(),
+        catalogue_id: Some("krausen-starter-catalogue-v1".into()),
+        entry_id: "starter-vienna".into(),
+        version: None,
+    });
+    assert!(matches!(
+        recipe_editor::save(
+            &db,
+            &actor_a,
+            &intent_a,
+            Some(&recipe_a),
+            Some(third_revision),
+            &missing_version,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::UnresolvedIngredientSource
+    ));
+    // A recipe-specific specification edit with an unchanged source must
+    // still save: catalogue validation never compares copied specifications.
+    let mut recipe_specific_edit = recipe_in_a.clone();
+    recipe_specific_edit.fermentables[0].specification.name = Some("Recipe-local rename".into());
+    recipe_specific_edit.fermentables[0].specification.yield_fraction = Some(0.77);
+    let RecipeSaveOutcome::Saved { .. } = recipe_editor::save(
+        &db,
+        &actor_a,
+        &intent_a,
+        Some(&recipe_a),
+        Some(third_revision),
+        &recipe_specific_edit,
+        uuid::Uuid::new_v4(),
+    )
+    .await
+    else {
+        panic!("recipe-specific specification edits must survive source validation");
+    };
+
     // The starter recipe saved from workspace B stays readable.
     assert!(
         matches!(
@@ -893,6 +1021,41 @@ async fn exercise(db: DbPool) {
             .await
             .unwrap();
     assert!(literal.items.is_empty());
+
+    // Archived entries are hidden by default, discoverable with the explicit
+    // workspace-scoped flag, and that flag is bound into the cursor.
+    let mut discover = search(&intent_a, "Bulk malt 000", CatalogueFilter::Workspace);
+    discover.include_archived = true;
+    let discovery = catalogue::search(&db, &actor_a, &discover).await.unwrap();
+    assert!(
+        discovery
+            .items
+            .iter()
+            .any(|e| e.entry_id == bulk_id && e.archived),
+        "archived entries must be discoverable for restore"
+    );
+    let hidden =
+        catalogue::search(&db, &actor_a, &search(&intent_a, "Bulk malt 000", CatalogueFilter::Workspace))
+            .await
+            .unwrap();
+    assert!(hidden.items.iter().all(|e| e.entry_id != bulk_id));
+    let mut archived_page = search(&intent_a, "", CatalogueFilter::Workspace);
+    archived_page.include_archived = true;
+    let first_archived_page =
+        catalogue::search(&db, &actor_a, &archived_page).await.unwrap();
+    if let Some(cursor_value) = first_archived_page.next_cursor.clone() {
+        let mut replay_hidden = search(&intent_a, "", CatalogueFilter::Workspace);
+        replay_hidden.cursor = Some(cursor_value.clone());
+        assert!(matches!(
+            catalogue::search(&db, &actor_a, &replay_hidden).await,
+            Err(Error::Invalid(_)),
+            "cursor must bind include_archived"
+        ));
+        let mut replay_shown = search(&intent_a, "", CatalogueFilter::Workspace);
+        replay_shown.cursor = Some(cursor_value);
+        replay_shown.include_archived = true;
+        assert!(catalogue::search(&db, &actor_a, &replay_shown).await.is_ok());
+    }
 
     // --- Context intent and credential revocation fail closed ---
     assert!(matches!(

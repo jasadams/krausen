@@ -59,7 +59,7 @@ impl Row {
     }
 }
 
-const SELECT_UNION: &str = "SELECT 'starter' AS scope, NULL AS workspace_id, entry_id, name, producer, category, version AS revision, CAST(1 AS BIGINT) AS metadata_revision, CAST(CASE WHEN archived THEN 1 ELSE 0 END AS BIGINT) AS archived, created_at, document_json, provenance_json, NULL AS saved_by, created_at AS saved_at FROM starter_ingredient_entries WHERE $1 AND NOT archived AND (created_at > $2 OR (created_at = $2 AND entry_id > $3)) AND (lower(name) LIKE $4 ESCAPE '\\' OR lower(producer) LIKE $4 ESCAPE '\\' OR lower(category) LIKE $4 ESCAPE '\\') UNION ALL SELECT 'workspace' AS scope, e.workspace_id, e.entry_id, e.name, e.producer, e.category, e.current_revision AS revision, e.metadata_revision, CAST(CASE WHEN e.archived THEN 1 ELSE 0 END AS BIGINT) AS archived, e.created_at, r.document_json, r.provenance_json, r.actor_id AS saved_by, r.recorded_at AS saved_at FROM ingredient_entries e JOIN ingredient_revisions r ON r.workspace_id = e.workspace_id AND r.entry_id = e.entry_id AND r.revision = e.current_revision WHERE e.workspace_id = $5 AND NOT e.archived AND (e.created_at > $2 OR (e.created_at = $2 AND e.entry_id > $3)) AND (lower(e.name) LIKE $4 ESCAPE '\\' OR lower(e.producer) LIKE $4 ESCAPE '\\' OR lower(e.category) LIKE $4 ESCAPE '\\') ORDER BY created_at, entry_id LIMIT $6";
+const SELECT_UNION: &str = "SELECT 'starter' AS scope, NULL AS workspace_id, entry_id, name, producer, category, version AS revision, CAST(1 AS BIGINT) AS metadata_revision, CAST(CASE WHEN archived THEN 1 ELSE 0 END AS BIGINT) AS archived, created_at, document_json, provenance_json, NULL AS saved_by, created_at AS saved_at FROM starter_ingredient_entries WHERE $1 AND NOT archived AND (created_at > $2 OR (created_at = $2 AND entry_id > $3)) AND (lower(name) LIKE $4 ESCAPE '\\' OR lower(producer) LIKE $4 ESCAPE '\\' OR lower(category) LIKE $4 ESCAPE '\\') UNION ALL SELECT 'workspace' AS scope, e.workspace_id, e.entry_id, e.name, e.producer, e.category, e.current_revision AS revision, e.metadata_revision, CAST(CASE WHEN e.archived THEN 1 ELSE 0 END AS BIGINT) AS archived, e.created_at, r.document_json, r.provenance_json, r.actor_id AS saved_by, r.recorded_at AS saved_at FROM ingredient_entries e JOIN ingredient_revisions r ON r.workspace_id = e.workspace_id AND r.entry_id = e.entry_id AND r.revision = e.current_revision WHERE e.workspace_id = $5 AND ($6 OR NOT e.archived) AND (e.created_at > $2 OR (e.created_at = $2 AND e.entry_id > $3)) AND (lower(e.name) LIKE $4 ESCAPE '\\' OR lower(e.producer) LIKE $4 ESCAPE '\\' OR lower(e.category) LIKE $4 ESCAPE '\\') ORDER BY created_at, entry_id LIMIT $7";
 
 /// Escape LIKE metacharacters so a search term is a literal substring match.
 fn like_pattern(query: &str) -> String {
@@ -85,6 +85,7 @@ pub async fn search(
     query: &str,
     after_created_at: i64,
     after_id: &str,
+    include_archived: bool,
     limit: i64,
 ) -> Result<Vec<IngredientEntry>> {
     let pattern = like_pattern(query);
@@ -97,6 +98,7 @@ pub async fn search(
                 .bind(after_id)
                 .bind(&pattern)
                 .bind(workspace)
+                .bind(include_archived)
                 .bind(limit)
                 .fetch_all(&mut **t)
                 .await?
@@ -108,6 +110,7 @@ pub async fn search(
                 .bind(after_id)
                 .bind(&pattern)
                 .bind(workspace)
+                .bind(include_archived)
                 .bind(limit)
                 .fetch_all(&mut **t)
                 .await?

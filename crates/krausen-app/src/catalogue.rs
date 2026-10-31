@@ -117,6 +117,7 @@ struct SearchCursor {
     filter: String,
     query: String,
     order: String,
+    include_archived: bool,
     created_at: i64,
     entry_id: String,
 }
@@ -159,6 +160,7 @@ pub async fn search(
             || cursor.filter != filter.as_str()
             || cursor.query != query
             || cursor.order != "created_at,id"
+            || cursor.include_archived != request.include_archived
             || !valid_entry_cursor_id(&cursor.entry_id)
         {
             return Err(Error::Invalid("cursor"));
@@ -174,6 +176,7 @@ pub async fn search(
         &query,
         created_at,
         &after_id,
+        request.include_archived,
         request.limit + 1,
     )
     .await
@@ -188,6 +191,7 @@ pub async fn search(
             filter: filter.as_str().to_owned(),
             query: query.clone(),
             order: "created_at,id".into(),
+            include_archived: request.include_archived,
             created_at: last.created_at,
             entry_id: last.entry_id.clone(),
         };
@@ -566,6 +570,29 @@ async fn resolve_one(
     workspace: &str,
     source: &IngredientSource,
 ) -> Result<bool, Error> {
+    // Identity checks first: the declared catalogue/edition and a real
+    // version must match the scope. Recipe rows keep their own copied
+    // specifications; only identity is validated here, never spec equality,
+    // so deliberate recipe-specific edits and historical copies survive.
+    match source.scope.as_str() {
+        "starter" => {
+            if source.catalogue_id.as_deref() != Some("krausen-starter-catalogue-v1") {
+                return Ok(false);
+            }
+        }
+        "workspace" => {
+            if source.catalogue_id.is_some() {
+                return Ok(false);
+            }
+        }
+        _ => return Ok(false),
+    }
+    let Some(version) = source.version else {
+        return Ok(false);
+    };
+    if version < 1 {
+        return Ok(false);
+    }
     let entry = krausen_brewery::catalogue_store::resolve_source(tx, workspace, source)
         .await
         .map_err(crate::boundary_error)?;
@@ -578,9 +605,7 @@ async fn resolve_one(
     if entry.scope == CatalogueScope::Workspace && entry.workspace_id.as_deref() != Some(workspace) {
         return Ok(false);
     }
-    if let Some(version) = source.version
-        && i64::try_from(version).is_ok_and(|version| version > entry.revision)
-    {
+    if i64::try_from(version).is_ok_and(|version| version > entry.revision) {
         return Ok(false);
     }
     Ok(true)
