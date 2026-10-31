@@ -260,33 +260,79 @@ pub fn project_revoke_all(result: Result<i64, Error>) -> krausen_types::account:
 }
 
 /// Return only the current account's enabled password and authenticator status.
-pub async fn status(pool:&DbPool, actor:&ActorContext)->Result<krausen_types::account::SecurityStatus,Error> {
-    let mut tx=pool.begin_write().await.map_err(boundary_error)?;
-    authorize_account(&mut tx,actor).await?;
-    let sql=if matches!(tx,DbTx::Postgres(_)) { "SELECT auth_type FROM user_auth_methods WHERE user_id=$1 AND active=TRUE ORDER BY auth_type FOR SHARE" } else { "SELECT auth_type FROM user_auth_methods WHERE user_id=$1 AND active=TRUE ORDER BY auth_type" };
-    let methods=match &mut tx {
-        DbTx::Postgres(t)=>sqlx::query_scalar::<_,String>(sql).bind(&actor.actor_id).fetch_all(&mut **t).await,
-        DbTx::Sqlite(t)=>sqlx::query_scalar::<_,String>(sql).bind(&actor.actor_id).fetch_all(&mut **t).await,
-    }.map_err(db_error)?;
-    authorize_account(&mut tx,actor).await?;
+pub async fn status(
+    pool: &DbPool,
+    actor: &ActorContext,
+) -> Result<krausen_types::account::SecurityStatus, Error> {
+    let mut tx = pool.begin_write().await.map_err(boundary_error)?;
+    authorize_account(&mut tx, actor).await?;
+    let sql = if matches!(tx, DbTx::Postgres(_)) {
+        "SELECT auth_type FROM user_auth_methods WHERE user_id=$1 AND active=TRUE ORDER BY auth_type FOR SHARE"
+    } else {
+        "SELECT auth_type FROM user_auth_methods WHERE user_id=$1 AND active=TRUE ORDER BY auth_type"
+    };
+    let methods = match &mut tx {
+        DbTx::Postgres(t) => {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&actor.actor_id)
+                .fetch_all(&mut **t)
+                .await
+        }
+        DbTx::Sqlite(t) => {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&actor.actor_id)
+                .fetch_all(&mut **t)
+                .await
+        }
+    }
+    .map_err(db_error)?;
+    authorize_account(&mut tx, actor).await?;
     tx.commit().await.map_err(boundary_error)?;
-    Ok(krausen_types::account::SecurityStatus {has_password:methods.iter().any(|method|method=="password"),totp_enabled:methods.iter().any(|method|method=="totp")})
+    Ok(krausen_types::account::SecurityStatus {
+        has_password: methods.iter().any(|method| method == "password"),
+        totp_enabled: methods.iter().any(|method| method == "totp"),
+    })
 }
 
 /// Return passkey display metadata without public-key or authenticator material.
-pub async fn passkeys(pool:&DbPool,actor:&ActorContext)->Result<Vec<krausen_types::account::PasskeySummary>,Error> {
-    let mut tx=pool.begin_write().await.map_err(boundary_error)?;
-    authorize_account(&mut tx,actor).await?;
-    let sql=if matches!(tx,DbTx::Postgres(_)) { "SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='webauthn' AND active=TRUE FOR SHARE" } else { "SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='webauthn' AND active=TRUE" };
-    let value=scalar!(&mut tx,String,sql,&actor.actor_id).map_err(db_error)?;
-    let data=match value {Some(value)=>serde_json::from_str::<serde_json::Value>(&value)?,None=>serde_json::Value::Null};
-    let mut result=Vec::new();
-    if let Some(credentials)=data.get("credentials").and_then(|value|value.as_object()) {
-        for (id,value) in credentials {
-            result.push(krausen_types::account::PasskeySummary {credential_id:id.clone(),name:value.get("device_name").and_then(|v|v.as_str()).unwrap_or("Unnamed Device").to_owned(),created_at:value.get("created_at").and_then(|v|v.as_str()).map(str::to_owned),last_used:value.get("last_used").and_then(|v|v.as_str()).map(str::to_owned)});
+pub async fn passkeys(
+    pool: &DbPool,
+    actor: &ActorContext,
+) -> Result<Vec<krausen_types::account::PasskeySummary>, Error> {
+    let mut tx = pool.begin_write().await.map_err(boundary_error)?;
+    authorize_account(&mut tx, actor).await?;
+    let sql = if matches!(tx, DbTx::Postgres(_)) {
+        "SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='webauthn' AND active=TRUE FOR SHARE"
+    } else {
+        "SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='webauthn' AND active=TRUE"
+    };
+    let value = scalar!(&mut tx, String, sql, &actor.actor_id).map_err(db_error)?;
+    let data = match value {
+        Some(value) => serde_json::from_str::<serde_json::Value>(&value)?,
+        None => serde_json::Value::Null,
+    };
+    let mut result = Vec::new();
+    if let Some(credentials) = data.get("credentials").and_then(|value| value.as_object()) {
+        for (id, value) in credentials {
+            result.push(krausen_types::account::PasskeySummary {
+                credential_id: id.clone(),
+                name: value
+                    .get("device_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed Device")
+                    .to_owned(),
+                created_at: value
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+                last_used: value
+                    .get("last_used")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+            });
         }
     }
-    authorize_account(&mut tx,actor).await?;
+    authorize_account(&mut tx, actor).await?;
     tx.commit().await.map_err(boundary_error)?;
     Ok(result)
 }

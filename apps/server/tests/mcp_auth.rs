@@ -1544,10 +1544,25 @@ async fn exercise(db: DbPool) {
         .call_tool(CallToolRequestParams::new("account_sessions"))
         .await
         .unwrap();
-    let password_path=<krausen_ui::server_fns::security::HasPassword as ServerFn>::PATH;
-    let browser_password:bool=reqwest::Client::new().post(format!("{base}{password_path}")).bearer_auth(&browser.access_token).form(&[] as &[(&str,&str)]).send().await.unwrap().json().await.unwrap();
-    let sdk_status=modern.call_tool(CallToolRequestParams::new("account_security_status")).await.unwrap();
-    assert_eq!(sdk_status.structured_content.unwrap()["has_password"],browser_password);
+    let password_path = <krausen_ui::server_fns::security::HasPassword as ServerFn>::PATH;
+    let browser_password: bool = reqwest::Client::new()
+        .post(format!("{base}{password_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[] as &[(&str, &str)])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sdk_status = modern
+        .call_tool(CallToolRequestParams::new("account_security_status"))
+        .await
+        .unwrap();
+    assert_eq!(
+        sdk_status.structured_content.unwrap()["has_password"],
+        browser_password
+    );
     assert!(
         sdk_sessions.structured_content.unwrap()["sessions"]
             .as_array()

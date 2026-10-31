@@ -277,8 +277,16 @@ impl ServerHandler for McpHandler {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
-            Tool::new(operations::SECURITY_STATUS.mcp_tool,"Read the current account's security status",schema(json!({"type":"object","properties":{},"additionalProperties":false}))),
-            Tool::new(operations::PASSKEYS_LIST.mcp_tool,"List the current account's passkey display metadata",schema(json!({"type":"object","properties":{},"additionalProperties":false}))),
+            Tool::new(
+                operations::SECURITY_STATUS.mcp_tool,
+                "Read the current account's security status",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::PASSKEYS_LIST.mcp_tool,
+                "List the current account's passkey display metadata",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
             Tool::new(
                 operations::SESSIONS_REVOKE_ALL.mcp_tool,
                 "Revoke all credentials belonging to the current account",
@@ -841,12 +849,33 @@ impl ServerHandler for McpHandler {
                 }
             }
             "account.security.status.v1" | "account.passkeys.list.v1" => {
-                if input.as_object().is_none_or(|value|!value.is_empty()) {return Err(ErrorData::invalid_params("Invalid security query",None));}
-                let actor=krausen_app::ActorContext {actor_id:principal.user_id.clone(),credential_id:principal.credential_id.clone(),access_expires_at:principal.access_expires_at,workspace_id:String::new()};
-                if operation.id=="account.security.status.v1" {
-                    match krausen_app::security::status(&self.db,&actor).await {Ok(status)=>CallToolResult::structured(serde_json::to_value(status).map_err(|_|ErrorData::internal_error("Result unavailable",None))?),Err(_)=>CallToolResult::structured_error(json!({"error":"unavailable_or_forbidden"}))}
+                if input.as_object().is_none_or(|value| !value.is_empty()) {
+                    return Err(ErrorData::invalid_params("Invalid security query", None));
+                }
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                if operation.id == "account.security.status.v1" {
+                    match krausen_app::security::status(&self.db, &actor).await {
+                        Ok(status) => {
+                            CallToolResult::structured(serde_json::to_value(status).map_err(
+                                |_| ErrorData::internal_error("Result unavailable", None),
+                            )?)
+                        }
+                        Err(_) => CallToolResult::structured_error(
+                            json!({"error":"unavailable_or_forbidden"}),
+                        ),
+                    }
                 } else {
-                    match krausen_app::security::passkeys(&self.db,&actor).await {Ok(passkeys)=>CallToolResult::structured(json!({"passkeys":passkeys})),Err(_)=>CallToolResult::structured_error(json!({"error":"unavailable_or_forbidden"}))}
+                    match krausen_app::security::passkeys(&self.db, &actor).await {
+                        Ok(passkeys) => CallToolResult::structured(json!({"passkeys":passkeys})),
+                        Err(_) => CallToolResult::structured_error(
+                            json!({"error":"unavailable_or_forbidden"}),
+                        ),
+                    }
                 }
             }
             "account.credentials.revoke_all.v1" => {

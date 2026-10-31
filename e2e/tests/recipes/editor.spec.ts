@@ -109,6 +109,7 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
 test('a dirty new recipe remains private to its original account and workspace', async ({ page }) => {
   const ownerId = getDefaultUserId();
   const originalWorkspace = getDefaultWorkspaceId();
+  const originalName = db.exec(`SELECT name FROM workspaces WHERE workspace_id = '${originalWorkspace}'`).trim();
   const otherName = `Editor workspace ${Date.now()}`;
   const otherWorkspace = seedWorkspace({ ownerId, name: otherName });
   db.exec(`UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${ownerId}'`);
@@ -134,17 +135,14 @@ test('a dirty new recipe remains private to its original account and workspace',
   await expect(title).toHaveValue('Private unsaved switch draft');
 
   const other = await page.context().newPage();
-  // Establish independently signed sessions for each selected workspace. The
-  // legacy workspace switch is covered by the account feature's own tests.
-  db.exec(`UPDATE users SET last_workspace_id = '${otherWorkspace}' WHERE user_id = '${ownerId}'`);
-  walCheckpoint();
-  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  await other.goto('/settings/profile');
+  await other.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  watchForDraft = true;
   const [otherContext] = await Promise.all([
     other.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
-    other.goto('/recipe-editor/new'),
+    other.getByRole('button', { name: otherName, exact: true }).click(),
   ]);
   expect((await otherContext.json()).workspace_id).toBe(otherWorkspace);
-  watchForDraft = true;
   await page.bringToFront();
   await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
   await expect(title).toBeHidden();
@@ -152,12 +150,10 @@ test('a dirty new recipe remains private to its original account and workspace',
   watchForDraft = false;
 
   await other.bringToFront();
-  db.exec(`UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${ownerId}'`);
-  walCheckpoint();
-  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  await other.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
   const [originalContext] = await Promise.all([
     other.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
-    other.goto('/recipe-editor/new'),
+    other.getByRole('button', { name: originalName, exact: true }).click(),
   ]);
   expect((await originalContext.json()).workspace_id).toBe(originalWorkspace);
   await page.bringToFront();

@@ -61,16 +61,31 @@ async fn exercise(db: DbPool) {
         access_expires_at: expiry,
     };
     let sessions = krausen_app::security::sessions(&db, &actor).await.unwrap();
-    run!("INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'webauthn','{\"credentials\":{\"public-id\":{\"device_name\":\"Test key\",\"private_material\":\"never-expose\"}}}',TRUE)", &user);
-    run!("INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'password','{}',TRUE)", &user);
-    let status=krausen_app::security::status(&db,&actor).await.unwrap();
+    run!(
+        "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'webauthn','{\"credentials\":{\"public-id\":{\"device_name\":\"Test key\",\"private_material\":\"never-expose\"}}}',TRUE)",
+        &user
+    );
+    run!(
+        "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'password','{}',TRUE)",
+        &user
+    );
+    let status = krausen_app::security::status(&db, &actor).await.unwrap();
     assert!(status.has_password);
     assert!(!status.totp_enabled);
-    let summaries=krausen_app::security::passkeys(&db,&actor).await.unwrap();
-    assert_eq!(summaries.len(),1);
-    assert_eq!(summaries[0].name,"Test key");
-    assert!(!serde_json::to_string(&summaries).unwrap().contains("never-expose"));
-    assert!(krausen_app::security::passkeys(&db,&foreign_actor).await.unwrap().is_empty());
+    let summaries = krausen_app::security::passkeys(&db, &actor).await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].name, "Test key");
+    assert!(
+        !serde_json::to_string(&summaries)
+            .unwrap()
+            .contains("never-expose")
+    );
+    assert!(
+        krausen_app::security::passkeys(&db, &foreign_actor)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(sessions.len(), 3);
     assert!(
         sessions

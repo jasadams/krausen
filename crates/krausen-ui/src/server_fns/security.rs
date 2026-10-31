@@ -47,8 +47,10 @@ pub async fn has_password() -> Result<bool, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let actor=super::verified_account_actor(&auth)?;
-    let status=krausen_app::security::status(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load security status"))?;
+    let actor = super::verified_account_actor(&auth)?;
+    let status = krausen_app::security::status(&ctx.db, &actor)
+        .await
+        .map_err(|_| ServerFnError::new("Unable to load security status"))?;
     Ok(status.has_password)
 }
 
@@ -130,9 +132,13 @@ pub async fn get_totp_status() -> Result<TotpStatus, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let actor=super::verified_account_actor(&auth)?;
-    let status=krausen_app::security::status(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load security status"))?;
-    Ok(TotpStatus { enabled:status.totp_enabled })
+    let actor = super::verified_account_actor(&auth)?;
+    let status = krausen_app::security::status(&ctx.db, &actor)
+        .await
+        .map_err(|_| ServerFnError::new("Unable to load security status"))?;
+    Ok(TotpStatus {
+        enabled: status.totp_enabled,
+    })
 }
 
 /// Begin 2FA setup: generate a secret and QR code data URI.
@@ -370,9 +376,19 @@ pub async fn list_passkeys() -> Result<Vec<PasskeyInfo>, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let actor=super::verified_account_actor(&auth)?;
-    let passkeys=krausen_app::security::passkeys(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load passkeys"))?;
-    Ok(passkeys.into_iter().map(|passkey|PasskeyInfo {credential_id:passkey.credential_id,name:passkey.name,created_at:passkey.created_at,last_used:passkey.last_used}).collect())
+    let actor = super::verified_account_actor(&auth)?;
+    let passkeys = krausen_app::security::passkeys(&ctx.db, &actor)
+        .await
+        .map_err(|_| ServerFnError::new("Unable to load passkeys"))?;
+    Ok(passkeys
+        .into_iter()
+        .map(|passkey| PasskeyInfo {
+            credential_id: passkey.credential_id,
+            name: passkey.name,
+            created_at: passkey.created_at,
+            last_used: passkey.last_used,
+        })
+        .collect())
 }
 
 /// Start passkey registration for the authenticated user.
