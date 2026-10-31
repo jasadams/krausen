@@ -27,7 +27,7 @@ test('recipe library searches, shows retained history, archives and restores', a
   await expect(page.getByRole('heading', { name: title })).toHaveCount(0);
   await page.getByLabel('Show', { exact: true }).selectOption('active');
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('link', { name: 'Open recipe' }).first().click();
+  await page.getByRole('link', { name: `Open ${title}` }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
 });
 
@@ -59,13 +59,13 @@ test('library navigation uses the shared dirty-editor guard', async ({ page }) =
   await expect(page).toHaveURL(/\/recipes$/);
   await page.getByLabel('Search recipes').fill(title);
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('link', { name: 'Open recipe' }).first().click();
+  await page.getByRole('link', { name: `Open ${title}` }).click();
   await page.getByLabel('Recipe name', { exact: true }).fill(`${title} discarded`);
   await recipes.click();
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await page.getByLabel('Search recipes').fill(title);
-  await page.getByRole('link', { name: 'Open recipe' }).first().click();
+  await page.getByRole('link', { name: `Open ${title}` }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
 });
