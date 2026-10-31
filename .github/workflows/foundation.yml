@@ -41,6 +41,7 @@ jobs:
       - run: cargo test -p krausen-server --test bootstrap --test migration_orders --test mcp_auth
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-app --test formulation_preview
+      - run: cargo test -p krausen-app --test equipment_profiles
       - run: cargo test -p krausen-app --lib style_reference
       - run: cargo test -p krausen-app --test recipe_editor
       - run: cargo test -p krausen-beerxml -p krausen-types

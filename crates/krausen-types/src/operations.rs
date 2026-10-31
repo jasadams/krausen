@@ -61,7 +61,42 @@ pub const RECIPE_SAVE: Operation = Operation {
     input_contract: "recipe-save.v1",
     output_contract: "RecipeSaveOutcome",
 };
+pub const EQUIPMENT_SAVE: Operation = Operation {
+    id: "equipment.save.v1",
+    mcp_tool: "equipment_save",
+    input_contract: "SaveEquipment",
+    output_contract: "EquipmentOutcome",
+};
+pub const EQUIPMENT_ARCHIVE: Operation = Operation {
+    id: "equipment.archive.v1",
+    mcp_tool: "equipment_archive",
+    input_contract: "ArchiveEquipment",
+    output_contract: "EquipmentOutcome",
+};
+pub const EQUIPMENT_GET: Operation = Operation {
+    id: "equipment.get.v1",
+    mcp_tool: "equipment_get",
+    input_contract: "EquipmentQuery",
+    output_contract: "EquipmentOutcome",
+};
+pub const EQUIPMENT_LIST: Operation = Operation {
+    id: "equipment.list.v1",
+    mcp_tool: "equipment_list",
+    input_contract: "EquipmentListQuery",
+    output_contract: "EquipmentOutcome",
+};
+pub const EQUIPMENT_REVISION: Operation = Operation {
+    id: "equipment.revision.v1",
+    mcp_tool: "equipment_revision",
+    input_contract: "EquipmentRevisionQuery",
+    output_contract: "EquipmentOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
+    EQUIPMENT_SAVE,
+    EQUIPMENT_ARCHIVE,
+    EQUIPMENT_GET,
+    EQUIPMENT_LIST,
+    EQUIPMENT_REVISION,
     WORKSPACE_GET,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,

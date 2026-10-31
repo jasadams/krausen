@@ -15,3 +15,5 @@ pub use recipe_service::{Recipe, RecipeSource, RecipeSummary};
 pub mod validation;
 
 pub mod mapping;
+
+pub mod equipment_store;

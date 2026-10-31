@@ -39,9 +39,19 @@ pub async fn preview(
     let mut tx = pool.begin_write().await?;
     authorize_workspace(&mut tx, actor).await?;
     crate::check_intent(actor, &request.intent)?;
-    if request.draft.equipment_profile_id.is_some() {
-        return Ok(PreviewOutcome::UnresolvedProfile);
-    }
+    let profile = if let Some(id) = &request.draft.equipment_profile_id {
+        match krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, id, true)
+            .await
+            .map_err(crate::boundary_error)?
+        {
+            Some(profile) if !profile.archived => Some(profile),
+            _ => return Ok(PreviewOutcome::UnresolvedProfile),
+        }
+    } else {
+        None
+    };
+    // A profile row lock may have waited across the credential expiry boundary.
+    authorize_workspace(&mut tx, actor).await?;
     let style = match &request.draft.style {
         Some(reference) => match crate::style_reference::resolve(reference) {
             Some(style) => Some(style),
@@ -52,7 +62,11 @@ pub async fn preview(
     if request.draft.equipment_overrides.schema_version != 1 {
         return Err(Error::Invalid("unsupported equipment override schema"));
     }
-    let e = effective(&request.equipment_draft, &request.draft.equipment_overrides);
+    let base = profile
+        .as_ref()
+        .map(|p| &p.settings)
+        .unwrap_or(&request.equipment_draft);
+    let e = effective(base, &request.draft.equipment_overrides);
     let mut validation = krausen_brewery::validation::validate_draft(&request.draft, &e);
     let targets =
         krausen_brewery::mapping::calculation::targets(&request.draft, &e, &mut validation);
@@ -78,6 +92,15 @@ pub async fn preview(
         "volume_reference_20c".into(),
         "solid_addition_volume_negligible".into(),
     ];
+    if let Some(profile) = &profile {
+        assumptions.extend(
+            profile
+                .provenance
+                .assumptions
+                .iter()
+                .map(|item| format!("profile:{item}")),
+        );
+    }
     if request.draft.process.kettle_top_up_l.is_none() {
         assumptions.push("kettle_top_up_default_zero".into());
     }
@@ -87,9 +110,15 @@ pub async fn preview(
     let envelope = krausen_types::formulation::CalculationContext {
         workspace_id: actor.workspace_id.clone(),
         draft: request.draft.clone(),
-        equipment_draft: request.equipment_draft.clone(),
+        equipment_draft: base.clone(),
         effective_equipment: e,
-        equipment_provenance: "caller_supplied_equipment_draft".into(),
+        equipment_provenance: if profile.is_some() {
+            "saved_profile"
+        } else {
+            "caller_supplied_equipment_draft"
+        }
+        .into(),
+        equipment_profile: profile,
         assumptions,
         engine_version: krausen_calc::formulation::ENGINE_VERSION.into(),
         engine_build: krausen_calc::formulation::ENGINE_BUILD.into(),

@@ -90,6 +90,24 @@ fn typed_schema<T: schemars::JsonSchema>() -> serde_json::Map<String, serde_json
     let value = serde_json::to_value(schemars::schema_for!(T)).expect("shared input schema");
     schema(value)
 }
+macro_rules! equipment_request {
+    ($name:ident, $ty:ty) => {
+        #[derive(Deserialize, schemars::JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        struct $name {
+            workspace_id: String,
+            request: $ty,
+        }
+    };
+}
+equipment_request!(EquipmentSave, krausen_types::equipment::SaveEquipment);
+equipment_request!(EquipmentArchive, krausen_types::equipment::ArchiveEquipment);
+equipment_request!(EquipmentGet, krausen_types::equipment::EquipmentQuery);
+equipment_request!(EquipmentList, krausen_types::equipment::EquipmentListQuery);
+equipment_request!(
+    EquipmentRevision,
+    krausen_types::equipment::EquipmentRevisionQuery
+);
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
 }
@@ -123,6 +141,46 @@ impl ServerHandler for McpHandler {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(
+                operations::EQUIPMENT_SAVE.mcp_tool,
+                "Save a guarded equipment profile",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(EquipmentSave))
+                        .expect("equipment schema"),
+                ),
+            ),
+            Tool::new(
+                operations::EQUIPMENT_ARCHIVE.mcp_tool,
+                "Archive or restore an equipment profile",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(EquipmentArchive))
+                        .expect("equipment schema"),
+                ),
+            ),
+            Tool::new(
+                operations::EQUIPMENT_GET.mcp_tool,
+                "Read an equipment profile",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(EquipmentGet))
+                        .expect("equipment schema"),
+                ),
+            ),
+            Tool::new(
+                operations::EQUIPMENT_LIST.mcp_tool,
+                "List active equipment profiles",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(EquipmentList))
+                        .expect("equipment schema"),
+                ),
+            ),
+            Tool::new(
+                operations::EQUIPMENT_REVISION.mcp_tool,
+                "Read an immutable equipment revision",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(EquipmentRevision))
+                        .expect("equipment schema"),
+                ),
+            ),
             Tool::new(
                 operations::FORMULATION_PREVIEW.mcp_tool,
                 "Calculate an unsaved recipe draft",
@@ -199,6 +257,101 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "equipment.save.v1"
+            | "equipment.archive.v1"
+            | "equipment.get.v1"
+            | "equipment.list.v1"
+            | "equipment.revision.v1" => {
+                macro_rules! parse {
+                    ($ty:ty) => {
+                        serde_json::from_value::<$ty>(input).map_err(|_| {
+                            ErrorData::invalid_params("Invalid equipment request", None)
+                        })?
+                    };
+                }
+                macro_rules! actor {
+                    ($workspace:expr) => {
+                        krausen_app::ActorContext {
+                            actor_id: principal.user_id.clone(),
+                            credential_id: principal.credential_id.clone(),
+                            access_expires_at: principal.access_expires_at,
+                            workspace_id: $workspace,
+                        }
+                    };
+                }
+                let outcome = match operation.id {
+                    "equipment.save.v1" => {
+                        let c = parse!(EquipmentSave);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::equipment::project(
+                            krausen_app::equipment::save(&self.db, &actor, c.request).await,
+                        )
+                    }
+                    "equipment.archive.v1" => {
+                        let c = parse!(EquipmentArchive);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::equipment::project(
+                            krausen_app::equipment::set_archived(&self.db, &actor, c.request).await,
+                        )
+                    }
+                    "equipment.get.v1" => {
+                        let c = parse!(EquipmentGet);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::equipment::project_get(
+                            krausen_app::equipment::get(
+                                &self.db,
+                                &actor,
+                                &c.request.intent,
+                                &c.request.profile_id,
+                            )
+                            .await,
+                        )
+                    }
+                    "equipment.list.v1" => {
+                        let c = parse!(EquipmentList);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::equipment::project_list(
+                            krausen_app::equipment::list(
+                                &self.db,
+                                &actor,
+                                &c.request.intent,
+                                &c.request.after,
+                                c.request.limit,
+                                c.request.include_archived,
+                            )
+                            .await,
+                        )
+                    }
+                    "equipment.revision.v1" => {
+                        let c = parse!(EquipmentRevision);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::equipment::project_revision(
+                            krausen_app::equipment::get_revision(
+                                &self.db,
+                                &actor,
+                                &c.request.intent,
+                                &c.request.profile_id,
+                                c.request.revision,
+                            )
+                            .await,
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::equipment::EquipmentOutcome::Profile(_)
+                        | krausen_types::equipment::EquipmentOutcome::Profiles(_)
+                        | krausen_types::equipment::EquipmentOutcome::Revision(_)
+                        | krausen_types::equipment::EquipmentOutcome::NotFound
+                );
+                let value = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
             "formulation.preview.v1" => {
                 let input: FormulationPreview = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid formulation preview", None))?;

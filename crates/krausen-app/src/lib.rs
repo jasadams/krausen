@@ -34,6 +34,8 @@ pub enum Error {
     Forbidden,
     #[error("operation context changed")]
     ContextChanged,
+    #[error("equipment profile is archived")]
+    EquipmentArchived,
     #[error("workspace revision conflict")]
     Conflict { expected: i64, actual: i64 },
     #[error("request identity reused with a different payload")]
@@ -423,3 +425,5 @@ pub mod formulation;
 
 mod style_reference;
 pub mod recipe_editor;
+
+pub mod equipment;
