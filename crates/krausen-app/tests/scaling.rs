@@ -358,6 +358,106 @@ async fn exercise(db: DbPool) {
         other => panic!("expected context conflict, got {other:?}"),
     }
 
+    // Reproduce the editor-created document exactly: no equipment profile,
+    // no hops, no kettle top-up and no process steps. This is the browser
+    // fixture shape that exposed an apply context conflict.
+    let mut browser_document = document(None);
+    browser_document.hops.clear();
+    browser_document.yeast.clear();
+    browser_document.other_ingredients.clear();
+    browser_document.process.mash_steps.clear();
+    browser_document.process.kettle_top_up_l = None;
+    browser_document.process.mash_water_l = Some(15.0);
+    browser_document.equipment_overrides = EquipmentSettingsV1 {
+        mash_efficiency_fraction: Some(0.75),
+        boil_off_l_per_hour: Some(3.0),
+        transfer_loss_l: Some(2.0),
+        pre_boil_deadspace_l: Some(0.0),
+        grain_absorption_l_per_kg: Some(0.8),
+        kettle_capacity_l: Some(30.0),
+        ..Default::default()
+    };
+    let browser_id = create_recipe(&db, &actor, &intent, &browser_document).await;
+    let browser_preview = match scaling::preview(
+        &db,
+        &actor,
+        ScalePreviewRequest {
+            intent: intent.clone(),
+            recipe_id: browser_id.clone(),
+            target_batch_size_l: 40.0,
+        },
+    )
+    .await
+    {
+        ScaleOutcome::Preview(preview) => preview,
+        other => panic!("browser-shape preview: {other:?}"),
+    };
+    assert_eq!(
+        browser_preview.validation.state,
+        krausen_types::validation::Readiness::Ready
+    );
+    let browser_outcome = scaling::apply(
+        &db,
+        &actor,
+        ScaleApplyRequest {
+            intent: intent.clone(),
+            recipe_id: browser_id.clone(),
+            expected_revision: 1,
+            target_batch_size_l: 40.0,
+            accepted: browser_preview.accepted.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    match browser_outcome {
+        ScaleApplyOutcome::Applied { revision: 2, .. } => {}
+        ScaleApplyOutcome::ContextConflict { fresh } => {
+            let accepted = &browser_preview.accepted;
+            let current = &fresh.accepted;
+            assert_eq!(accepted.context.draft, current.context.draft, "draft");
+            assert_eq!(
+                accepted.context.equipment_draft, current.context.equipment_draft,
+                "equipment_draft"
+            );
+            assert_eq!(
+                accepted.context.effective_equipment, current.context.effective_equipment,
+                "effective_equipment"
+            );
+            assert_eq!(
+                accepted.context.equipment_provenance, current.context.equipment_provenance,
+                "equipment_provenance"
+            );
+            assert_eq!(
+                accepted.context.equipment_profile, current.context.equipment_profile,
+                "equipment_profile"
+            );
+            assert_eq!(
+                accepted.context.assumptions, current.context.assumptions,
+                "assumptions"
+            );
+            assert_eq!(
+                accepted.context.engine_version, current.context.engine_version,
+                "engine_version"
+            );
+            assert_eq!(
+                accepted.context.engine_build, current.context.engine_build,
+                "engine_build"
+            );
+            assert_eq!(
+                accepted.context.engine_source_hash, current.context.engine_source_hash,
+                "engine_source_hash"
+            );
+            assert_eq!(
+                accepted.context.policy_source_hash, current.context.policy_source_hash,
+                "policy_source_hash"
+            );
+            assert_eq!(accepted.context.style, current.context.style, "style");
+            assert_eq!(accepted.targets, current.targets, "targets");
+            panic!("server-produced accepted context equals fresh preview but apply rejected it");
+        }
+        other => panic!("browser-shape apply: {other:?}"),
+    }
+
     let duplicate = scaling::duplicate(
         &db,
         &actor,
