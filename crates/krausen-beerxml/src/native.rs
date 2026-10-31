@@ -25,6 +25,13 @@ pub struct OriginalSource {
     pub sha256: String,
 }
 
+impl OriginalSource {
+    pub fn has_valid_hash(&self) -> bool {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&self.bytes)) == self.sha256
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NativeImportError {
     #[error(transparent)]
