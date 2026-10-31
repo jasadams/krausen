@@ -33,6 +33,7 @@ pub struct InvitationData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceSettingsData {
     pub workspace_name: String,
+    pub revision: i64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

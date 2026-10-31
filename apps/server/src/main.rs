@@ -27,6 +27,10 @@ async fn serve() {
     let db = krausen_core::db::DbPool::connect(&config.database_url)
         .await
         .expect("failed to connect to database");
+    match &db {
+        krausen_core::DbPool::Postgres(pool) => sqlx::migrate!("./migrations").run(pool).await,
+        krausen_core::DbPool::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite").run(pool).await,
+    }.expect("failed to apply database migrations");
 
     // Personal mode: auto-provision local user and workspace on first boot
     if config.is_personal() {

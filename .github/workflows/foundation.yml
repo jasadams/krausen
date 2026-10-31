@@ -1,0 +1,34 @@
+name: Foundation database tests
+permissions:
+  contents: read
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: krausen
+          POSTGRES_PASSWORD: krausen
+          POSTGRES_DB: krausen_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U krausen -d krausen_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      KRAUSEN_TEST_POSTGRES_URL: postgres://krausen:krausen@localhost:5432/krausen_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p krausen-app --test foundation
+      - run: cargo test -p krausen-ui --features ssr --lib retry_preserves_browser_request_identity
+      - run: cargo test -p krausen-ui --features ssr --lib request_id::tests
+      - run: cargo check -p krausen-server
+      - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown

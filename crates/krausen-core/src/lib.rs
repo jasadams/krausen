@@ -15,7 +15,7 @@ pub mod sql_compat;
 pub mod websocket_types;
 
 pub use config::Config;
-pub use db::DbPool;
+pub use db::{DbPool, DbTx};
 pub use error::{Error, Result};
 pub use kv_store::{KVPool, KVStore, create_kv_store, kv_consume_json, kv_peek_json, kv_store_json};
 pub use redis::RedisPool;

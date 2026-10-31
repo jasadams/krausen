@@ -1,0 +1,23 @@
+[package]
+name = "krausen-app"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+krausen-core.workspace = true
+krausen-types.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

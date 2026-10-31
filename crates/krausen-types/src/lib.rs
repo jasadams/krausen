@@ -6,3 +6,4 @@
 //! krausen-ui, and the server binary.
 
 pub mod sync;
+pub mod workspace;

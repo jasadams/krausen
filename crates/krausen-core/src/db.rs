@@ -18,8 +18,40 @@ pub enum DbPool {
     Sqlite(SqlitePool),
 }
 
+/// A single application-owned write transaction. Helpers borrow this value and
+/// must not begin, commit, or acquire another connection.
+pub enum DbTx<'a> {
+    Postgres(sqlx::Transaction<'a, sqlx::Postgres>),
+    Sqlite(sqlx::Transaction<'a, sqlx::Sqlite>),
+}
+
+impl DbTx<'_> {
+    pub async fn commit(self) -> crate::Result<()> {
+        match self {
+            Self::Postgres(tx) => tx.commit().await?,
+            Self::Sqlite(tx) => tx.commit().await?,
+        }
+        Ok(())
+    }
+
+    pub async fn rollback(self) -> crate::Result<()> {
+        match self {
+            Self::Postgres(tx) => tx.rollback().await?,
+            Self::Sqlite(tx) => tx.rollback().await?,
+        }
+        Ok(())
+    }
+}
+
 impl DbPool {
-    /// Connect to the database and run migrations.
+    /// Acquire the write boundary before any authorization or source reads.
+    pub async fn begin_write(&self) -> crate::Result<DbTx<'_>> {
+        Ok(match self {
+            Self::Postgres(pool) => DbTx::Postgres(pool.begin().await?),
+            Self::Sqlite(pool) => DbTx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?),
+        })
+    }
+    /// Connect to the database. The composition root runs migrations.
     pub async fn connect(url: &str) -> crate::Result<Self> {
         if url.starts_with("postgresql://") || url.starts_with("postgres://") {
             let pool = PgPoolOptions::new()
@@ -27,8 +59,7 @@ impl DbPool {
                 .acquire_timeout(std::time::Duration::from_secs(5))
                 .connect(url)
                 .await?;
-            sqlx::migrate!("../../apps/server/migrations").run(&pool).await?;
-            tracing::info!("PostgreSQL pool connected, migrations applied");
+            tracing::info!("PostgreSQL pool connected");
             Ok(Self::Postgres(pool))
         } else {
             // SQLite WAL mode serialises writes; a single connection avoids contention.
@@ -46,10 +77,7 @@ impl DbPool {
                 .execute(&pool)
                 .await
                 .map_err(crate::Error::Sqlx)?;
-            sqlx::migrate!("../../apps/server/migrations-sqlite")
-                .run(&pool)
-                .await?;
-            tracing::info!("SQLite pool connected, migrations applied");
+            tracing::info!("SQLite pool connected");
             Ok(Self::Sqlite(pool))
         }
     }
