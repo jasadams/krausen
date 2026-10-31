@@ -17,6 +17,41 @@ async fn revisions_are_workspace_scoped_and_append_only() {
     sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document) VALUES ('a', 'r', 'Recipe', '{}')").execute(&pool).await.unwrap();
     let insert = "INSERT INTO recipe_revisions (workspace_id, recipe_id, revision, schema_version, document, content_digest) VALUES (?, 'r', 1, 1, '{}', 'digest')";
     sqlx::query(insert).bind("a").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE recipes SET native_head_revision = 1 WHERE recipe_id = 'r'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let db = krausen_core::DbPool::Sqlite(pool.clone());
+    assert!(matches!(
+        krausen_brewery::recipe_service::update_recipe(
+            &db,
+            "a",
+            "r",
+            &krausen_beerxml::Recipe::default()
+        )
+        .await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
+    assert!(matches!(
+        krausen_brewery::recipe_service::delete_recipe(&db, "a", "r").await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
+    assert!(matches!(
+        krausen_brewery::recipe_service::get_recipe(&db, "a", "r").await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
+    assert!(
+        sqlx::query("UPDATE recipes SET document = 'changed' WHERE recipe_id = 'r'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE recipes SET deleted_at = '2026-01-01' WHERE recipe_id = 'r'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
     sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('a', 'r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
     assert!(
         sqlx::query("UPDATE recipe_import_provenance SET diagnostics = 'changed'")
@@ -65,6 +100,37 @@ async fn postgres_revisions_are_workspace_scoped_and_append_only() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("UPDATE recipes SET native_head_revision = 1 WHERE recipe_id = 'native-test-r'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let db = krausen_core::DbPool::Postgres(pool.clone());
+    assert!(matches!(
+        krausen_brewery::recipe_service::update_recipe(
+            &db,
+            "native-test-a",
+            "native-test-r",
+            &krausen_beerxml::Recipe::default()
+        )
+        .await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
+    assert!(matches!(
+        krausen_brewery::recipe_service::delete_recipe(&db, "native-test-a", "native-test-r").await,
+        Err(krausen_core::Error::Conflict(_))
+    ));
+    assert!(
+        sqlx::query("UPDATE recipes SET document = 'changed' WHERE recipe_id = 'native-test-r'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE recipes SET deleted_at = NOW() WHERE recipe_id = 'native-test-r'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
     sqlx::query("INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, format, mapping_version, diagnostics, source_record) VALUES ('native-test-a', 'native-test-r', 1, 'BeerXML', 'v1', '[]', '{\"raw\":true}')").execute(&pool).await.unwrap();
     assert!(sqlx::query("UPDATE recipe_import_provenance SET diagnostics = 'changed' WHERE recipe_id = 'native-test-r'").execute(&pool).await.is_err());
     assert!(
