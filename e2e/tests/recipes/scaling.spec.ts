@@ -46,6 +46,8 @@ test('scaling previews fixed-loss target changes and applies one revision', asyn
   await expect(page.getByText(/Fixed losses stay unchanged/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await page.waitForTimeout(2000);
+  console.log('SCALE_BODY', await page.locator('body').innerText());
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue(/^40(\.0+)?$/);
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^8(\.0+)?$/);
