@@ -96,9 +96,9 @@ async fn exercise(db: DbPool) {
     }
     macro_rules! run_err {
         ($sql:expr $(,$arg:expr)*) => {{
-            let result = match &db {
-                DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await,
-                DbPool::Postgres(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await,
+            let result: Result<(), sqlx::Error> = match &db {
+                DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await.map(|_| ()),
+                DbPool::Postgres(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await.map(|_| ()),
             };
             assert!(result.is_err(), "immutable history must reject writes");
         }};

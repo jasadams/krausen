@@ -210,7 +210,7 @@ pub async fn duplicate_key_exists(
 /// True when the ID already exists anywhere in the catalogue: another
 /// workspace's entry or the immutable starter namespace. IDs are global.
 pub async fn entry_id_in_use(tx: &mut DbTx<'_>, entry_id: &str) -> Result<bool> {
-    let sql = "SELECT CASE WHEN EXISTS (SELECT 1 FROM ingredient_entries WHERE entry_id = $1) OR EXISTS (SELECT 1 FROM starter_ingredient_entries WHERE entry_id = $1) THEN 1 ELSE 0 END";
+    let sql = "SELECT CASE WHEN EXISTS (SELECT 1 FROM ingredient_entries WHERE entry_id = $1) OR EXISTS (SELECT 1 FROM starter_ingredient_entries WHERE entry_id = $1) THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END";
     let found = match &mut *tx {
         DbTx::Postgres(t) => {
             sqlx::query_scalar::<_, i64>(sql)
