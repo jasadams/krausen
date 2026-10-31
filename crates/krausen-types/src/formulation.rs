@@ -93,6 +93,16 @@ pub struct StyleComparison {
     pub colour_ebc: Option<RangeStatus>,
 }
 
+/// One engine fallback value actually used during calculation. It is frozen
+/// with the plan so a historical read does not need a later engine build to
+/// recover an applied default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedDefault {
+    pub path: String,
+    pub value: f64,
+    pub unit: String,
+}
+
 /// Complete unrounded resolved inputs and version identities used for context hashing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalculationContext {
@@ -104,6 +114,8 @@ pub struct CalculationContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equipment_profile: Option<crate::equipment::EquipmentProfile>,
     pub assumptions: Vec<String>,
+    #[serde(default)]
+    pub applied_defaults: Vec<AppliedDefault>,
     pub engine_version: String,
     pub engine_build: String,
     pub engine_source_hash: String,

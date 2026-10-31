@@ -20,22 +20,27 @@ async function importRecipe(page: import('@playwright/test').Page, title: string
 
 async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.getByLabel('Manage profile').selectOption('');
-  await page.getByLabel('Profile name').fill('E2E kettle');
-  await page.getByLabel('Mash efficiency').fill('75');
-  await page.getByLabel('Boil-off').fill('3');
-  await page.getByLabel('Transfer loss').fill('2');
-  await page.getByLabel('Grain absorption').fill('0.8');
-  await page.getByLabel('Mash thickness').fill('2.5');
-  await page.getByLabel('Kettle capacity').fill('30');
-  await page.getByLabel('Kettle diameter').fill('35');
-  await page.getByLabel('Kettle opening').fill('30');
-  await page.getByLabel('Boil temperature').fill('100');
-  await page.getByLabel('Profile chilling').selectOption('natural');
+  await page.locator('#equipment-profile-edit').selectOption('');
+  await page.locator('#equipment-profile-name').fill('E2E kettle');
+  await page.locator('#profile-mash-efficiency').fill('75');
+  await page.locator('#profile-boil-off').fill('3');
+  await page.locator('#profile-transfer-loss').fill('2');
+  await page.locator('#profile-absorption').fill('0.8');
+  await page.locator('#profile-thickness').fill('2.5');
+  await page.locator('#profile-capacity').fill('30');
+  await page.locator('#profile-diameter').fill('35');
+  await page.locator('#profile-opening').fill('30');
+  await page.locator('#profile-boil-temperature').fill('100');
+  await page.locator('#profile-chilling').selectOption('natural');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
-  await page.getByLabel('Equipment profile').selectOption({ label: 'E2E kettle' });
-  await page.getByLabel('Whole-wort apparent attenuation').fill('78');
+  await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
+  await page.locator('#recipe-attenuation').fill('78');
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.locator('#recipe-mash-water').fill('15');
+  await page.locator('#recipe-whirlpool').fill('15');
+  await page.locator('#recipe-top-up').fill('0');
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
 }

@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 use crate::{
-    formulation::{CalculationContext, StyleComparison, StyleRanges, Targets},
+    formulation::{AppliedDefault, CalculationContext, StyleComparison, StyleRanges, Targets},
     validation::Diagnostic,
 };
 
@@ -324,6 +324,7 @@ pub struct BrewPlanV1 {
     pub equipment_profile_metadata_revision: Option<i64>,
     pub original_targets: Targets,
     pub assumptions: Vec<String>,
+    pub applied_defaults: Vec<AppliedDefault>,
     pub diagnostics: Vec<Diagnostic>,
     pub style: Option<StyleReference>,
     pub style_reference: Option<StyleRanges>,
