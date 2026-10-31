@@ -96,6 +96,12 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await page.keyboard.press('Escape');
       await expect(dialog).toBeHidden();
       await expect(opener).toBeFocused();
+      await opener.click();
+      await dialog.getByRole('button', { name: 'Close' }).click();
+      await opener.click();
+      await page.waitForTimeout(100);
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press('Escape');
     }
   }
 });
