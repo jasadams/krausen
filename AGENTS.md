@@ -73,3 +73,13 @@ not mark KRA tickets complete merely because a prototype or screenshot exists.
 - Keep snapshots/evidence immutable and compare complete accepted calculation context.
 - Use the adoption scenario matrix and both database backends for affected contracts.
 - Match review scope to material changes; reuse existing accepted decisions and evidence.
+
+## Delivery coordination
+
+Do not create any new Trakkt ticket or sub-ticket without Jason's explicit
+approval. Refine existing scope, acceptance and dependencies instead. Each
+assigned developer owns one ticket through implementation, tests, review fixes
+and an open PR. The delivery lead reviews/merges, records completion and assigns
+the next ticket; developers do not merge or start another ticket themselves.
+Operational updates belong on the dedicated Krausen Agent Bridge board, with
+Needs Jason first and a message input last; leave the main board unchanged.

@@ -357,9 +357,11 @@ root and does not replace the selected actual unless explicitly selected.
 
 ## Migration and schema evolution
 
-KRA-6 introduces versioned document envelopes, recipe revisions, profile and
-catalogue revision storage, immutable plans, actual evidence and selection/
-lifecycle records with the constraints above. Derive list/search metadata from
+KRA-6 introduces native recipe/equipment input types and recipe revision
+storage/backfill. KRA-14/15 own catalogue/profile storage and operations; KRA-20
+owns complete brew-plan types/storage and atomic start; KRA-21 owns evidence,
+selection and lifecycle types/storage/operations. These existing feature tickets
+implement the constraints above without blocking every module on one migration. Derive list/search metadata from
 the native document in the same write transaction; it is not independently
 editable recipe content.
 

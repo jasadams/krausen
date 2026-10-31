@@ -30,8 +30,8 @@ The canonical contracts define the implementation target. Their presence does
 not mean corresponding services are implemented. ADOPTION.md records resolutions
 of B1–B8, ownership of deferred work, acceptance scenarios and delivery order.
 KRA-1–4 design delivery remains complete. KRA-5 adopts the independently approved
-combined contracts and maps them to implementation tickets; KRA-6 is the next
-delivery slice.
+combined contracts and maps them to implementation tickets; the post-design delivery map uses the original tickets with
+one developer owning each through its PR and lead-controlled integration.
 
 Repository documents are the durable contract. Tracker records link delivery and
 evidence; later accepted changes update both documents and applicable guidance.

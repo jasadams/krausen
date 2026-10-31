@@ -428,9 +428,10 @@ design prototype does not implement these backend guarantees.
 
 ## Dependency and implementation acceptance
 
-KRA-6 implements the canonical versioned data and both database migrations;
-KRA-7 implements the application/transaction context and removes transport-owned
-business policy. These are separate delivered slices, not competing service
+KRA-7 implements the application/transaction foundation and representative
+existing-workspace operation without a native recipe prerequisite. KRA-6 then
+uses its transaction contract for native recipe persistence/backfill; later
+feature tickets own their respective profile/catalogue/brew/evidence storage. These are separate delivered slices, not competing service
 architectures. KRA-8/9 implement validation and calculation policy; KRA-10/11
 provide authenticated transport and complete parity. No consumer bypasses app
 because another implementation ticket has not landed yet.

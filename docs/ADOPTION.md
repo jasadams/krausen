@@ -2,7 +2,9 @@
 
 Status: adopted on 2026-10-31 after three independent changed-contract reviews.
 Baseline before this resolution: `2c12479`. No application code is implemented
-by this documentation change. KRA-6 starts the implementation sequence.
+by this documentation change. The post-design delivery audit below preserves
+the original ticket set; KRA-7 establishes the transaction boundary while KRA-6
+prepares native types/migrations and KRA-8 prepares validation against those types.
 
 ## Scope and authority
 
@@ -49,34 +51,50 @@ This is a dependency map, not an instruction to execute all tickets at once.
 Implementation descriptions must link these canonical contracts. Tickets can
 choose SQL names and Rust lifetimes without changing their semantics.
 
-| Ticket | Deliverable and exit evidence | Prerequisites after KRA-5 |
-| --- | --- | --- |
-| KRA-6 | Native V1 documents and equivalent migrations; immutable revisions/plans/evidence, composite tenancy constraints, preserved import/backfill diagnostics and versioned readers; save/reload/archive/recovery on both databases | None |
-| KRA-7 | App commands/queries and trusted context, transaction-capable helpers, authority/source guards, scoped durable retries, typed outcomes, post-commit delivery; remove transport policy and extract migration runner | KRA-6 |
-| KRA-8 | Ready/Incomplete/Invalid diagnostics and shared field validation; structurally valid incomplete saves, malformed rejection, no stale targets | KRA-6 |
-| KRA-9 | Versioned calculation/mapping policy, grain/extract/late-boil handling and reference arithmetic/model tests; complete preview context | KRA-8 |
-| KRA-10 | Installation-local browser OAuth, durable credential/revocation checks, authenticated official-SDK MCP adapters; retire protected anonymous/personal bypass | KRA-7 |
-| KRA-11 | Existing profile/workspace/team/security operations call app and are exposed equivalently by MCP; proof, role and sensitive-read cases | KRA-7, KRA-10 |
-| KRA-12 | Approved editable recipe components use shared preview/save operations; missing/invalid states and head/style context remain honest | KRA-7, KRA-9, KRA-10 |
-| KRA-13 | Explicit Save, undo/recovery and dirty navigation; conflict keeps draft; isolate recovery by account/workspace/recipe | KRA-12 |
-| KRA-14 | Durable starter/custom ingredient library, copied specs and provenance, scoped shared operations and picker | KRA-12 |
-| KRA-15 | Versioned equipment profiles, live future-preview resolution and explicit overrides; history unchanged | KRA-7, KRA-9, KRA-10, KRA-12 |
-| KRA-16 | Library/search/history navigation with approved states/components, shared bounded queries | KRA-12 |
-| KRA-17 | Source-preserving native BeerXML preview/import/export with explicit ambiguity/loss handling and source download | KRA-7, KRA-9, KRA-10, KRA-12 |
-| KRA-18 | Linear ingredient scaling/duplication preview, recalculated context/capacity and explicit guarded apply; no target-match promise | KRA-12, KRA-15, KRA-16 |
-| KRA-19 | Printable current/saved/historical process summary with context and assumptions; equivalent structured export | KRA-15, KRA-16 |
-| KRA-20 | Atomic brew start and immutable plan/targets/marker; historical/head/context distinction, scoped retry and source checks | KRA-7, KRA-9, KRA-10, KRA-12, KRA-15 |
-| KRA-21 | Optional actuals/notes, append-only amendments/corrections, guarded selections/retractions and lifecycle events | KRA-20 |
-| KRA-22 | Brew history and planned-versus-actual comparison using stored plans and selected readings, no silent recalculation | KRA-16, KRA-21 |
-| KRA-23 | Cross-interface operation registry/authorization/result parity across all delivered capability families | KRA-11, KRA-13, KRA-14, KRA-17, KRA-18, KRA-19, KRA-22 |
-| KRA-24 | Integrated recipe-to-brew/historical acceptance, both databases, packaging and deployment checks | KRA-23 |
+The delivery lead and three developers reviewed the original tickets after
+adoption. Keep the original tickets; no new ticket or sub-ticket may be created
+without Jason's explicit approval. Milestones are exit criteria, not a rule that
+only one developer or module can be active at a time.
 
-KRA-6 accepts persistence/helper tests without claiming the public application API
-is finished. KRA-7 accepts representative shared operations and reusable boundaries;
-later feature tickets extend its operation registry, never bypass it. KRA-8/9 may
-develop pure validation/calculation work alongside the app migration after the
-canonical types exist. Resolve a prerequisite through its reviewed implementation,
-not by duplicating its functionality in a caller.
+| Ticket | Cohesive delivery scope | Prerequisites after KRA-5 |
+| --- | --- | --- |
+| KRA-6 | Native recipe/equipment input types, recipe revision persistence, initial native/XML migration mapping and versioned backfill/readers on both databases; future profile/catalogue/brew/evidence storage belongs to its existing feature owner | KRA-7 |
+| KRA-7 | Shared app/DbTx/authority/retry/change/outbox foundation, representative existing workspace operation, helper/transport migration and dual-backend PR CI/test harness; no native recipe DTO prerequisite | None |
+| KRA-8 | Pure/shared Ready/Incomplete/Invalid validation and diagnostics; canonical native mapping when KRA-6 lands; never invent duplicate types to bypass it | KRA-6 |
+| KRA-9 | Native→engine mapping, typed fermentables/process policy, complete shared preview context and independent references | KRA-7, KRA-8 |
+| KRA-10 | Authenticated official-SDK MCP and installation browser authorization, durable revocation/proof and dual-version adapter acceptance | KRA-7 |
+| KRA-11 | Remaining account/workspace/team/security shared operation extraction and complete MCP/UI parity | KRA-7, KRA-10 |
+| KRA-12 | Production token/component/showcase migration followed by the one editable recipe page over shared APIs; this ticket owns the kit, not a new ticket | KRA-6, KRA-7, KRA-9, KRA-10 |
+| KRA-13 | Explicit Save/undo/recovery/navigation/conflict integration, account-isolated drafts | KRA-12 |
+| KRA-14 | Catalogue storage/shared operations and picker integration; guarded archive/unarchive, resolved copied specs/provenance | KRA-6, KRA-7, KRA-9, KRA-10, KRA-12 |
+| KRA-15 | Equipment storage/resolution/shared operations and control integration; guarded archive/unarchive and immutable historical settings | KRA-6, KRA-7, KRA-9, KRA-10, KRA-12 |
+| KRA-16 | Bounded library query and approved navigation/list states, reusing production kit; history entry integration with KRA-22 | KRA-6, KRA-7, KRA-10, KRA-12 |
+| KRA-17 | Extend the single XML/native mapping into complete source-preserving authorized preview/import/export and screens | KRA-6, KRA-7, KRA-9, KRA-10, KRA-12 |
+| KRA-18 | Shared scaling/duplicate preview and guarded apply plus controls; library is an entry point, not a prerequisite | KRA-7, KRA-9, KRA-10, KRA-12, KRA-15 |
+| KRA-19 | Current/draft structured process summary and printable recipe, reusable by historical view; no dependency on library screen | KRA-6, KRA-7, KRA-9, KRA-10, KRA-12, KRA-15 |
+| KRA-20 | Brew-plan types/storage plus atomic shared start, adapters and start presentation; complete frozen inputs/targets/marker and historical/head/context checks | KRA-6, KRA-7, KRA-9, KRA-10, KRA-12, KRA-15 |
+| KRA-21 | Evidence/quantity/selection/lifecycle schema and operations plus optional actual-entry UI; append-only amendment/note/correction/retraction and guarded archive/reopen | KRA-20 |
+| KRA-22 | Shared history/comparison queries and views, explicit guarded feedback to recipe and frozen historical print/export reusing KRA-19 | KRA-16, KRA-19, KRA-21 |
+| KRA-23 | Aggregate registry-wide UI/MCP parity verification, supplementing per-ticket adapter and backend checks | KRA-11, KRA-13, KRA-14, KRA-17, KRA-18, KRA-19, KRA-22 |
+| KRA-24 | Integrated product acceptance, both backends, responsive/a11y/print and packaging evidence | KRA-23 |
+
+KRA-7's infrastructure and representative existing-workspace operation can land
+without native recipe models; KRA-6 helpers then use its reviewed DbTx. KRA-6 may
+prepare types/migrations while that prerequisite is being implemented, but cannot
+merge incomplete helpers or duplicate transaction machinery. KRA-8 may prepare
+pure engine validation/references, then consumes the single native contract.
+
+Each developer sees one assigned ticket through tests, review fixes and an open
+PR. The lead independently reviews, requires relevant green CI/evidence, merges,
+records Done and assigns the next ticket. Preparation on a blocked ticket is
+explicit on the board; completion remains gated by its real prerequisites.
+No extra tickets are needed to track review, fixtures, components or CI.
+
+Backend work inside catalogue/profile/import/brew tickets may be prepared before
+screen integration. Their production acceptance still includes the shared API,
+UI/MCP adapters and required presentation; no feature is marked Done for only
+half its scope. Accepted module ownership, snapshot and permission contracts are
+unchanged. Cancelled audit-created KRA-25–32 are not prerequisites or deliverables.
 
 ## Acceptance scenarios
 
@@ -95,7 +113,7 @@ not checks claimed to have run during architecture adoption.
 | Result expired but retry tombstone retained | `ResultExpired`, no re-execution | KRA-7 |
 | Membership/credential revoked during other operation | Serialized authority boundary; calls ordered after revocation fail through both adapters | KRA-7/10/11 |
 | User belongs to A and B, supplies B profile to A brew | Rejected despite both memberships; no copied foreign data | KRA-7/20 |
-| Correction links another brew/quantity | Rejected by shared parent checks and applicable constraints | KRA-6/21 |
+| Correction links another brew/quantity | Rejected by shared parent checks and applicable constraints | KRA-20/21 |
 | Explicit historical revision 4 selected while head is 7 | Start 4 with accepted current equipment/context; no restore required | KRA-20 |
 | Start-current preview at 7, then head becomes 8 | Head conflict; no silently substituted plan | KRA-20 |
 | Profile/default/engine/style context changes between preview and start | Context conflict/refreshed acceptance; old brews remain unchanged | KRA-9/20 |
