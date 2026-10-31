@@ -17,6 +17,9 @@ test.beforeEach(async ({ page }) => {
 async function importRecipe(page: import('@playwright/test').Page, xml: string) {
   await page.goto('/beerxml');
   await page.getByLabel('Paste BeerXML').fill(xml);
+  // The fixture carries a source colour, so the import requires an explicit
+  // Lovibond/SRM choice before it can commit.
+  await page.getByLabel('Source colour').selectOption('srm');
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Import preview' })).toBeVisible();
   await page.getByRole('button', { name: 'Import recipe' }).click();
