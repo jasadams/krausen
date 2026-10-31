@@ -56,7 +56,7 @@ phosphor-leptos = "0.8"
 web-sys = { version = "0.3", features = [
     "Window", "Crypto", "Document", "HtmlElement", "HtmlInputElement", "HtmlDialogElement",
     "Element", "EventTarget", "Node",
-    "KeyboardEvent", "DomTokenList", "MediaQueryList", "Location",
+    "KeyboardEvent", "MouseEvent", "BeforeUnloadEvent", "PopStateEvent", "HtmlAnchorElement", "DomTokenList", "MediaQueryList", "Location",
     "Navigator", "Storage", "StorageEvent", "History",
     "CredentialsContainer", "Credential", "PublicKeyCredential",
     "AuthenticatorResponse", "AuthenticatorAttestationResponse",

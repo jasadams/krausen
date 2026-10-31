@@ -9,30 +9,22 @@ use leptos_router::{
     path,
 };
 
-use crate::pages::auth::{
-    account_recovery::AccountRecoveryPage,
-    account_recovery_complete::AccountRecoveryCompletePage,
-    google_callback::GoogleCallbackPage,
-    login::LoginPage,
-    oauth_complete::OAuthCompletePage,
-    passkey_recovery::PasskeyRecoveryPage,
-    passkey_recovery_complete::PasskeyRecoveryCompletePage,
-    passkey_signup_complete::PasskeySignupCompletePage,
-    signup_complete::SignupCompletePage,
-};
 use crate::pages::accept_ownership::AcceptOwnershipPage;
-use crate::pages::onboarding::OnboardingPage;
-use crate::pages::recipes::RecipesPage;
-use crate::pages::recipe_editor::RecipeEditorPage;
-use crate::pages::design_system::DesignSystemPage;
-use crate::pages::welcome::WelcomePage;
-use crate::pages::settings::{
-    profile::ProfilePage,
-    security::security_tab::SecurityTab,
-    settings_shell::SettingsShell,
-    team::TeamPage,
-    workspace::WorkspacePage,
+use crate::pages::auth::{
+    account_recovery::AccountRecoveryPage, account_recovery_complete::AccountRecoveryCompletePage,
+    google_callback::GoogleCallbackPage, login::LoginPage, oauth_complete::OAuthCompletePage,
+    passkey_recovery::PasskeyRecoveryPage, passkey_recovery_complete::PasskeyRecoveryCompletePage,
+    passkey_signup_complete::PasskeySignupCompletePage, signup_complete::SignupCompletePage,
 };
+use crate::pages::design_system::DesignSystemPage;
+use crate::pages::onboarding::OnboardingPage;
+use crate::pages::recipe_editor::RecipeEditorPage;
+use crate::pages::recipes::RecipesPage;
+use crate::pages::settings::{
+    profile::ProfilePage, security::security_tab::SecurityTab, settings_shell::SettingsShell,
+    team::TeamPage, workspace::WorkspacePage,
+};
+use crate::pages::welcome::WelcomePage;
 
 /// Shell HTML page that loads the WASM bundle.
 #[component]
@@ -59,6 +51,11 @@ use crate::components::layout::Layout;
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+
+    let editor_guard = crate::components::layout::EditorGuard::new();
+    provide_context(editor_guard);
+    #[cfg(target_arch = "wasm32")]
+    editor_guard.install_history_guard();
 
     let auth_version = RwSignal::new(0u64);
     provide_context(auth_version);

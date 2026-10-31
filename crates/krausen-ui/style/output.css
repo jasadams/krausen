@@ -431,6 +431,9 @@
   .block {
     display: block;
   }
+  .contents {
+    display: contents;
+  }
   .flex {
     display: flex;
   }
@@ -837,6 +840,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .overflow-auto {
+    overflow: auto;
   }
   .overflow-hidden {
     overflow: hidden;

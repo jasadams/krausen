@@ -6,16 +6,123 @@ use leptos::prelude::*;
 use leptos_router::components::Outlet;
 
 use crate::components::Spinner;
-use crate::server_fns::sidebar::{get_sidebar_user, list_user_workspaces, switch_workspace, SidebarUser};
+use crate::server_fns::sidebar::{
+    SidebarUser, get_sidebar_user, list_user_workspaces, switch_workspace,
+};
 
 /// A cross-tab invalidation signal; it contains no account or credential data.
 pub const CONTEXT_CHANGED_KEY: &str = "krausen-context-changed";
+
+#[derive(Clone)]
+pub enum EditorDestination {
+    Href(String),
+    Workspace(String),
+    Logout,
+}
 
 /// Prevent an in-progress recipe draft from being discarded by workspace switching.
 #[derive(Clone, Copy)]
 pub struct EditorGuard {
     pub dirty: RwSignal<bool>,
     pub notice: RwSignal<bool>,
+    pub destination: RwSignal<Option<EditorDestination>>,
+    pub save: StoredValue<Option<Callback<()>>>,
+    pub discard: StoredValue<Option<Callback<(), bool>>>,
+    pub saving_to_leave: RwSignal<bool>,
+    pub pending: RwSignal<bool>,
+    pub message: RwSignal<String>,
+    pub current_url: RwSignal<String>,
+}
+
+impl EditorGuard {
+    pub fn new() -> Self {
+        Self {
+            dirty: RwSignal::new(false),
+            notice: RwSignal::new(false),
+            destination: RwSignal::new(None),
+            save: StoredValue::new(None),
+            discard: StoredValue::new(None),
+            saving_to_leave: RwSignal::new(false),
+            pending: RwSignal::new(false),
+            message: RwSignal::new(String::new()),
+            current_url: RwSignal::new(String::new()),
+        }
+    }
+    /// Install before the router so a dirty form cannot be unmounted by its
+    /// earlier popstate handler before the user chooses how to leave.
+    #[cfg(target_arch = "wasm32")]
+    pub fn install_history_guard(self) {
+        use wasm_bindgen::{JsCast, closure::Closure};
+        let window = web_sys::window().expect("browser window");
+        let pop = Closure::<dyn FnMut(web_sys::PopStateEvent)>::new(
+            move |event: web_sys::PopStateEvent| {
+                if !self.dirty.get_untracked() {
+                    return;
+                }
+                let Some(window) = web_sys::window() else {
+                    return;
+                };
+                let Ok(destination) = window.location().href() else {
+                    return;
+                };
+                let previous = self.current_url.get_untracked();
+                if previous.is_empty() || destination == previous {
+                    return;
+                }
+                event.stop_immediate_propagation();
+                if let Ok(history) = window.history() {
+                    let _ = history.push_state_with_url(
+                        &wasm_bindgen::JsValue::NULL,
+                        "",
+                        Some(&previous),
+                    );
+                }
+                self.request(EditorDestination::Href(destination));
+            },
+        );
+        let _ = window.add_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref());
+        let listener = send_wrapper::SendWrapper::new((window, pop));
+        on_cleanup(move || {
+            let (window, pop) = &*listener;
+            let _ = window
+                .remove_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref());
+        });
+    }
+    pub fn request(self, destination: EditorDestination) {
+        self.destination.set(Some(destination));
+        if self.dirty.get_untracked() {
+            self.notice.set(true);
+        } else {
+            self.finish();
+        }
+    }
+    pub fn finish(self) {
+        self.saving_to_leave.set(false);
+        self.notice.set(false);
+        let Some(destination) = self.destination.get_untracked() else {
+            return;
+        };
+        self.destination.set(None);
+        self.dirty.set(false);
+        leptos::task::spawn_local(async move {
+            match destination {
+                EditorDestination::Href(href) => {
+                    let _ = web_sys::window().and_then(|w| w.location().set_href(&href).ok());
+                }
+                EditorDestination::Workspace(id) => {
+                    if switch_workspace(id).await.is_ok() {
+                        let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    }
+                }
+                EditorDestination::Logout => {
+                    if crate::server_fns::security::logout().await.is_ok() {
+                        let _ =
+                            web_sys::window().and_then(|w| w.location().set_href("/login").ok());
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// Main authenticated layout with sidebar and content area.
@@ -24,14 +131,77 @@ pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
     let (user_menu_open, set_user_menu_open) = signal(false);
     let mobile_sidebar_open = RwSignal::new(false);
-    let editor_guard = EditorGuard { dirty: RwSignal::new(false), notice: RwSignal::new(false) };
-    provide_context(editor_guard);
+    let editor_guard = expect_context::<EditorGuard>();
+    Effect::new(move |_| {
+        if !editor_guard.notice.get() {
+            editor_guard.saving_to_leave.set(false);
+            editor_guard.destination.set(None);
+        }
+    });
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::{JsCast, closure::Closure};
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .expect("browser document");
+        let click =
+            Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
+                if !editor_guard.dirty.get_untracked()
+                    || event.default_prevented()
+                    || event.button() != 0
+                    || event.meta_key()
+                    || event.ctrl_key()
+                    || event.shift_key()
+                    || event.alt_key()
+                {
+                    return;
+                }
+                let Some(anchor) = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|element| element.closest("a[href]").ok().flatten())
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlAnchorElement>().ok())
+                else {
+                    return;
+                };
+                if !anchor.target().is_empty() || anchor.has_attribute("download") {
+                    return;
+                }
+                let Some(window) = web_sys::window() else {
+                    return;
+                };
+                if anchor.origin() != window.location().origin().unwrap_or_default() {
+                    return;
+                }
+                event.prevent_default();
+                event.stop_immediate_propagation();
+                editor_guard.request(EditorDestination::Href(anchor.href()));
+            });
+        let _ = document.add_event_listener_with_callback_and_bool(
+            "click",
+            click.as_ref().unchecked_ref(),
+            true,
+        );
+        let listener = send_wrapper::SendWrapper::new((document, click));
+        on_cleanup(move || {
+            let (document, click) = &*listener;
+            let _ = document.remove_event_listener_with_callback_and_bool(
+                "click",
+                click.as_ref().unchecked_ref(),
+                true,
+            );
+        });
+    }
 
     #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {
         if matches!(user_info.get(), Some(Ok(_))) {
-            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-                if let Err(error) = storage.set_item(CONTEXT_CHANGED_KEY, &js_sys::Date::now().to_string()) {
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten())
+            {
+                if let Err(error) =
+                    storage.set_item(CONTEXT_CHANGED_KEY, &js_sys::Date::now().to_string())
+                {
                     tracing::warn!(error = ?error, "Unable to notify other tabs of context change");
                 }
             }
@@ -41,14 +211,12 @@ pub fn Layout() -> impl IntoView {
     let auth_confirmed = RwSignal::new(false);
     let nav = leptos_router::hooks::use_navigate();
 
-    Effect::new(move || {
-        match user_info.get() {
-            Some(Ok(_)) => auth_confirmed.set(true),
-            Some(Err(_)) => {
-                nav("/login", Default::default());
-            }
-            None => {}
+    Effect::new(move || match user_info.get() {
+        Some(Ok(_)) => auth_confirmed.set(true),
+        Some(Err(_)) => {
+            nav("/login", Default::default());
         }
+        None => {}
     });
 
     view! {
@@ -66,8 +234,17 @@ pub fn Layout() -> impl IntoView {
                     <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
                 </div>
 
-                <crate::components::BreweryDialog id="workspace-draft-warning" title="Save your recipe first" description="Your unsaved recipe stays open in this workspace." open=editor_guard.notice>
-                    <p>"Save your recipe before switching workspaces or signing out."</p>
+                <crate::components::BreweryDialog id="workspace-draft-warning" title="Unsaved recipe changes" description="Save, discard, or stay with your draft." open=editor_guard.notice>
+                    <p>"Your draft remains in this account and workspace until you choose what to do."</p>
+                    <p role="status">{move || editor_guard.message.get()}</p>
+                    <crate::components::Button disabled=editor_guard.pending on:click=move |_| {
+                        editor_guard.saving_to_leave.set(true);
+                        if let Some(save) = editor_guard.save.get_value() { save.run(()); } else { editor_guard.saving_to_leave.set(false); }
+                    }>"Save and leave"</crate::components::Button>
+                    <crate::components::Button variant=crate::components::ButtonVariant::Secondary disabled=editor_guard.pending on:click=move |_| {
+                        if editor_guard.discard.get_value().is_some_and(|discard| discard.run(())) { editor_guard.finish(); }
+                    }>"Discard and leave"</crate::components::Button>
+                    <crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| { editor_guard.destination.set(None); editor_guard.saving_to_leave.set(false); editor_guard.notice.set(false); }>"Stay"</crate::components::Button>
                 </crate::components::BreweryDialog>
 
                 <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
@@ -171,17 +348,8 @@ fn Sidebar(
                                         <button
                                             class="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
                                             on:click=move |_| {
-                                                if editor_guard.dirty.get_untracked() {
-                                                    editor_guard.notice.set(true);
-                                                    set_user_menu_open.set(false);
-                                                    return;
-                                                }
                                                 set_user_menu_open.set(false);
-                                                leptos::task::spawn_local(async move {
-                                                    let _ = crate::server_fns::security::logout().await;
-                                                    let _ = web_sys::window()
-                                                        .and_then(|w| w.location().set_href("/login").ok());
-                                                });
+                                                editor_guard.request(EditorDestination::Logout);
                                             }
                                         >
                                             "Sign Out"
@@ -226,18 +394,9 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                         class="w-full text-left px-4 py-2 text-sm hover:bg-secondary transition-colors flex items-center gap-2"
                                         disabled=is_current
                                         on:click=move |_| {
-                                            if editor_guard.dirty.get_untracked() {
-                                                editor_guard.notice.set(true);
-                                                set_user_menu_open.set(false);
-                                                return;
-                                            }
                                             let ws_id = ws_id.clone();
                                             set_user_menu_open.set(false);
-                                            leptos::task::spawn_local(async move {
-                                                let _ = switch_workspace(ws_id).await;
-                                                let _ = web_sys::window()
-                                                    .and_then(|w| w.location().reload().ok());
-                                            });
+                                            editor_guard.request(EditorDestination::Workspace(ws_id));
                                         }
                                     >
                                         {if is_current {
