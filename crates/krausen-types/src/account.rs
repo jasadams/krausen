@@ -44,6 +44,15 @@ pub struct AccountContext {
     pub is_owner: bool,
 }
 
+/// A bounded inventory. `truncated` is true when more rows exist than the
+/// application limit, so adapters can tell the caller instead of silently
+/// dropping results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundedList<T> {
+    pub items: Vec<T>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     pub credential_id: String,
@@ -94,6 +103,123 @@ pub struct PasskeySummary {
     pub name: String,
     pub created_at: Option<String>,
     pub last_used: Option<String>,
+}
+
+/// Pending authenticator enrollment data. The secret is returned once to the
+/// authenticated caller and never persisted in retry/audit storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TotpSetup {
+    pub secret: String,
+    pub qr_uri: String,
+}
+
+/// One-time browser WebAuthn challenge plus the creation options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PasskeyRegistration {
+    pub challenge_id: String,
+    pub options: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SetPasswordOutcome {
+    Saved { revision: i64 },
+    AlreadySet,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    RetryKeyUnavailable,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TotpSetupOutcome {
+    Pending(TotpSetup),
+    AlreadyEnabled,
+    Conflict { expected: i64, actual: i64 },
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TotpEnableOutcome {
+    Saved { revision: i64 },
+    NoPendingSetup,
+    InvalidCode,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    RetryKeyUnavailable,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TotpDisableOutcome {
+    Saved { revision: i64 },
+    NotEnabled,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PasskeyRegistrationStartOutcome {
+    Started(PasskeyRegistration),
+    Conflict { expected: i64, actual: i64 },
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PasskeyRegistrationCompleteOutcome {
+    Added { device_name: String, revision: i64 },
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PasskeyRenameOutcome {
+    Saved { revision: i64 },
+    NotFound,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PasskeyDeleteOutcome {
+    Saved { revision: i64 },
+    NotFound,
+    LastSignInMethod,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

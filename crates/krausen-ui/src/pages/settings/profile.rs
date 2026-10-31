@@ -26,7 +26,10 @@ pub fn ProfilePage() -> impl IntoView {
     let invitations = Resource::new(discovery, |proof| async move {
         match proof {
             Some(proof) => get_pending_invitations(proof).await,
-            None => Ok(Vec::new()),
+            None => Ok(crate::types::InvitationDataList {
+                invitations: Vec::new(),
+                truncated: false,
+            }),
         }
     });
 
@@ -41,8 +44,9 @@ pub fn ProfilePage() -> impl IntoView {
 
                     profile_result.map(|result| match result {
                         Ok(data) => {
-                            let inv_list = invitations_result
+                            let (inv_list, inv_truncated) = invitations_result
                                 .and_then(|r| r.ok())
+                                .map(|page| (page.invitations, page.truncated))
                                 .unwrap_or_default();
 
                             let is_personal = data.is_personal_mode;
@@ -57,7 +61,7 @@ pub fn ProfilePage() -> impl IntoView {
                                     </Show>
                                     <AppearanceCard data=data_appearance revision=revision/>
                                     <McpConnectionCard is_personal=is_personal/>
-                                    <InvitationsCard invitations=inv_list.clone() discovery_id=discovery_id.clone()/>
+                                    <InvitationsCard invitations=inv_list.clone() truncated=inv_truncated discovery_id=discovery_id.clone()/>
 
                                 </div>
                             }.into_any()
@@ -532,6 +536,7 @@ fn CopyButton(text: String) -> impl IntoView {
 #[component]
 fn InvitationsCard(
     invitations: Vec<crate::types::InvitationData>,
+    truncated: bool,
     discovery_id: Option<String>,
 ) -> impl IntoView {
     let discovery_request = RwSignal::new(None::<String>);
@@ -582,6 +587,9 @@ fn InvitationsCard(
                 {move || response_action.value().get().map(|result| match result {
                     Ok(_) => view! { <p>"Confirmation is pending. Check your email when delivery is available; your invitation remains pending."</p> }.into_any(),
                     Err(error) => view! { <p>{error.to_string()}</p> }.into_any(),
+                })}
+                {truncated.then(|| view! {
+                    <p class="text-sm text-muted-foreground">"Showing the first 100 pending invitations."</p>
                 })}
                 <div class="space-y-3">
                 {invitations.into_iter().map(|inv| {

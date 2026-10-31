@@ -10,7 +10,9 @@
 
 use leptos::prelude::*;
 
-use crate::types::{OwnershipTransferData, TeamInvitation, TeamMember};
+use crate::types::{
+    OwnershipTransferData, OwnershipTransferList, TeamInvitation, TeamInvitationList, TeamMember,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (server-only)
@@ -111,23 +113,27 @@ pub async fn remove_member(
 ///
 /// Mirrors `GET /api/v1/workspaces/invitations` in workspaces.rs.
 #[server(prefix = "/leptos-api")]
-pub async fn list_workspace_invitations() -> Result<Vec<TeamInvitation>, ServerFnError> {
+pub async fn list_workspace_invitations() -> Result<TeamInvitationList, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let actor = super::verified_actor(&ac.auth)?;
-    let invitations = krausen_app::team::invitations(ac.db(), &actor)
+    let page = krausen_app::team::invitations(ac.db(), &actor)
         .await
         .map_err(|_| ServerFnError::new("Unable to load invitations"))?;
-    Ok(invitations
-        .into_iter()
-        .map(|inv| TeamInvitation {
-            invitation_id: inv.invitation_id,
-            email: inv.email,
-            role: inv.role,
-            status: inv.status,
-            created_at: inv.created_at,
-            expires_at: inv.expires_at,
-        })
-        .collect())
+    Ok(TeamInvitationList {
+        invitations: page
+            .items
+            .into_iter()
+            .map(|inv| TeamInvitation {
+                invitation_id: inv.invitation_id,
+                email: inv.email,
+                role: inv.role,
+                status: inv.status,
+                created_at: inv.created_at,
+                expires_at: inv.expires_at,
+            })
+            .collect(),
+        truncated: page.truncated,
+    })
 }
 
 /// Create a new invitation. Requires admin.
@@ -200,28 +206,32 @@ pub async fn cancel_invitation(
 ///
 /// Mirrors `GET /api/v1/workspaces/ownership/transfers` in workspaces.rs.
 #[server(prefix = "/leptos-api")]
-pub async fn list_ownership_transfers() -> Result<Vec<OwnershipTransferData>, ServerFnError> {
+pub async fn list_ownership_transfers() -> Result<OwnershipTransferList, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
 
     let actor = super::verified_actor(&ac.auth)?;
-    let transfers = krausen_app::ownership::list(ac.db(), &actor)
+    let page = krausen_app::ownership::list(ac.db(), &actor)
         .await
         .map_err(|_| ServerFnError::new("Unable to load transfers"))?;
-    Ok(transfers
-        .into_iter()
-        .map(|t| OwnershipTransferData {
-            transfer_id: t.transfer_id,
-            from_user_id: t.from_user_id.clone(),
-            from_user_email: t.from_user_email,
-            to_user_id: t.to_user_id.clone(),
-            to_user_email: t.to_user_email,
-            status: t.status,
-            created_at: t.created_at,
-            expires_at: t.expires_at,
-            is_initiator: t.from_user_id == actor.actor_id,
-            is_recipient: t.to_user_id == actor.actor_id,
-        })
-        .collect())
+    Ok(OwnershipTransferList {
+        transfers: page
+            .items
+            .into_iter()
+            .map(|t| OwnershipTransferData {
+                transfer_id: t.transfer_id,
+                from_user_id: t.from_user_id.clone(),
+                from_user_email: t.from_user_email,
+                to_user_id: t.to_user_id.clone(),
+                to_user_email: t.to_user_email,
+                status: t.status,
+                created_at: t.created_at,
+                expires_at: t.expires_at,
+                is_initiator: t.from_user_id == actor.actor_id,
+                is_recipient: t.to_user_id == actor.actor_id,
+            })
+            .collect(),
+        truncated: page.truncated,
+    })
 }
 
 /// Cancel an ownership transfer. Only the initiator can cancel.

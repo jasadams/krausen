@@ -141,6 +141,7 @@ pub fn SessionManagement() -> impl IntoView {
     // ── UI state ─────────────────────────────────────────────────────────
     let loading = RwSignal::new(true);
     let sessions = RwSignal::new(Vec::<SessionEntry>::new());
+    let sessions_truncated = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let revoking_id = RwSignal::new(Option::<String>::None);
     let revoke_request = RwSignal::new(None::<(String, i64, String)>);
@@ -162,7 +163,8 @@ pub fn SessionManagement() -> impl IntoView {
             match result {
                 Ok(data) => {
                     error.set(None);
-                    sessions.set(data);
+                    sessions.set(data.sessions);
+                    sessions_truncated.set(data.truncated);
                 }
                 Err(e) => {
                     error.set(Some(format!("Failed to load sessions: {e}")));
@@ -275,7 +277,8 @@ pub fn SessionManagement() -> impl IntoView {
                         loading.set(true);
                         match get_sessions().await {
                             Ok(data) => {
-                                sessions.set(data);
+                                sessions.set(data.sessions);
+                                sessions_truncated.set(data.truncated);
                                 loading.set(false);
                             }
                             Err(e) => {
@@ -331,6 +334,16 @@ pub fn SessionManagement() -> impl IntoView {
                         <Alert variant=AlertVariant::Error>
                             <AlertDescription>
                                 {move || error.get().unwrap_or_default()}
+                            </AlertDescription>
+                        </Alert>
+                    </div>
+                </Show>
+
+                <Show when=move || sessions_truncated.get()>
+                    <div class="mb-6">
+                        <Alert variant=AlertVariant::Warning>
+                            <AlertDescription>
+                                "Showing the first 100 sessions. Revoke unused sessions to see any remaining ones."
                             </AlertDescription>
                         </Alert>
                     </div>

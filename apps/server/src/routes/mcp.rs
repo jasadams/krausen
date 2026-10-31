@@ -27,10 +27,13 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
+use webauthn_rs::Webauthn;
 
 #[derive(Clone)]
 struct McpHandler {
     db: krausen_core::DbPool,
+    kv: krausen_core::KVPool,
+    webauthn: Arc<Webauthn>,
     mail_available: bool,
     password_key: Arc<str>,
 }
@@ -143,6 +146,60 @@ struct CredentialRevoke {
 struct PasswordChange {
     current_password: String,
     new_password: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordSet {
+    new_password: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TotpSetup {
+    expected_revision: i64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TotpEnable {
+    code: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TotpDisable {
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasskeyBegin {
+    device_name: String,
+    expected_revision: i64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasskeyComplete {
+    challenge_id: String,
+    credential: serde_json::Value,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasskeyRename {
+    credential_id: String,
+    name: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasskeyDelete {
+    credential_id: String,
     expected_revision: i64,
     request_id: uuid::Uuid,
 }
@@ -302,6 +359,62 @@ impl ServerHandler for McpHandler {
                 operations::PASSKEYS_LIST.mcp_tool,
                 "List the current account's passkey display metadata",
                 schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::PASSWORD_SET.mcp_tool,
+                "Add a first password to an account that uses another sign-in method",
+                schema(
+                    json!({"type":"object","properties":{"new_password":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["new_password","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TOTP_SETUP.mcp_tool,
+                "Begin authenticator (TOTP) enrollment and return the one-time secret",
+                schema(
+                    json!({"type":"object","properties":{"expected_revision":{"type":"integer"}},"required":["expected_revision"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TOTP_ENABLE.mcp_tool,
+                "Confirm authenticator enrollment with a verification code",
+                schema(
+                    json!({"type":"object","properties":{"code":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["code","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TOTP_DISABLE.mcp_tool,
+                "Disable authenticator (TOTP) for the current account",
+                schema(
+                    json!({"type":"object","properties":{"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::PASSKEY_REGISTER_BEGIN.mcp_tool,
+                "Begin passkey registration and return the one-time WebAuthn creation options",
+                schema(
+                    json!({"type":"object","properties":{"device_name":{"type":"string"},"expected_revision":{"type":"integer"}},"required":["device_name","expected_revision"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::PASSKEY_REGISTER_COMPLETE.mcp_tool,
+                "Complete passkey registration with the browser credential response",
+                schema(
+                    json!({"type":"object","properties":{"challenge_id":{"type":"string"},"credential":{"type":"object"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["challenge_id","credential","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::PASSKEY_RENAME.mcp_tool,
+                "Rename an owned passkey",
+                schema(
+                    json!({"type":"object","properties":{"credential_id":{"type":"string"},"name":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["credential_id","name","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::PASSKEY_DELETE.mcp_tool,
+                "Delete an owned passkey unless it is the last sign-in method",
+                schema(
+                    json!({"type":"object","properties":{"credential_id":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["credential_id","expected_revision","request_id"],"additionalProperties":false}),
+                ),
             ),
             Tool::new(
                 operations::SESSIONS_REVOKE_ALL.mcp_tool,
@@ -897,6 +1010,262 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured(value)
                 }
             }
+            "account.password.set.v1" => {
+                let input: PasswordSet = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid password set", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_set_password(
+                    krausen_app::security::set_password(
+                        &self.db,
+                        &actor,
+                        input.new_password,
+                        input.expected_revision,
+                        input.request_id,
+                        self.password_key.as_bytes(),
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::SetPasswordOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.totp.setup.v1" => {
+                let input: TotpSetup = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid authenticator setup", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_totp_setup(
+                    krausen_app::security::setup_totp(
+                        &self.db,
+                        &self.kv,
+                        &actor,
+                        input.expected_revision,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::TotpSetupOutcome::Pending(_)
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.totp.enable.v1" => {
+                let input: TotpEnable = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid authenticator enable", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_totp_enable(
+                    krausen_app::security::enable_totp(
+                        &self.db,
+                        &self.kv,
+                        &actor,
+                        &input.code,
+                        input.expected_revision,
+                        input.request_id,
+                        self.password_key.as_bytes(),
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::TotpEnableOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.totp.disable.v1" => {
+                let input: TotpDisable = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid authenticator disable", None)
+                })?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_totp_disable(
+                    krausen_app::security::disable_totp(
+                        &self.db,
+                        &actor,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::TotpDisableOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.passkey.register.begin.v1" => {
+                let input: PasskeyBegin = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid passkey registration", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_passkey_start(
+                    krausen_app::security::start_passkey_registration(
+                        &self.db,
+                        &self.kv,
+                        &self.webauthn,
+                        &actor,
+                        &input.device_name,
+                        input.expected_revision,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::PasskeyRegistrationStartOutcome::Started(_)
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.passkey.register.complete.v1" => {
+                let input: PasskeyComplete = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid passkey registration completion", None)
+                })?;
+                let Ok(credential) = serde_json::from_value::<
+                    webauthn_rs::prelude::RegisterPublicKeyCredential,
+                >(input.credential) else {
+                    return Ok(CallToolResult::structured_error(json!({
+                        "outcome": krausen_types::account::PasskeyRegistrationCompleteOutcome::Invalid
+                    }))
+                    .into());
+                };
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_passkey_complete(
+                    krausen_app::security::complete_passkey_registration(
+                        &self.db,
+                        &self.kv,
+                        &self.webauthn,
+                        &actor,
+                        &input.challenge_id,
+                        &credential,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::PasskeyRegistrationCompleteOutcome::Added { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.passkey.rename.v1" => {
+                let input: PasskeyRename = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid passkey rename", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_passkey_rename(
+                    krausen_app::security::rename_passkey(
+                        &self.db,
+                        &actor,
+                        &input.credential_id,
+                        &input.name,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::PasskeyRenameOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.passkey.delete.v1" => {
+                let input: PasskeyDelete = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid passkey delete", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_passkey_delete(
+                    krausen_app::security::delete_passkey(
+                        &self.db,
+                        &actor,
+                        &input.credential_id,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::PasskeyDeleteOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
             "account.security.status.v1" | "account.passkeys.list.v1" => {
                 if input.as_object().is_none_or(|value| !value.is_empty()) {
                     return Err(ErrorData::invalid_params("Invalid security query", None));
@@ -961,7 +1330,9 @@ impl ServerHandler for McpHandler {
                     workspace_id: String::new(),
                 };
                 match krausen_app::security::sessions(&self.db, &actor).await {
-                    Ok(sessions) => CallToolResult::structured(json!({"sessions":sessions})),
+                    Ok(page) => CallToolResult::structured(
+                        json!({"sessions":page.items,"truncated":page.truncated}),
+                    ),
                     Err(_) => CallToolResult::structured_error(
                         json!({"error":"unavailable_or_forbidden"}),
                     ),
@@ -1008,7 +1379,9 @@ impl ServerHandler for McpHandler {
                     workspace_id: input.workspace_id,
                 };
                 match krausen_app::ownership::list(&self.db, &actor).await {
-                    Ok(transfers) => CallToolResult::structured(json!({"transfers":transfers})),
+                    Ok(page) => CallToolResult::structured(
+                        json!({"transfers":page.items,"truncated":page.truncated}),
+                    ),
                     Err(_) => CallToolResult::structured_error(
                         json!({"error":"unavailable_or_forbidden"}),
                     ),
@@ -1176,9 +1549,9 @@ impl ServerHandler for McpHandler {
                     workspace_id: input.workspace_id,
                 };
                 match krausen_app::team::invitations(&self.db, &actor).await {
-                    Ok(invitations) => {
-                        CallToolResult::structured(json!({"invitations":invitations}))
-                    }
+                    Ok(page) => CallToolResult::structured(
+                        json!({"invitations":page.items,"truncated":page.truncated}),
+                    ),
                     Err(_) => CallToolResult::structured_error(
                         json!({"error":"unavailable_or_forbidden"}),
                     ),
@@ -1453,9 +1826,9 @@ impl ServerHandler for McpHandler {
                     workspace_id: String::new(),
                 };
                 match krausen_app::invitation::list(&self.db, &actor, &input.interaction_id).await {
-                    Ok(invitations) => {
-                        CallToolResult::structured(json!({"invitations":invitations}))
-                    }
+                    Ok(page) => CallToolResult::structured(
+                        json!({"invitations":page.items,"truncated":page.truncated}),
+                    ),
                     Err(_) => CallToolResult::structured_error(
                         json!({"error":"unavailable_or_forbidden"}),
                     ),
@@ -1720,6 +2093,8 @@ impl ServerHandler for McpHandler {
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let db = state.db.clone();
+    let kv = state.kv.clone();
+    let webauthn = state.webauthn.clone();
     let password_key: Arc<str> = Arc::from(state.config.jwt_secret.as_str());
     let mail_available = krausen_app::invitation::delivery_available(
         krausen_auth::email_service::EmailService::from_env().is_configured(),
@@ -1740,6 +2115,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         move || {
             Ok(McpHandler {
                 db: db.clone(),
+                kv: kv.clone(),
+                webauthn: webauthn.clone(),
                 mail_available,
                 password_key: password_key.clone(),
             })

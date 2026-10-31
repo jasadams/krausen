@@ -30,6 +30,13 @@ pub struct InvitationData {
     pub expires_at: String,
 }
 
+/// Bounded pending-invitation inventory for the signed-in account.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvitationDataList {
+    pub invitations: Vec<InvitationData>,
+    pub truncated: bool,
+}
+
 /// Workspace settings data returned by the get_workspace_settings server function.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceSettingsData {
@@ -68,6 +75,13 @@ pub struct TeamInvitation {
     pub expires_at: String,
 }
 
+/// Bounded pending-invitation inventory.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamInvitationList {
+    pub invitations: Vec<TeamInvitation>,
+    pub truncated: bool,
+}
+
 /// A pending ownership transfer.
 ///
 /// Mirrors the JSON shape returned by `GET /api/v1/workspaces/ownership/transfers`.
@@ -83,4 +97,11 @@ pub struct OwnershipTransferData {
     pub expires_at: String,
     pub is_initiator: bool,
     pub is_recipient: bool,
+}
+
+/// Bounded ownership-transfer inventory.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OwnershipTransferList {
+    pub transfers: Vec<OwnershipTransferData>,
+    pub truncated: bool,
 }

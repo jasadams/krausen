@@ -4,8 +4,13 @@ use crate::{ActorContext, Error, RequestIdentity, authorize_account, boundary_er
 use krausen_core::{DbPool, DbTx};
 use krausen_types::account::Session;
 
+mod credentials;
+pub use credentials::{
+    complete_passkey_registration, delete_passkey, disable_totp, enable_totp, rename_passkey,
+    setup_totp, start_passkey_registration,
+};
 mod password;
-pub use password::change_password;
+pub use password::{change_password, set_password};
 
 /// Project password changes without exposing credential material.
 pub fn project_password_change(
@@ -29,6 +34,167 @@ pub fn project_password_change(
     }
 }
 
+pub fn project_set_password(
+    result: Result<i64, Error>,
+) -> krausen_types::account::SetPasswordOutcome {
+    use krausen_types::account::SetPasswordOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::PasswordAlreadySet) => Outcome::AlreadySet,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::RetryKeyUnavailable) => Outcome::RetryKeyUnavailable,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "password set failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_totp_setup(
+    result: Result<krausen_types::account::TotpSetup, Error>,
+) -> krausen_types::account::TotpSetupOutcome {
+    use krausen_types::account::TotpSetupOutcome as Outcome;
+    match result {
+        Ok(setup) => Outcome::Pending(setup),
+        Err(Error::TotpAlreadyEnabled) => Outcome::AlreadyEnabled,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "authenticator setup failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_totp_enable(
+    result: Result<i64, Error>,
+) -> krausen_types::account::TotpEnableOutcome {
+    use krausen_types::account::TotpEnableOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::NoPendingSetup) => Outcome::NoPendingSetup,
+        Err(Error::InvalidCode) => Outcome::InvalidCode,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::RetryKeyUnavailable) => Outcome::RetryKeyUnavailable,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "authenticator enable failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_totp_disable(
+    result: Result<i64, Error>,
+) -> krausen_types::account::TotpDisableOutcome {
+    use krausen_types::account::TotpDisableOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::TotpNotEnabled) => Outcome::NotEnabled,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "authenticator disable failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_passkey_start(
+    result: Result<krausen_types::account::PasskeyRegistration, Error>,
+) -> krausen_types::account::PasskeyRegistrationStartOutcome {
+    use krausen_types::account::PasskeyRegistrationStartOutcome as Outcome;
+    match result {
+        Ok(registration) => Outcome::Started(registration),
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "passkey registration start failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_passkey_complete(
+    result: Result<(String, i64), Error>,
+) -> krausen_types::account::PasskeyRegistrationCompleteOutcome {
+    use krausen_types::account::PasskeyRegistrationCompleteOutcome as Outcome;
+    match result {
+        Ok((device_name, revision)) => Outcome::Added {
+            device_name,
+            revision,
+        },
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "passkey registration completion failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_passkey_rename(
+    result: Result<i64, Error>,
+) -> krausen_types::account::PasskeyRenameOutcome {
+    use krausen_types::account::PasskeyRenameOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::NotFound) => Outcome::NotFound,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "passkey rename failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
+pub fn project_passkey_delete(
+    result: Result<i64, Error>,
+) -> krausen_types::account::PasskeyDeleteOutcome {
+    use krausen_types::account::PasskeyDeleteOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::NotFound) => Outcome::NotFound,
+        Err(Error::LastSignInMethod) => Outcome::LastSignInMethod,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "passkey delete failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     credential_id: String,
@@ -44,10 +210,13 @@ struct SessionRow {
 }
 
 /// A credential holder can inspect only credentials belonging to that account.
-pub async fn sessions(pool: &DbPool, actor: &ActorContext) -> Result<Vec<Session>, Error> {
+pub async fn sessions(
+    pool: &DbPool,
+    actor: &ActorContext,
+) -> Result<krausen_types::account::BoundedList<Session>, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_account(&mut tx, actor).await?;
-    let sql = "SELECT c.credential_id,c.kind,c.revision,c.expires_at, (SELECT CAST(r.created_at AS TEXT) FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS created_at, (SELECT CAST(r.last_used AS TEXT) FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS last_used, (SELECT r.user_agent FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS user_agent, (SELECT r.ip_address FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS ip_address, (SELECT r.country_code FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS country_code, (SELECT cl.client_name FROM mcp_oauth_refresh_tokens r JOIN mcp_oauth_clients cl ON cl.client_id=r.client_id WHERE r.credential_id=c.credential_id LIMIT 1) AS client_name FROM auth_credentials c WHERE c.user_id=$1 AND c.revoked_at IS NULL AND c.expires_at>$2 ORDER BY c.credential_id LIMIT 100";
+    let sql = "SELECT c.credential_id,c.kind,c.revision,c.expires_at, (SELECT CAST(r.created_at AS TEXT) FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS created_at, (SELECT CAST(r.last_used AS TEXT) FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS last_used, (SELECT r.user_agent FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS user_agent, (SELECT r.ip_address FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS ip_address, (SELECT r.country_code FROM refresh_tokens r WHERE r.family_id=c.credential_id ORDER BY r.created_at DESC LIMIT 1) AS country_code, (SELECT cl.client_name FROM mcp_oauth_refresh_tokens r JOIN mcp_oauth_clients cl ON cl.client_id=r.client_id WHERE r.credential_id=c.credential_id LIMIT 1) AS client_name FROM auth_credentials c WHERE c.user_id=$1 AND c.revoked_at IS NULL AND c.expires_at>$2 ORDER BY c.credential_id LIMIT 101";
     let rows = match &mut tx {
         DbTx::Postgres(t) => {
             sqlx::query_as::<_, SessionRow>(sql)
@@ -67,22 +236,23 @@ pub async fn sessions(pool: &DbPool, actor: &ActorContext) -> Result<Vec<Session
     .map_err(db_error)?;
     authorize_account(&mut tx, actor).await?;
     tx.commit().await.map_err(boundary_error)?;
-    Ok(rows
-        .into_iter()
-        .map(|r| Session {
-            is_current: r.credential_id == actor.credential_id,
-            credential_id: r.credential_id,
-            kind: r.kind,
-            revision: r.revision,
-            expires_at: r.expires_at,
-            created_at: r.created_at,
-            last_used: r.last_used,
-            user_agent: r.user_agent,
-            ip_address: r.ip_address,
-            country_code: r.country_code,
-            client_name: r.client_name,
-        })
-        .collect())
+    Ok(crate::bounded(
+        rows.into_iter()
+            .map(|r| Session {
+                is_current: r.credential_id == actor.credential_id,
+                credential_id: r.credential_id,
+                kind: r.kind,
+                revision: r.revision,
+                expires_at: r.expires_at,
+                created_at: r.created_at,
+                last_used: r.last_used,
+                user_agent: r.user_agent,
+                ip_address: r.ip_address,
+                country_code: r.country_code,
+                client_name: r.client_name,
+            })
+            .collect(),
+    ))
 }
 
 #[derive(sqlx::FromRow)]

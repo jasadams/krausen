@@ -18,6 +18,19 @@ pub struct ActorContext {
     pub access_expires_at: i64,
 }
 
+/// Maximum rows returned by a bounded inventory query. Adapters must surface
+/// `truncated` rather than presenting a partial list as complete.
+pub const INVENTORY_LIMIT: usize = 100;
+
+/// Trim an over-fetched inventory and report whether more rows exist.
+pub fn bounded<T>(mut items: Vec<T>) -> krausen_types::account::BoundedList<T> {
+    let truncated = items.len() > INVENTORY_LIMIT;
+    if truncated {
+        items.truncate(INVENTORY_LIMIT);
+    }
+    krausen_types::account::BoundedList { items, truncated }
+}
+
 /// Compare caller expectations only after current authorization; intent never grants access.
 pub fn check_intent(
     actor: &ActorContext,
@@ -47,6 +60,20 @@ pub enum Error {
     RetryKeyUnavailable,
     #[error("current password is incorrect")]
     InvalidPassword,
+    #[error("password is already set")]
+    PasswordAlreadySet,
+    #[error("authenticator is already enabled")]
+    TotpAlreadyEnabled,
+    #[error("no pending authenticator setup")]
+    NoPendingSetup,
+    #[error("invalid verification code")]
+    InvalidCode,
+    #[error("authenticator is not enabled")]
+    TotpNotEnabled,
+    #[error("passkey not found")]
+    NotFound,
+    #[error("cannot remove the last sign-in method")]
+    LastSignInMethod,
     #[error("invalid input: {0}")]
     Invalid(&'static str),
     #[error("retry transaction")]

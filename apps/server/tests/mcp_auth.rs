@@ -416,12 +416,29 @@ async fn exercise(db: DbPool) {
             .any(|t| t.name == "workspace_rename")
     );
     let discovered = modern.list_tools(None).await.unwrap();
-    let notification = rmcp::model::CancelledNotification::new(
-        rmcp::model::CancelledNotificationParam::new(
+    for tool in [
+        "account_password_set",
+        "account_totp_setup",
+        "account_totp_enable",
+        "account_totp_disable",
+        "account_passkey_register_begin",
+        "account_passkey_register_complete",
+        "account_passkey_rename",
+        "account_passkey_delete",
+    ] {
+        assert!(
+            discovered
+                .tools
+                .iter()
+                .any(|candidate| candidate.name == tool),
+            "missing security parity tool {tool}"
+        );
+    }
+    let notification =
+        rmcp::model::CancelledNotification::new(rmcp::model::CancelledNotificationParam::new(
             Some(rmcp::model::RequestId::Number(987654)),
             Some(NOTIFICATION_SENTINEL.into()),
-        ),
-    );
+        ));
     modern
         .peer()
         .send_notification(notification.into())
@@ -1614,19 +1631,19 @@ async fn exercise(db: DbPool) {
         .unwrap()
         .to_owned();
     let session_path = <krausen_ui::server_fns::security::GetSessions as ServerFn>::PATH;
-    let browser_sessions: Vec<krausen_ui::server_fns::security::SessionEntry> =
-        reqwest::Client::new()
-            .post(format!("{base}{session_path}"))
-            .bearer_auth(&browser.access_token)
-            .form(&[] as &[(&str, &str)])
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    let browser_sessions: krausen_ui::server_fns::security::SessionList = reqwest::Client::new()
+        .post(format!("{base}{session_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[] as &[(&str, &str)])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert!(
         browser_sessions
+            .sessions
             .iter()
             .any(|s| s.token_id == extra_credential)
     );

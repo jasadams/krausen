@@ -34,13 +34,6 @@ pub struct TotpStatus {
     pub enabled: bool,
 }
 
-/// TOTP setup data returned by `setup_totp()`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TotpSetup {
-    pub secret: String,
-    pub qr_uri: String,
-}
-
 /// Check whether the current user has a password set.
 #[server(prefix = "/leptos-api")]
 pub async fn has_password() -> Result<bool, ServerFnError> {
@@ -72,33 +65,27 @@ pub async fn get_security_status() -> Result<krausen_types::account::SecuritySta
 /// - Password must be at least 8 characters.
 /// - User must NOT already have a password.
 #[server(prefix = "/leptos-api")]
-pub async fn set_password(new_password: String) -> Result<String, ServerFnError> {
+pub async fn set_password(
+    new_password: String,
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::SetPasswordOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    // Validate password length
-    if new_password.len() < 8 {
-        return Err(ServerFnError::new("Password must be at least 8 characters"));
-    }
-
-    // Check user does NOT already have a password
-    let has_pw = krausen_auth::user_service::has_password(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-    if has_pw {
-        return Err(ServerFnError::new(
-            "Password already set. Use change-password to update it.",
-        ));
-    }
-
-    // Hash and store
-    let hash = krausen_auth::password::hash_password(&new_password).into_sfn()?;
-    let auth_data = serde_json::json!({"hash": hash});
-    krausen_auth::user_service::upsert_auth_method(&ctx.db, &auth.user_id, "password", &auth_data)
-        .await
-        .into_sfn()?;
-
-    Ok("Password set successfully".to_string())
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_set_password(
+        krausen_app::security::set_password(
+            &ctx.db,
+            &actor,
+            new_password,
+            expected_revision,
+            request_id,
+            ctx.auth_state.jwt_secret.as_bytes(),
+        )
+        .await,
+    ))
 }
 
 /// Change password for a user who already has one.
@@ -161,21 +148,16 @@ pub async fn get_totp_status() -> Result<TotpStatus, ServerFnError> {
 ///
 /// Mirrors `POST /auth/2fa/setup` in `apps/server/src/routes/auth_totp.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn setup_totp() -> Result<TotpSetup, ServerFnError> {
+pub async fn setup_totp(
+    expected_revision: i64,
+) -> Result<krausen_types::account::TotpSetupOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
+    let actor = super::verified_account_actor(&auth)?;
     let kv = ctx.kv()?;
-
-    let result =
-        krausen_auth::security_service::setup_totp(&ctx.db, &kv, &auth.user_id, &auth.email)
-            .await
-            .into_sfn()?;
-
-    Ok(TotpSetup {
-        secret: result.secret,
-        qr_uri: result.qr_uri,
-    })
+    Ok(krausen_app::security::project_totp_setup(
+        krausen_app::security::setup_totp(&ctx.db, &kv, &actor, expected_revision).await,
+    ))
 }
 
 /// Confirm 2FA setup by verifying a TOTP code against the pending secret.
@@ -185,17 +167,29 @@ pub async fn setup_totp() -> Result<TotpSetup, ServerFnError> {
 ///
 /// Mirrors `POST /auth/2fa/enable` in `apps/server/src/routes/auth_totp.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn enable_totp(code: String) -> Result<String, ServerFnError> {
+pub async fn enable_totp(
+    code: String,
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::TotpEnableOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
+    let actor = super::verified_account_actor(&auth)?;
     let kv = ctx.kv()?;
-
-    krausen_auth::security_service::enable_totp(&ctx.db, &kv, &auth.user_id, &code)
-        .await
-        .into_sfn()?;
-
-    Ok("2FA has been successfully enabled".to_string())
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_totp_enable(
+        krausen_app::security::enable_totp(
+            &ctx.db,
+            &kv,
+            &actor,
+            &code,
+            expected_revision,
+            request_id,
+            ctx.auth_state.jwt_secret.as_bytes(),
+        )
+        .await,
+    ))
 }
 
 /// Disable 2FA for the authenticated user.
@@ -204,22 +198,18 @@ pub async fn enable_totp(code: String) -> Result<String, ServerFnError> {
 /// The REST handler does not require a TOTP code — it simply removes the auth
 /// method for the already-authenticated user.
 #[server(prefix = "/leptos-api")]
-pub async fn disable_totp() -> Result<String, ServerFnError> {
+pub async fn disable_totp(
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::TotpDisableOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    let enabled = krausen_auth::user_service::has_totp_enabled(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-    if !enabled {
-        return Err(ServerFnError::new("2FA is not currently enabled"));
-    }
-
-    krausen_auth::user_service::remove_auth_method(&ctx.db, &auth.user_id, "totp")
-        .await
-        .into_sfn()?;
-
-    Ok("2FA has been successfully disabled".to_string())
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_totp_disable(
+        krausen_app::security::disable_totp(&ctx.db, &actor, expected_revision, request_id).await,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -246,38 +236,49 @@ pub struct SessionEntry {
     pub is_current: bool,
 }
 
+/// A bounded session inventory that tells the UI when more rows exist.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionList {
+    pub sessions: Vec<SessionEntry>,
+    pub truncated: bool,
+}
+
 /// Get all active sessions for the current user.
 ///
 /// Mirrors `GET /auth/sessions` in `apps/server/src/routes/auth.rs`.
 /// Determines the current session by comparing the refresh token cookie's
 /// family_id against each session's family_id.
 #[server(prefix = "/leptos-api")]
-pub async fn get_sessions() -> Result<Vec<SessionEntry>, ServerFnError> {
+pub async fn get_sessions() -> Result<SessionList, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
     let actor = super::verified_account_actor(&auth)?;
-    let sessions = krausen_app::security::sessions(&ctx.db, &actor)
+    let page = krausen_app::security::sessions(&ctx.db, &actor)
         .await
         .map_err(|_| ServerFnError::new("Unable to load sessions"))?;
-    Ok(sessions
-        .into_iter()
-        .map(|s| SessionEntry {
-            token_id: s.credential_id,
-            revision: s.revision,
-            kind: s.kind,
-            created_at: s.created_at.unwrap_or_default(),
-            last_used: s.last_used,
-            expires_at: chrono::DateTime::from_timestamp(s.expires_at, 0)
-                .map(|v| v.to_rfc3339())
-                .unwrap_or_default(),
-            user_agent: s.user_agent,
-            ip_address: s.ip_address,
-            country_code: s.country_code,
-            oauth_client_name: s.client_name,
-            is_current: s.is_current,
-        })
-        .collect())
+    Ok(SessionList {
+        sessions: page
+            .items
+            .into_iter()
+            .map(|s| SessionEntry {
+                token_id: s.credential_id,
+                revision: s.revision,
+                kind: s.kind,
+                created_at: s.created_at.unwrap_or_default(),
+                last_used: s.last_used,
+                expires_at: chrono::DateTime::from_timestamp(s.expires_at, 0)
+                    .map(|v| v.to_rfc3339())
+                    .unwrap_or_default(),
+                user_agent: s.user_agent,
+                ip_address: s.ip_address,
+                country_code: s.country_code,
+                oauth_client_name: s.client_name,
+                is_current: s.is_current,
+            })
+            .collect(),
+        truncated: page.truncated,
+    })
 }
 
 /// Revoke a specific session by token ID.
@@ -411,36 +412,26 @@ pub async fn list_passkeys() -> Result<Vec<PasskeyInfo>, ServerFnError> {
 ///
 /// Mirrors `POST /auth/passkeys/add/start` in `apps/server/src/routes/auth_passkeys.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn start_passkey_registration(device_name: String) -> Result<String, ServerFnError> {
+pub async fn start_passkey_registration(
+    device_name: String,
+    expected_revision: i64,
+) -> Result<krausen_types::account::PasskeyRegistrationStartOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
+    let actor = super::verified_account_actor(&auth)?;
     let webauthn = ctx.webauthn()?;
     let kv = ctx.kv()?;
-
-    let device_name = if device_name.trim().is_empty() {
-        "Unknown Device".to_string()
-    } else {
-        device_name.trim().to_string()
-    };
-
-    let (ccr, challenge_id) = krausen_auth::security_service::start_passkey_registration(
-        &ctx.db,
-        &kv,
-        webauthn,
-        &auth.user_id,
-        &device_name,
-    )
-    .await
-    .into_sfn()?;
-
-    let result = serde_json::json!({
-        "challenge_id": challenge_id,
-        "options": ccr,
-    });
-
-    serde_json::to_string(&result)
-        .map_err(|e| ServerFnError::new(format!("Serialize response: {e}")))
+    Ok(krausen_app::security::project_passkey_start(
+        krausen_app::security::start_passkey_registration(
+            &ctx.db,
+            &kv,
+            webauthn,
+            &actor,
+            &device_name,
+            expected_revision,
+        )
+        .await,
+    ))
 }
 
 /// Complete passkey registration by verifying the browser credential.
@@ -451,14 +442,18 @@ pub async fn start_passkey_registration(device_name: String) -> Result<String, S
 #[server(prefix = "/leptos-api")]
 pub async fn complete_passkey_registration(
     credential_json: String,
-) -> Result<String, ServerFnError> {
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::PasskeyRegistrationCompleteOutcome, ServerFnError> {
     use webauthn_rs::prelude::RegisterPublicKeyCredential;
 
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
+    let actor = super::verified_account_actor(&auth)?;
     let webauthn = ctx.webauthn()?;
     let kv = ctx.kv()?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
 
     let data: serde_json::Value = serde_json::from_str(&credential_json)
         .map_err(|e| ServerFnError::new(format!("Invalid credential JSON: {e}")))?;
@@ -471,73 +466,71 @@ pub async fn complete_passkey_registration(
         serde_json::from_value(data["credential"].clone())
             .map_err(|e| ServerFnError::new(format!("Invalid credential: {e}")))?;
 
-    let device_name = krausen_auth::security_service::complete_passkey_registration(
-        &ctx.db,
-        &kv,
-        webauthn,
-        &auth.user_id,
-        challenge_id,
-        &credential,
-    )
-    .await
-    .into_sfn()?;
-
-    Ok(format!("Passkey '{}' added successfully", device_name))
+    Ok(krausen_app::security::project_passkey_complete(
+        krausen_app::security::complete_passkey_registration(
+            &ctx.db,
+            &kv,
+            webauthn,
+            &actor,
+            challenge_id,
+            &credential,
+            expected_revision,
+            request_id,
+        )
+        .await,
+    ))
 }
 
 /// Delete a passkey for the authenticated user.
 ///
 /// Mirrors `DELETE /auth/passkeys/{credential_id}` in `apps/server/src/routes/auth_passkeys.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn delete_passkey(credential_id: String) -> Result<String, ServerFnError> {
+pub async fn delete_passkey(
+    credential_id: String,
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::PasskeyDeleteOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    match krausen_auth::user_service::delete_passkey_from_user(
-        &ctx.db,
-        &auth.user_id,
-        &credential_id,
-    )
-    .await
-    .into_sfn()?
-    {
-        None => Ok("Passkey deleted successfully".to_string()),
-        Some(error_msg) => Err(ServerFnError::new(error_msg)),
-    }
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_passkey_delete(
+        krausen_app::security::delete_passkey(
+            &ctx.db,
+            &actor,
+            &credential_id,
+            expected_revision,
+            request_id,
+        )
+        .await,
+    ))
 }
 
 /// Rename a passkey for the authenticated user.
 ///
 /// Mirrors `PATCH /auth/passkeys/{credential_id}` in `apps/server/src/routes/auth_passkeys.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn rename_passkey(credential_id: String, name: String) -> Result<String, ServerFnError> {
+pub async fn rename_passkey(
+    credential_id: String,
+    name: String,
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::PasskeyRenameOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    let trimmed = name.trim().to_string();
-
-    if trimmed.is_empty() {
-        return Err(ServerFnError::new("Device name cannot be empty"));
-    }
-
-    if trimmed.len() > 100 {
-        return Err(ServerFnError::new(
-            "Device name cannot exceed 100 characters",
-        ));
-    }
-
-    let updated = krausen_auth::user_service::update_passkey_device_name(
-        &ctx.db,
-        &auth.user_id,
-        &credential_id,
-        &trimmed,
-    )
-    .await
-    .into_sfn()?;
-
-    if !updated {
-        return Err(ServerFnError::new("Passkey not found"));
-    }
-
-    Ok("Passkey renamed successfully".to_string())
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_passkey_rename(
+        krausen_app::security::rename_passkey(
+            &ctx.db,
+            &actor,
+            &credential_id,
+            &name,
+            expected_revision,
+            request_id,
+        )
+        .await,
+    ))
 }

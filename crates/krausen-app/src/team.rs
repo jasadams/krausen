@@ -356,7 +356,7 @@ struct InvitationRow {
 pub async fn invitations(
     pool: &DbPool,
     actor: &ActorContext,
-) -> Result<Vec<krausen_types::account::TeamInvitation>, Error> {
+) -> Result<krausen_types::account::BoundedList<krausen_types::account::TeamInvitation>, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     if authorize_workspace(&mut tx, actor).await? != "workspace_admin" {
         return Err(Error::Forbidden);
@@ -373,9 +373,9 @@ pub async fn invitations(
         return Err(Error::Forbidden);
     }
     let sql = if matches!(tx, DbTx::Postgres(_)) {
-        "SELECT invitation_id,email,role,status,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='pending' AND expires_at>CURRENT_TIMESTAMP ORDER BY invitation_id LIMIT 100"
+        "SELECT invitation_id,email,role,status,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='pending' AND expires_at>CURRENT_TIMESTAMP ORDER BY invitation_id LIMIT 101"
     } else {
-        "SELECT invitation_id,email,role,status,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='pending' AND julianday(expires_at)>julianday('now') ORDER BY invitation_id LIMIT 100"
+        "SELECT invitation_id,email,role,status,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='pending' AND julianday(expires_at)>julianday('now') ORDER BY invitation_id LIMIT 101"
     };
     let rows = match &mut tx {
         DbTx::Postgres(t) => {
@@ -394,15 +394,16 @@ pub async fn invitations(
     .map_err(db_error)?;
     authorize_workspace(&mut tx, actor).await?;
     tx.commit().await.map_err(boundary_error)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| krausen_types::account::TeamInvitation {
-            invitation_id: row.invitation_id,
-            email: row.email,
-            role: row.role,
-            status: row.status,
-            created_at: row.created_at,
-            expires_at: row.expires_at,
-        })
-        .collect())
+    Ok(crate::bounded(
+        rows.into_iter()
+            .map(|row| krausen_types::account::TeamInvitation {
+                invitation_id: row.invitation_id,
+                email: row.email,
+                role: row.role,
+                status: row.status,
+                created_at: row.created_at,
+                expires_at: row.expires_at,
+            })
+            .collect(),
+    ))
 }

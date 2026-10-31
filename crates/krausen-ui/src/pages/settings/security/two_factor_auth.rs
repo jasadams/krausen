@@ -9,14 +9,14 @@
 //! - Uses StatusBadge for enabled/disabled indicator
 //! - Uses Card, Button, Alert, Label, INPUT_CLASS
 
-use leptos::prelude::*;
-use phosphor_leptos::Icon;
 use crate::components::{
     Alert, AlertDescription, AlertVariant, Button, ButtonVariant, Card, CardContent,
-    CardDescription, CardHeader, CardTitle, Label, Skeleton, StatusBadge, StatusBadgeVariant,
-    INPUT_CLASS,
+    CardDescription, CardHeader, CardTitle, INPUT_CLASS, Label, Skeleton, StatusBadge,
+    StatusBadgeVariant,
 };
-use crate::server_fns::security::{disable_totp, enable_totp, get_totp_status, setup_totp};
+use crate::server_fns::security::{disable_totp, enable_totp, get_security_status, setup_totp};
+use leptos::prelude::*;
+use phosphor_leptos::Icon;
 
 /// View state for the TwoFactorAuth component.
 #[derive(Clone, Copy, PartialEq)]
@@ -34,25 +34,27 @@ enum View {
 #[component]
 pub fn TwoFactorAuth() -> impl IntoView {
     // ── Server data ──────────────────────────────────────────────────────
-    let totp_status = Resource::new(|| (), |_| get_totp_status());
+    let totp_status = Resource::new(|| (), |_| get_security_status());
 
     // ── UI state ─────────────────────────────────────────────────────────
     let current_view = RwSignal::new(View::Status);
     let verification_code = RwSignal::new(String::new());
-    let setup_data = RwSignal::new(Option::<crate::server_fns::security::TotpSetup>::None);
+    let setup_data = RwSignal::new(Option::<krausen_types::account::TotpSetup>::None);
     let setup_loading = RwSignal::new(false);
     let enable_loading = RwSignal::new(false);
     let disable_loading = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(Option::<String>::None);
     let copied = RwSignal::new(false);
+    let enable_request = RwSignal::new(None::<(String, i64, String)>);
+    let disable_request = RwSignal::new(None::<(i64, String)>);
 
     // ── Derived signals ──────────────────────────────────────────────────
     let is_enabled = move || {
         totp_status
             .get()
             .and_then(|r| r.ok())
-            .map(|s| s.enabled)
+            .map(|s| s.totp_enabled)
             .unwrap_or(false)
     };
 
@@ -62,11 +64,30 @@ pub fn TwoFactorAuth() -> impl IntoView {
         error.set(None);
         success.set(None);
 
+        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
+            setup_loading.set(false);
+            error.set(Some("Reload security settings before enabling 2FA.".into()));
+            return;
+        };
         leptos::task::spawn_local(async move {
-            match setup_totp().await {
-                Ok(data) => {
+            use krausen_types::account::TotpSetupOutcome as Outcome;
+            match setup_totp(status.revision).await {
+                Ok(Outcome::Pending(data)) => {
                     setup_data.set(Some(data));
                     current_view.set(View::Setup);
+                }
+                Ok(Outcome::AlreadyEnabled) => {
+                    error.set(Some("2FA is already enabled.".into()));
+                    totp_status.refetch();
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".into(),
+                    ));
+                    totp_status.refetch();
+                }
+                Ok(_) => {
+                    error.set(Some("2FA setup is unavailable. Try again.".into()));
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -83,17 +104,54 @@ pub fn TwoFactorAuth() -> impl IntoView {
             return;
         }
 
+        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
+            error.set(Some(
+                "Reload security settings before confirming 2FA.".into(),
+            ));
+            return;
+        };
+        let request = enable_request
+            .get_untracked()
+            .filter(|(old_code, revision, _)| old_code == &code && *revision == status.revision)
+            .map(|(_, _, id)| id)
+            .or_else(crate::utils::request_id::new_request_id);
+        let Some(request) = request else {
+            error.set(Some("Unable to create request identity.".into()));
+            return;
+        };
+        enable_request.set(Some((code.clone(), status.revision, request.clone())));
         enable_loading.set(true);
         error.set(None);
 
         leptos::task::spawn_local(async move {
-            match enable_totp(code).await {
-                Ok(message) => {
-                    success.set(Some(message));
+            use krausen_types::account::TotpEnableOutcome as Outcome;
+            match enable_totp(code, status.revision, request).await {
+                Ok(Outcome::Saved { .. }) => {
+                    enable_request.set(None);
+                    success.set(Some("2FA has been successfully enabled".to_string()));
                     current_view.set(View::Status);
                     setup_data.set(None);
                     verification_code.set(String::new());
                     totp_status.refetch();
+                }
+                Ok(Outcome::InvalidCode) => {
+                    error.set(Some("Invalid verification code. Please try again.".into()));
+                }
+                Ok(Outcome::NoPendingSetup) => {
+                    error.set(Some(
+                        "No pending 2FA setup found. Start the setup process again.".into(),
+                    ));
+                    current_view.set(View::Status);
+                    setup_data.set(None);
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".into(),
+                    ));
+                    totp_status.refetch();
+                }
+                Ok(_) => {
+                    error.set(Some("2FA confirmation is unavailable. Try again.".into()));
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -104,15 +162,46 @@ pub fn TwoFactorAuth() -> impl IntoView {
     };
 
     let handle_disable = move |_| {
+        let Some(status) = totp_status.get_untracked().and_then(Result::ok) else {
+            error.set(Some(
+                "Reload security settings before disabling 2FA.".into(),
+            ));
+            return;
+        };
+        let request = disable_request
+            .get_untracked()
+            .filter(|(revision, _)| *revision == status.revision)
+            .map(|(_, id)| id)
+            .or_else(crate::utils::request_id::new_request_id);
+        let Some(request) = request else {
+            error.set(Some("Unable to create request identity.".into()));
+            return;
+        };
+        disable_request.set(Some((status.revision, request.clone())));
         disable_loading.set(true);
         error.set(None);
         success.set(None);
 
         leptos::task::spawn_local(async move {
-            match disable_totp().await {
-                Ok(message) => {
-                    success.set(Some(message));
+            use krausen_types::account::TotpDisableOutcome as Outcome;
+            match disable_totp(status.revision, request).await {
+                Ok(Outcome::Saved { .. }) => {
+                    disable_request.set(None);
+                    success.set(Some("2FA has been successfully disabled".to_string()));
                     totp_status.refetch();
+                }
+                Ok(Outcome::NotEnabled) => {
+                    error.set(Some("2FA is not currently enabled.".into()));
+                    totp_status.refetch();
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".into(),
+                    ));
+                    totp_status.refetch();
+                }
+                Ok(_) => {
+                    error.set(Some("Disabling 2FA is unavailable. Try again.".into()));
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));

@@ -152,7 +152,10 @@ pub async fn get_webauthn_challenge(
 }
 
 /// Delete WebAuthn challenge after successful verification (replay prevention).
-pub async fn delete_webauthn_challenge(kv: &KVPool, challenge_id: &str) -> krausen_core::Result<()> {
+pub async fn delete_webauthn_challenge(
+    kv: &KVPool,
+    challenge_id: &str,
+) -> krausen_core::Result<()> {
     let constants = krausen_core::constants::get();
     let key = constants
         .redis
@@ -170,25 +173,44 @@ pub async fn delete_webauthn_challenge(kv: &KVPool, challenge_id: &str) -> kraus
 ///
 /// The secret is stored temporarily while the user scans the QR code and enters
 /// a verification code. Once confirmed, the secret moves to `user_auth_methods`.
-pub async fn store_pending_totp(kv: &KVPool, user_id: &str, secret: &str) -> krausen_core::Result<()> {
+pub async fn store_pending_totp(
+    kv: &KVPool,
+    user_id: &str,
+    secret: &str,
+) -> krausen_core::Result<()> {
     let constants = krausen_core::constants::get();
     let key = constants
         .redis
         .key_prefixes
         .totp_setup
         .replace("{user_id}", user_id);
-    kv.set(&key, secret, Some(constants.redis.ttls.totp_setup)).await
+    kv.set(&key, secret, Some(constants.redis.ttls.totp_setup))
+        .await
 }
 
 /// Atomically get and delete pending TOTP secret (GETDEL). Returns None if expired or absent.
 pub async fn get_pending_totp(kv: &KVPool, user_id: &str) -> krausen_core::Result<Option<String>> {
-    let constants = krausen_core::constants::get();
-    let key = constants
+    let key = pending_totp_key(user_id);
+    kv.getdel(&key).await
+}
+
+/// Read the pending TOTP secret without consuming it. The caller deletes it
+/// only after the durable enrollment commit succeeds.
+pub async fn peek_pending_totp(kv: &KVPool, user_id: &str) -> krausen_core::Result<Option<String>> {
+    kv.get(&pending_totp_key(user_id)).await
+}
+
+/// Delete a consumed pending TOTP secret.
+pub async fn delete_pending_totp(kv: &KVPool, user_id: &str) -> krausen_core::Result<()> {
+    kv.del(&pending_totp_key(user_id)).await
+}
+
+fn pending_totp_key(user_id: &str) -> String {
+    krausen_core::constants::get()
         .redis
         .key_prefixes
         .totp_setup
-        .replace("{user_id}", user_id);
-    kv.getdel(&key).await
+        .replace("{user_id}", user_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +232,8 @@ pub async fn store_recovery_session(
         .key_prefixes
         .recovery_session
         .replace("{session_id}", session_id);
-    kv.set(&key, user_id, Some(constants.redis.ttls.recovery_session)).await
+    kv.set(&key, user_id, Some(constants.redis.ttls.recovery_session))
+        .await
 }
 
 /// Read a recovery session without consuming it. Returns the user_id if valid.

@@ -34,6 +34,12 @@ pub fn generate_qr_code(secret: &str, email: &str) -> krausen_core::Result<Strin
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
+/// Generate the current code for a secret. Intended for tests and local
+/// operator tooling; callers must not log or persist the result.
+pub fn current_code(secret: &str) -> Option<String> {
+    build_totp(secret, "").ok()?.generate_current().ok()
+}
+
 /// Verify a 6-digit TOTP code against the secret.
 ///
 /// Allows +-1 time step for clock drift.

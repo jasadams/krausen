@@ -2085,6 +2085,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "webauthn-rs",
 ]
 
 [[package]]

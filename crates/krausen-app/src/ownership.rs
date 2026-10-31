@@ -18,7 +18,10 @@ struct TransferRow {
 }
 
 /// The current owner and named recipient can read their own workspace transfers.
-pub async fn list(pool: &DbPool, actor: &ActorContext) -> Result<Vec<OwnershipTransfer>, Error> {
+pub async fn list(
+    pool: &DbPool,
+    actor: &ActorContext,
+) -> Result<krausen_types::account::BoundedList<OwnershipTransfer>, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
     let sql = if matches!(tx, DbTx::Postgres(_)) {
@@ -32,7 +35,7 @@ pub async fn list(pool: &DbPool, actor: &ActorContext) -> Result<Vec<OwnershipTr
     {
         return Err(Error::Forbidden);
     }
-    let sql = "SELECT t.transfer_id,t.workspace_id,t.from_user_id,source.email AS from_user_email,t.to_user_id,target.email AS to_user_email,t.status,CAST(t.created_at AS TEXT) AS created_at,CAST(t.expires_at AS TEXT) AS expires_at FROM ownership_transfers t JOIN users source ON source.user_id=t.from_user_id JOIN users target ON target.user_id=t.to_user_id JOIN workspaces w ON w.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND (t.to_user_id=$2 OR (t.from_user_id=$2 AND w.owner_user_id=$2)) ORDER BY t.transfer_id LIMIT 100";
+    let sql = "SELECT t.transfer_id,t.workspace_id,t.from_user_id,source.email AS from_user_email,t.to_user_id,target.email AS to_user_email,t.status,CAST(t.created_at AS TEXT) AS created_at,CAST(t.expires_at AS TEXT) AS expires_at FROM ownership_transfers t JOIN users source ON source.user_id=t.from_user_id JOIN users target ON target.user_id=t.to_user_id JOIN workspaces w ON w.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND (t.to_user_id=$2 OR (t.from_user_id=$2 AND w.owner_user_id=$2)) ORDER BY t.transfer_id LIMIT 101";
     let rows = match &mut tx {
         DbTx::Postgres(t) => {
             sqlx::query_as::<_, TransferRow>(sql)
@@ -52,20 +55,21 @@ pub async fn list(pool: &DbPool, actor: &ActorContext) -> Result<Vec<OwnershipTr
     .map_err(db_error)?;
     authorize_workspace(&mut tx, actor).await?;
     tx.commit().await.map_err(boundary_error)?;
-    Ok(rows
-        .into_iter()
-        .map(|r| OwnershipTransfer {
-            transfer_id: r.transfer_id,
-            workspace_id: r.workspace_id,
-            from_user_id: r.from_user_id,
-            from_user_email: r.from_user_email,
-            to_user_id: r.to_user_id,
-            to_user_email: r.to_user_email,
-            status: r.status,
-            created_at: r.created_at,
-            expires_at: r.expires_at,
-        })
-        .collect())
+    Ok(crate::bounded(
+        rows.into_iter()
+            .map(|r| OwnershipTransfer {
+                transfer_id: r.transfer_id,
+                workspace_id: r.workspace_id,
+                from_user_id: r.from_user_id,
+                from_user_email: r.from_user_email,
+                to_user_id: r.to_user_id,
+                to_user_email: r.to_user_email,
+                status: r.status,
+                created_at: r.created_at,
+                expires_at: r.expires_at,
+            })
+            .collect(),
+    ))
 }
 
 #[derive(sqlx::FromRow)]

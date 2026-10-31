@@ -185,7 +185,41 @@ pub fn PasswordManager() -> impl IntoView {
                     Err(error) => Err(error),
                 }
             } else {
-                set_password(new_pw).await
+                let generation = generation.get_untracked();
+                let request = pending_request
+                    .get_untracked()
+                    .filter(|(old, revision, _)| *old == generation && *revision == status.revision)
+                    .map(|(_, _, id)| id)
+                    .or_else(crate::utils::request_id::new_request_id);
+                let Some(request) = request else {
+                    loading.set(false);
+                    error.set(Some("Unable to create request identity.".into()));
+                    return;
+                };
+                pending_request.set(Some((generation, status.revision, request.clone())));
+                match set_password(new_pw, status.revision, request).await {
+                    Ok(krausen_types::account::SetPasswordOutcome::Saved { .. }) => {
+                        pending_request.set(None);
+                        Ok("Password set successfully".to_string())
+                    }
+                    Ok(krausen_types::account::SetPasswordOutcome::AlreadySet) => Err(
+                        ServerFnError::new("Password already set. Reload and use Change Password."),
+                    ),
+                    Ok(krausen_types::account::SetPasswordOutcome::Conflict { .. }) => {
+                        Err(ServerFnError::new(
+                            "Security settings changed. Reload before trying again.",
+                        ))
+                    }
+                    Ok(krausen_types::account::SetPasswordOutcome::RetryKeyUnavailable) => {
+                        Err(ServerFnError::new(
+                            "The previous request cannot be recovered after a key change. Reload before trying again.",
+                        ))
+                    }
+                    Ok(_) => Err(ServerFnError::new(
+                        "Setting a password is unavailable. Try again.",
+                    )),
+                    Err(error) => Err(error),
+                }
             };
 
             loading.set(false);

@@ -285,6 +285,54 @@ pub const RECIPE_ARCHIVE: Operation = Operation {
 };
 pub const SECURITY_STATUS: Operation = Operation { id:"account.security.status.v1",mcp_tool:"account_security_status",input_contract:"empty.v1",output_contract:"security-status.v1" };
 pub const PASSKEYS_LIST: Operation = Operation { id:"account.passkeys.list.v1",mcp_tool:"account_passkeys",input_contract:"empty.v1",output_contract:"passkey-summaries.v1" };
+pub const PASSWORD_SET: Operation = Operation {
+    id: "account.password.set.v1",
+    mcp_tool: "account_password_set",
+    input_contract: "password-set.v1",
+    output_contract: "password-set-outcome.v1",
+};
+pub const TOTP_SETUP: Operation = Operation {
+    id: "account.totp.setup.v1",
+    mcp_tool: "account_totp_setup",
+    input_contract: "totp-setup.v1",
+    output_contract: "totp-setup-outcome.v1",
+};
+pub const TOTP_ENABLE: Operation = Operation {
+    id: "account.totp.enable.v1",
+    mcp_tool: "account_totp_enable",
+    input_contract: "totp-enable.v1",
+    output_contract: "totp-enable-outcome.v1",
+};
+pub const TOTP_DISABLE: Operation = Operation {
+    id: "account.totp.disable.v1",
+    mcp_tool: "account_totp_disable",
+    input_contract: "totp-disable.v1",
+    output_contract: "totp-disable-outcome.v1",
+};
+pub const PASSKEY_REGISTER_BEGIN: Operation = Operation {
+    id: "account.passkey.register.begin.v1",
+    mcp_tool: "account_passkey_register_begin",
+    input_contract: "passkey-register-begin.v1",
+    output_contract: "passkey-register-begin-outcome.v1",
+};
+pub const PASSKEY_REGISTER_COMPLETE: Operation = Operation {
+    id: "account.passkey.register.complete.v1",
+    mcp_tool: "account_passkey_register_complete",
+    input_contract: "passkey-register-complete.v1",
+    output_contract: "passkey-register-complete-outcome.v1",
+};
+pub const PASSKEY_RENAME: Operation = Operation {
+    id: "account.passkey.rename.v1",
+    mcp_tool: "account_passkey_rename",
+    input_contract: "passkey-rename.v1",
+    output_contract: "passkey-rename-outcome.v1",
+};
+pub const PASSKEY_DELETE: Operation = Operation {
+    id: "account.passkey.delete.v1",
+    mcp_tool: "account_passkey_delete",
+    input_contract: "passkey-delete.v1",
+    output_contract: "passkey-delete-outcome.v1",
+};
 pub const SESSIONS_REVOKE_ALL: Operation = Operation {
     id: "account.credentials.revoke_all.v1",
     mcp_tool: "account_sessions_revoke_all",
@@ -306,8 +354,16 @@ pub const OPERATIONS: &[Operation] = &[
     EQUIPMENT_LIST,
     EQUIPMENT_REVISION,
     PASSWORD_CHANGE,
+    PASSWORD_SET,
     SECURITY_STATUS,
     PASSKEYS_LIST,
+    PASSKEY_REGISTER_BEGIN,
+    PASSKEY_REGISTER_COMPLETE,
+    PASSKEY_RENAME,
+    PASSKEY_DELETE,
+    TOTP_SETUP,
+    TOTP_ENABLE,
+    TOTP_DISABLE,
     SESSIONS_REVOKE_ALL,
     SESSIONS_LIST,
     SESSION_REVOKE,

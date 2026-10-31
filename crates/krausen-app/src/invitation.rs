@@ -815,7 +815,7 @@ pub async fn list(
     pool: &DbPool,
     actor: &ActorContext,
     discovery_id: &str,
-) -> Result<Vec<krausen_types::account::InvitationSummary>, Error> {
+) -> Result<krausen_types::account::BoundedList<krausen_types::account::InvitationSummary>, Error> {
     #[derive(sqlx::FromRow)]
     struct Row {
         invitation_id: String,
@@ -830,9 +830,9 @@ pub async fn list(
     verify_discovery(&mut tx, actor, discovery_id).await?;
     let email = account_email(&mut tx, actor).await?;
     let sql = if pool.is_postgres() {
-        "SELECT invitation_id,workspace_id,email,role,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE lower(email)=lower($1) AND status='pending' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 100"
+        "SELECT invitation_id,workspace_id,email,role,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE lower(email)=lower($1) AND status='pending' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 101"
     } else {
-        "SELECT invitation_id,workspace_id,email,role,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE lower(email)=lower($1) AND status='pending' AND julianday(expires_at)>julianday('now') ORDER BY created_at DESC LIMIT 100"
+        "SELECT invitation_id,workspace_id,email,role,CAST(created_at AS TEXT) AS created_at,CAST(expires_at AS TEXT) AS expires_at FROM workspace_invitations WHERE lower(email)=lower($1) AND status='pending' AND julianday(expires_at)>julianday('now') ORDER BY created_at DESC LIMIT 101"
     };
     let rows = match &mut tx {
         DbTx::Postgres(t) => {
@@ -851,17 +851,18 @@ pub async fn list(
     .map_err(db_error)?;
     authorize_account(&mut tx, actor).await?;
     verify_discovery(&mut tx, actor, discovery_id).await?;
-    let result = rows
-        .into_iter()
-        .map(|r| krausen_types::account::InvitationSummary {
-            invitation_id: r.invitation_id,
-            workspace_id: r.workspace_id,
-            email: r.email,
-            role: r.role,
-            created_at: r.created_at,
-            expires_at: r.expires_at,
-        })
-        .collect();
+    let result = crate::bounded(
+        rows.into_iter()
+            .map(|r| krausen_types::account::InvitationSummary {
+                invitation_id: r.invitation_id,
+                workspace_id: r.workspace_id,
+                email: r.email,
+                role: r.role,
+                created_at: r.created_at,
+                expires_at: r.expires_at,
+            })
+            .collect(),
+    );
     tx.commit().await.map_err(boundary_error)?;
     Ok(result)
 }

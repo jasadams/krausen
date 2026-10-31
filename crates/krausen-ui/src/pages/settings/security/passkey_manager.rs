@@ -12,17 +12,18 @@
 //! - Empty state with illustration when no passkeys exist
 //! - Tip alert when only one passkey is registered
 
-use leptos::prelude::*;
-use phosphor_leptos::{Icon, IconWeight};
 use crate::components::{
     Alert, AlertDescription, AlertVariant, Button, ButtonSize, ButtonVariant, Card, CardContent,
-    CardDescription, CardHeader, CardTitle, ConfirmDialog, EmptyState, Modal, ModalSize, INPUT_CLASS,
+    CardDescription, CardHeader, CardTitle, ConfirmDialog, EmptyState, INPUT_CLASS, Modal,
+    ModalSize,
 };
 use crate::server_fns::security::{
-    delete_passkey, list_passkeys, rename_passkey, PasskeyInfo,
+    PasskeyInfo, delete_passkey, get_security_status, list_passkeys, rename_passkey,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::server_fns::security::{complete_passkey_registration, start_passkey_registration};
+use leptos::prelude::*;
+use phosphor_leptos::{Icon, IconWeight};
 
 /// Format an RFC 3339 date string as "Mon DD, YYYY".
 ///
@@ -55,10 +56,7 @@ fn format_date(date_str: &str) -> String {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        date_str
-            .get(..10)
-            .unwrap_or("Unknown")
-            .to_string()
+        date_str.get(..10).unwrap_or("Unknown").to_string()
     }
 }
 
@@ -178,43 +176,46 @@ async fn browser_create_credential(options_json: &str) -> Result<String, String>
 
     // Convert to JS and fix up the binary fields (challenge, user.id, excludeCredentials[].id)
     // that need to be ArrayBuffer, not base64url strings.
-    let js_options = js_value_from_json(options)
-        .map_err(|e| format!("Convert options to JS: {e:?}"))?;
+    let js_options =
+        js_value_from_json(options).map_err(|e| format!("Convert options to JS: {e:?}"))?;
 
-    let js_pub_key = Reflect::get(&js_options, &"publicKey".into())
-        .unwrap_or(js_options.clone());
+    let js_pub_key = Reflect::get(&js_options, &"publicKey".into()).unwrap_or(js_options.clone());
 
     // Decode base64url challenge -> ArrayBuffer
     if let Ok(challenge_val) = Reflect::get(&js_pub_key, &"challenge".into())
-        && let Some(challenge_str) = challenge_val.as_string() {
-            let bytes = base64url_decode(&challenge_str)?;
-            let arr = Uint8Array::from(&bytes[..]);
-            let _ = Reflect::set(&js_pub_key, &"challenge".into(), &arr.buffer());
-        }
+        && let Some(challenge_str) = challenge_val.as_string()
+    {
+        let bytes = base64url_decode(&challenge_str)?;
+        let arr = Uint8Array::from(&bytes[..]);
+        let _ = Reflect::set(&js_pub_key, &"challenge".into(), &arr.buffer());
+    }
 
     // Decode user.id -> ArrayBuffer
     if let Ok(user) = Reflect::get(&js_pub_key, &"user".into())
         && let Ok(user_id_val) = Reflect::get(&user, &"id".into())
-            && let Some(user_id_str) = user_id_val.as_string() {
-                let bytes = base64url_decode(&user_id_str)?;
-                let arr = Uint8Array::from(&bytes[..]);
-                let _ = Reflect::set(&user, &"id".into(), &arr.buffer());
-            }
+        && let Some(user_id_str) = user_id_val.as_string()
+    {
+        let bytes = base64url_decode(&user_id_str)?;
+        let arr = Uint8Array::from(&bytes[..]);
+        let _ = Reflect::set(&user, &"id".into(), &arr.buffer());
+    }
 
     // Decode excludeCredentials[].id -> ArrayBuffer
     if let Ok(exclude_creds) = Reflect::get(&js_pub_key, &"excludeCredentials".into())
-        && js_sys::Array::is_array(&exclude_creds) {
-            let arr = js_sys::Array::from(&exclude_creds);
-            for i in 0..arr.length() {
-                let cred = arr.get(i);
-                if let Ok(id_val) = Reflect::get(&cred, &"id".into())
-                    && let Some(id_str) = id_val.as_string() {
-                        let bytes = base64url_decode(&id_str)?;
-                        let u8arr = Uint8Array::from(&bytes[..]);
-                        let _ = Reflect::set(&cred, &"id".into(), &u8arr.buffer());
-                    }
+        && js_sys::Array::is_array(&exclude_creds)
+    {
+        let arr = js_sys::Array::from(&exclude_creds);
+        for i in 0..arr.length() {
+            let cred = arr.get(i);
+            if let Ok(id_val) = Reflect::get(&cred, &"id".into())
+                && let Some(id_str) = id_val.as_string()
+            {
+                let bytes = base64url_decode(&id_str)?;
+                let u8arr = Uint8Array::from(&bytes[..]);
+                let _ = Reflect::set(&cred, &"id".into(), &u8arr.buffer());
             }
         }
+    }
 
     // Build the CredentialCreationOptions object with { publicKey: ... }
     let create_options = Object::new();
@@ -223,11 +224,10 @@ async fn browser_create_credential(options_json: &str) -> Result<String, String>
     // Call navigator.credentials.create(options)
     let window = web_sys::window().ok_or("No window")?;
     let navigator = window.navigator();
-    let credentials = Reflect::get(&navigator, &"credentials".into())
-        .map_err(|_| "No credentials API")?;
+    let credentials =
+        Reflect::get(&navigator, &"credentials".into()).map_err(|_| "No credentials API")?;
 
-    let create_fn = Reflect::get(&credentials, &"create".into())
-        .map_err(|_| "No create method")?;
+    let create_fn = Reflect::get(&credentials, &"create".into()).map_err(|_| "No create method")?;
 
     let create_fn: js_sys::Function = create_fn
         .dyn_into()
@@ -262,15 +262,13 @@ async fn browser_create_credential(options_json: &str) -> Result<String, String>
         .as_string()
         .ok_or("credential id is not a string")?;
 
-    let raw_id = Reflect::get(&result, &"rawId".into())
-        .map_err(|_| "Missing rawId")?;
+    let raw_id = Reflect::get(&result, &"rawId".into()).map_err(|_| "Missing rawId")?;
     let raw_id_b64 = arraybuffer_to_base64url(&raw_id)?;
 
-    let response = Reflect::get(&result, &"response".into())
-        .map_err(|_| "Missing response")?;
+    let response = Reflect::get(&result, &"response".into()).map_err(|_| "Missing response")?;
 
-    let client_data_json = Reflect::get(&response, &"clientDataJSON".into())
-        .map_err(|_| "Missing clientDataJSON")?;
+    let client_data_json =
+        Reflect::get(&response, &"clientDataJSON".into()).map_err(|_| "Missing clientDataJSON")?;
     let client_data_b64 = arraybuffer_to_base64url(&client_data_json)?;
 
     let attestation_object = Reflect::get(&response, &"attestationObject".into())
@@ -359,7 +357,9 @@ fn arraybuffer_to_base64url(value: &wasm_bindgen::JsValue) -> Result<String, Str
 
 /// Convert a serde_json::Value to a JsValue.
 #[cfg(target_arch = "wasm32")]
-fn js_value_from_json(value: &serde_json::Value) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+fn js_value_from_json(
+    value: &serde_json::Value,
+) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
     let json_str = serde_json::to_string(value)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
     js_sys::JSON::parse(&json_str)
@@ -386,6 +386,7 @@ pub fn PasskeyManager() -> impl IntoView {
     let rename_credential_id = RwSignal::new(Option::<String>::None);
     let rename_device_name = RwSignal::new(String::new());
     let rename_loading = RwSignal::new(false);
+    let rename_request = RwSignal::new(None::<(String, i64, String)>);
 
     // Add passkey modal state
     let add_modal_open = RwSignal::new(false);
@@ -397,6 +398,7 @@ pub fn PasskeyManager() -> impl IntoView {
     let dialog_title = RwSignal::new(String::new());
     let dialog_message = RwSignal::new(String::new());
     let pending_delete_id = RwSignal::new(Option::<String>::None);
+    let delete_request = RwSignal::new(None::<(String, i64, String)>);
 
     // ── Check WebAuthn support ───────────────────────────────────────────
     Effect::new(move || {
@@ -487,15 +489,57 @@ pub fn PasskeyManager() -> impl IntoView {
         success.set(None);
 
         leptos::task::spawn_local(async move {
-            match rename_passkey(cred_id, name.trim().to_string()).await {
-                Ok(msg) => {
-                    success.set(Some(msg));
+            use krausen_types::account::PasskeyRenameOutcome as Outcome;
+            let status = match get_security_status().await {
+                Ok(status) => status,
+                Err(e) => {
+                    error.set(Some(e.to_string()));
+                    rename_loading.set(false);
+                    return;
+                }
+            };
+            let request = rename_request
+                .get_untracked()
+                .filter(|(id, revision, _)| id == &cred_id && *revision == status.revision)
+                .map(|(_, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id);
+            let Some(request) = request else {
+                error.set(Some("Unable to create request identity.".to_string()));
+                rename_loading.set(false);
+                return;
+            };
+            rename_request.set(Some((cred_id.clone(), status.revision, request.clone())));
+            match rename_passkey(cred_id, name.trim().to_string(), status.revision, request).await {
+                Ok(Outcome::Saved { .. }) => {
+                    rename_request.set(None);
+                    success.set(Some("Passkey renamed successfully".to_string()));
                     rename_modal_open.set(false);
                     rename_credential_id.set(None);
                     rename_device_name.set(String::new());
                     // Reload passkeys
                     loading.set(true);
                     passkeys_resource.refetch();
+                }
+                Ok(Outcome::NotFound) => {
+                    rename_request.set(None);
+                    error.set(Some("Passkey not found.".to_string()));
+                    passkeys_resource.refetch();
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    rename_request.set(None);
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".to_string(),
+                    ));
+                    passkeys_resource.refetch();
+                }
+                Ok(Outcome::Forbidden) | Ok(Outcome::Invalid) => {
+                    rename_request.set(None);
+                    error.set(Some("Passkey rename is not allowed.".to_string()));
+                }
+                Ok(_) => {
+                    error.set(Some(
+                        "Passkey rename is unavailable. Try again.".to_string(),
+                    ));
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -529,10 +573,57 @@ pub fn PasskeyManager() -> impl IntoView {
         success.set(None);
 
         leptos::task::spawn_local(async move {
-            match delete_passkey(cred_id).await {
-                Ok(msg) => {
-                    success.set(Some(msg));
+            use krausen_types::account::PasskeyDeleteOutcome as Outcome;
+            let status = match get_security_status().await {
+                Ok(status) => status,
+                Err(e) => {
+                    error.set(Some(e.to_string()));
+                    loading.set(false);
+                    return;
+                }
+            };
+            let request = delete_request
+                .get_untracked()
+                .filter(|(id, revision, _)| id == &cred_id && *revision == status.revision)
+                .map(|(_, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id);
+            let Some(request) = request else {
+                error.set(Some("Unable to create request identity.".to_string()));
+                loading.set(false);
+                return;
+            };
+            delete_request.set(Some((cred_id.clone(), status.revision, request.clone())));
+            match delete_passkey(cred_id, status.revision, request).await {
+                Ok(Outcome::Saved { .. }) => {
+                    delete_request.set(None);
+                    success.set(Some("Passkey deleted successfully".to_string()));
                     passkeys_resource.refetch();
+                }
+                Ok(Outcome::LastSignInMethod) => {
+                    delete_request.set(None);
+                    error.set(Some(
+                        "Cannot delete your only sign-in method. Set a password or add another way to sign in first."
+                            .to_string(),
+                    ));
+                    loading.set(false);
+                }
+                Ok(Outcome::NotFound) => {
+                    delete_request.set(None);
+                    error.set(Some("Passkey not found.".to_string()));
+                    passkeys_resource.refetch();
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    delete_request.set(None);
+                    error.set(Some(
+                        "Security settings changed. Reload before trying again.".to_string(),
+                    ));
+                    passkeys_resource.refetch();
+                }
+                Ok(_) => {
+                    error.set(Some(
+                        "Passkey deletion is unavailable. Try again.".to_string(),
+                    ));
+                    loading.set(false);
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -854,18 +945,64 @@ async fn add_passkey_flow(device_name: &str) -> Result<String, String> {
 
     #[cfg(target_arch = "wasm32")]
     {
+        use krausen_types::account::{
+            PasskeyRegistrationCompleteOutcome as Complete,
+            PasskeyRegistrationStartOutcome as Start,
+        };
+        let status = get_security_status().await.map_err(|e| e.to_string())?;
         // Step 1: Start registration on server
-        let options_json = start_passkey_registration(device_name.to_string())
-            .await
-            .map_err(|e| e.to_string())?;
+        let registration =
+            match start_passkey_registration(device_name.to_string(), status.revision)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                Start::Started(registration) => registration,
+                Start::Conflict { .. } => {
+                    return Err(
+                        "Security settings changed. Reload before trying again.".to_string()
+                    );
+                }
+                Start::Forbidden => return Err("Passkey registration is not allowed.".to_string()),
+                Start::Invalid => return Err("Passkey registration is invalid.".to_string()),
+                Start::Retryable => {
+                    return Err("Passkey registration is temporarily unavailable.".to_string());
+                }
+                Start::Unavailable => {
+                    return Err("Passkey registration is unavailable.".to_string());
+                }
+            };
+        let options_json = serde_json::to_string(&serde_json::json!({
+            "challenge_id": registration.challenge_id,
+            "options": registration.options,
+        }))
+        .map_err(|e| format!("Serialize options: {e}"))?;
 
         // Step 2: Browser creates credential
         let credential_json = browser_create_credential(&options_json).await?;
 
         // Step 3: Complete registration on server
-        complete_passkey_registration(credential_json)
+        let Some(request) = crate::utils::request_id::new_request_id() else {
+            return Err("Unable to create request identity.".to_string());
+        };
+        match complete_passkey_registration(credential_json, status.revision, request)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?
+        {
+            Complete::Added { device_name, .. } => {
+                Ok(format!("Passkey '{}' added successfully", device_name))
+            }
+            Complete::Conflict { .. } => {
+                Err("Security settings changed. Reload before trying again.".to_string())
+            }
+            Complete::Invalid => Err("Passkey registration was rejected.".to_string()),
+            Complete::Forbidden => Err("Passkey registration is not allowed.".to_string()),
+            Complete::ResultExpired | Complete::RequestIdentityConflict => {
+                Err("Reload before trying to add this passkey again.".to_string())
+            }
+            Complete::Retryable | Complete::Unavailable => {
+                Err("Passkey registration is temporarily unavailable.".to_string())
+            }
+        }
     }
 }
 

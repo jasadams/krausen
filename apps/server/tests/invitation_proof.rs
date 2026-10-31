@@ -199,6 +199,7 @@ async fn exercise(db: DbPool) {
         krausen_app::team::invitations(&db, &owner_actor)
             .await
             .unwrap()
+            .items
             .iter()
             .any(|item| item.invitation_id == queued.invitation_id)
     );
@@ -594,8 +595,8 @@ async fn exercise(db: DbPool) {
     let list = invitation::list(&db, &actor, &pending.interaction_id)
         .await
         .unwrap();
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0].invitation_id, invite);
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].invitation_id, invite);
     // A failure after the membership write must roll back the membership,
     // invitation state and consumed proof together on either database.
     let rollback_workspace = format!("rollback-{suffix}");

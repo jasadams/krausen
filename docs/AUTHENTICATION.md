@@ -24,6 +24,16 @@ current account state and start a new request. Current credential authority is
 checked before retry recovery; a first execution verifies the old password and
 account revision inside the transaction.
 
+Authenticator and passkey management uses the same shared application commands
+for browser and MCP callers. A pending TOTP secret is returned only to the
+authenticated caller and kept in short-lived pending storage, never in retry or
+audit records; confirmation persists the verified method and account revision in
+one transaction. Passkey registration uses a one-time challenge bound to the
+account. Rename and delete are revision-checked, and deleting the final passkey
+is refused while no password or linked Google method remains. Passwords can be
+added for an account that has none; an existing verifier is never overwritten by
+that command.
+
 For an empty installation, a local operator can initialize the first owner by
 running the server binary with `bootstrap-owner EMAIL` and providing the new
 password on standard input. This operation is one-time and refuses an existing

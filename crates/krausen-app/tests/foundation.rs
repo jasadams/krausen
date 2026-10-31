@@ -357,6 +357,16 @@ async fn postgres_foundation() {
 }
 
 #[test]
+fn bounded_inventory_truncates_only_over_the_limit() {
+    let at_limit = krausen_app::bounded((0..krausen_app::INVENTORY_LIMIT).collect::<Vec<_>>());
+    assert_eq!(at_limit.items.len(), krausen_app::INVENTORY_LIMIT);
+    assert!(!at_limit.truncated);
+    let over = krausen_app::bounded((0..=krausen_app::INVENTORY_LIMIT).collect::<Vec<_>>());
+    assert_eq!(over.items.len(), krausen_app::INVENTORY_LIMIT);
+    assert!(over.truncated);
+}
+
+#[test]
 fn shared_projection_preserves_conflicts_and_redacts_internal_errors() {
     use krausen_types::workspace::WorkspaceRenameOutcome as Outcome;
     assert_eq!(

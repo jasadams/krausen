@@ -24,8 +24,40 @@ fn safe(input: &ProofInput) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
+/// Render the confirmation page with the production kit's approved tokens.
+///
+/// This route stays a server-rendered form: the proof token arrives in the URL
+/// fragment and is never sent in a request line or referrer. A hydrated Leptos
+/// page would require script/wasm/connect sources that weaken the strict CSP,
+/// so the form is styled inline with the same token values instead.
 fn page(status: StatusCode, body: String) -> Response {
-    (status, [(header::CACHE_CONTROL, "no-store"), (header::REFERRER_POLICY, "no-referrer"), (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")], Html(format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>Confirm account action</title></head><body><main>{body}</main></body></html>"))).into_response()
+    const STYLE: &str = r#"
+:root{--bg:#f7f6f2;--surface:#fffefa;--fg:#292c25;--muted:#6d7166;--border:#dedfd4;--primary:#a34728;--primary-hover:#873a21;--on-primary:#fffdf8;--danger:#a2332c;--focus:#9c5838;--radius:0.5rem;--radius-sm:0.25rem}
+@media (prefers-color-scheme:dark){:root{--bg:#1c211c;--surface:#242b24;--fg:#f5f3ec;--muted:#b8b8ad;--border:#3b463b;--primary:#d0805d;--primary-hover:#e0946f;--on-primary:#241a15;--danger:#e8938a;--focus:#d9a184}}
+*{box-sizing:border-box}
+html{font-size:15px}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font-family:'DM Sans',system-ui,-apple-system,sans-serif;line-height:1.55}
+main{width:100%;max-width:32rem;margin:1.5rem;padding:2rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgb(0 0 0 / 4%)}
+h1{margin:0 0 .75rem;font-size:1.5rem;line-height:1.25;letter-spacing:-.01em}
+p{margin:.5rem 0 1.25rem;color:var(--muted)}
+form{margin:0}
+button{display:inline-flex;align-items:center;justify-content:center;min-height:2.5rem;padding:0 1rem;border:1px solid transparent;border-radius:var(--radius-sm);background:var(--primary);color:var(--on-primary);font:inherit;font-weight:600;cursor:pointer;transition:background-color 200ms,color 200ms}
+button:hover{background:var(--primary-hover)}
+button:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--focus) 35%,transparent)}
+"#;
+    let csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'";
+    (
+        status,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+            (header::CONTENT_SECURITY_POLICY, csp),
+        ],
+        Html(format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\"><title>Confirm account action</title><style>{STYLE}</style></head><body><main>{body}</main></body></html>"
+        )),
+    )
+        .into_response()
 }
 async fn show(
     State(state): State<AppState>,

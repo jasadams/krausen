@@ -6,7 +6,7 @@
 
 use leptos::prelude::*;
 
-use crate::types::{InvitationData, ProfileData};
+use crate::types::{InvitationData, InvitationDataList, ProfileData};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read operations (called on page load via Resource)
@@ -59,24 +59,28 @@ pub async fn begin_invitation_discovery(
 #[server(prefix = "/leptos-api")]
 pub async fn get_pending_invitations(
     discovery_id: String,
-) -> Result<Vec<InvitationData>, ServerFnError> {
+) -> Result<InvitationDataList, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
     let actor = super::verified_account_actor(&auth)?;
-    let invitations = krausen_app::invitation::list(&ctx.db, &actor, &discovery_id)
+    let page = krausen_app::invitation::list(&ctx.db, &actor, &discovery_id)
         .await
         .map_err(invitation_error)?;
-    Ok(invitations
-        .into_iter()
-        .map(|inv| InvitationData {
-            invitation_id: inv.invitation_id,
-            workspace_id: inv.workspace_id,
-            email: inv.email,
-            role: inv.role,
-            created_at: inv.created_at,
-            expires_at: inv.expires_at,
-        })
-        .collect())
+    Ok(InvitationDataList {
+        invitations: page
+            .items
+            .into_iter()
+            .map(|inv| InvitationData {
+                invitation_id: inv.invitation_id,
+                workspace_id: inv.workspace_id,
+                email: inv.email,
+                role: inv.role,
+                created_at: inv.created_at,
+                expires_at: inv.expires_at,
+            })
+            .collect(),
+        truncated: page.truncated,
+    })
 }
 
 /// Begin an action-bound mailbox proof; no membership change occurs yet.

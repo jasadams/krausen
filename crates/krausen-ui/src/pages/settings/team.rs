@@ -570,7 +570,7 @@ fn TeamPageInner() -> impl IntoView {
                 }>
                     {move || Suspend::new(async move {
                         match invitations.await {
-                            Ok(invs) if invs.is_empty() => {
+                            Ok(page) if page.invitations.is_empty() => {
                                 view! {
                                     <EmptyState
                                         title="No pending invitations"
@@ -579,10 +579,16 @@ fn TeamPageInner() -> impl IntoView {
                                     />
                                 }.into_any()
                             },
-                            Ok(invs) => {
+                            Ok(page) => {
+                                let truncated = page.truncated;
                                 view! {
                                     <div class="space-y-3">
-                                        {invs.into_iter().map(|inv| {
+                                        {truncated.then(|| view! {
+                                            <p class="text-sm text-muted-foreground">
+                                                "Showing the first 100 pending invitations."
+                                            </p>
+                                        })}
+                                        {page.invitations.into_iter().map(|inv| {
                                             view! { <InvitationRow invitation=inv on_cancel=request_cancel_invitation/> }
                                         }).collect_view()}
                                     </div>
@@ -612,17 +618,23 @@ fn TeamPageInner() -> impl IntoView {
                         .unwrap_or(false);
 
                     match transfers.await {
-                        Ok(t) if !t.is_empty() => {
+                        Ok(page) if !page.transfers.is_empty() => {
                             let title = if is_owner {
                                 "Pending Ownership Transfers"
                             } else {
                                 "Ownership Transfer Offers"
                             };
+                            let truncated = page.truncated;
                             view! {
                                 <div class="mb-6">
                                     <h3 class="text-lg font-semibold text-foreground mb-4">{title}</h3>
+                                    {truncated.then(|| view! {
+                                        <p class="text-sm text-muted-foreground mb-4">
+                                            "Showing the first 100 transfers."
+                                        </p>
+                                    })}
                                     <div class="space-y-4">
-                                        {t.into_iter().map(|transfer| {
+                                        {page.transfers.into_iter().map(|transfer| {
                                             view! { <TransferRow transfer=transfer on_cancel=request_cancel_transfer/> }
                                         }).collect_view()}
                                     </div>
