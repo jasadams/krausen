@@ -1009,7 +1009,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
             </div></BreweryDisclosure>
         </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation/></aside></div>
-    </div> }
+    </div>
     {
         move || {
             print_preview
@@ -1017,6 +1017,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 .filter(|_| context_visible.get())
                 .map(|summary| view! { <PrintPreview summary=summary on_close=close_print/> })
         }
+    }
     }
 }
 
