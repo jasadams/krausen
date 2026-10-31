@@ -602,7 +602,7 @@ async fn exercise(db: DbPool) {
             intent: intent.clone(),
             profile_id: profile.profile_id,
             archived: true,
-            expected_metadata_revision: 0,
+            expected_metadata_revision: 1,
             request_id: uuid::Uuid::new_v4().to_string(),
         },
     )
