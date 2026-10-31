@@ -324,6 +324,7 @@ pub struct BrewPlanV1 {
     pub equipment_profile_metadata_revision: Option<i64>,
     pub original_targets: Targets,
     pub assumptions: Vec<String>,
+    #[serde(default)]
     pub applied_defaults: Vec<AppliedDefault>,
     pub diagnostics: Vec<Diagnostic>,
     pub style: Option<StyleReference>,
