@@ -233,7 +233,7 @@ pub fn ScaleDialog(
             pending.set(false);
             match outcome {
                 Ok(ScaleOutcome::Preview(preview_value)) => {
-                    if revision.try_get_untracked() != Some(preview_value.source_revision) {
+                    if revision.try_get_untracked().flatten() != Some(preview_value.source_revision) {
                         preview.set(None);
                         message
                             .set("The saved recipe has changed. Reload it before scaling.".into());
