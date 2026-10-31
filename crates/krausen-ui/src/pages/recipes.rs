@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use krausen_types::{
     recipe_library::{
         ArchiveRecipe, HistoryPage, HistoryQuery, LibraryCommand, LibraryOutcome, LibraryQuery,
-        RecipeSummary, RecoveryQuery,
+        RecipeSummary, RecoveryQuery, RevisionQuery,
     },
     request_context::OperationIntent,
 };
@@ -44,6 +44,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let history = RwSignal::new(None::<(String, HistoryPage)>);
     let history_name = RwSignal::new(String::new());
     let recovery = RwSignal::new(None::<(String, String)>);
+    let selected_revision = RwSignal::new(None::<(i64, krausen_types::brewery::RecipeDocumentV1)>);
+    let detail_generation = RwSignal::new(0_u64);
+    let detail_loading = RwSignal::new(false);
     let history_generation = RwSignal::new(0_u64);
     let pending = RwSignal::new(None::<ArchiveRecipe>);
     let blocked = RwSignal::new(false);
@@ -57,6 +60,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             context_valid.set(false);
             generation.update(|n| *n += 1);
             history_generation.update(|n| *n += 1);
+            detail_generation.update(|n| *n += 1);
+            selected_revision.set(None);
+            detail_loading.set(false);
             context_generation.update(|n| *n += 1);
             let sequence = context_generation.get_untracked();
             results.set(Vec::new());
@@ -134,7 +140,11 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             return;
         }
         history_generation.update(|n| *n += 1);
+        detail_generation.update(|n| *n += 1);
         history.set(None);
+        selected_revision.set(None);
+        recovery.set(None);
+        detail_loading.set(false);
         load.run(None);
     });
     let show_history = Callback::new(
@@ -142,7 +152,11 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             let append = cursor.is_some();
             if !append {
                 history_generation.update(|n| *n += 1);
+                detail_generation.update(|n| *n += 1);
                 history.set(None);
+                selected_revision.set(None);
+                recovery.set(None);
+                detail_loading.set(false);
             }
             let sequence = history_generation.get_untracked();
             let query = HistoryQuery {
@@ -183,13 +197,26 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         },
     );
     let recover = Callback::new(move |recipe_id: String| {
+        detail_generation.update(|n| *n += 1);
+        let sequence = detail_generation.get_untracked();
+        history_generation.update(|n| *n += 1);
+        history.set(None);
+        selected_revision.set(None);
         recovery.set(None);
+        detail_loading.set(true);
         let query = RecoveryQuery {
             intent: intent.get_value(),
             recipe_id,
         };
         leptos::task::spawn_local(async move {
-            match library_command_shared(LibraryCommand::Recover(query)).await {
+            let response = library_command_shared(LibraryCommand::Recover(query)).await;
+            if detail_generation.try_get_untracked() != Some(sequence)
+                || context_valid.try_get_untracked() != Some(true)
+            {
+                return;
+            }
+            detail_loading.set(false);
+            match response {
                 Ok(LibraryOutcome::LegacySource { source, diagnostic }) => {
                     recovery.set(Some((source, diagnostic)))
                 }
@@ -198,6 +225,40 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     context_valid.set(false);
                 }
                 _ => status.set("Unable to recover the stored recipe source.".into()),
+            }
+        });
+    });
+    let inspect_revision = Callback::new(move |(recipe_id, revision): (String, i64)| {
+        detail_generation.update(|n| *n += 1);
+        let sequence = detail_generation.get_untracked();
+        selected_revision.set(None);
+        recovery.set(None);
+        detail_loading.set(true);
+        let query = RevisionQuery {
+            intent: intent.get_value(),
+            recipe_id: recipe_id.clone(),
+            revision,
+        };
+        leptos::task::spawn_local(async move {
+            let response = library_command_shared(LibraryCommand::Revision(query)).await;
+            if detail_generation.try_get_untracked() != Some(sequence)
+                || context_valid.try_get_untracked() != Some(true)
+                || history
+                    .try_with_untracked(|h| h.as_ref().is_some_and(|(id, _)| id == &recipe_id))
+                    != Some(true)
+            {
+                return;
+            }
+            detail_loading.set(false);
+            match response {
+                Ok(LibraryOutcome::Revision(document)) => {
+                    selected_revision.set(Some((revision, document)))
+                }
+                Ok(LibraryOutcome::Forbidden | LibraryOutcome::ContextChanged) => {
+                    results.set(Vec::new());
+                    context_valid.set(false);
+                }
+                _ => status.set("Unable to load that saved revision.".into()),
             }
         });
     });
@@ -213,7 +274,12 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             match result {
                 Ok(LibraryOutcome::Archive { .. }) => {
                     pending.set(None);
+                    history_generation.update(|n| *n += 1);
+                    detail_generation.update(|n| *n += 1);
                     history.set(None);
+                    selected_revision.set(None);
+                    recovery.set(None);
+                    detail_loading.set(false);
                     load.run(None);
                 }
                 Ok(LibraryOutcome::Unavailable) | Err(_) => {
@@ -261,7 +327,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                 view! { <li><BreweryPanel title=title.clone()>
                     <p>{item.style.unwrap_or_else(|| "No style".into())}{item.batch_size_l.map(|v| format!(" · {v} L")).unwrap_or_default()}{format!(" · revision {}", item.revision)}</p>
                     {(!archived_item && !recovery_item).then(|| view! { <ButtonLink href=format!("/recipe-editor/{id}") variant=ButtonVariant::Secondary aria_label=format!("Open {title}")>"Open recipe"</ButtonLink> })}
-                    {recovery_item.then(|| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| recover.run(recovery_id.clone())>"Recover stored source"</Button> })}
+                    {recovery_item.then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("Recover stored source for {title}") on:click=move |_| recover.run(recovery_id.clone())>"Recover stored source"</Button> })}
                     {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Ghost aria_label=format!("History for {title}") on:click=move |_| show_history.run((history_id.clone(), history_title.clone(), None))>"History"</Button> })}
                     {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("{} {title}", if archived_item { "Restore" } else { "Archive" }) disabled=Signal::derive(move || saving.get() || pending.get().is_some() || blocked.get()) on:click=move |_| {
                         let Some(request_id) = crate::utils::request_id::new_request_id() else { status.set("Unable to create request identity.".into()); return; };
@@ -272,7 +338,148 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             <Show when=move || next.get().is_some()><Button variant=ButtonVariant::Secondary disabled=loading on:click=move |_| load.run(next.get_untracked())>"Load more recipes"</Button></Show>
             <Show when=move || pending.get().is_some() && !blocked.get()><Button variant=ButtonVariant::Secondary disabled=saving on:click=move |_| { if let Some(command) = pending.get_untracked() { execute_archive.run(command); } }>"Retry previous request"</Button></Show>
         </BreweryPanel>
-        {move || recovery.get().map(|(source, diagnostic)| { let href = format!("data:application/json;base64,{}", STANDARD.encode(source.as_bytes())); view! { <BreweryPanel title="Stored recipe source"><p>{diagnostic}</p><a href=href download="legacy-recipe.json">"Download stored source"</a><pre>{source}</pre></BreweryPanel> } })}
-        {move || history.get().map(|(id, page)| { let title = format!("History · {}", history_name.get()); let more_id = id.clone(); let more_name = history_name.get(); let more_cursor = page.next_cursor.clone(); view! { <BreweryPanel title=title><ul>{page.items.into_iter().map(|entry| view! { <li>{format!("Revision {}", entry.revision)}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}</li> }).collect_view()}</ul>{more_cursor.map(|cursor| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_history.run((more_id.clone(), more_name.clone(), Some(cursor.clone())))>"Load more revisions"</Button> })}</BreweryPanel> } })}
+        {move || recovery.get().map(|(source, diagnostic)| { let href = format!("data:application/json;base64,{}", STANDARD.encode(source.as_bytes())); view! { <BreweryPanel title="Stored recipe source"><p>{diagnostic}</p><a href=href download="legacy-recipe.json">"Download stored source"</a><pre class="overflow-x-auto">{source}</pre></BreweryPanel> } })}
+        {move || history.get().map(|(id, page)| { let title = format!("History · {}", history_name.get()); let more_id = id.clone(); let more_name = history_name.get(); let more_cursor = page.next_cursor.clone(); view! { <BreweryPanel title=title><ul>{page.items.into_iter().map(|entry| { let recipe_id = id.clone(); let revision = entry.revision; view! { <li>{format!("Revision {}", revision)}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}<Button variant=ButtonVariant::Ghost aria_label=format!("Inspect revision {revision}") on:click=move |_| inspect_revision.run((recipe_id.clone(), revision))>"Inspect"</Button></li> } }).collect_view()}</ul>{more_cursor.map(|cursor| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_history.run((more_id.clone(), more_name.clone(), Some(cursor.clone())))>"Load more revisions"</Button> })}</BreweryPanel> } })}
+        <Show when=move || detail_loading.get()><BreweryNotice title="Loading saved content" body="Please wait."/></Show>
+        {move || selected_revision.get().map(|(revision, document)| view! { <HistoricalRecipe revision=revision document=document/> })}
     </div> }
+}
+
+/// Read-only presentation of retained source data; no targets are recalculated.
+#[component]
+fn HistoricalRecipe(
+    revision: i64,
+    document: krausen_types::brewery::RecipeDocumentV1,
+) -> impl IntoView {
+    let title = format!("Historical revision {revision} · {}", document.title);
+    let style = document
+        .style
+        .as_ref()
+        .map(|style| style.name.clone())
+        .unwrap_or_else(|| "Not specified".into());
+    let batch = document
+        .batch_size_l
+        .map(|value| format!("{value} L"))
+        .unwrap_or_else(|| "Not specified".into());
+    let boil = document
+        .boil_minutes
+        .map(|value| format!("{value} min"))
+        .unwrap_or_else(|| "Not specified".into());
+    let fermentables = document
+        .fermentables
+        .iter()
+        .map(|row| {
+            format!(
+                "{} · {} · {}",
+                row.specification
+                    .name
+                    .as_deref()
+                    .unwrap_or("Unnamed fermentable"),
+                row.amount_kg
+                    .map(|value| format!("{value} kg"))
+                    .unwrap_or_else(|| "quantity not specified".into()),
+                row.addition.stage
+            )
+        })
+        .collect::<Vec<_>>();
+    let hops = document
+        .hops
+        .iter()
+        .map(|row| {
+            format!(
+                "{} · {} · {}",
+                row.specification.name.as_deref().unwrap_or("Unnamed hop"),
+                row.amount_g
+                    .map(|value| format!("{value} g"))
+                    .unwrap_or_else(|| "quantity not specified".into()),
+                row.stage
+            )
+        })
+        .collect::<Vec<_>>();
+    let yeast = document
+        .yeast
+        .iter()
+        .map(|row| {
+            format!(
+                "{} · {}",
+                row.specification.name.as_deref().unwrap_or("Unnamed yeast"),
+                ingredient_amount(row.amount, row.unit.as_deref())
+            )
+        })
+        .collect::<Vec<_>>();
+    let other = document
+        .other_ingredients
+        .iter()
+        .map(|row| {
+            format!(
+                "{} · {}",
+                row.specification
+                    .name
+                    .as_deref()
+                    .unwrap_or("Unnamed ingredient"),
+                ingredient_amount(row.amount, row.unit.as_deref())
+            )
+        })
+        .collect::<Vec<_>>();
+    let mash = document
+        .process
+        .mash_steps
+        .iter()
+        .map(step_text)
+        .collect::<Vec<_>>();
+    let fermentation = document
+        .process
+        .fermentation_steps
+        .iter()
+        .map(step_text)
+        .collect::<Vec<_>>();
+    let saved_data = match serde_json::to_string_pretty(&document) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(error = %error, "Unable to display saved revision data");
+            "Saved data could not be displayed.".into()
+        }
+    };
+    view! { <BreweryPanel title=title description="Read-only saved content. The current recipe has not been changed.">
+        <p>{format!("Style: {style} · Batch: {batch} · Boil: {boil}")}</p>
+        {document.description.map(|text| view! { <p>{text}</p> })}
+        <h3>"Fermentables"</h3>{saved_rows(fermentables)}
+        <h3>"Hops"</h3>{saved_rows(hops)}
+        <h3>"Yeast"</h3>{saved_rows(yeast)}
+        <h3>"Other ingredients"</h3>{saved_rows(other)}
+        <h3>"Mash steps"</h3>{saved_rows(mash)}
+        <h3>"Fermentation steps"</h3>{saved_rows(fermentation)}
+        {document.notes.map(|text| view! { <div><h3>"Notes"</h3><p>{text}</p></div> })}
+        <details><summary>"Complete saved data"</summary><pre class="overflow-x-auto">{saved_data}</pre></details>
+    </BreweryPanel> }
+}
+fn ingredient_amount(amount: Option<f64>, unit: Option<&str>) -> String {
+    match amount {
+        Some(value) => match unit {
+            Some(unit) if !unit.is_empty() => format!("{value} {unit}"),
+            _ => value.to_string(),
+        },
+        None => "quantity not specified".into(),
+    }
+}
+fn step_text(step: &krausen_types::brewery::ProcessStep) -> String {
+    let mut parts = vec![step.name.as_deref().unwrap_or("Unnamed step").to_owned()];
+    if let Some(value) = step.temperature_c {
+        parts.push(format!("{value} °C"));
+    }
+    if let Some(value) = step.time_minutes {
+        parts.push(format!("{value} min"));
+    }
+    if let Some(value) = step.volume_l {
+        parts.push(format!("{value} L"));
+    }
+    parts.join(" · ")
+}
+fn saved_rows(items: Vec<String>) -> impl IntoView {
+    if items.is_empty() {
+        view! { <p>"None saved"</p> }.into_any()
+    } else {
+        view! { <ul>{items.into_iter().map(|item| view! { <li>{item}</li> }).collect_view()}</ul> }
+            .into_any()
+    }
 }
