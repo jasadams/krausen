@@ -18,11 +18,11 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Yield (%)', { exact: true }).fill('80');
   await page.getByLabel('Colour (EBC)', { exact: true }).fill('5');
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.getByLabel('Mash efficiency (%)', { exact: true }).fill('75');
-  await page.getByLabel('Boil-off (L/h)', { exact: true }).fill('3');
-  await page.getByLabel('Transfer loss (L)', { exact: true }).fill('2');
-  await page.getByLabel('Grain absorption (L/kg)', { exact: true }).fill('0.8');
-  await page.getByLabel('Kettle capacity (L)', { exact: true }).fill('30');
+  await page.locator('#recipe-efficiency').fill('75');
+  await page.locator('#recipe-boil-off').fill('3');
+  await page.locator('#recipe-loss').fill('2');
+  await page.locator('#recipe-absorption').fill('0.8');
+  await page.locator('#recipe-capacity').fill('30');
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
 }
