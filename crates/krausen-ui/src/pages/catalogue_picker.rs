@@ -132,6 +132,7 @@ fn CataloguePickerSelection(
     selected: RwSignal<Option<IngredientEntry>>,
     amount: RwSignal<String>,
     archive_retrying: RwSignal<bool>,
+    #[prop(into)] busy: Signal<bool>,
     on_edit: Callback<()>,
     on_archive: Callback<bool>,
 ) -> impl IntoView {
@@ -163,11 +164,11 @@ fn CataloguePickerSelection(
         </div>
         {move || selected_workspace.get().then(|| view! {
             <div class="k-catalogue-manage">
-                <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || selected_archived.get()) on:click=move |_| on_edit.run(())>"Edit library entry"</Button>
+                <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || selected_archived.get() || busy.get() || archive_retrying.get()) on:click=move |_| on_edit.run(())>"Edit library entry"</Button>
                 <Show when=move || selected_archived.get() fallback=move || view! {
-                    <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| on_archive.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button>
+                    <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || busy.get()) on:click=move |_| on_archive.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button>
                 }>
-                    <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| on_archive.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button>
+                    <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || busy.get()) on:click=move |_| on_archive.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button>
                 </Show>
             </div>
         })}
@@ -208,9 +209,12 @@ pub fn CataloguePicker(
     let entry_id = RwSignal::new(None::<String>);
     let request_id = RwSignal::new(None::<String>);
     let retrying = RwSignal::new(false);
+    // The full command is retained across an uncertain outcome so a retry is
+    // sent verbatim even if the editable form values later change.
+    let pending_save = RwSignal::new(None::<SaveIngredientEntry>);
 
     // Archive/restore identity, stable for one selected-entry action session.
-    let archive_request_id = RwSignal::new(None::<String>);
+    let pending_archive = RwSignal::new(None::<ArchiveIngredientEntry>);
     let archive_retrying = RwSignal::new(false);
 
     let load_page = Callback::new(move |cursor: Option<String>| {
@@ -260,9 +264,9 @@ pub fn CataloguePicker(
                             .items
                             .iter()
                             .any(|entry| Some(&entry.entry_id) == selected_id.as_ref());
-                        if !contains {
+                        if !contains && !archive_retrying.get_untracked() {
                             selected.set(None);
-                            archive_request_id.set(None);
+                            pending_archive.set(None);
                             archive_retrying.set(false);
                         }
                         items.set(page.items);
@@ -295,6 +299,7 @@ pub fn CataloguePicker(
         edit_target.set(None);
         entry_id.set(None);
         request_id.set(None);
+        pending_save.set(None);
         retrying.set(false);
     };
 
@@ -309,7 +314,7 @@ pub fn CataloguePicker(
         loading.set(false);
         next_cursor.set(None);
         items.set(Vec::new());
-        archive_request_id.set(None);
+        pending_archive.set(None);
         archive_retrying.set(false);
         clear_form();
     };
@@ -348,15 +353,24 @@ pub fn CataloguePicker(
     });
 
     let choose = Callback::new(move |entry: IngredientEntry| {
+        // Lock the target while an archive is uncertain or a request is in
+        // flight; the retry must address the original entry.
+        if busy.get_untracked() || archive_retrying.get_untracked() {
+            return;
+        }
         selected.set(Some(entry));
-        archive_request_id.set(None);
+        pending_archive.set(None);
         archive_retrying.set(false);
         notice.set(None);
     });
 
     let begin_create = Callback::new(move |()| {
+        if busy.get_untracked() || archive_retrying.get_untracked() {
+            return;
+        }
         notice.set(None);
         clear_form();
+        pending_archive.set(None);
         let Some(new_entry_id) = crate::utils::request_id::new_request_id() else {
             return;
         };
@@ -369,6 +383,9 @@ pub fn CataloguePicker(
     });
 
     let begin_edit = Callback::new(move |()| {
+        if busy.get_untracked() || archive_retrying.get_untracked() {
+            return;
+        }
         let Some(entry) = selected.get_untracked() else {
             return;
         };
@@ -376,6 +393,8 @@ pub fn CataloguePicker(
             return;
         }
         notice.set(None);
+        pending_save.set(None);
+        pending_archive.set(None);
         name.set(entry.name().to_owned());
         producer.set(entry.producer().to_owned());
         category.set(entry.document.category.clone());
@@ -408,6 +427,8 @@ pub fn CataloguePicker(
     let back_to_catalogue = Callback::new(move |()| {
         notice.set(None);
         clear_form();
+        pending_archive.set(None);
+        archive_retrying.set(false);
         view.set(PickerView::Catalogue);
     });
 
@@ -466,81 +487,97 @@ pub fn CataloguePicker(
         if busy.get_untracked() {
             return;
         }
-        let editing = edit_target.get_untracked();
-        let session_entry_id = entry_id.get_untracked();
-        let session_request_id = request_id.get_untracked();
-        let (Some(target_entry_id), Some(target_request_id)) =
-            (session_entry_id, session_request_id)
-        else {
-            return;
-        };
-        let entry_name = name.get_untracked().trim().to_owned();
-        if entry_name.is_empty() || entry_name.chars().count() > 100 {
-            notice.set(Some((
-                "A little more information needed".to_owned(),
-                "Give your fermentable a name.".to_owned(),
-                true,
-            )));
-            return;
-        }
-        let colour_text = colour.get_untracked();
-        let Ok(colour_value) = colour_text.trim().parse::<f64>() else {
-            notice.set(Some((
-                "A little more information needed".to_owned(),
-                "Enter a colour of zero or more EBC.".to_owned(),
-                true,
-            )));
-            return;
-        };
-        if !colour_value.is_finite() || colour_value < 0.0 {
-            notice.set(Some((
-                "A little more information needed".to_owned(),
-                "Enter a colour of zero or more EBC.".to_owned(),
-                true,
-            )));
-            return;
-        }
-        let yield_text = yield_percent.get_untracked();
-        let Ok(yield_value) = yield_text.trim().parse::<f64>() else {
-            notice.set(Some((
-                "A little more information needed".to_owned(),
-                "Enter a potential yield greater than zero and at most 100%.".to_owned(),
-                true,
-            )));
-            return;
-        };
-        if !yield_value.is_finite() || yield_value <= 0.0 || yield_value > 100.0 {
-            notice.set(Some((
-                "A little more information needed".to_owned(),
-                "Enter a potential yield greater than zero and at most 100%.".to_owned(),
-                true,
-            )));
-            return;
-        }
-        let document = IngredientEntryDocumentV1::fermentable(
-            category.get_untracked(),
-            FermentableSpecification {
-                name: Some(entry_name),
-                producer: {
-                    let producer_value = producer.get_untracked().trim().to_owned();
-                    (!producer_value.is_empty()).then_some(producer_value)
+        let save = if retrying.get_untracked() {
+            let Some(pending) = pending_save.get_untracked() else {
+                notice.set(Some((
+                    "Retry unavailable".to_owned(),
+                    "Reopen the form to start a new save.".to_owned(),
+                    true,
+                )));
+                return;
+            };
+            pending
+        } else {
+            let editing = edit_target.get_untracked();
+            let session_entry_id = entry_id.get_untracked();
+            let session_request_id = request_id.get_untracked();
+            let (Some(target_entry_id), Some(target_request_id)) =
+                (session_entry_id, session_request_id)
+            else {
+                return;
+            };
+            let entry_name = name.get_untracked().trim().to_owned();
+            if entry_name.is_empty() || entry_name.chars().count() > 100 {
+                notice.set(Some((
+                    "A little more information needed".to_owned(),
+                    "Give your fermentable a name.".to_owned(),
+                    true,
+                )));
+                return;
+            }
+            let colour_text = colour.get_untracked();
+            let Ok(colour_value) = colour_text.trim().parse::<f64>() else {
+                notice.set(Some((
+                    "A little more information needed".to_owned(),
+                    "Enter a colour of zero or more EBC.".to_owned(),
+                    true,
+                )));
+                return;
+            };
+            if !colour_value.is_finite() || colour_value < 0.0 {
+                notice.set(Some((
+                    "A little more information needed".to_owned(),
+                    "Enter a colour of zero or more EBC.".to_owned(),
+                    true,
+                )));
+                return;
+            }
+            let yield_text = yield_percent.get_untracked();
+            let Ok(yield_value) = yield_text.trim().parse::<f64>() else {
+                notice.set(Some((
+                    "A little more information needed".to_owned(),
+                    "Enter a potential yield greater than zero and at most 100%.".to_owned(),
+                    true,
+                )));
+                return;
+            };
+            if !yield_value.is_finite() || yield_value <= 0.0 || yield_value > 100.0 {
+                notice.set(Some((
+                    "A little more information needed".to_owned(),
+                    "Enter a potential yield greater than zero and at most 100%.".to_owned(),
+                    true,
+                )));
+                return;
+            }
+            let document = IngredientEntryDocumentV1::fermentable(
+                category.get_untracked(),
+                FermentableSpecification {
+                    name: Some(entry_name),
+                    producer: {
+                        let producer_value = producer.get_untracked().trim().to_owned();
+                        (!producer_value.is_empty()).then_some(producer_value)
+                    },
+                    kind: Some("grain".to_owned()),
+                    yield_fraction: Some(yield_value / 100.0),
+                    colour_ebc: Some(colour_value),
                 },
-                kind: Some("grain".to_owned()),
-                yield_fraction: Some(yield_value / 100.0),
-                colour_ebc: Some(colour_value),
-            },
-        );
-        let command = IngredientCommand::Save(SaveIngredientEntry {
-            intent: identity.get_untracked(),
-            entry_id: target_entry_id,
-            document,
-            expected_revision: editing.as_ref().map(|entry| entry.revision).unwrap_or(0),
-            expected_metadata_revision: editing
-                .as_ref()
-                .map(|entry| entry.metadata_revision)
-                .unwrap_or(0),
-            request_id: target_request_id,
-        });
+            );
+            let save = SaveIngredientEntry {
+                intent: identity.get_untracked(),
+                entry_id: target_entry_id,
+                document,
+                expected_revision: editing.as_ref().map(|entry| entry.revision).unwrap_or(0),
+                expected_metadata_revision: editing
+                    .as_ref()
+                    .map(|entry| entry.metadata_revision)
+                    .unwrap_or(0),
+                request_id: target_request_id,
+            };
+            pending_save.set(Some(save.clone()));
+            save
+        };
+        let is_edit = save.expected_revision > 0;
+        let command = IngredientCommand::Save(save);
         let expected = identity.get_untracked();
         busy.set(true);
         leptos::task::spawn_local(async move {
@@ -560,13 +597,14 @@ pub fn CataloguePicker(
                 Ok(IngredientOutcome::Entry(entry)) => {
                     notice.set(None);
                     retrying.set(false);
-                    if editing.is_some() {
+                    pending_save.set(None);
+                    if is_edit {
                         // Committed: rotate the request identity, keep the
                         // edited entry current for a further guarded change.
                         request_id.set(crate::utils::request_id::new_request_id());
                         selected.set(Some(entry.clone()));
                         edit_target.set(Some(entry.clone()));
-                        archive_request_id.set(None);
+                        pending_archive.set(None);
                         view.set(PickerView::Catalogue);
                         load_page.run(None);
                     } else {
@@ -583,6 +621,7 @@ pub fn CataloguePicker(
                     // The command committed earlier; its confirmation is gone.
                     // Discard the identity and show the fresh library state.
                     retrying.set(false);
+                    pending_save.set(None);
                     notice.set(terminal_notice(
                         match &outcome { Ok(value) => value, Err(_) => unreachable!() },
                     ));
@@ -592,6 +631,7 @@ pub fn CataloguePicker(
                 }
                 Ok(IngredientOutcome::RequestIdentityConflict) => {
                     retrying.set(false);
+                    pending_save.set(None);
                     notice.set(terminal_notice(
                         match &outcome { Ok(value) => value, Err(_) => unreachable!() },
                     ));
@@ -600,14 +640,17 @@ pub fn CataloguePicker(
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
+                    pending_save.set(None);
                     context_visible.set(false)
                 }
                 Ok(other) => {
+                    retrying.set(false);
+                    pending_save.set(None);
                     notice.set(terminal_notice(other));
                 }
                 Err(_) => {
-                    // Uncertain outcome: retain the exact command identity so
-                    // the next click replays it instead of minting a new one.
+                    // Uncertain outcome: retain the full command so the next
+                    // click replays it verbatim, independent of form edits.
                     retrying.set(true);
                     notice.set(Some((
                         "Save may not have completed".to_owned(),
@@ -623,29 +666,37 @@ pub fn CataloguePicker(
         if busy.get_untracked() {
             return;
         }
-        let Some(entry) = selected.get_untracked() else {
-            return;
-        };
-        if entry.scope != CatalogueScope::Workspace {
-            return;
-        }
-        let request_id = match archive_request_id.get_untracked() {
-            Some(id) => id,
-            None => {
-                let Some(id) = crate::utils::request_id::new_request_id() else {
-                    return;
-                };
-                archive_request_id.set(Some(id.clone()));
-                id
+        let archive = if archive_retrying.get_untracked() {
+            let Some(pending) = pending_archive.get_untracked() else {
+                notice.set(Some((
+                    "Retry unavailable".to_owned(),
+                    "Reopen the library entry to try again.".to_owned(),
+                    true,
+                )));
+                return;
+            };
+            pending
+        } else {
+            let Some(entry) = selected.get_untracked() else {
+                return;
+            };
+            if entry.scope != CatalogueScope::Workspace {
+                return;
             }
+            let Some(request_id) = crate::utils::request_id::new_request_id() else {
+                return;
+            };
+            let archive = ArchiveIngredientEntry {
+                intent: identity.get_untracked(),
+                entry_id: entry.entry_id.clone(),
+                archived: target_archived,
+                expected_metadata_revision: entry.metadata_revision,
+                request_id,
+            };
+            pending_archive.set(Some(archive.clone()));
+            archive
         };
-        let command = IngredientCommand::Archive(ArchiveIngredientEntry {
-            intent: identity.get_untracked(),
-            entry_id: entry.entry_id.clone(),
-            archived: target_archived,
-            expected_metadata_revision: entry.metadata_revision,
-            request_id,
-        });
+        let command = IngredientCommand::Archive(archive);
         let expected = identity.get_untracked();
         busy.set(true);
         leptos::task::spawn_local(async move {
@@ -665,23 +716,26 @@ pub fn CataloguePicker(
                 Ok(IngredientOutcome::Entry(entry)) => {
                     notice.set(None);
                     archive_retrying.set(false);
-                    archive_request_id.set(None);
+                    pending_archive.set(None);
                     selected.set(Some(entry.clone()));
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ResultExpired)
                 | Ok(IngredientOutcome::RequestIdentityConflict) => {
                     archive_retrying.set(false);
-                    archive_request_id.set(None);
+                    pending_archive.set(None);
                     notice.set(terminal_notice(
                         match &outcome { Ok(value) => value, Err(_) => unreachable!() },
                     ));
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
+                    pending_archive.set(None);
                     context_visible.set(false)
                 }
                 Ok(other) => {
+                    archive_retrying.set(false);
+                    pending_archive.set(None);
                     notice.set(terminal_notice(other));
                 }
                 Err(_) => {
@@ -704,6 +758,7 @@ pub fn CataloguePicker(
             .is_some_and(|entry| !entry.archived)
             && amount_kg(&text).is_some()
             && !busy.get()
+            && !archive_retrying.get()
     });
     let count_label = Signal::derive(move || {
         let count = items.with(|items| items.len());
@@ -738,7 +793,7 @@ pub fn CataloguePicker(
     let catalogue_view = move || view! {
         <div class="k-catalogue-toolbar">
             <BreweryDraftField id="catalogue-search" label="Search fermentables" value=Signal::from(query) on_change=search_input input_type="search"/>
-            <Button variant=ButtonVariant::Secondary on:click=move |_| begin_create.run(())>"Create fermentable"</Button>
+            <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || archive_retrying.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button>
         </div>
         <div class="k-catalogue-filters">
             <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm aria_pressed=Signal::derive(move || (filter.get() == CatalogueFilter::All).to_string()) on:click=move |_| filter.set(CatalogueFilter::All)>"All fermentables"</Button>
@@ -753,7 +808,7 @@ pub fn CataloguePicker(
                     variant=crate::components::EmptyStateVariant::Default
                     title="Make this library your own"
                     description="No matching fermentables. Add the malt or grain you use."
-                    action=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Secondary on:click=move |_| begin_create.run(())>"Create fermentable"</Button> }.into_any())
+                    action=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || archive_retrying.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button> }.into_any())
                 />
             }
         >
@@ -803,6 +858,7 @@ pub fn CataloguePicker(
             selected=selected
             amount=amount
             archive_retrying=archive_retrying
+            busy=busy
             on_edit=Callback::new(move |()| begin_edit.run(()))
             on_archive=Callback::new(move |archived| archive_entry.run(archived))
         />
@@ -811,11 +867,11 @@ pub fn CataloguePicker(
     let form_view = move || view! {
         {move || notice_view()}
         <div class="k-catalogue-create">
-            <BreweryDraftField id="library-name" label="Fermentable name" value=Signal::from(name) on_change=Callback::new(move |text| name.set(text)) hint="e.g. Local maltster pale malt"/>
-            <BreweryDraftField id="library-producer" label="Producer" value=Signal::from(producer) on_change=Callback::new(move |text| producer.set(text)) hint="Maltster or supplier (optional)"/>
-            <BreweryDraftSelect id="library-category" label="Type" value=Signal::from(category) on_change=Callback::new(move |text| category.set(text)) options=CATEGORIES.iter().map(|option| ((*option).to_owned(), (*option).to_owned())).collect()/>
-            <BreweryDraftField id="library-colour" label="Colour" value=Signal::from(colour) on_change=Callback::new(move |text| colour.set(text)) unit="EBC" numeric=true hint="e.g. 3.5"/>
-            <BreweryDraftField id="library-yield" label="Potential yield" value=Signal::from(yield_percent) on_change=Callback::new(move |text| yield_percent.set(text)) unit="%" numeric=true hint="Use the extract yield from the supplier's specification."/>
+            <BreweryDraftField id="library-name" label="Fermentable name" value=Signal::from(name) on_change=Callback::new(move |text| name.set(text)) hint="e.g. Local maltster pale malt" disabled=busy.get()||retrying.get()/>
+            <BreweryDraftField id="library-producer" label="Producer" value=Signal::from(producer) on_change=Callback::new(move |text| producer.set(text)) hint="Maltster or supplier (optional)" disabled=busy.get()||retrying.get()/>
+            <BreweryDraftSelect id="library-category" label="Type" value=Signal::from(category) on_change=Callback::new(move |text| category.set(text)) options=CATEGORIES.iter().map(|option| ((*option).to_owned(), (*option).to_owned())).collect() disabled=busy.get()||retrying.get()/>
+            <BreweryDraftField id="library-colour" label="Colour" value=Signal::from(colour) on_change=Callback::new(move |text| colour.set(text)) unit="EBC" numeric=true hint="e.g. 3.5" disabled=busy.get()||retrying.get()/>
+            <BreweryDraftField id="library-yield" label="Potential yield" value=Signal::from(yield_percent) on_change=Callback::new(move |text| yield_percent.set(text)) unit="%" numeric=true hint="Use the extract yield from the supplier's specification." disabled=busy.get()||retrying.get()/>
         </div>
         <p class="note-caption">"Stored in your workspace's ingredient library. It will not modify the starter catalogue."</p>
     };
@@ -910,12 +966,13 @@ mod tests {
         entry
     }
 
-    fn render_selection(entry: Option<IngredientEntry>, retrying: bool) -> String {
+    fn render_selection(entry: Option<IngredientEntry>, retrying: bool, busy: bool) -> String {
         let owner = Owner::new();
         owner.with(|| {
             let selected = RwSignal::new(entry);
             let amount = RwSignal::new("4.5".to_owned());
             let archive_retrying = RwSignal::new(retrying);
+            let busy = RwSignal::new(busy);
             view! {
                 <BreweryDialog
                     id="ingredient-picker-test"
@@ -928,6 +985,7 @@ mod tests {
                         selected=selected
                         amount=amount
                         archive_retrying=archive_retrying
+                        busy=busy
                         on_edit=Callback::new(move |()| {})
                         on_archive=Callback::new(move |_| {})
                     />
@@ -1001,7 +1059,7 @@ mod tests {
 
     #[test]
     fn composed_picker_renders_real_management_actions_by_scope_and_archive_state() {
-        let workspace = render_selection(Some(workspace_entry()), false);
+        let workspace = render_selection(Some(workspace_entry()), false, false);
         assert!(workspace.contains("Build your grain bill"));
         assert!(workspace.contains("Edit library entry"));
         assert!(workspace.contains("Archive"));
@@ -1009,7 +1067,7 @@ mod tests {
         assert!(!button_is_disabled(&workspace, "Edit library entry"));
 
         // The public starter catalogue is read-only: no library management.
-        let starter = render_selection(Some(starter_entry()), false);
+        let starter = render_selection(Some(starter_entry()), false, false);
         assert!(!starter.contains("Edit library entry"));
         assert!(!starter.contains("Archive"));
         assert!(!starter.contains("Restore"));
@@ -1018,7 +1076,7 @@ mod tests {
         // archived again until the restore commits.
         let mut archived = workspace_entry();
         archived.archived = true;
-        let archived_html = render_selection(Some(archived), false);
+        let archived_html = render_selection(Some(archived), false, false);
         assert!(archived_html.contains("Edit library entry"));
         assert!(button_is_disabled(&archived_html, "Edit library entry"));
         assert!(archived_html.contains("Restore"));
@@ -1027,8 +1085,12 @@ mod tests {
 
         // An uncertain archive outcome retains an enabled retry action; only
         // an in-flight request disables it.
-        let retrying = render_selection(Some(workspace_entry()), true);
+        let retrying = render_selection(Some(workspace_entry()), true, false);
         assert!(retrying.contains("Retry previous request"));
         assert!(!button_is_disabled(&retrying, "Retry previous request"));
+
+        let busy = render_selection(Some(workspace_entry()), false, true);
+        assert!(busy.contains("Archive"));
+        assert!(button_is_disabled(&busy, "Archive"));
     }
 }

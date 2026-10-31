@@ -590,6 +590,9 @@ async fn resolve_one(
     let Some(version) = source.version else {
         return Ok(false);
     };
+    let Ok(version) = i64::try_from(version) else {
+        return Ok(false);
+    };
     if version < 1 {
         return Ok(false);
     }
@@ -605,7 +608,7 @@ async fn resolve_one(
     if entry.scope == CatalogueScope::Workspace && entry.workspace_id.as_deref() != Some(workspace) {
         return Ok(false);
     }
-    if i64::try_from(version).is_ok_and(|version| version > entry.revision) {
+    if version > entry.revision {
         return Ok(false);
     }
     Ok(true)
