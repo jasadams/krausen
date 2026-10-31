@@ -745,7 +745,7 @@ pub fn CataloguePicker(
             <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_pressed=Signal::derive(move || (filter.get() == CatalogueFilter::Workspace).to_string()) on:click=move |_| filter.set(CatalogueFilter::Workspace)>"Your library"</Button>
             <span class="note-caption" role="status">{move || count_label.get()}</span>
         </div>
-        {notice_view()}
+        {move || notice_view()}
         <Show
             when=move || loading.get() || !items.with(|items| items.is_empty())
             fallback=move || view! {
@@ -799,7 +799,7 @@ pub fn CataloguePicker(
     };
 
     let form_view = move || view! {
-        {notice_view()}
+        {move || notice_view()}
         <div class="k-catalogue-create">
             <BreweryDraftField id="library-name" label="Fermentable name" value=Signal::from(name) on_change=Callback::new(move |text| name.set(text)) hint="e.g. Local maltster pale malt"/>
             <BreweryDraftField id="library-producer" label="Producer" value=Signal::from(producer) on_change=Callback::new(move |text| producer.set(text)) hint="Maltster or supplier (optional)"/>
