@@ -2227,7 +2227,9 @@ dependencies = [
 name = "krausen-types"
 version = "0.1.0"
 dependencies = [
+ "schemars",
  "serde",
+ "serde-value",
  "serde_json",
 ]
 

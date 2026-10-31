@@ -7,8 +7,10 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PreviewRequest {
     pub draft_generation: String,
+    pub intent: crate::request_context::OperationIntent,
     pub draft: RecipeDocumentV1,
     /// Explicit unsaved settings, never a claimed saved profile.
     pub equipment_draft: EquipmentSettingsV1,
@@ -44,6 +46,18 @@ pub enum PreviewOutcome {
     Preview(Preview),
     UnresolvedProfile,
     UnresolvedStyle,
+    Forbidden,
+    ContextChanged,
+    Invalid,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StyleListOutcome {
+    Styles(Vec<crate::brewery::StyleReference>),
+    Forbidden,
+    ContextChanged,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,4 +110,46 @@ pub struct CalculationContext {
     pub native_schema_version: u32,
     pub result_schema_version: u32,
     pub style: Option<StyleRanges>,
+}
+
+/// Encode the transport envelope without allowing JSON to turn NaN/Infinity
+/// into null, which would otherwise change Invalid into Incomplete.
+pub fn checked_request_json(request: &PreviewRequest) -> Result<String, ()> {
+    fn finite(v: &serde_value::Value) -> bool {
+        use serde_value::Value as V;
+        match v {
+            V::F32(n) => n.is_finite(),
+            V::F64(n) => n.is_finite(),
+            V::Option(Some(v)) | V::Newtype(v) => finite(v),
+            V::Seq(values) => values.iter().all(finite),
+            V::Map(values) => values.iter().all(|(k, v)| finite(k) && finite(v)),
+            _ => true,
+        }
+    }
+    let value = serde_value::to_value(request).map_err(|_| ())?;
+    if !finite(&value) {
+        return Err(());
+    }
+    serde_json::to_string(request).map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn preview_encoding_rejects_nonfinite_instead_of_replacing_it_with_null() {
+        let mut request = PreviewRequest {
+            draft_generation: "1".into(),
+            intent: crate::request_context::OperationIntent {
+                account_id: "a".into(),
+                workspace_id: "w".into(),
+            },
+            draft: RecipeDocumentV1::default(),
+            equipment_draft: EquipmentSettingsV1::default(),
+        };
+        request.draft.batch_size_l = Some(f64::NAN);
+        assert!(checked_request_json(&request).is_err());
+        request.draft.batch_size_l = None;
+        assert!(checked_request_json(&request).is_ok());
+    }
 }

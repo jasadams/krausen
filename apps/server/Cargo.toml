@@ -11,7 +11,7 @@ path = "src/main.rs"
 krausen-core = { workspace = true }
 krausen-app = { workspace = true }
 krausen-auth = { workspace = true }
-krausen-types = { workspace = true }
+krausen-types = { workspace = true, features = ["schema"] }
 krausen-ui = { workspace = true, features = ["ssr"] }
 leptos = "0.8"
 leptos_axum = "0.8"

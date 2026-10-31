@@ -37,12 +37,26 @@ pub const RECIPE_IMPORT: Operation = Operation {
     input_contract: "legacy-authoring.v1",
     output_contract: "legacy-authoring-unavailable.v1",
 };
+pub const FORMULATION_PREVIEW: Operation = Operation {
+    id: "formulation.preview.v1",
+    mcp_tool: "formulation_preview",
+    input_contract: "formulation-preview-request.v1",
+    output_contract: "PreviewOutcome",
+};
+pub const STYLE_LIST: Operation = Operation {
+    id: "formulation.styles.v1",
+    mcp_tool: "formulation_styles",
+    input_contract: "formulation-style-query.v1",
+    output_contract: "StyleListOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     WORKSPACE_GET,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,
     RECIPE_CREATE,
     RECIPE_IMPORT,
+    FORMULATION_PREVIEW,
+    STYLE_LIST,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

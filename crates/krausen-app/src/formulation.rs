@@ -38,6 +38,7 @@ pub async fn preview(
 ) -> Result<PreviewOutcome, Error> {
     let mut tx = pool.begin_write().await?;
     authorize_workspace(&mut tx, actor).await?;
+    crate::check_intent(actor, &request.intent)?;
     if request.draft.equipment_profile_id.is_some() {
         return Ok(PreviewOutcome::UnresolvedProfile);
     }
@@ -124,10 +125,40 @@ pub async fn preview(
 pub async fn list_styles(
     pool: &DbPool,
     actor: &ActorContext,
+    intent: &krausen_types::request_context::OperationIntent,
 ) -> Result<Vec<krausen_types::brewery::StyleReference>, Error> {
     let mut tx = pool.begin_write().await?;
     authorize_workspace(&mut tx, actor).await?;
+    crate::check_intent(actor, intent)?;
     let styles = crate::style_reference::identities();
     tx.commit().await?;
     Ok(styles)
+}
+
+/// Shared sanitized result mapping for both adapters.
+pub fn project_preview(result: Result<PreviewOutcome, Error>) -> PreviewOutcome {
+    match result {
+        Ok(outcome) => outcome,
+        Err(Error::Forbidden) => PreviewOutcome::Forbidden,
+        Err(Error::ContextChanged) => PreviewOutcome::ContextChanged,
+        Err(Error::Invalid(_)) => PreviewOutcome::Invalid,
+        Err(error) => {
+            tracing::warn!(%error, "formulation preview unavailable");
+            PreviewOutcome::Unavailable
+        }
+    }
+}
+pub fn project_styles(
+    result: Result<Vec<krausen_types::brewery::StyleReference>, Error>,
+) -> krausen_types::formulation::StyleListOutcome {
+    use krausen_types::formulation::StyleListOutcome;
+    match result {
+        Ok(styles) => StyleListOutcome::Styles(styles),
+        Err(Error::Forbidden) => StyleListOutcome::Forbidden,
+        Err(Error::ContextChanged) => StyleListOutcome::ContextChanged,
+        Err(error) => {
+            tracing::warn!(%error, "style list unavailable");
+            StyleListOutcome::Unavailable
+        }
+    }
 }

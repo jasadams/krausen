@@ -6,6 +6,11 @@ edition = "2024"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde-value = "0.7"
+schemars = { version = "1", optional = true }
 
 [lints]
 workspace = true
+
+[features]
+schema = ["dep:schemars"]

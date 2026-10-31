@@ -39,6 +39,10 @@ fn request() -> PreviewRequest {
     e.grain_absorption_l_per_kg = Some(0.8);
     PreviewRequest {
         draft_generation: "gen-1".into(),
+        intent: krausen_types::request_context::OperationIntent {
+            account_id: String::new(),
+            workspace_id: String::new(),
+        },
         draft: d,
         equipment_draft: e,
     }
@@ -63,16 +67,30 @@ async fn exercise(db: DbPool) {
         &ws,
         &user
     );
+    let credential = format!("c-{id}");
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+        &credential,
+        &user,
+        4102444800_i64
+    );
     let actor = ActorContext {
         actor_id: user,
         workspace_id: ws,
+        credential_id: credential,
+        access_expires_at: 4102444800,
     };
-    let choices = krausen_app::formulation::list_styles(&db, &actor)
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id: actor.actor_id.clone(),
+        workspace_id: actor.workspace_id.clone(),
+    };
+    let choices = krausen_app::formulation::list_styles(&db, &actor, &intent)
         .await
         .unwrap();
     assert_eq!(choices.len(), 3);
     assert_eq!(choices[0].style_id.as_deref(), Some("4A"));
-    let req = request();
+    let mut req = request();
+    req.intent = intent.clone();
     let PreviewOutcome::Preview(first) = preview(&db, &actor, req.clone()).await.unwrap() else {
         panic!("preview")
     };
@@ -95,12 +113,29 @@ async fn exercise(db: DbPool) {
     let other_actor = ActorContext {
         actor_id: actor.actor_id.clone(),
         workspace_id: other_ws.clone(),
+        ..actor.clone()
     };
-    let PreviewOutcome::Preview(other) = preview(&db, &other_actor, req.clone()).await.unwrap()
+    let mut other_request = req.clone();
+    other_request.intent.workspace_id = other_ws.clone();
+    let PreviewOutcome::Preview(other) = preview(&db, &other_actor, other_request).await.unwrap()
     else {
         panic!("preview")
     };
     assert_ne!(first.context_digest, other.context_digest);
+    assert!(matches!(
+        preview(&db, &other_actor, req.clone()).await,
+        Err(Error::ContextChanged)
+    ));
+    assert!(matches!(
+        krausen_app::formulation::list_styles(&db, &other_actor, &intent).await,
+        Err(Error::ContextChanged)
+    ));
+    let mut stale_account = req.clone();
+    stale_account.intent.account_id = "another-account".into();
+    assert!(matches!(
+        preview(&db, &actor, stale_account).await,
+        Err(Error::ContextChanged)
+    ));
     assert_eq!(other.context.unwrap().workspace_id, other_ws);
     assert!(
         (first.targets.mash_water_l.unwrap()
@@ -260,9 +295,10 @@ async fn exercise(db: DbPool) {
     let stranger = ActorContext {
         actor_id: "stranger".into(),
         workspace_id: actor.workspace_id.clone(),
+        ..actor.clone()
     };
     assert!(matches!(
-        krausen_app::formulation::list_styles(&db, &stranger).await,
+        krausen_app::formulation::list_styles(&db, &stranger, &intent).await,
         Err(Error::Forbidden)
     ));
     assert!(matches!(
