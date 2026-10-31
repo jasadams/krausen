@@ -283,8 +283,18 @@ pub const RECIPE_ARCHIVE: Operation = Operation {
     input_contract: "ArchiveRecipe",
     output_contract: "LibraryOutcome",
 };
-pub const SECURITY_STATUS: Operation = Operation { id:"account.security.status.v1",mcp_tool:"account_security_status",input_contract:"empty.v1",output_contract:"security-status.v1" };
-pub const PASSKEYS_LIST: Operation = Operation { id:"account.passkeys.list.v1",mcp_tool:"account_passkeys",input_contract:"empty.v1",output_contract:"passkey-summaries.v1" };
+pub const SECURITY_STATUS: Operation = Operation {
+    id: "account.security.status.v1",
+    mcp_tool: "account_security_status",
+    input_contract: "empty.v1",
+    output_contract: "security-status.v1",
+};
+pub const PASSKEYS_LIST: Operation = Operation {
+    id: "account.passkeys.list.v1",
+    mcp_tool: "account_passkeys",
+    input_contract: "empty.v1",
+    output_contract: "passkey-summaries.v1",
+};
 pub const PASSWORD_SET: Operation = Operation {
     id: "account.password.set.v1",
     mcp_tool: "account_password_set",
