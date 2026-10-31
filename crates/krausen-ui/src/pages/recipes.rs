@@ -133,12 +133,17 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         if !context_valid.get() {
             return;
         }
+        history_generation.update(|n| *n += 1);
         history.set(None);
         load.run(None);
     });
     let show_history = Callback::new(
         move |(id, name, cursor): (String, String, Option<String>)| {
             let append = cursor.is_some();
+            if !append {
+                history_generation.update(|n| *n += 1);
+            }
+            let sequence = history_generation.get_untracked();
             let query = HistoryQuery {
                 intent: intent.get_value(),
                 recipe_id: id.clone(),
