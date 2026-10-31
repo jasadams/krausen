@@ -302,9 +302,14 @@ pub fn CataloguePicker(
     let begin_create = Callback::new(move |()| {
         notice.set(None);
         clear_form();
-        let new_entry_id = uuid::Uuid::new_v4().to_string();
+        let Some(new_entry_id) = crate::utils::request_id::new_request_id() else {
+            return;
+        };
+        let Some(new_save_request_id) = crate::utils::request_id::new_request_id() else {
+            return;
+        };
         entry_id.set(Some(new_entry_id));
-        request_id.set(Some(uuid::Uuid::new_v4().to_string()));
+        request_id.set(Some(new_save_request_id));
         view.set(PickerView::Create);
     });
 
@@ -335,8 +340,11 @@ pub fn CataloguePicker(
                 .map(|value| format!("{}", value * 100.0))
                 .unwrap_or_default(),
         );
+        let Some(edit_request_id) = crate::utils::request_id::new_request_id() else {
+            return;
+        };
         entry_id.set(Some(entry.entry_id.clone()));
-        request_id.set(Some(uuid::Uuid::new_v4().to_string()));
+        request_id.set(Some(edit_request_id));
         retrying.set(false);
         edit_target.set(Some(entry));
         view.set(PickerView::Edit);
@@ -500,7 +508,7 @@ pub fn CataloguePicker(
                     if editing.is_some() {
                         // Committed: rotate the request identity, keep the
                         // edited entry current for a further guarded change.
-                        request_id.set(Some(uuid::Uuid::new_v4().to_string()));
+                        request_id.set(crate::utils::request_id::new_request_id());
                         selected.set(Some(entry.clone()));
                         edit_target.set(Some(entry.clone()));
                         archive_request_id.set(None);
@@ -520,14 +528,18 @@ pub fn CataloguePicker(
                     // The command committed earlier; its confirmation is gone.
                     // Discard the identity and show the fresh library state.
                     retrying.set(false);
-                    notice.set(terminal_notice(&outcome));
+                    notice.set(terminal_notice(
+                        match &outcome { Ok(value) => value, Err(_) => unreachable!() },
+                    ));
                     clear_form();
                     view.set(PickerView::Catalogue);
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::RequestIdentityConflict) => {
                     retrying.set(false);
-                    notice.set(terminal_notice(&outcome));
+                    notice.set(terminal_notice(
+                        match &outcome { Ok(value) => value, Err(_) => unreachable!() },
+                    ));
                     clear_form();
                     view.set(PickerView::Catalogue);
                     load_page.run(None);
@@ -565,7 +577,9 @@ pub fn CataloguePicker(
         let request_id = match archive_request_id.get_untracked() {
             Some(id) => id,
             None => {
-                let id = uuid::Uuid::new_v4().to_string();
+                let Some(id) = crate::utils::request_id::new_request_id() else {
+                    return;
+                };
                 archive_request_id.set(Some(id.clone()));
                 id
             }
@@ -604,7 +618,9 @@ pub fn CataloguePicker(
                 | Ok(IngredientOutcome::RequestIdentityConflict) => {
                     archive_retrying.set(false);
                     archive_request_id.set(None);
-                    notice.set(terminal_notice(&outcome));
+                    notice.set(terminal_notice(
+                        match &outcome { Ok(value) => value, Err(_) => unreachable!() },
+                    ));
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
@@ -746,11 +762,11 @@ pub fn CataloguePicker(
         {move || selected_workspace.get().then(|| view! {
             <div class="k-catalogue-manage">
                 <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || selected_archived.get()) on:click=move |_| begin_edit.run(())>"Edit library entry"</Button>
-                {move || if selected_archived.get() {
-                    view! { <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button> }.into_view()
-                } else {
-                    view! { <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button> }.into_view()
-                }}
+                <Show when=move || selected_archived.get() fallback=move || view! {
+                    <Button variant=ButtonVariant::GhostDestructive size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(true)>{move || if archive_retrying.get() { "Retry previous request" } else { "Archive" }}</Button>
+                }>
+                    <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm disabled=Signal::derive(move || archive_retrying.get()) on:click=move |_| archive_entry.run(false)>{move || if archive_retrying.get() { "Retry previous request" } else { "Restore" }}</Button>
+                </Show>
             </div>
         })}
         <p class="note-caption">"Specifications are copied into your recipe, so later library changes cannot change what you brewed."</p>

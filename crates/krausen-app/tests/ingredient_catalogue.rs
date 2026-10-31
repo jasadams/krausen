@@ -1058,11 +1058,13 @@ async fn exercise(db: DbPool) {
     if let Some(cursor_value) = first_archived_page.next_cursor.clone() {
         let mut replay_hidden = search(&intent_a, "", CatalogueFilter::Workspace);
         replay_hidden.cursor = Some(cursor_value.clone());
-        assert!(matches!(
-            catalogue::search(&db, &actor_a, &replay_hidden).await,
-            Err(Error::Invalid(_)),
+        assert!(
+            matches!(
+                catalogue::search(&db, &actor_a, &replay_hidden).await,
+                Err(Error::Invalid(_))
+            ),
             "cursor must bind include_archived"
-        ));
+        );
         let mut replay_shown = search(&intent_a, "", CatalogueFilter::Workspace);
         replay_shown.cursor = Some(cursor_value);
         replay_shown.include_archived = true;
