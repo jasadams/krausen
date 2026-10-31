@@ -215,7 +215,7 @@ impl ServerHandler for McpHandler {
                     ),
                 }
             }
-            "recipe_create" | "recipe.import-legacy.v1" => {
+            "recipe.create-legacy.v1" | "recipe.import-legacy.v1" => {
                 let input: LegacyAuthoring = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid recipe input", None))?;
                 let _ = input.beerxml;

@@ -392,6 +392,34 @@ async fn exercise(db: DbPool) {
         recovered.structured_content.unwrap()["source"],
         "original source"
     );
+    for tool in ["recipe_create", "recipe_import"] {
+        let valid = json!({"workspace_id":ws, "beerxml":"<RECIPES/>"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let result = modern
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(valid))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "legacy_authoring_unavailable"
+        );
+        let denied = json!({"workspace_id":"not-a-member", "beerxml":"<RECIPES/>"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let result = modern
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(denied))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "unavailable_or_forbidden"
+        );
+    }
     let request_id = uuid::Uuid::new_v4().to_string();
     let args = json!({"workspace_id": ws, "name":"SDK name", "expected_revision":0, "request_id":request_id}).as_object().unwrap().clone();
     let first = legacy
