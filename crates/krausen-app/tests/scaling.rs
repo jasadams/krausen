@@ -298,29 +298,6 @@ async fn exercise(db: DbPool) {
         ScaleApplyOutcome::RequestIdentityConflict
     );
 
-    let mut tampered = preview.accepted.clone();
-    tampered.targets.original_sg = Some(1.123456);
-    let tampered_outcome = scaling::apply(
-        &db,
-        &actor,
-        ScaleApplyRequest {
-            intent: intent.clone(),
-            recipe_id: recipe_id.clone(),
-            expected_revision: 1,
-            target_batch_size_l: 40.0,
-            accepted: tampered,
-            request_id: uuid::Uuid::new_v4().to_string(),
-        },
-    )
-    .await;
-    match tampered_outcome {
-        ScaleApplyOutcome::ContextConflict { fresh } => {
-            assert_eq!(fresh.source_revision, 2);
-            assert_eq!(fresh.factor, 1.0);
-        }
-        other => panic!("expected context conflict, got {other:?}"),
-    }
-
     let unchanged = match scaling::preview(
         &db,
         &actor,
@@ -336,6 +313,7 @@ async fn exercise(db: DbPool) {
         other => panic!("preview unchanged: {other:?}"),
     };
     assert_eq!(unchanged.factor, 1.0);
+    let accepted_at_head_two = unchanged.accepted.clone();
     assert_eq!(
         scaling::apply(
             &db,
@@ -355,6 +333,30 @@ async fn exercise(db: DbPool) {
             revision: 2,
         }
     );
+
+    // Same accepted digest, tampered component: head passes, context compare fails.
+    let mut tampered = accepted_at_head_two;
+    tampered.targets.original_sg = Some(1.123456);
+    let tampered_outcome = scaling::apply(
+        &db,
+        &actor,
+        ScaleApplyRequest {
+            intent: intent.clone(),
+            recipe_id: recipe_id.clone(),
+            expected_revision: 2,
+            target_batch_size_l: 40.0,
+            accepted: tampered,
+            request_id: uuid::Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    match tampered_outcome {
+        ScaleApplyOutcome::ContextConflict { fresh } => {
+            assert_eq!(fresh.source_revision, 2);
+            assert_eq!(fresh.factor, 1.0);
+        }
+        other => panic!("expected context conflict, got {other:?}"),
+    }
 
     let duplicate = scaling::duplicate(
         &db,
