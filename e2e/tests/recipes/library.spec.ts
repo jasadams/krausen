@@ -42,3 +42,30 @@ test('library controls remain usable at narrow width and by keyboard', async ({ 
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Show', { exact: true })).toBeFocused();
 });
+
+
+test('library navigation uses the shared dirty-editor guard', async ({ page }) => {
+  const title = `Guarded library recipe ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  const recipes = page.getByRole('link', { name: 'Recipes', exact: true }).first();
+  await recipes.click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
+  await recipes.click();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await page.getByLabel('Search recipes').fill(title);
+  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await page.getByRole('link', { name: 'Open recipe' }).first().click();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${title} discarded`);
+  await recipes.click();
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await page.getByLabel('Search recipes').fill(title);
+  await page.getByRole('link', { name: 'Open recipe' }).first().click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
+});
