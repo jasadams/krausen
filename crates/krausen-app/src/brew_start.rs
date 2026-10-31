@@ -12,7 +12,7 @@ use krausen_core::{DbPool, DbTx, canonical_json};
 use krausen_types::{
     brew::{StartBrewOutcome, StartBrewRequest},
     brewery::{BrewPlanV1, BrewStatusV1},
-    formulation::{Preview, PreviewOutcome, PreviewRequest},
+    formulation::{PreviewOutcome, PreviewRequest},
     request_context::OperationIntent,
 };
 use uuid::Uuid;
@@ -75,8 +75,10 @@ async fn start_inner(
         request.selected_recipe_revision,
         request.expected_head_revision,
         &request.expected_calculation_context,
-    ))?;
-    let payload_digest = canonical_json::sha256(&payload)?;
+    ))
+    .map_err(|_| Error::Invalid("start request"))?;
+    let payload_digest =
+        canonical_json::sha256(&payload).map_err(|_| Error::Invalid("start request"))?;
     let key = RequestIdentity {
         actor,
         operation: "brew.start.v1",
