@@ -78,6 +78,11 @@ as fully mashed grain.
 
 Theoretical potential is `yield_fraction × 385.674500456` points·L/kg, preserving
 the current boundary conversion `46.214 PPG × 8.345404`. PPG is not native storage.
+The native V1 validation vocabulary uses `grain` with `mash`, and `extract` or
+`sugar` with `boil`; boil `time_minutes` is remaining boil time. Hop stages are
+`boil`, `whirlpool`, and `dry_hop`. Other source strings remain preserved and
+incomplete until an explicit mapping is accepted; validation does not reinterpret
+BeerXML stage or kind strings implicitly.
 Grain extract reaching the kettle is `kg × potential × mash_efficiency`;
 extract/sugar contributes `kg × potential`. Efficiency is the fraction of mashed
 grain's theoretical extract reaching the kettle. Homogeneous transfer losses
@@ -140,6 +145,8 @@ all-fermentables-as-grain behavior must be corrected in KRA-9.
 
 One explicit apparent attenuation applies to the complete wort; V1 does not
 infer separate sugar/yeast fermentabilities. `FG = 1 + (OG - 1) × (1 - attenuation)`.
+`ProcessV1.apparent_attenuation_fraction` owns this value independently of yeast
+catalogue estimates. Missing is incomplete; legacy documents deserialize it as absent.
 `ABV% = 76.08 × (OG - FG) / (1.775 - OG) × (FG / 0.794)`. V1 requires
 `1 ≤ FG ≤ OG < 1.775`; formula-domain failures or non-finite outputs are Invalid.
 These are estimates, not measured alcohol.
