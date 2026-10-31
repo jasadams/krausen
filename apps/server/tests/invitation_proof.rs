@@ -1080,6 +1080,116 @@ async fn exercise(db: DbPool) {
         .await
         .is_err()
     );
+    let ownership_race_ws = format!("owner-race-{suffix}");
+    run!(
+        "INSERT INTO workspaces (workspace_id,owner_user_id,status) VALUES ($1,$2,'active')",
+        &ownership_race_ws,
+        &owner
+    );
+    run!(
+        "INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ($1,$2,'workspace_admin',TRUE)",
+        &ownership_race_ws,
+        &owner
+    );
+    run!(
+        "INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ($1,$2,'workspace_user',TRUE)",
+        &ownership_race_ws,
+        &wrong.actor_id
+    );
+    let race_owner = ActorContext {
+        workspace_id: ownership_race_ws.clone(),
+        ..owner_actor.clone()
+    };
+    let race_target = ActorContext {
+        workspace_id: ownership_race_ws.clone(),
+        ..wrong.clone()
+    };
+    let race_transfer = krausen_app::ownership::start(
+        &db,
+        &race_owner,
+        &race_target.actor_id,
+        0,
+        uuid::Uuid::new_v4(),
+        true,
+    )
+    .await
+    .unwrap();
+    let pending_response = krausen_app::ownership::begin_response(
+        &db,
+        &race_target,
+        &race_transfer.transfer_id,
+        true,
+        race_transfer.revision,
+        uuid::Uuid::new_v4(),
+        true,
+    )
+    .await
+    .unwrap();
+    let response_proof: Proof = krausen_core::db_fetch_optional!(
+        &db,
+        Proof,
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1",
+        &pending_response.interaction_id
+    )
+    .unwrap()
+    .unwrap();
+    let response_code = invitation::delivery_token(secret, &response_proof).unwrap();
+    if db.is_postgres() {
+        run!(
+            "CREATE OR REPLACE FUNCTION test_fail_owner_transfer() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='accepted' THEN RAISE EXCEPTION 'test rollback'; END IF; RETURN NEW; END $$"
+        );
+        run!(
+            "CREATE TRIGGER test_fail_owner_transfer BEFORE UPDATE ON ownership_transfers FOR EACH ROW EXECUTE FUNCTION test_fail_owner_transfer()"
+        );
+    } else {
+        run!(
+            "CREATE TRIGGER test_fail_owner_transfer BEFORE UPDATE ON ownership_transfers WHEN NEW.status='accepted' BEGIN SELECT RAISE(ABORT,'test rollback'); END"
+        );
+    }
+    let completion_request = uuid::Uuid::new_v4();
+    assert!(
+        invitation::complete(
+            &db,
+            &race_target,
+            &pending_response.interaction_id,
+            &response_code,
+            completion_request,
+            secret
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        krausen_app::account::context(&db, &race_owner)
+            .await
+            .unwrap()
+            .is_owner
+    );
+    if db.is_postgres() {
+        run!("DROP TRIGGER test_fail_owner_transfer ON ownership_transfers");
+        run!("DROP FUNCTION test_fail_owner_transfer()");
+    } else {
+        run!("DROP TRIGGER test_fail_owner_transfer");
+    }
+    let (accepted, cancelled) = tokio::join!(
+        invitation::complete(
+            &db,
+            &race_target,
+            &pending_response.interaction_id,
+            &response_code,
+            completion_request,
+            secret
+        ),
+        krausen_app::ownership::cancel(
+            &db,
+            &race_owner,
+            &race_transfer.transfer_id,
+            race_transfer.revision,
+            uuid::Uuid::new_v4()
+        )
+    );
+    assert_ne!(accepted.is_ok(), cancelled.is_ok());
+
     let transfer_revision = krausen_app::team::members(&db, &owner_actor)
         .await
         .unwrap()
