@@ -13,6 +13,7 @@ test('recipe library searches, shows retained history, archives and restores', a
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
+  await expect(page.getByRole('link', { name: 'Import BeerXML' })).toHaveAttribute('href', '/beerxml');
   await page.getByLabel('Search recipes').fill(title);
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
   await page.getByRole('button', { name: `History for ${title}` }).click();
