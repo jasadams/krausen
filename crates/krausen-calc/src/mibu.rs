@@ -99,7 +99,7 @@ struct Trajectory {
 
 impl Trajectory {
     /// Advance the wort temperature by one step.
-    fn step(&self, temp_c: f64, elapsed: f64) -> f64 {
+    fn step(&self, temp_c: f64, elapsed: f64, step_minutes: f64) -> f64 {
         let natural_asymptote = self.boil_temp_c - NATURAL_COOLING_AMPLITUDE_C;
 
         // During the stand the wort sits in the kettle. If the brewer holds a
@@ -110,23 +110,25 @@ impl Trajectory {
             {
                 return hold;
             }
-            return decay_toward(temp_c, natural_asymptote, self.natural_rate);
+            return decay_toward_step(temp_c, natural_asymptote, self.natural_rate, step_minutes);
         }
 
         match self.chilling {
             // Wort keeps sitting in the kettle, losing heat to the room only.
-            Chilling::None => decay_toward(temp_c, natural_asymptote, self.natural_rate),
+            Chilling::None => {
+                decay_toward_step(temp_c, natural_asymptote, self.natural_rate, step_minutes)
+            }
 
             Chilling::Forced {
                 rate_per_min,
                 plateau_c,
-            } => decay_toward(temp_c, plateau_c, rate_per_min),
+            } => decay_toward_step(temp_c, plateau_c, rate_per_min, step_minutes),
 
             // The kettle stays hot; wort is chilled as it leaves. Whatever is
             // still in the kettle carries on cooling naturally, and the
             // transfer sets how long that lasts.
             Chilling::Counterflow { .. } => {
-                decay_toward(temp_c, natural_asymptote, self.natural_rate)
+                decay_toward_step(temp_c, natural_asymptote, self.natural_rate, step_minutes)
             }
         }
     }
@@ -148,9 +150,9 @@ impl Trajectory {
 /// `rate_per_min * STEP_MINUTES` would overshoot the asymptote and oscillate
 /// — physically impossible, since wort cannot cool past what is cooling it —
 /// so the step is clamped to land on the asymptote instead.
-fn decay_toward(temp_c: f64, asymptote_c: f64, rate_per_min: f64) -> f64 {
+fn decay_toward_step(temp_c: f64, asymptote_c: f64, rate_per_min: f64, step_minutes: f64) -> f64 {
     let above = temp_c - asymptote_c;
-    let fraction = (rate_per_min * STEP_MINUTES).clamp(0.0, 1.0);
+    let fraction = (rate_per_min * step_minutes).clamp(0.0, 1.0);
     asymptote_c + above * (1.0 - fraction)
 }
 
@@ -169,6 +171,24 @@ pub(crate) fn post_flameout_utilisation(
     stand_minutes: f64,
     hold_temp_c: Option<f64>,
     remaining_alpha: &[f64],
+) -> Vec<f64> {
+    post_flameout_with_step(
+        equipment,
+        post_boil_l,
+        stand_minutes,
+        hold_temp_c,
+        remaining_alpha,
+        STEP_MINUTES,
+    )
+}
+
+fn post_flameout_with_step(
+    equipment: &Equipment,
+    post_boil_l: f64,
+    stand_minutes: f64,
+    hold_temp_c: Option<f64>,
+    remaining_alpha: &[f64],
+    step_minutes: f64,
 ) -> Vec<f64> {
     let mut accumulated = vec![0.0; remaining_alpha.len()];
     if remaining_alpha.is_empty() {
@@ -198,13 +218,13 @@ pub(crate) fn post_flameout_utilisation(
         // Alpha acid isomerises at Tinseth's rate; only the share that does so
         // while the wort is hot enough counts toward bitterness.
         for (acc, aa) in accumulated.iter_mut().zip(alpha.iter_mut()) {
-            let isomerised = *aa * AA_DECAY_PER_MIN * STEP_MINUTES;
+            let isomerised = *aa * AA_DECAY_PER_MIN * step_minutes;
             *acc += isomerised * urel / TINSETH_DIVISOR;
             *aa -= isomerised;
         }
 
-        temp_c = trajectory.step(temp_c, elapsed);
-        elapsed += STEP_MINUTES;
+        temp_c = trajectory.step(temp_c, elapsed, step_minutes);
+        elapsed += step_minutes;
     }
 
     accumulated
@@ -214,6 +234,19 @@ pub(crate) fn post_flameout_utilisation(
 mod tests {
     use super::*;
     use crate::equipment::Equipment;
+
+    #[test]
+    fn post_flameout_integration_converges_at_half_step() {
+        let mut e = equipment();
+        e.chilling = Chilling::Forced {
+            rate_per_min: 0.3,
+            plateau_c: 20.0,
+        };
+        let coarse = post_flameout_with_step(&e, 22.0, 20.0, Some(80.0), &[1.0], 0.01)[0];
+        let fine = post_flameout_with_step(&e, 22.0, 20.0, Some(80.0), &[1.0], 0.005)[0];
+        // 50 g at 10% alpha, 20 L and a conservative bigness factor 1.65.
+        assert!((coarse - fine).abs() * 50.0 * 0.1 * 1000.0 / 20.0 * 1.65 < 0.05);
+    }
 
     fn equipment() -> Equipment {
         Equipment {
@@ -309,8 +342,8 @@ mod tests {
     fn decay_cannot_overshoot_its_asymptote() {
         // A chilling rate fast enough to overshoot in one Euler step would
         // otherwise drive the wort below the thing cooling it.
-        assert!((decay_toward(100.0, 20.0, 1000.0) - 20.0).abs() < 1e-12);
-        assert!(decay_toward(100.0, 20.0, 1000.0) >= 20.0);
+        assert!((decay_toward_step(100.0, 20.0, 1000.0, STEP_MINUTES) - 20.0).abs() < 1e-12);
+        assert!(decay_toward_step(100.0, 20.0, 1000.0, STEP_MINUTES) >= 20.0);
     }
 
     #[test]

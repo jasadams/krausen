@@ -285,3 +285,5 @@ fn validate(recipe: &Recipe, equipment: &Equipment) -> Result<(), CalcError> {
     }
     Ok(())
 }
+
+pub mod formulation;

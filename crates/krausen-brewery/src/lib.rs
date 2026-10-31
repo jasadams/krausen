@@ -13,3 +13,5 @@ pub mod native_store;
 pub use recipe_service::{Recipe, RecipeSource, RecipeSummary};
 
 pub mod validation;
+
+pub mod mapping;

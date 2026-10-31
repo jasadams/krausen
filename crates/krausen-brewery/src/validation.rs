@@ -456,7 +456,10 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
     v.number(
         "process.whirlpool_minutes",
         recipe.process.whirlpool_minutes,
-        false,
+        recipe
+            .hops
+            .iter()
+            .any(|row| matches!(row.stage.as_str(), "boil" | "whirlpool")),
         Rule::Nonnegative,
         IBU,
     );
