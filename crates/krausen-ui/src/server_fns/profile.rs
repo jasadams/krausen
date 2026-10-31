@@ -6,7 +6,9 @@
 
 use leptos::prelude::*;
 
-use crate::types::{InvitationData, InvitationDataList, ProfileData};
+#[cfg(feature = "ssr")]
+use crate::types::InvitationData;
+use crate::types::{InvitationDataList, ProfileData};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read operations (called on page load via Resource)

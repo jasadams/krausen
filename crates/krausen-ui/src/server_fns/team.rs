@@ -10,9 +10,9 @@
 
 use leptos::prelude::*;
 
-use crate::types::{
-    OwnershipTransferData, OwnershipTransferList, TeamInvitation, TeamInvitationList, TeamMember,
-};
+#[cfg(feature = "ssr")]
+use crate::types::{OwnershipTransferData, TeamInvitation};
+use crate::types::{OwnershipTransferList, TeamInvitationList, TeamMember};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (server-only)
