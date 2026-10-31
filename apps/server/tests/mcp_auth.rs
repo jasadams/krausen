@@ -1417,6 +1417,489 @@ async fn exercise(db: DbPool) {
         profile.structured_content.unwrap()["user_id"],
         principal.user_id
     );
+    let profile_revision = krausen_app::account::profile(&db, &browser_actor)
+        .await
+        .unwrap()
+        .revision;
+    let profile_request = uuid::Uuid::new_v4().to_string();
+    let profile_change = json!({"field":"theme","theme":"dark"});
+    let profile_path = <krausen_ui::server_fns::profile::UpdateProfile as ServerFn>::PATH;
+    let browser_profile = reqwest::Client::new()
+        .post(format!("{base}{profile_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("change_json", profile_change.to_string()),
+            ("expected_revision", profile_revision.to_string()),
+            ("request_id", profile_request.clone()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_profile.status().is_success());
+    let browser_profile: serde_json::Value = browser_profile.json().await.unwrap();
+    let mcp_profile = modern.call_tool(CallToolRequestParams::new("account_profile_save").with_arguments(json!({"change":profile_change,"expected_revision":profile_revision,"request_id":profile_request}).as_object().unwrap().clone())).await.unwrap();
+    assert_eq!(
+        mcp_profile.structured_content.unwrap()["outcome"],
+        browser_profile
+    );
+    let pending =
+        krausen_app::invitation::begin_discovery(&db, &browser_actor, uuid::Uuid::new_v4(), true)
+            .await
+            .unwrap();
+    let proof: krausen_app::invitation::Proof = krausen_core::db_fetch_optional!(
+        &db,
+        krausen_app::invitation::Proof,
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1",
+        &pending.interaction_id
+    )
+    .unwrap()
+    .unwrap();
+    let proof_token =
+        krausen_app::invitation::delivery_token(b"test-secret-at-least-32-bytes-long", &proof)
+            .unwrap();
+    let confirmation = reqwest::Client::new()
+        .post(format!("{base}/account/proof/preview"))
+        .bearer_auth(&browser.access_token)
+        .header("Origin", &base)
+        .form(&[
+            ("interaction", pending.interaction_id.as_str()),
+            ("code", proof_token.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(confirmation.status().is_success());
+    assert!(
+        confirmation
+            .text()
+            .await
+            .unwrap()
+            .contains("Verify your mailbox to review invitations")
+    );
+    let bad_origin = reqwest::Client::new()
+        .post(format!("{base}/account/proof/preview"))
+        .bearer_auth(&browser.access_token)
+        .header("Origin", "https://attacker.example")
+        .form(&[
+            ("interaction", pending.interaction_id.as_str()),
+            ("code", proof_token.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_origin.status(), reqwest::StatusCode::FORBIDDEN);
+    let confirmed = reqwest::Client::new()
+        .post(format!("{base}/account/proof"))
+        .bearer_auth(&browser.access_token)
+        .header("Origin", &base)
+        .form(&[
+            ("interaction", pending.interaction_id.as_str()),
+            ("code", proof_token.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(confirmed.status().is_success());
+    let own_user = user_service::get_user_by_id(&db, &principal.user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let extra_browser = session::create_authenticated_session(
+        &db,
+        &kv,
+        "test-secret-at-least-32-bytes-long",
+        &own_user,
+        &device,
+    )
+    .await
+    .unwrap();
+    let extra_claims = krausen_auth::jwt::validate_browser_token(
+        &extra_browser.access_token,
+        "test-secret-at-least-32-bytes-long",
+    )
+    .unwrap()
+    .claims;
+    let extra_credential = extra_claims.extra["credential_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let session_path = <krausen_ui::server_fns::security::GetSessions as ServerFn>::PATH;
+    let browser_sessions: Vec<krausen_ui::server_fns::security::SessionEntry> =
+        reqwest::Client::new()
+            .post(format!("{base}{session_path}"))
+            .bearer_auth(&browser.access_token)
+            .form(&[] as &[(&str, &str)])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert!(
+        browser_sessions
+            .iter()
+            .any(|s| s.token_id == extra_credential)
+    );
+    let sdk_sessions = modern
+        .call_tool(CallToolRequestParams::new("account_sessions"))
+        .await
+        .unwrap();
+    let password_path=<krausen_ui::server_fns::security::HasPassword as ServerFn>::PATH;
+    let browser_password:bool=reqwest::Client::new().post(format!("{base}{password_path}")).bearer_auth(&browser.access_token).form(&[] as &[(&str,&str)]).send().await.unwrap().json().await.unwrap();
+    let sdk_status=modern.call_tool(CallToolRequestParams::new("account_security_status")).await.unwrap();
+    assert_eq!(sdk_status.structured_content.unwrap()["has_password"],browser_password);
+    assert!(
+        sdk_sessions.structured_content.unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["credential_id"] == extra_credential)
+    );
+    let revoke_path = <krausen_ui::server_fns::security::RevokeSession as ServerFn>::PATH;
+    let revoke_id = uuid::Uuid::new_v4().to_string();
+    let revoked = reqwest::Client::new()
+        .post(format!("{base}{revoke_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("token_id", extra_credential.clone()),
+            ("expected_revision", "0".into()),
+            ("request_id", revoke_id.clone()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(revoked.status().is_success());
+    let revoked: serde_json::Value = revoked.json().await.unwrap();
+    let sdk_retry=modern.call_tool(CallToolRequestParams::new("account_session_revoke").with_arguments(json!({"credential_id":extra_credential,"expected_revision":0,"request_id":revoke_id}).as_object().unwrap().clone())).await.unwrap();
+    assert_eq!(sdk_retry.structured_content.unwrap()["outcome"], revoked);
+    let invalid = reqwest::Client::new()
+        .post(format!("{base}{session_path}"))
+        .bearer_auth(&extra_browser.access_token)
+        .form(&[] as &[(&str, &str)])
+        .send()
+        .await
+        .unwrap();
+    assert!(!invalid.status().is_success());
+    let target_email = format!("member-{suffix}@example.test");
+    let target = user_service::create_user(&db, &target_email, Some("Member"), true)
+        .await
+        .unwrap();
+    let target_browser = session::create_authenticated_session(
+        &db,
+        &kv,
+        "test-secret-at-least-32-bytes-long",
+        &target,
+        &device,
+    )
+    .await
+    .unwrap();
+    let target_claims = krausen_auth::jwt::validate_browser_token(
+        &target_browser.access_token,
+        "test-secret-at-least-32-bytes-long",
+    )
+    .unwrap()
+    .claims;
+    let target_credential = target_claims.extra["credential_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cross_account = modern.call_tool(CallToolRequestParams::new("account_session_revoke").with_arguments(json!({"credential_id":target_credential,"expected_revision":0,"request_id":uuid::Uuid::new_v4()}).as_object().unwrap().clone())).await.unwrap();
+    assert_eq!(cross_account.is_error, Some(true));
+    krausen_core::db_execute!(&db, "INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ($1,$2,'workspace_user',TRUE)", &ws, &target.user_id).unwrap();
+    let team_snapshot = krausen_app::team::members(&db, &browser_actor)
+        .await
+        .unwrap();
+    let team_id = uuid::Uuid::new_v4().to_string();
+    let team_path = <krausen_ui::server_fns::team::UpdateMemberRole as ServerFn>::PATH;
+    let browser_team = reqwest::Client::new()
+        .post(format!("{base}{team_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("user_id", target.user_id.clone()),
+            ("role", "admin".into()),
+            ("expected_revision", team_snapshot.revision.to_string()),
+            ("request_id", team_id.clone()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_team.status().is_success());
+    let browser_team: serde_json::Value = browser_team.json().await.unwrap();
+    let mcp_team = modern.call_tool(CallToolRequestParams::new("team_member_change").with_arguments(json!({"workspace_id":ws,"change":{"action":"set_role","user_id":target.user_id,"role":"workspace_admin"},"expected_revision":team_snapshot.revision,"request_id":team_id}).as_object().unwrap().clone())).await.unwrap();
+    assert_eq!(
+        mcp_team.structured_content.unwrap()["outcome"],
+        browser_team
+    );
+    let owner_revision = krausen_app::team::members(&db, &browser_actor)
+        .await
+        .unwrap()
+        .revision;
+    let transfer = krausen_app::ownership::start(
+        &db,
+        &browser_actor,
+        &target.user_id,
+        owner_revision,
+        uuid::Uuid::new_v4(),
+        true,
+    )
+    .await
+    .unwrap();
+    let sdk_transfer = modern
+        .call_tool(
+            CallToolRequestParams::new("ownership_get").with_arguments(
+                json!({"transfer_id":transfer.transfer_id})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        sdk_transfer.structured_content.unwrap()["transfer_id"],
+        transfer.transfer_id
+    );
+    let get_transfer_path =
+        <krausen_ui::server_fns::ownership::GetOwnershipTransfer as ServerFn>::PATH;
+    let detail = reqwest::Client::new()
+        .post(format!("{base}{get_transfer_path}"))
+        .bearer_auth(&target_browser.access_token)
+        .form(&[("transfer_id", transfer.transfer_id.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert!(detail.status().is_success());
+    let detail: serde_json::Value = detail.json().await.unwrap();
+    assert_eq!(detail["transfer_id"], transfer.transfer_id);
+    let target_actor = krausen_app::ActorContext {
+        actor_id: target.user_id.clone(),
+        workspace_id: ws.clone(),
+        credential_id: target_credential.clone(),
+        access_expires_at: target_claims.exp,
+    };
+    let confirmation = krausen_app::ownership::begin_response(
+        &db,
+        &target_actor,
+        &transfer.transfer_id,
+        true,
+        transfer.revision,
+        uuid::Uuid::new_v4(),
+        true,
+    )
+    .await
+    .unwrap();
+    let proof: krausen_app::invitation::Proof = krausen_core::db_fetch_optional!(
+        &db,
+        krausen_app::invitation::Proof,
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1",
+        &confirmation.interaction_id
+    )
+    .unwrap()
+    .unwrap();
+    let code =
+        krausen_app::invitation::delivery_token(b"test-secret-at-least-32-bytes-long", &proof)
+            .unwrap();
+    let review = reqwest::Client::new()
+        .post(format!("{base}/account/proof/preview"))
+        .bearer_auth(&target_browser.access_token)
+        .header("Origin", &base)
+        .form(&[
+            ("interaction", confirmation.interaction_id.as_str()),
+            ("code", code.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(review.status().is_success());
+    assert!(review.text().await.unwrap().contains("Accept ownership of"));
+    let complete = reqwest::Client::new()
+        .post(format!("{base}/account/proof"))
+        .bearer_auth(&target_browser.access_token)
+        .header("Origin", &base)
+        .form(&[
+            ("interaction", confirmation.interaction_id.as_str()),
+            ("code", code.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(complete.status().is_success());
+    assert!(
+        krausen_app::account::context(&db, &target_actor)
+            .await
+            .unwrap()
+            .is_owner
+    );
+    let second = user_service::create_workspace_for_user(
+        &db,
+        &principal.user_id,
+        Some("Second"),
+        &email,
+        None,
+    )
+    .await
+    .unwrap();
+    krausen_core::db_execute!(
+        &db,
+        "UPDATE workspaces SET status = 'active' WHERE workspace_id = $1",
+        &second
+    )
+    .unwrap();
+    let switch_path = <krausen_ui::server_fns::sidebar::SwitchWorkspace as ServerFn>::PATH;
+    let switch_id = uuid::Uuid::new_v4().to_string();
+    let switched = reqwest::Client::new()
+        .post(format!("{base}{switch_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("workspace_id", second.as_str()),
+            ("request_id", switch_id.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(switched.status().is_success());
+    let cookie = switched
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .map(|h| h.to_str().unwrap())
+        .find(|s| s.starts_with("access_token="))
+        .unwrap();
+    let new_token = cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("access_token=")
+        .unwrap();
+    let switched_claims =
+        krausen_auth::jwt::validate_browser_token(new_token, "test-secret-at-least-32-bytes-long")
+            .unwrap()
+            .claims;
+    assert_eq!(switched_claims.extra["workspace_id"], second);
+    assert_eq!(
+        switched_claims.extra["credential_id"],
+        claims.extra["credential_id"]
+    );
+    assert_eq!(switched_claims.exp, claims.exp);
+    let back = reqwest::Client::new()
+        .post(format!("{base}{switch_path}"))
+        .bearer_auth(new_token)
+        .form(&[
+            ("workspace_id", ws.as_str()),
+            ("request_id", uuid::Uuid::new_v4().to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(back.status().is_success());
+    let back_cookie = back
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .map(|h| h.to_str().unwrap())
+        .find(|s| s.starts_with("access_token="))
+        .unwrap();
+    let back_token = back_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("access_token=")
+        .unwrap();
+    let back_claims =
+        krausen_auth::jwt::validate_browser_token(back_token, "test-secret-at-least-32-bytes-long")
+            .unwrap()
+            .claims;
+    assert_eq!(back_claims.extra["workspace_id"], ws);
+    assert_eq!(
+        back_claims.extra["credential_id"],
+        claims.extra["credential_id"]
+    );
+    for workspace in [&ws, &second] {
+        let context = modern
+            .call_tool(
+                CallToolRequestParams::new("account_context").with_arguments(
+                    json!({"workspace_id":workspace})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            context.structured_content.unwrap()["workspace"]["workspace_id"],
+            *workspace
+        );
+    }
+    let denied_context = modern
+        .call_tool(
+            CallToolRequestParams::new("account_context").with_arguments(
+                json!({"workspace_id":"not-a-member"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_context.is_error, Some(true));
+    let denied_switch = reqwest::Client::new()
+        .post(format!("{base}{switch_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("workspace_id", "not-a-member"),
+            ("request_id", uuid::Uuid::new_v4().to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(!denied_switch.status().is_success());
+    assert!(
+        denied_switch
+            .headers()
+            .get(reqwest::header::SET_COOKIE)
+            .is_none()
+    );
+    let memberships = modern
+        .call_tool(CallToolRequestParams::new("account_workspaces"))
+        .await
+        .unwrap();
+    assert!(
+        memberships.structured_content.unwrap()["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["workspace_id"] == ws)
+    );
+    let selection_id = uuid::Uuid::new_v4().to_string();
+    let selection = json!({"workspace_id":ws,"request_id":selection_id})
+        .as_object()
+        .unwrap()
+        .clone();
+    let first = modern
+        .call_tool(
+            CallToolRequestParams::new("account_workspace_select")
+                .with_arguments(selection.clone()),
+        )
+        .await
+        .unwrap();
+    let retry = modern
+        .call_tool(CallToolRequestParams::new("account_workspace_select").with_arguments(selection))
+        .await
+        .unwrap();
+    assert_eq!(first.structured_content, retry.structured_content);
+    let denied_selection = modern
+        .call_tool(
+            CallToolRequestParams::new("account_workspace_select").with_arguments(
+                json!({"workspace_id":"not-a-member","request_id":uuid::Uuid::new_v4()})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_selection.is_error, Some(true));
     let recovery_args = json!({"workspace_id": ws, "recipe_id":format!("r-{suffix}")})
         .as_object()
         .unwrap()
@@ -1460,7 +1943,11 @@ async fn exercise(db: DbPool) {
         );
     }
     let request_id = uuid::Uuid::new_v4().to_string();
-    let args = json!({"workspace_id": ws, "name":"SDK name", "expected_revision":0, "request_id":request_id}).as_object().unwrap().clone();
+    let workspace_revision = krausen_app::workspace_snapshot(&db, &browser_actor)
+        .await
+        .unwrap()
+        .revision;
+    let args = json!({"workspace_id": ws, "name":"SDK name", "expected_revision":workspace_revision, "request_id":request_id}).as_object().unwrap().clone();
     let first = legacy
         .call_tool(CallToolRequestParams::new("workspace_rename").with_arguments(args.clone()))
         .await
@@ -1470,7 +1957,10 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert_eq!(first.structured_content, retry.structured_content);
-    assert_eq!(first.structured_content.unwrap()["Saved"]["revision"], 1);
+    assert_eq!(
+        first.structured_content.unwrap()["Saved"]["revision"],
+        workspace_revision + 1
+    );
     krausen_core::db_execute!(&db, "UPDATE workspace_users SET role = 'workspace_user' WHERE workspace_id = $1 AND user_id = $2", &ws, &principal.user_id).unwrap();
     let actor = krausen_app::ActorContext {
         actor_id: principal.user_id.clone(),
@@ -1555,13 +2045,24 @@ async fn exercise(db: DbPool) {
             .await
             .is_err()
     );
-    krausen_core::db_execute!(
-        &db,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
-        chrono::Utc::now().timestamp(),
-        &browser_actor.credential_id
-    )
-    .unwrap();
+    let logout_path = <krausen_ui::server_fns::security::LogoutAllSessions as ServerFn>::PATH;
+    let logout = reqwest::Client::new()
+        .post(format!("{base}{logout_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[("request_id", uuid::Uuid::new_v4().to_string())])
+        .send()
+        .await
+        .unwrap();
+    assert!(logout.status().is_success());
+    assert!(
+        logout
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .any(|value| value.to_str().unwrap().contains("Max-Age=0"))
+    );
+    let logout_result: serde_json::Value = logout.json().await.unwrap();
+    assert!(logout_result.get("Revoked").is_some());
     assert!(matches!(
         krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await,
         krausen_types::formulation::StyleListOutcome::Forbidden

@@ -57,11 +57,85 @@ struct InteractionQuery {
 struct InvitationCancel {
     workspace_id: String,
     invitation_id: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceQuery {
     workspace_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountContextQuery {
+    workspace_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceSelection {
+    workspace_id: String,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSave {
+    change: krausen_types::account::ProfileChange,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TeamChange {
+    workspace_id: String,
+    change: krausen_types::account::TeamChange,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TeamInvite {
+    workspace_id: String,
+    email: String,
+    role: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnershipId {
+    transfer_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnershipStart {
+    workspace_id: String,
+    to_user_id: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnershipCancel {
+    workspace_id: String,
+    transfer_id: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnershipResponse {
+    workspace_id: String,
+    transfer_id: String,
+    accept: bool,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialRevoke {
+    credential_id: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -203,6 +277,123 @@ impl ServerHandler for McpHandler {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(operations::SECURITY_STATUS.mcp_tool,"Read the current account's security status",schema(json!({"type":"object","properties":{},"additionalProperties":false}))),
+            Tool::new(operations::PASSKEYS_LIST.mcp_tool,"List the current account's passkey display metadata",schema(json!({"type":"object","properties":{},"additionalProperties":false}))),
+            Tool::new(
+                operations::SESSIONS_REVOKE_ALL.mcp_tool,
+                "Revoke all credentials belonging to the current account",
+                schema(
+                    json!({"type":"object","properties":{"request_id":{"type":"string","format":"uuid"}},"required":["request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::SESSIONS_LIST.mcp_tool,
+                "List credentials belonging to the current account",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::SESSION_REVOKE.mcp_tool,
+                "Revoke an owned browser session or MCP connection",
+                schema(
+                    json!({"type":"object","properties":{"credential_id":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["credential_id","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_LIST.mcp_tool,
+                "List transfers visible to the current account",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_GET.mcp_tool,
+                "Read a transfer as its current owner or named recipient",
+                schema(
+                    json!({"type":"object","properties":{"transfer_id":{"type":"string"}},"required":["transfer_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_START.mcp_tool,
+                "Start an ownership transfer to a workspace member",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"to_user_id":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","to_user_id","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_CANCEL.mcp_tool,
+                "Cancel a pending ownership transfer",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"transfer_id":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","transfer_id","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_RESPONSE.mcp_tool,
+                "Begin mailbox confirmation of an ownership response",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"transfer_id":{"type":"string"},"accept":{"type":"boolean"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","transfer_id","accept","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::OWNERSHIP_STATUS.mcp_tool,
+                "Check an ownership confirmation interaction",
+                schema(
+                    json!({"type":"object","properties":{"interaction_id":{"type":"string"}},"required":["interaction_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::ACCOUNT_CONTEXT.mcp_tool,
+                "Read account context with an optional explicit workspace",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TEAM_INVITATIONS.mcp_tool,
+                "List pending invitations for an administered workspace",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TEAM_INVITE.mcp_tool,
+                "Queue a workspace invitation for email delivery",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"email":{"type":"string"},"role":{"enum":["workspace_admin","workspace_user"]},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","email","role","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TEAM_MEMBERS.mcp_tool,
+                "List workspace members and current revision",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::TEAM_CHANGE.mcp_tool,
+                "Update or remove a workspace member",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"change":{"oneOf":[{"type":"object","properties":{"action":{"const":"set_role"},"user_id":{"type":"string"},"role":{"enum":["workspace_admin","workspace_user"]}},"required":["action","user_id","role"],"additionalProperties":false},{"type":"object","properties":{"action":{"const":"remove"},"user_id":{"type":"string"}},"required":["action","user_id"],"additionalProperties":false}]},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","change","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::ACCOUNT_PROFILE_SAVE.mcp_tool,
+                "Save an account profile field using its observed revision",
+                schema(
+                    json!({"type":"object","properties":{"change":{"oneOf":[{"type":"object","properties":{"field":{"const":"name"},"name":{"type":"string"}},"required":["field","name"],"additionalProperties":false},{"type":"object","properties":{"field":{"const":"theme"},"theme":{"enum":["light","dark","system"]}},"required":["field","theme"],"additionalProperties":false}]},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["change","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::ACCOUNT_WORKSPACES.mcp_tool,
+                "List active workspace memberships",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::ACCOUNT_WORKSPACE_SELECT.mcp_tool,
+                "Select a preferred workspace; subsequent tool calls still require an explicit workspace",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","request_id"],"additionalProperties":false}),
+                ),
+            ),
             Tool::new(
                 operations::BEERXML_PREVIEW.mcp_tool,
                 "Preview a BeerXML import",
@@ -302,7 +493,7 @@ impl ServerHandler for McpHandler {
                 operations::INVITATION_CANCEL.mcp_tool,
                 "Cancel a pending workspace invitation",
                 schema(
-                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"invitation_id":{"type":"string"}},"required":["workspace_id","invitation_id"],"additionalProperties":false}),
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"invitation_id":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","invitation_id","expected_revision","request_id"],"additionalProperties":false}),
                 ),
             ),
             Tool::new(
@@ -649,6 +840,423 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured(value)
                 }
             }
+            "account.security.status.v1" | "account.passkeys.list.v1" => {
+                if input.as_object().is_none_or(|value|!value.is_empty()) {return Err(ErrorData::invalid_params("Invalid security query",None));}
+                let actor=krausen_app::ActorContext {actor_id:principal.user_id.clone(),credential_id:principal.credential_id.clone(),access_expires_at:principal.access_expires_at,workspace_id:String::new()};
+                if operation.id=="account.security.status.v1" {
+                    match krausen_app::security::status(&self.db,&actor).await {Ok(status)=>CallToolResult::structured(serde_json::to_value(status).map_err(|_|ErrorData::internal_error("Result unavailable",None))?),Err(_)=>CallToolResult::structured_error(json!({"error":"unavailable_or_forbidden"}))}
+                } else {
+                    match krausen_app::security::passkeys(&self.db,&actor).await {Ok(passkeys)=>CallToolResult::structured(json!({"passkeys":passkeys})),Err(_)=>CallToolResult::structured_error(json!({"error":"unavailable_or_forbidden"}))}
+                }
+            }
+            "account.credentials.revoke_all.v1" => {
+                let input: DiscoveryBegin = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid request", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_revoke_all(
+                    krausen_app::security::revoke_all(&self.db, &actor, input.request_id).await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::RevokeAllOutcome::Revoked { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.sessions.list.v1" => {
+                if input.as_object().is_none_or(|value| !value.is_empty()) {
+                    return Err(ErrorData::invalid_params("Invalid session query", None));
+                }
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::security::sessions(&self.db, &actor).await {
+                    Ok(sessions) => CallToolResult::structured(json!({"sessions":sessions})),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.credential.revoke.v1" => {
+                let input: CredentialRevoke = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid credential revocation", None)
+                })?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::team::project_change(
+                    krausen_app::security::revoke(
+                        &self.db,
+                        &actor,
+                        &input.credential_id,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::TeamChangeOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "workspace.ownership.list.v1" => {
+                let input: WorkspaceQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::ownership::list(&self.db, &actor).await {
+                    Ok(transfers) => CallToolResult::structured(json!({"transfers":transfers})),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "workspace.ownership.get.v1" => {
+                let input: OwnershipId = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid transfer", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::ownership::get(&self.db, &actor, &input.transfer_id).await {
+                    Ok(detail) => CallToolResult::structured(
+                        serde_json::to_value(detail)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "workspace.ownership.start.v1" => {
+                let input: OwnershipStart = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid transfer", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::ownership::project_start(
+                    krausen_app::ownership::start(
+                        &self.db,
+                        &actor,
+                        &input.to_user_id,
+                        input.expected_revision,
+                        input.request_id,
+                        self.mail_available,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::OwnershipStartOutcome::Queued(_)
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "workspace.ownership.cancel.v1" => {
+                let input: OwnershipCancel = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid transfer", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::team::project_change(
+                    krausen_app::ownership::cancel(
+                        &self.db,
+                        &actor,
+                        &input.transfer_id,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::TeamChangeOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "workspace.ownership.response.begin.v1" => {
+                let input: OwnershipResponse = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid transfer response", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::ownership::project_response(
+                    krausen_app::ownership::begin_response(
+                        &self.db,
+                        &actor,
+                        &input.transfer_id,
+                        input.accept,
+                        input.expected_revision,
+                        input.request_id,
+                        self.mail_available,
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::OwnershipResponseOutcome::Pending(_)
+                );
+                let value = json!({"outcome":outcome});
+                if error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "workspace.ownership.response.status.v1" => {
+                let input: InteractionQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid interaction", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::invitation::status(&self.db, &actor, &input.interaction_id).await
+                {
+                    Ok(status) => CallToolResult::structured(
+                        serde_json::to_value(status)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.context.get.v1" => {
+                let input: AccountContextQuery = serde_json::from_value(input).map_err(|_| {
+                    ErrorData::invalid_params("Invalid account context query", None)
+                })?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id.unwrap_or_default(),
+                };
+                match krausen_app::account::context(&self.db, &actor).await {
+                    Ok(context) => CallToolResult::structured(
+                        serde_json::to_value(context)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "workspace.invitations.list.v1" => {
+                let input: WorkspaceQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::team::invitations(&self.db, &actor).await {
+                    Ok(invitations) => {
+                        CallToolResult::structured(json!({"invitations":invitations}))
+                    }
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "workspace.invitation.create.v1" => {
+                let input: TeamInvite = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid invitation", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::team::project_invite(
+                    krausen_app::team::invite(
+                        &self.db,
+                        &actor,
+                        &input.email,
+                        &input.role,
+                        input.expected_revision,
+                        input.request_id,
+                        self.mail_available,
+                    )
+                    .await,
+                );
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::account::InvitationCreateOutcome::Queued(_)
+                );
+                let result = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(result)
+                } else {
+                    CallToolResult::structured(result)
+                }
+            }
+            "workspace.members.list.v1" => {
+                let input: WorkspaceQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::team::members(&self.db, &actor).await {
+                    Ok(snapshot) => CallToolResult::structured(
+                        serde_json::to_value(snapshot)
+                            .map_err(|_| ErrorData::internal_error("Result unavailable", None))?,
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "workspace.member.change.v1" => {
+                let input: TeamChange = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid team change", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::team::project_change(
+                    krausen_app::team::change(
+                        &self.db,
+                        &actor,
+                        input.change,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::account::TeamChangeOutcome::Saved { .. }
+                );
+                let result = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(result)
+                } else {
+                    CallToolResult::structured(result)
+                }
+            }
+            "account.profile.save.v1" => {
+                let input: ProfileSave = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid profile change", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::account::project_save(
+                    krausen_app::account::save(
+                        &self.db,
+                        &actor,
+                        input.change,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::account::ProfileSaveOutcome::Saved(_)
+                );
+                let result = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(result)
+                } else {
+                    CallToolResult::structured(result)
+                }
+            }
+            "account.workspaces.list.v1" => {
+                if input.as_object().is_none_or(|v| !v.is_empty()) {
+                    return Err(ErrorData::invalid_params("Invalid workspace query", None));
+                }
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                match krausen_app::account::workspaces(&self.db, &actor).await {
+                    Ok(items) => CallToolResult::structured(json!({"workspaces":items})),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "account.workspace.select.v1" => {
+                let input: WorkspaceSelection = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace selection", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id.clone(),
+                };
+                match krausen_app::account::select_workspace(
+                    &self.db,
+                    &actor,
+                    &input.workspace_id,
+                    input.request_id,
+                )
+                .await
+                {
+                    Ok(item) => CallToolResult::structured(json!({"workspace":item})),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
             "formulation.preview.v1" => {
                 let input: FormulationPreview = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid formulation preview", None))?;
@@ -707,15 +1315,25 @@ impl ServerHandler for McpHandler {
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
-                match krausen_app::invitation::cancel(&self.db, &actor, &input.invitation_id).await
-                {
-                    Ok(()) => CallToolResult::structured(json!({"status":"cancelled"})),
-                    Err(krausen_app::Error::Conflict { .. }) => {
-                        CallToolResult::structured_error(json!({"error":"conflict"}))
-                    }
-                    Err(_) => CallToolResult::structured_error(
-                        json!({"error":"unavailable_or_forbidden"}),
-                    ),
+                let outcome = krausen_app::team::project_change(
+                    krausen_app::invitation::cancel(
+                        &self.db,
+                        &actor,
+                        &input.invitation_id,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::account::TeamChangeOutcome::Saved { .. }
+                );
+                let result = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(result)
+                } else {
+                    CallToolResult::structured(result)
                 }
             }
             "account.invitation.discovery.begin.v1" => {

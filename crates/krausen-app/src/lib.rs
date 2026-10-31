@@ -5,7 +5,6 @@ use krausen_core::{DbPool, DbTx};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub mod account;
 pub mod invitation;
 pub mod recipe_migration;
 
@@ -110,6 +109,10 @@ macro_rules! scalar {
         }
     };
 }
+pub mod account;
+pub mod ownership;
+pub mod security;
+pub mod team;
 fn db_error(e: sqlx::Error) -> Error {
     if let sqlx::Error::Database(ref d) = e {
         if matches!(

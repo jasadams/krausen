@@ -26,7 +26,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ssr")]
-use super::{extract_auth, extract_context, IntoServerFnError};
+use super::{IntoServerFnError, extract_auth, extract_context};
 
 /// TOTP status returned by `get_totp_status()`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,9 +47,9 @@ pub async fn has_password() -> Result<bool, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    krausen_auth::user_service::has_password(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()
+    let actor=super::verified_account_actor(&auth)?;
+    let status=krausen_app::security::status(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load security status"))?;
+    Ok(status.has_password)
 }
 
 /// Set a password for a user who does not yet have one (e.g. OAuth-only users).
@@ -64,9 +64,7 @@ pub async fn set_password(new_password: String) -> Result<String, ServerFnError>
 
     // Validate password length
     if new_password.len() < 8 {
-        return Err(ServerFnError::new(
-            "Password must be at least 8 characters",
-        ));
+        return Err(ServerFnError::new("Password must be at least 8 characters"));
     }
 
     // Check user does NOT already have a password
@@ -80,8 +78,7 @@ pub async fn set_password(new_password: String) -> Result<String, ServerFnError>
     }
 
     // Hash and store
-    let hash = krausen_auth::password::hash_password(&new_password)
-        .into_sfn()?;
+    let hash = krausen_auth::password::hash_password(&new_password).into_sfn()?;
     let auth_data = serde_json::json!({"hash": hash});
     krausen_auth::user_service::upsert_auth_method(&ctx.db, &auth.user_id, "password", &auth_data)
         .await
@@ -133,11 +130,9 @@ pub async fn get_totp_status() -> Result<TotpStatus, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let enabled = krausen_auth::user_service::has_totp_enabled(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-
-    Ok(TotpStatus { enabled })
+    let actor=super::verified_account_actor(&auth)?;
+    let status=krausen_app::security::status(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load security status"))?;
+    Ok(TotpStatus { enabled:status.totp_enabled })
 }
 
 /// Begin 2FA setup: generate a secret and QR code data URI.
@@ -220,6 +215,8 @@ pub async fn disable_totp() -> Result<String, ServerFnError> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionEntry {
     pub token_id: String,
+    pub revision: i64,
+    pub kind: String,
     pub created_at: String,
     pub last_used: Option<String>,
     pub expires_at: String,
@@ -240,37 +237,28 @@ pub async fn get_sessions() -> Result<Vec<SessionEntry>, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let headers: axum::http::HeaderMap = leptos_axum::extract()
+    let actor = super::verified_account_actor(&auth)?;
+    let sessions = krausen_app::security::sessions(&ctx.db, &actor)
         .await
-        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
-
-    let refresh_token_name = &krausen_core::constants::get().cookies.refresh_token_name;
-    let raw_token = krausen_auth::cookies::get_cookie_value(&headers, refresh_token_name);
-
-    let (sessions, current_family_id) =
-        krausen_auth::security_service::get_sessions(&ctx.db, &auth.user_id, raw_token)
-            .await
-            .into_sfn()?;
-
-    let entries = sessions
-        .iter()
-        .map(|s| {
-            let is_current = current_family_id.as_deref() == Some(&s.family_id);
-            SessionEntry {
-                token_id: s.token_id.clone(),
-                created_at: s.created_at.to_rfc3339(),
-                last_used: s.last_used.map(|dt| dt.to_rfc3339()),
-                expires_at: s.expires_at.to_rfc3339(),
-                user_agent: s.user_agent.clone(),
-                ip_address: s.ip_address.clone(),
-                country_code: s.country_code.clone(),
-                oauth_client_name: s.oauth_client_name.clone(),
-                is_current,
-            }
+        .map_err(|_| ServerFnError::new("Unable to load sessions"))?;
+    Ok(sessions
+        .into_iter()
+        .map(|s| SessionEntry {
+            token_id: s.credential_id,
+            revision: s.revision,
+            kind: s.kind,
+            created_at: s.created_at.unwrap_or_default(),
+            last_used: s.last_used,
+            expires_at: chrono::DateTime::from_timestamp(s.expires_at, 0)
+                .map(|v| v.to_rfc3339())
+                .unwrap_or_default(),
+            user_agent: s.user_agent,
+            ip_address: s.ip_address,
+            country_code: s.country_code,
+            oauth_client_name: s.client_name,
+            is_current: s.is_current,
         })
-        .collect();
-
-    Ok(entries)
+        .collect())
 }
 
 /// Revoke a specific session by token ID.
@@ -279,20 +267,20 @@ pub async fn get_sessions() -> Result<Vec<SessionEntry>, ServerFnError> {
 /// Revokes the entire token family so rotated tokens in the same session are
 /// also invalidated.
 #[server(prefix = "/leptos-api")]
-pub async fn revoke_session(token_id: String) -> Result<String, ServerFnError> {
+pub async fn revoke_session(
+    token_id: String,
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::TeamChangeOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    let revoked =
-        krausen_auth::token_service::revoke_user_refresh_token(&ctx.db, &auth.user_id, &token_id)
-            .await
-            .into_sfn()?;
-
-    if !revoked {
-        return Err(ServerFnError::new("Session not found"));
-    }
-
-    Ok("Session revoked successfully".to_string())
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::team::project_change(
+        krausen_app::security::revoke(&ctx.db, &actor, &token_id, expected_revision, request_id)
+            .await,
+    ))
 }
 
 /// Log out the current session.
@@ -336,28 +324,29 @@ pub async fn logout() -> Result<(), ServerFnError> {
 ///
 /// Mirrors `POST /auth/logout-all` in `apps/server/src/routes/auth.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn logout_all_sessions() -> Result<String, ServerFnError> {
+pub async fn logout_all_sessions(
+    request_id: String,
+) -> Result<krausen_types::account::RevokeAllOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    let revoked_count =
-        krausen_auth::token_service::revoke_all_user_refresh_tokens(&ctx.db, &auth.user_id)
-            .await
-            .into_sfn()?;
-
-    // Clear both HTTPOnly cookies so the browser forgets the current session.
-    let response_options = leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
-    let mut cookie_headers = axum::http::HeaderMap::new();
-    krausen_auth::cookies::clear_token_cookies(&mut cookie_headers);
-    for (name, value) in cookie_headers.iter() {
-        if name == axum::http::header::SET_COOKIE {
-            response_options.append_header(name.clone(), value.clone());
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    let outcome = krausen_app::security::project_revoke_all(
+        krausen_app::security::revoke_all(&ctx.db, &actor, request_id).await,
+    );
+    if matches!(
+        outcome,
+        krausen_types::account::RevokeAllOutcome::Revoked { .. }
+    ) {
+        let response = leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
+        let mut headers = axum::http::HeaderMap::new();
+        krausen_auth::cookies::clear_token_cookies(&mut headers);
+        for value in headers.get_all(axum::http::header::SET_COOKIE) {
+            response.append_header(axum::http::header::SET_COOKIE, value.clone());
         }
     }
-
-    Ok(format!(
-        "Logged out from all devices successfully ({revoked_count} sessions revoked)"
-    ))
+    Ok(outcome)
 }
 
 // ---------------------------------------------------------------------------
@@ -381,31 +370,9 @@ pub async fn list_passkeys() -> Result<Vec<PasskeyInfo>, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let creds = krausen_auth::user_service::get_passkey_credentials(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-
-    let passkeys: Vec<PasskeyInfo> = creds
-        .iter()
-        .map(|(cred_id, data)| PasskeyInfo {
-            credential_id: cred_id.clone(),
-            name: data
-                .get("device_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unnamed Device")
-                .to_string(),
-            created_at: data
-                .get("created_at")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            last_used: data
-                .get("last_used")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-        })
-        .collect();
-
-    Ok(passkeys)
+    let actor=super::verified_account_actor(&auth)?;
+    let passkeys=krausen_app::security::passkeys(&ctx.db,&actor).await.map_err(|_|ServerFnError::new("Unable to load passkeys"))?;
+    Ok(passkeys.into_iter().map(|passkey|PasskeyInfo {credential_id:passkey.credential_id,name:passkey.name,created_at:passkey.created_at,last_used:passkey.last_used}).collect())
 }
 
 /// Start passkey registration for the authenticated user.
@@ -415,9 +382,7 @@ pub async fn list_passkeys() -> Result<Vec<PasskeyInfo>, ServerFnError> {
 ///
 /// Mirrors `POST /auth/passkeys/add/start` in `apps/server/src/routes/auth_passkeys.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn start_passkey_registration(
-    device_name: String,
-) -> Result<String, ServerFnError> {
+pub async fn start_passkey_registration(device_name: String) -> Result<String, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
@@ -516,10 +481,7 @@ pub async fn delete_passkey(credential_id: String) -> Result<String, ServerFnErr
 ///
 /// Mirrors `PATCH /auth/passkeys/{credential_id}` in `apps/server/src/routes/auth_passkeys.rs`.
 #[server(prefix = "/leptos-api")]
-pub async fn rename_passkey(
-    credential_id: String,
-    name: String,
-) -> Result<String, ServerFnError> {
+pub async fn rename_passkey(credential_id: String, name: String) -> Result<String, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
@@ -550,4 +512,3 @@ pub async fn rename_passkey(
 
     Ok("Passkey renamed successfully".to_string())
 }
-

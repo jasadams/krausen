@@ -43,6 +43,102 @@ pub const ACCOUNT_PROFILE_GET: Operation = Operation {
     input_contract: "empty.v1",
     output_contract: "account-profile.v1",
 };
+pub const ACCOUNT_CONTEXT: Operation = Operation {
+    id: "account.context.get.v1",
+    mcp_tool: "account_context",
+    input_contract: "account-context-query.v1",
+    output_contract: "account-context.v1",
+};
+pub const OWNERSHIP_LIST: Operation = Operation {
+    id: "workspace.ownership.list.v1",
+    mcp_tool: "ownership_list",
+    input_contract: "workspace-id.v1",
+    output_contract: "ownership-list.v1",
+};
+pub const OWNERSHIP_GET: Operation = Operation {
+    id: "workspace.ownership.get.v1",
+    mcp_tool: "ownership_get",
+    input_contract: "ownership-id.v1",
+    output_contract: "ownership-detail.v1",
+};
+pub const OWNERSHIP_START: Operation = Operation {
+    id: "workspace.ownership.start.v1",
+    mcp_tool: "ownership_start",
+    input_contract: "ownership-start.v1",
+    output_contract: "ownership-start-outcome.v1",
+};
+pub const OWNERSHIP_CANCEL: Operation = Operation {
+    id: "workspace.ownership.cancel.v1",
+    mcp_tool: "ownership_cancel",
+    input_contract: "ownership-cancel.v1",
+    output_contract: "team-change-outcome.v1",
+};
+pub const OWNERSHIP_RESPONSE: Operation = Operation {
+    id: "workspace.ownership.response.begin.v1",
+    mcp_tool: "ownership_response_begin",
+    input_contract: "ownership-response-begin.v1",
+    output_contract: "ownership-response-outcome.v1",
+};
+pub const OWNERSHIP_STATUS: Operation = Operation {
+    id: "workspace.ownership.response.status.v1",
+    mcp_tool: "ownership_response_status",
+    input_contract: "interaction-id.v1",
+    output_contract: "interaction-status.v1",
+};
+pub const SESSIONS_LIST: Operation = Operation {
+    id: "account.sessions.list.v1",
+    mcp_tool: "account_sessions",
+    input_contract: "empty.v1",
+    output_contract: "account-sessions.v1",
+};
+pub const SESSION_REVOKE: Operation = Operation {
+    id: "account.credential.revoke.v1",
+    mcp_tool: "account_session_revoke",
+    input_contract: "credential-revoke.v1",
+    output_contract: "team-change-outcome.v1",
+};
+pub const ACCOUNT_PROFILE_SAVE: Operation = Operation {
+    id: "account.profile.save.v1",
+    mcp_tool: "account_profile_save",
+    input_contract: "profile-save.v1",
+    output_contract: "profile-save-outcome.v1",
+};
+pub const TEAM_MEMBERS: Operation = Operation {
+    id: "workspace.members.list.v1",
+    mcp_tool: "team_members",
+    input_contract: "workspace-id.v1",
+    output_contract: "team-snapshot.v1",
+};
+pub const TEAM_CHANGE: Operation = Operation {
+    id: "workspace.member.change.v1",
+    mcp_tool: "team_member_change",
+    input_contract: "team-change.v1",
+    output_contract: "team-change-outcome.v1",
+};
+pub const TEAM_INVITE: Operation = Operation {
+    id: "workspace.invitation.create.v1",
+    mcp_tool: "team_invite",
+    input_contract: "team-invitation-create.v1",
+    output_contract: "invitation-create-outcome.v1",
+};
+pub const TEAM_INVITATIONS: Operation = Operation {
+    id: "workspace.invitations.list.v1",
+    mcp_tool: "team_invitations",
+    input_contract: "workspace-id.v1",
+    output_contract: "team-invitations.v1",
+};
+pub const ACCOUNT_WORKSPACES: Operation = Operation {
+    id: "account.workspaces.list.v1",
+    mcp_tool: "account_workspaces",
+    input_contract: "empty.v1",
+    output_contract: "workspace-memberships.v1",
+};
+pub const ACCOUNT_WORKSPACE_SELECT: Operation = Operation {
+    id: "account.workspace.select.v1",
+    mcp_tool: "account_workspace_select",
+    input_contract: "workspace-selection.v1",
+    output_contract: "workspace-membership.v1",
+};
 pub const INVITATION_PROOF_BEGIN: Operation = Operation {
     id: "account.invitation.proof.begin.v1",
     mcp_tool: "invitation_response_begin",
@@ -70,8 +166,8 @@ pub const INVITATION_LIST: Operation = Operation {
 pub const INVITATION_CANCEL: Operation = Operation {
     id: "account.invitation.cancel.v1",
     mcp_tool: "invitation_cancel",
-    input_contract: "workspace-invitation-id.v1",
-    output_contract: "invitation-cancel.v1",
+    input_contract: "invitation-cancel-request.v1",
+    output_contract: "team-change-outcome.v1",
 };
 pub const FORMULATION_PREVIEW: Operation = Operation {
     id: "formulation.preview.v1",
@@ -181,6 +277,14 @@ pub const RECIPE_ARCHIVE: Operation = Operation {
     input_contract: "ArchiveRecipe",
     output_contract: "LibraryOutcome",
 };
+pub const SECURITY_STATUS: Operation = Operation { id:"account.security.status.v1",mcp_tool:"account_security_status",input_contract:"empty.v1",output_contract:"security-status.v1" };
+pub const PASSKEYS_LIST: Operation = Operation { id:"account.passkeys.list.v1",mcp_tool:"account_passkeys",input_contract:"empty.v1",output_contract:"passkey-summaries.v1" };
+pub const SESSIONS_REVOKE_ALL: Operation = Operation {
+    id: "account.credentials.revoke_all.v1",
+    mcp_tool: "account_sessions_revoke_all",
+    input_contract: "request-id.v1",
+    output_contract: "revoke-all-outcome.v1",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
@@ -195,6 +299,24 @@ pub const OPERATIONS: &[Operation] = &[
     EQUIPMENT_GET,
     EQUIPMENT_LIST,
     EQUIPMENT_REVISION,
+    SECURITY_STATUS, PASSKEYS_LIST,
+    SESSIONS_REVOKE_ALL,
+    SESSIONS_LIST,
+    SESSION_REVOKE,
+    OWNERSHIP_LIST,
+    OWNERSHIP_GET,
+    OWNERSHIP_START,
+    OWNERSHIP_CANCEL,
+    OWNERSHIP_RESPONSE,
+    OWNERSHIP_STATUS,
+    ACCOUNT_CONTEXT,
+    TEAM_INVITATIONS,
+    TEAM_INVITE,
+    TEAM_MEMBERS,
+    TEAM_CHANGE,
+    ACCOUNT_PROFILE_SAVE,
+    ACCOUNT_WORKSPACES,
+    ACCOUNT_WORKSPACE_SELECT,
     INVITATION_CANCEL,
     INVITATION_DISCOVERY_BEGIN,
     INVITATION_LIST,

@@ -14,12 +14,9 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::components::{
-    Alert, AlertDescription, AlertTitle, AlertVariant, Button, ButtonVariant,
-};
+use crate::components::{Alert, AlertDescription, AlertTitle, AlertVariant, Button, ButtonVariant};
 use crate::server_fns::ownership::{
-    accept_ownership_transfer, decline_ownership_transfer, get_ownership_transfer,
-    OwnershipTransfer,
+    OwnershipTransfer, begin_ownership_response, get_ownership_transfer,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +29,7 @@ enum PageState {
     Error { message: String },
     Ready { transfer: OwnershipTransfer },
     Processing { transfer: OwnershipTransfer },
-    Success { workspace_name: String },
+    Pending { workspace_name: String },
 }
 
 /// Fetch the ownership transfer and return the resulting page state.
@@ -82,96 +79,63 @@ pub fn AcceptOwnershipPage() -> impl IntoView {
         });
     }
 
-    // ── Accept handler ───────────────────────────────────────────────────
-    let on_accept = move |_| {
-        let current = state.get_untracked();
-        let transfer = match current {
+    let pending_request = RwSignal::new(None::<(bool, String)>);
+    let respond = move |accept: bool| {
+        let transfer = match state.get_untracked() {
             PageState::Ready { transfer } => transfer,
             _ => return,
         };
-
-        let workspace_name = transfer.workspace_name.clone();
-        let transfer_id = transfer.transfer_id.clone();
+        let request = pending_request
+            .get_untracked()
+            .filter(|(action, _)| *action == accept)
+            .map(|(_, id)| id)
+            .or_else(crate::utils::request_id::new_request_id);
+        let Some(request) = request else {
+            crate::components::toast::toast_error("Unable to create request identity");
+            return;
+        };
+        pending_request.set(Some((accept, request.clone())));
         set_state.set(PageState::Processing {
             transfer: transfer.clone(),
         });
-
         leptos::task::spawn_local(async move {
-            match accept_ownership_transfer(transfer_id).await {
-                Ok(()) => {
-                    set_state.set(PageState::Success { workspace_name });
-
-                    // Auto-redirect to /settings/team after 3 seconds
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        use wasm_bindgen::prelude::*;
-                        if let Some(window) = web_sys::window() {
-                            let closure = Closure::once(move || {
-                                if let Some(window) = web_sys::window() {
-                                    let _ = window.location().set_href("/settings/team");
-                                }
-                            });
-                            let _ = window
-                                .set_timeout_with_callback_and_timeout_and_arguments_0(
-                                    closure.as_ref().unchecked_ref(),
-                                    3000,
-                                );
-                            closure.forget();
-                        }
-                    }
+            use krausen_types::account::OwnershipResponseOutcome as Outcome;
+            let result = begin_ownership_response(
+                transfer.transfer_id.clone(),
+                transfer.workspace_id.clone(),
+                transfer.revision,
+                accept,
+                request,
+            )
+            .await;
+            match result {
+                Ok(Outcome::Pending(_)) => {
+                    pending_request.set(None);
+                    set_state.set(PageState::Pending {
+                        workspace_name: transfer.workspace_name,
+                    });
                 }
-                Err(e) => {
-                    crate::components::toast::toast_error(format!("Failed to accept transfer: {e}"));
+                Ok(Outcome::DeliveryUnavailable) => {
+                    crate::components::toast::toast_error("Email delivery is unavailable");
+                    set_state.set(PageState::Ready { transfer });
+                }
+                Ok(Outcome::Conflict { .. }) => {
+                    set_state.set(PageState::Error {
+                        message: "The workspace changed. Reload to review the transfer again."
+                            .into(),
+                    });
+                }
+                _ => {
+                    crate::components::toast::toast_error(
+                        "Could not start confirmation. Try again.",
+                    );
                     set_state.set(PageState::Ready { transfer });
                 }
             }
         });
     };
-
-    // ── Decline handler ──────────────────────────────────────────────────
-    let on_decline = move |_| {
-        let current = state.get_untracked();
-        let transfer = match current {
-            PageState::Ready { transfer } => transfer,
-            _ => return,
-        };
-
-        let transfer_id = transfer.transfer_id.clone();
-        set_state.set(PageState::Processing {
-            transfer: transfer.clone(),
-        });
-
-        leptos::task::spawn_local(async move {
-            match decline_ownership_transfer(transfer_id).await {
-                Ok(()) => {
-                    crate::components::toast::toast_success("Transfer request declined");
-
-                    // Redirect home after 2 seconds
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        use wasm_bindgen::prelude::*;
-                        if let Some(window) = web_sys::window() {
-                            let closure = Closure::once(move || {
-                                if let Some(window) = web_sys::window() {
-                                    let _ = window.location().set_href("/");
-                                }
-                            });
-                            let _ = window
-                                .set_timeout_with_callback_and_timeout_and_arguments_0(
-                                    closure.as_ref().unchecked_ref(),
-                                    2000,
-                                );
-                            closure.forget();
-                        }
-                    }
-                }
-                Err(e) => {
-                    crate::components::toast::toast_error(format!("Failed to decline transfer: {e}"));
-                    set_state.set(PageState::Ready { transfer });
-                }
-            }
-        });
-    };
+    let on_accept = move |_| respond(true);
+    let on_decline = move |_| respond(false);
 
     // ── Render ────────────────────────────────────────────────────────────
     view! {
@@ -184,7 +148,7 @@ pub fn AcceptOwnershipPage() -> impl IntoView {
                             {move || {
                                 let s = state.get();
                                 match &s {
-                                    PageState::Success { .. } => icon_check_circle_large().into_any(),
+                                    PageState::Pending { .. } => icon_check_circle_large().into_any(),
                                     PageState::Error { .. } => icon_alert_circle_large().into_any(),
                                     _ => icon_arrow_right_left().into_any(),
                                 }
@@ -200,7 +164,7 @@ pub fn AcceptOwnershipPage() -> impl IntoView {
                                     PageState::Loading => "Loading transfer details...".to_string(),
                                     PageState::Ready { .. } => "You have been offered workspace ownership".to_string(),
                                     PageState::Processing { .. } => "Processing your response...".to_string(),
-                                    PageState::Success { .. } => "Transfer accepted successfully!".to_string(),
+                                    PageState::Pending { .. } => "Confirmation required".to_string(),
                                     PageState::Error { .. } => "Transfer request unavailable".to_string(),
                                 }
                             }}
@@ -227,8 +191,8 @@ pub fn AcceptOwnershipPage() -> impl IntoView {
                                         </div>
                                     }.into_any()
                                 }
-                                PageState::Success { workspace_name } => {
-                                    success_view(workspace_name).into_any()
+                                PageState::Pending { workspace_name } => {
+                                    pending_view(workspace_name).into_any()
                                 }
                             }
                         }}
@@ -408,29 +372,15 @@ fn ready_view(
 // Success view
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn success_view(workspace_name: String) -> impl IntoView {
+fn pending_view(workspace_name: String) -> impl IntoView {
     view! {
         <div class="space-y-4">
-            <div class="text-center py-8">
-                {icon_check_circle_success()}
-                <div class="mt-4 font-semibold text-success-foreground">"Success!"</div>
-                <p class="text-muted-foreground mt-2">
-                    "You are now the owner of " {workspace_name} "."
-                </p>
-            </div>
-            <Alert variant=AlertVariant::Success>
-                {icon_check_sm()}
-                <div class="ml-2">
-                    <AlertDescription>
-                        "Redirecting to workspace settings in 3 seconds..."
-                    </AlertDescription>
-                </div>
+            <Alert variant=AlertVariant::Default>
+                <div class="ml-2"><AlertDescription>
+                    "Check your email and confirm your response for " {workspace_name} ". Ownership has not changed yet."
+                </AlertDescription></div>
             </Alert>
-            <div class="text-center">
-                <a href="/settings/team">
-                    <Button>"Go to Settings Now"</Button>
-                </a>
-            </div>
+            <a href="/settings/team"><Button>"Return to team"</Button></a>
         </div>
     }
 }
@@ -571,38 +521,6 @@ fn icon_alert_circle_sm() -> impl IntoView {
             <circle cx="12" cy="12" r="10" />
             <line x1="12" x2="12" y1="8" y2="12" />
             <line x1="12" x2="12.01" y1="16" y2="16" />
-        </svg>
-    }
-}
-
-/// CheckCircle icon — large for success view body.
-fn icon_check_circle_success() -> impl IntoView {
-    view! {
-        <svg
-            class="h-16 w-16 text-success-foreground mx-auto"
-            xmlns="http://www.w3.org/2000/svg"
-            width="24" height="24" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        >
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-            <path d="m9 11 3 3L22 4" />
-        </svg>
-    }
-}
-
-/// Small CheckCircle icon — for success alert.
-fn icon_check_sm() -> impl IntoView {
-    view! {
-        <svg
-            class="h-4 w-4"
-            xmlns="http://www.w3.org/2000/svg"
-            width="24" height="24" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        >
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-            <path d="m9 11 3 3L22 4" />
         </svg>
     }
 }

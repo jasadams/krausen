@@ -249,7 +249,7 @@ async fn send_signup_link(
         "{}/signup/complete?token={raw_token}",
         frontend_url.trim_end_matches('/')
     );
-    tracing::info!("Password signup link for {email}: {signup_url}");
+    tracing::debug!("Sending account signup verification");
 
     spawn_verification_email(email.to_string(), String::new(), signup_url);
     Ok(())

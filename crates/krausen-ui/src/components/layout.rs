@@ -33,6 +33,7 @@ pub struct EditorGuard {
     pub message: RwSignal<String>,
     pub navigation_error: RwSignal<String>,
     pub current_url: RwSignal<String>,
+    selection: RwSignal<Option<(String, String)>>,
 }
 
 impl EditorGuard {
@@ -48,6 +49,7 @@ impl EditorGuard {
             message: RwSignal::new(String::new()),
             navigation_error: RwSignal::new(String::new()),
             current_url: RwSignal::new(String::new()),
+            selection: RwSignal::new(None),
         }
     }
     /// Install before the router so a dirty form cannot be unmounted by its
@@ -156,12 +158,26 @@ impl EditorGuard {
                     .is_none_or(|w| w.location().set_href(&href).is_err())
                     .then_some("Could not open that destination."),
                 EditorDestination::Workspace(id) => {
-                    if switch_workspace(id).await.is_err() {
-                        Some("Could not switch workspaces.")
+                    let request_id = self.selection.get_untracked()
+                        .filter(|(workspace, _)| workspace == &id)
+                        .map(|(_, request)| request)
+                        .or_else(crate::utils::request_id::new_request_id);
+                    if let Some(request) = request_id.as_ref() {
+                        self.selection.set(Some((id.clone(), request.clone())));
+                    }
+                    if let Some(request) = request_id {
+                        if switch_workspace(id, request).await.is_ok() {
+                            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                                let _ = storage.set_item(CONTEXT_CHANGED_KEY, &js_sys::Date::now().to_string());
+                            }
+                            web_sys::window()
+                                .is_none_or(|w| w.location().reload().is_err())
+                                .then_some("Workspace changed, but the page could not reload.")
+                        } else {
+                            Some("Could not switch workspaces.")
+                        }
                     } else {
-                        web_sys::window()
-                            .is_none_or(|w| w.location().reload().is_err())
-                            .then_some("Workspace changed, but the page could not reload.")
+                        Some("Could not switch workspaces.")
                     }
                 }
                 EditorDestination::Logout => {

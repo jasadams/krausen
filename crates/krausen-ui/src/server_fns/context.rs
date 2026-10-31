@@ -2,7 +2,6 @@
 
 //! Server function for user context.
 
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -28,20 +27,29 @@ pub struct UserContext {
 pub async fn get_user_context() -> Result<UserContext, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
+    let actor = super::verified_account_actor(&auth)?;
+    let current = krausen_app::account::context(&ctx.db, &actor)
+        .await
+        .map_err(|_| ServerFnError::new("Unable to load account context"))?;
 
     Ok(UserContext {
-        user_id: auth.user_id,
-        email: auth.email,
-        name: auth.name,
-        workspace_id: auth.workspace.workspace_id,
-        workspace_name: auth.workspace.workspace_name,
-        workspace_roles: auth
+        user_id: current.profile.user_id,
+        email: current.profile.email,
+        name: current.profile.name,
+        workspace_id: current
             .workspace
-            .workspace_roles
-            .iter()
-            .map(|r| r.to_string())
-            .collect(),
-        is_owner: auth.workspace.is_owner,
+            .as_ref()
+            .map(|workspace| workspace.workspace_id.clone()),
+        workspace_name: current
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.name.clone()),
+        workspace_roles: current
+            .workspace
+            .as_ref()
+            .map(|workspace| vec![workspace.role.clone()])
+            .unwrap_or_default(),
+        is_owner: current.is_owner,
         is_personal_mode: ctx.config.is_personal(),
         is_self_hosted: ctx.config.self_hosted,
     })

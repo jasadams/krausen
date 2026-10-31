@@ -75,8 +75,7 @@ pub fn register_server_functions() {
     use server_fns::profile::*;
     register_explicit::<GetProfile>();
     register_explicit::<GetPendingInvitations>();
-    register_explicit::<UpdateProfileName>();
-    register_explicit::<UpdateTheme>();
+    register_explicit::<UpdateProfile>();
     register_explicit::<BeginInvitationDiscovery>();
     register_explicit::<BeginInvitationResponse>();
 
@@ -121,8 +120,7 @@ pub fn register_server_functions() {
     // Ownership
     use server_fns::ownership::*;
     register_explicit::<GetOwnershipTransfer>();
-    register_explicit::<AcceptOwnershipTransfer>();
-    register_explicit::<DeclineOwnershipTransfer>();
+    register_explicit::<BeginOwnershipResponse>();
 
     // Workspace
     use server_fns::workspace::*;

@@ -6,6 +6,7 @@ use std::borrow::Cow;
 const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
 const EQUIPMENT: i64 = 20261031040000;
+const ACCOUNT_PROOFS: i64 = 20261031030000;
 const RECIPE_ARCHIVE: i64 = 20261031060000;
 fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
     Migrator {
@@ -14,6 +15,7 @@ fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
                 .filter(|m| {
                     Some(m.version) != skip
                         && !(skip == Some(NATIVE) && m.version == RECIPE_ARCHIVE)
+                        && !(skip == Some(CREDENTIALS) && m.version == ACCOUNT_PROOFS)
                 })
                 .cloned()
                 .collect(),
@@ -89,6 +91,7 @@ async fn sqlite_empty_and_both_upgrade_orders() {
         None,
         Some(NATIVE),
         Some(CREDENTIALS),
+        Some(ACCOUNT_PROOFS),
         Some(EQUIPMENT),
         Some(RECIPE_ARCHIVE),
     ] {
@@ -110,6 +113,7 @@ async fn postgres_empty_and_both_upgrade_orders() {
         None,
         Some(NATIVE),
         Some(CREDENTIALS),
+        Some(ACCOUNT_PROOFS),
         Some(EQUIPMENT),
         Some(RECIPE_ARCHIVE),
     ] {

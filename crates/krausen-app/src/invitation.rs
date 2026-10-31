@@ -46,6 +46,7 @@ pub struct Proof {
     pub action: String,
     pub target_id: String,
     pub workspace_id: Option<String>,
+    pub expected_revision: Option<i64>,
     pub recipient_email: String,
     pub outbox_id: Option<String>,
     pub expires_at: i64,
@@ -167,7 +168,7 @@ pub fn delivery_token(secret: &[u8], proof: &Proof) -> Result<String, Error> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret)
         .map_err(|_| Error::Invalid("invalid installation key"))?;
     for part in [
-        "account-invitation-proof.v1",
+        "account-interaction-proof.v1",
         &proof.proof_id,
         &proof.account_id,
         &proof.credential_id,
@@ -180,7 +181,129 @@ pub fn delivery_token(secret: &[u8], proof: &Proof) -> Result<String, Error> {
         mac.update(part.as_bytes());
     }
     mac.update(&proof.expires_at.to_be_bytes());
+    mac.update(&proof.expected_revision.unwrap_or(-1).to_be_bytes());
     Ok(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+/// Verify a mailbox link and show its bound action before any confirmation.
+pub async fn preview(
+    pool: &DbPool,
+    actor: &ActorContext,
+    proof_id: &str,
+    token: &str,
+    secret: &[u8],
+) -> Result<krausen_types::account::ProofPreview, Error> {
+    let mut tx = pool.begin_write().await.map_err(boundary_error)?;
+    let prepared_ownership = crate::ownership::prepare_proof(&mut tx, actor, proof_id).await?;
+    authorize_account(&mut tx, actor).await?;
+    let initial = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        Proof,
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1",
+        proof_id
+    )
+    .map_err(db_error)?
+    .ok_or(Error::Forbidden)?;
+    if initial.account_id != actor.actor_id {
+        return Err(Error::Forbidden);
+    }
+    #[derive(sqlx::FromRow)]
+    struct Credential {
+        credential_id: String,
+    }
+    let credential_sql = if pool.is_postgres() {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3 FOR SHARE"
+    } else {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3"
+    };
+    let credential = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        Credential,
+        credential_sql,
+        &initial.credential_id,
+        &actor.actor_id,
+        chrono::Utc::now().timestamp()
+    )
+    .map_err(db_error)?
+    .ok_or(Error::Forbidden)?;
+    if credential.credential_id != initial.credential_id {
+        return Err(Error::Forbidden);
+    }
+    let proof_sql = if pool.is_postgres() {
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1 FOR SHARE"
+    } else {
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1"
+    };
+    let proof = krausen_core::dbtx_fetch_optional!(&mut tx, Proof, proof_sql, proof_id)
+        .map_err(db_error)?
+        .ok_or(Error::Forbidden)?;
+    use subtle::ConstantTimeEq;
+    if proof.account_id != actor.actor_id
+        || proof.credential_id != initial.credential_id
+        || proof.consumed_at.is_some()
+        || proof.expires_at <= chrono::Utc::now().timestamp()
+        || !bool::from(
+            delivery_token(secret, &proof)?
+                .as_bytes()
+                .ct_eq(token.as_bytes()),
+        )
+        || !account_email(&mut tx, actor)
+            .await?
+            .eq_ignore_ascii_case(&proof.recipient_email)
+    {
+        return Err(Error::Forbidden);
+    }
+    let workspace_name = match proof.action.as_str() {
+        "discover" if proof.target_id == actor.actor_id && proof.workspace_id.is_none() => None,
+        "accept" | "decline" => {
+            let invitation = eligible(&mut tx, actor, &proof.target_id).await?;
+            if proof.workspace_id.as_deref() != Some(invitation.workspace_id.as_str())
+                || !invitation
+                    .email
+                    .eq_ignore_ascii_case(&proof.recipient_email)
+            {
+                return Err(Error::Forbidden);
+            }
+            #[derive(sqlx::FromRow)]
+            struct Name {
+                name: Option<String>,
+            }
+            let row = krausen_core::dbtx_fetch_optional!(
+                &mut tx,
+                Name,
+                "SELECT name FROM workspaces WHERE workspace_id=$1 AND status='active'",
+                &invitation.workspace_id
+            )
+            .map_err(db_error)?
+            .ok_or(Error::Forbidden)?;
+            Some(row.name.unwrap_or_else(|| "Unnamed Workspace".into()))
+        }
+        "ownership_accept" | "ownership_decline" if prepared_ownership => {
+            Some(crate::ownership::preview_in_tx(&mut tx, actor, &proof).await?)
+        }
+        _ => return Err(Error::Forbidden),
+    };
+    authorize_account(&mut tx, actor).await?;
+    let credential = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        Credential,
+        credential_sql,
+        &proof.credential_id,
+        &actor.actor_id,
+        chrono::Utc::now().timestamp()
+    )
+    .map_err(db_error)?
+    .ok_or(Error::Forbidden)?;
+    if credential.credential_id != proof.credential_id
+        || proof.expires_at <= chrono::Utc::now().timestamp()
+    {
+        return Err(Error::Forbidden);
+    }
+    tx.commit().await.map_err(boundary_error)?;
+    Ok(krausen_types::account::ProofPreview {
+        action: proof.action,
+        workspace_name,
+    })
 }
 
 /// Complete only with the mailbox token and a verified account session. The
@@ -194,6 +317,7 @@ pub async fn complete(
     secret: &[u8],
 ) -> Result<InvitationProofOutcome, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
+    let prepared_ownership = crate::ownership::prepare_proof(&mut tx, actor, proof_id).await?;
     authorize_account(&mut tx, actor).await?;
     let pg = pool.is_postgres();
     // Read only to discover the initiating credential, then lock account and
@@ -270,6 +394,13 @@ pub async fn complete(
         ..actor.clone()
     };
     authorize_account(&mut tx, actor).await?;
+    if matches!(
+        proof.action.as_str(),
+        "ownership_accept" | "ownership_decline"
+    ) || (proof.consumed_at.is_some() && proof.result.as_deref() == Some("accepted"))
+    {
+        crate::authorize_workspace(&mut tx, &scoped_actor).await?;
+    }
     if !account_email(&mut tx, actor)
         .await?
         .eq_ignore_ascii_case(&proof.recipient_email)
@@ -282,7 +413,7 @@ pub async fn complete(
             workspace_id: String,
         }
         let sql = if pg {
-            "SELECT workspace_id FROM workspaces WHERE workspace_id=$1 AND status='active' FOR SHARE"
+            "SELECT workspace_id FROM workspaces WHERE workspace_id=$1 AND status='active' FOR UPDATE"
         } else {
             "SELECT workspace_id FROM workspaces WHERE workspace_id=$1 AND status='active'"
         };
@@ -292,11 +423,25 @@ pub async fn complete(
         if workspace.workspace_id != workspace_id {
             return Err(Error::Forbidden);
         }
-        if proof.consumed_at.is_some() && proof.result.as_deref() == Some("accepted") {
-            crate::authorize_workspace(&mut tx, &scoped_actor).await?;
+        if proof.consumed_at.is_some() && proof.result.as_deref() == Some("ownership accepted") {
+            #[derive(sqlx::FromRow)]
+            struct Owner {
+                owner_user_id: String,
+            }
+            let owner = krausen_core::dbtx_fetch_optional!(
+                &mut tx,
+                Owner,
+                "SELECT owner_user_id FROM workspaces WHERE workspace_id=$1 AND status='active'",
+                workspace_id
+            )
+            .map_err(db_error)?
+            .ok_or(Error::Forbidden)?;
+            if owner.owner_user_id != actor.actor_id {
+                return Err(Error::Forbidden);
+            }
         }
     }
-    let digest = krausen_core::canonical_json::sha256(&serde_json::json!({"version":1,"proof_id":proof.proof_id,"action":proof.action,"target_id":proof.target_id,"workspace_id":proof.workspace_id})).map_err(|_| Error::Invalid("invalid proof identity"))?;
+    let digest = krausen_core::canonical_json::sha256(&serde_json::json!({"version":1,"proof_id":proof.proof_id,"action":proof.action,"target_id":proof.target_id,"workspace_id":proof.workspace_id,"expected_revision":proof.expected_revision})).map_err(|_| Error::Invalid("invalid proof identity"))?;
     let request = request_id.to_string();
     let key = RequestIdentity {
         actor: &scoped_actor,
@@ -347,6 +492,49 @@ pub async fn complete(
         tx.commit().await.map_err(boundary_error)?;
         return Ok(InvitationProofOutcome::MailboxVerified);
     }
+    if matches!(
+        proof.action.as_str(),
+        "ownership_accept" | "ownership_decline"
+    ) {
+        if !prepared_ownership {
+            return Err(Error::Forbidden);
+        }
+        let result = crate::ownership::complete_in_tx(&mut tx, actor, &proof).await?;
+        authorize_account(&mut tx, actor).await?;
+        let credential = krausen_core::dbtx_fetch_optional!(
+            &mut tx,
+            Credential,
+            credential_sql,
+            &proof.credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        )
+        .map_err(db_error)?
+        .ok_or(Error::Forbidden)?;
+        if credential.credential_id != proof.credential_id
+            || proof.expires_at <= chrono::Utc::now().timestamp()
+        {
+            return Err(Error::Forbidden);
+        }
+        krausen_core::dbtx_execute!(&mut tx, "UPDATE account_action_proofs SET consumed_at=$1,result=$2,completion_credential_id=$3 WHERE proof_id=$4 AND consumed_at IS NULL", chrono::Utc::now().timestamp(), result.as_str(), &actor.credential_id, proof_id).map_err(db_error)?;
+        record_request(
+            &mut tx,
+            &key,
+            &serde_json::to_value(result)?,
+            Some(&proof.target_id),
+        )
+        .await?;
+        record_change(
+            &mut tx,
+            &scoped_actor,
+            "workspace.ownership.response.complete.v1",
+            &proof.target_id,
+            proof.expected_revision.unwrap_or_default() + 1,
+        )
+        .await?;
+        tx.commit().await.map_err(boundary_error)?;
+        return Ok(result);
+    }
     let invitation = eligible(&mut tx, actor, &proof.target_id).await?;
     if Some(invitation.workspace_id.as_str()) != proof.workspace_id.as_deref()
         || !invitation
@@ -381,21 +569,39 @@ pub async fn complete(
     }
     let result = match proof.action.as_str() {
         "accept" => {
-            let existing = krausen_core::dbtx_fetch_optional!(&mut tx, Invitation, "SELECT workspace_id, '' AS email, role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2", &proof.workspace_id, &actor.actor_id).map_err(db_error)?;
-            if existing.is_some() {
+            #[derive(sqlx::FromRow)]
+            struct ExistingMembership {
+                active: bool,
+            }
+            let existing = krausen_core::dbtx_fetch_optional!(
+                &mut tx,
+                ExistingMembership,
+                "SELECT active FROM workspace_users WHERE workspace_id=$1 AND user_id=$2",
+                &proof.workspace_id,
+                &actor.actor_id
+            )
+            .map_err(db_error)?;
+            if existing
+                .as_ref()
+                .is_some_and(|membership| membership.active)
+            {
                 return Err(Error::Conflict {
                     expected: 0,
                     actual: 1,
                 });
             }
-            krausen_core::dbtx_execute!(
-                &mut tx,
-                "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,$3)",
-                proof.workspace_id.as_deref(),
-                &actor.actor_id,
-                &invitation.role
-            )
-            .map_err(db_error)?;
+            if existing.is_some() {
+                krausen_core::dbtx_execute!(&mut tx, "UPDATE workspace_users SET active=TRUE,role=$1 WHERE workspace_id=$2 AND user_id=$3 AND active=FALSE", &invitation.role, proof.workspace_id.as_deref(), &actor.actor_id).map_err(db_error)?;
+            } else {
+                krausen_core::dbtx_execute!(
+                    &mut tx,
+                    "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,$3)",
+                    proof.workspace_id.as_deref(),
+                    &actor.actor_id,
+                    &invitation.role
+                )
+                .map_err(db_error)?;
+            }
             krausen_core::dbtx_execute!(&mut tx, "UPDATE workspace_invitations SET status='accepted', accepted_at=CURRENT_TIMESTAMP, accepted_by_user_id=$1 WHERE invitation_id=$2 AND status='pending'", &actor.actor_id, &proof.target_id).map_err(db_error)?;
             InvitationProofOutcome::Accepted
         }
@@ -405,6 +611,12 @@ pub async fn complete(
         }
         _ => return Err(Error::Forbidden),
     };
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE workspaces SET revision=revision+1 WHERE workspace_id=$1 AND status='active'",
+        proof.workspace_id.as_deref()
+    )
+    .map_err(db_error)?;
     let now = chrono::Utc::now().timestamp();
     krausen_core::dbtx_execute!(&mut tx, "UPDATE account_action_proofs SET consumed_at=$1,result=$2,completion_credential_id=$3 WHERE proof_id=$4 AND consumed_at IS NULL", now, result.as_str(), &actor.credential_id, proof_id).map_err(db_error)?;
     let audit_actor = ActorContext {
@@ -645,17 +857,61 @@ pub async fn list(
     Ok(result)
 }
 
-/// Cancel a pending invitation under current workspace administration authority.
-pub async fn cancel(pool: &DbPool, actor: &ActorContext, invitation_id: &str) -> Result<(), Error> {
+/// Cancel a pending invitation under current administration and revision authority.
+pub async fn cancel(
+    pool: &DbPool,
+    actor: &ActorContext,
+    invitation_id: &str,
+    expected: i64,
+    request_id: uuid::Uuid,
+) -> Result<i64, Error> {
     #[derive(sqlx::FromRow)]
     struct State {
         status: String,
+    }
+    #[derive(sqlx::FromRow)]
+    struct Revision {
+        revision: i64,
     }
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     if crate::authorize_workspace(&mut tx, actor).await? != "workspace_admin" {
         return Err(Error::Forbidden);
     }
-    let sql = if pool.is_postgres() {
+    let pg = pool.is_postgres();
+    let sql = if pg {
+        "SELECT revision FROM workspaces WHERE workspace_id=$1 AND status='active' FOR UPDATE"
+    } else {
+        "SELECT revision FROM workspaces WHERE workspace_id=$1 AND status='active'"
+    };
+    let workspace = krausen_core::dbtx_fetch_optional!(&mut tx, Revision, sql, &actor.workspace_id)
+        .map_err(db_error)?
+        .ok_or(Error::Forbidden)?;
+    if crate::authorize_workspace(&mut tx, actor).await? != "workspace_admin" {
+        return Err(Error::Forbidden);
+    }
+    let digest = krausen_core::canonical_json::sha256(
+        &serde_json::json!({"invitation_id":invitation_id,"expected_revision":expected}),
+    )
+    .map_err(|_| Error::Invalid("invitation identity"))?;
+    let request = request_id.to_string();
+    let key = RequestIdentity {
+        actor,
+        operation: "account.invitation.cancel.v1",
+        request_id: &request,
+        payload_digest: &digest,
+    };
+    if let Some(result) = recover_request(&mut tx, &key).await? {
+        let revision = serde_json::from_value(result)?;
+        tx.commit().await.map_err(boundary_error)?;
+        return Ok(revision);
+    }
+    if workspace.revision != expected {
+        return Err(Error::Conflict {
+            expected,
+            actual: workspace.revision,
+        });
+    }
+    let sql = if pg {
         "SELECT status FROM workspace_invitations WHERE invitation_id=$1 AND workspace_id=$2 FOR UPDATE"
     } else {
         "SELECT status FROM workspace_invitations WHERE invitation_id=$1 AND workspace_id=$2"
@@ -664,22 +920,37 @@ pub async fn cancel(pool: &DbPool, actor: &ActorContext, invitation_id: &str) ->
         krausen_core::dbtx_fetch_optional!(&mut tx, State, sql, invitation_id, &actor.workspace_id)
             .map_err(db_error)?
             .ok_or(Error::Forbidden)?;
-    crate::authorize_workspace(&mut tx, actor).await?;
-    if row.status == "cancelled" {
-        tx.commit().await.map_err(boundary_error)?;
-        return Ok(());
-    }
     if row.status != "pending" {
-        return Err(Error::Conflict {
-            expected: 0,
-            actual: 1,
-        });
+        return Err(Error::Invalid("invitation unavailable"));
     }
     let result = krausen_core::dbtx_execute!(&mut tx, "UPDATE workspace_invitations SET status='cancelled' WHERE invitation_id=$1 AND workspace_id=$2 AND status='pending'", invitation_id, &actor.workspace_id).map_err(db_error)?;
     if result.rows_affected() != 1 {
         return Err(Error::Retryable);
     }
-    record_change(&mut tx, actor, "invitation.cancel.v1", invitation_id, 0).await?;
+    let revision = workspace.revision + 1;
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE workspaces SET revision=$1 WHERE workspace_id=$2 AND revision=$3",
+        revision,
+        &actor.workspace_id,
+        workspace.revision
+    )
+    .map_err(db_error)?;
+    record_request(
+        &mut tx,
+        &key,
+        &serde_json::json!(revision),
+        Some(invitation_id),
+    )
+    .await?;
+    record_change(
+        &mut tx,
+        actor,
+        "account.invitation.cancel.v1",
+        invitation_id,
+        revision,
+    )
+    .await?;
     tx.commit().await.map_err(boundary_error)?;
-    Ok(())
+    Ok(revision)
 }

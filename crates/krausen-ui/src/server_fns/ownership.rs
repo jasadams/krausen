@@ -1,155 +1,52 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-//! Server functions for the Accept Ownership page.
-//!
-//! These handle fetching, accepting, and declining ownership transfers.
-//! The page is a standalone route (`/accept-ownership/:transferId`) that
-//! does not use the main layout wrapper.
-
+//! Browser adapters for shared ownership-transfer operations.
 use leptos::prelude::*;
 
-// On the server, re-export the canonical definition from `krausen-auth`.
-// On the client (WASM), provide an identical definition for deserialization.
-// The auth crate owns the struct shape; the client mirror exists only because
-// `krausen-auth` is not compiled for the WASM target.
-#[cfg(feature = "ssr")]
-pub use krausen_auth::workspace_service::OwnershipTransferDetail;
+pub type OwnershipTransfer = krausen_types::account::OwnershipDetail;
 
-/// Client-side mirror of `krausen_auth::workspace_service::OwnershipTransferDetail`.
-/// Must be kept in sync with the canonical definition.
-#[cfg(not(feature = "ssr"))]
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct OwnershipTransferDetail {
-    pub transfer_id: String,
-    pub workspace_name: String,
-    pub from_user_email: String,
-    pub expires_at: String,
-    pub status: String,
-}
-
-/// Convenience alias so page modules can keep importing `OwnershipTransfer`.
-pub type OwnershipTransfer = OwnershipTransferDetail;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Server functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Fetch a specific ownership transfer by ID.
-///
-/// Returns `Ok(Some(transfer))` if a pending transfer exists for the
-/// authenticated user, `Ok(None)` if not found / not pending / expired.
-///
-/// find the one matching `transfer_id`, verify status == "pending".
 #[server(prefix = "/leptos-api")]
 pub async fn get_ownership_transfer(
     transfer_id: String,
-) -> Result<Option<OwnershipTransferDetail>, ServerFnError> {
-    let auth = extract_auth().await?;
-    let ctx = extract_context()?;
-
-    krausen_auth::workspace_service::get_transfer_for_recipient(
-        &ctx.db,
-        &transfer_id,
-        &auth.user_id,
-    )
-    .await
-    .into_sfn()
+) -> Result<Option<OwnershipTransfer>, ServerFnError> {
+    let auth = super::extract_auth().await?;
+    let ctx = super::extract_context()?;
+    let actor = super::verified_account_actor(&auth)?;
+    match krausen_app::ownership::get(&ctx.db, &actor, &transfer_id).await {
+        Ok(detail) => Ok(Some(detail)),
+        Err(krausen_app::Error::Forbidden) => Ok(None),
+        Err(_) => Err(ServerFnError::new("Unable to load transfer")),
+    }
 }
 
-/// Accept an ownership transfer. Only the recipient can accept.
-///
-/// Mirrors `POST /api/v1/workspaces/ownership/transfer/{id}/accept`.
+/// Begin a bound mailbox confirmation; a pending result is not ownership.
 #[server(prefix = "/leptos-api")]
-pub async fn accept_ownership_transfer(
+pub async fn begin_ownership_response(
     transfer_id: String,
-) -> Result<(), ServerFnError> {
-    let auth = extract_auth().await?;
-    let ctx = extract_context()?;
-
-    let transfer = krausen_auth::workspace_service::get_ownership_transfer(&ctx.db, &transfer_id)
-        .await
-        .into_sfn()?
-        .ok_or_else(|| ServerFnError::new("Transfer not found"))?;
-
-    // Authorization first — recipient check before status/expiry
-    if transfer.to_user_id != auth.user_id {
-        return Err(ServerFnError::new(
-            "Only the transfer recipient can accept",
-        ));
-    }
-
-    if transfer.status != krausen_core::enums::TransferStatus::Pending {
-        return Err(ServerFnError::new("Transfer is no longer pending"));
-    }
-
-    if transfer.expires_at < chrono::Utc::now() {
-        let _ = krausen_auth::workspace_service::update_transfer_status(
+    workspace_id: String,
+    expected_revision: i64,
+    accept: bool,
+    request_id: String,
+) -> Result<krausen_types::account::OwnershipResponseOutcome, ServerFnError> {
+    let auth = super::extract_auth().await?;
+    let ctx = super::extract_context()?;
+    let mut actor = super::verified_account_actor(&auth)?;
+    actor.workspace_id = workspace_id;
+    let request = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    let mail_available = krausen_app::invitation::delivery_available(
+        krausen_auth::email_service::EmailService::from_env().is_configured(),
+        &ctx.config.base_url,
+    );
+    Ok(krausen_app::ownership::project_response(
+        krausen_app::ownership::begin_response(
             &ctx.db,
+            &actor,
             &transfer_id,
-            "expired",
+            accept,
+            expected_revision,
+            request,
+            mail_available,
         )
-        .await;
-        return Err(ServerFnError::new("Transfer has expired"));
-    }
-
-    krausen_auth::workspace_service::complete_ownership_transfer(
-        &ctx.db,
-        &transfer_id,
-        &transfer.workspace_id,
-        &auth.user_id,
-    )
-    .await
-    .into_sfn()?;
-
-    tracing::info!(
-        "Ownership transfer {} accepted: workspace {} now owned by {}",
-        transfer_id,
-        transfer.workspace_id,
-        auth.user_id
-    );
-
-    Ok(())
+        .await,
+    ))
 }
-
-/// Decline an ownership transfer. Only the recipient can decline.
-///
-/// Mirrors `POST /api/v1/workspaces/ownership/transfer/{id}/decline`.
-#[server(prefix = "/leptos-api")]
-pub async fn decline_ownership_transfer(
-    transfer_id: String,
-) -> Result<(), ServerFnError> {
-    let auth = extract_auth().await?;
-    let ctx = extract_context()?;
-
-    let transfer = krausen_auth::workspace_service::get_ownership_transfer(&ctx.db, &transfer_id)
-        .await
-        .into_sfn()?
-        .ok_or_else(|| ServerFnError::new("Transfer not found"))?;
-
-    // Authorization first — recipient check before status
-    if transfer.to_user_id != auth.user_id {
-        return Err(ServerFnError::new(
-            "Only the transfer recipient can decline",
-        ));
-    }
-
-    if transfer.status != krausen_core::enums::TransferStatus::Pending {
-        return Err(ServerFnError::new("Transfer is no longer pending"));
-    }
-
-    krausen_auth::workspace_service::update_transfer_status(&ctx.db, &transfer_id, "declined")
-        .await
-        .into_sfn()?;
-
-    tracing::info!(
-        "Ownership transfer {} declined by {}",
-        transfer_id,
-        auth.user_id
-    );
-
-    Ok(())
-}
-
-// Helpers — delegate to shared extractors in parent module
-#[cfg(feature = "ssr")]
-use super::{extract_auth, extract_context, IntoServerFnError};

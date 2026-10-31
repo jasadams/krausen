@@ -5,6 +5,7 @@ CREATE TABLE account_action_proofs (
  action TEXT NOT NULL,
  target_id TEXT NOT NULL,
  workspace_id TEXT REFERENCES workspaces(workspace_id),
+ expected_revision BIGINT,
  recipient_email TEXT NOT NULL,
  outbox_id TEXT,
  expires_at BIGINT NOT NULL,
@@ -12,3 +13,5 @@ CREATE TABLE account_action_proofs (
  completion_credential_id TEXT,
  result TEXT
 );
+ALTER TABLE users ADD COLUMN account_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE auth_credentials ADD COLUMN revision BIGINT NOT NULL DEFAULT 0;

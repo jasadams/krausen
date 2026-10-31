@@ -14,6 +14,7 @@ pub struct ProfileData {
     pub email: String,
     pub name: Option<String>,
     pub theme: String,
+    pub revision: i64,
     pub is_personal_mode: bool,
     pub is_self_hosted: bool,
 }
@@ -51,6 +52,7 @@ pub struct TeamMember {
     pub role: String,
     pub is_owner: bool,
     pub joined_at: String,
+    pub revision: i64,
 }
 
 /// A pending workspace invitation (admin view).

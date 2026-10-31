@@ -8,11 +8,34 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
+fn team_change_result(
+    outcome: krausen_types::account::TeamChangeOutcome,
+) -> Result<(), ServerFnError> {
+    use krausen_types::account::TeamChangeOutcome;
+    match outcome {
+        TeamChangeOutcome::Saved { .. } => Ok(()),
+        TeamChangeOutcome::Conflict { .. } => Err(ServerFnError::new(
+            "Team changed elsewhere. Reload to continue.",
+        )),
+        TeamChangeOutcome::RequestIdentityConflict => {
+            Err(ServerFnError::new("Request identity conflict."))
+        }
+        TeamChangeOutcome::ResultExpired => Err(ServerFnError::new(
+            "Request result expired. Reload to continue.",
+        )),
+        TeamChangeOutcome::Forbidden => Err(ServerFnError::new("Access denied.")),
+        TeamChangeOutcome::Invalid => Err(ServerFnError::new("This team change is not allowed.")),
+        TeamChangeOutcome::Retryable | TeamChangeOutcome::Unavailable => {
+            Err(ServerFnError::new("Could not save. Try again."))
+        }
+    }
+}
+
+use crate::components::select::DynSelect;
 use crate::components::{
     Alert, AlertDescription, AlertTitle, AlertVariant, Badge, BadgeVariant, Button, ButtonSize,
-    ButtonVariant, ConfirmDialog, EmptyState, Modal, ModalSize, Skeleton, INPUT_CLASS,
+    ButtonVariant, ConfirmDialog, EmptyState, INPUT_CLASS, Modal, ModalSize, Skeleton,
 };
-use crate::components::select::DynSelect;
 use crate::server_fns::context::UserContext;
 use crate::server_fns::team::*;
 use crate::types::{OwnershipTransferData, TeamInvitation, TeamMember};
@@ -66,10 +89,7 @@ fn TeamPageInner() -> impl IntoView {
     let (invitations_version, set_invitations_version) = signal(0u32);
     let (transfers_version, set_transfers_version) = signal(0u32);
 
-    let members = Resource::new(
-        move || members_version.get(),
-        |_| list_workspace_members(),
-    );
+    let members = Resource::new(move || members_version.get(), |_| list_workspace_members());
     let invitations = Resource::new(
         move || invitations_version.get(),
         |_| list_workspace_invitations(),
@@ -89,35 +109,153 @@ fn TeamPageInner() -> impl IntoView {
     let (dialog_title, set_dialog_title) = signal(String::new());
     let (dialog_message, set_dialog_message) = signal(String::new());
     let (dialog_confirm_text, set_dialog_confirm_text) = signal("Confirm".to_string());
-    let (pending_action, set_pending_action) =
-        signal(Option::<PendingAction>::None);
+    let (pending_action, set_pending_action) = signal(Option::<PendingAction>::None);
 
     // Actions
+    let invite_request = RwSignal::new(None::<(String, String, i64, String)>);
     let invite_action = Action::new(move |(email, role): &(String, String)| {
         let email = email.clone();
         let role = role.clone();
-        async move { invite_member(email, role).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.first().map(|member| member.revision));
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before inviting."))?;
+            let request = invite_request
+                .get_untracked()
+                .filter(|(address, value, rev, _)| {
+                    address == &email && value == &role && *rev == expected
+                })
+                .map(|(_, _, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            invite_request.set(Some((
+                email.clone(),
+                role.clone(),
+                expected,
+                request.clone(),
+            )));
+            use krausen_types::account::InvitationCreateOutcome as Outcome;
+            match invite_member(email, role, expected, request).await? {
+                Outcome::Queued(_) => {
+                    invite_request.set(None);
+                    Ok(())
+                }
+                Outcome::Conflict { .. } => Err(ServerFnError::new(
+                    "Team changed elsewhere. Reload to continue.",
+                )),
+                Outcome::DeliveryUnavailable => {
+                    Err(ServerFnError::new("Email delivery is unavailable."))
+                }
+                Outcome::Forbidden => Err(ServerFnError::new("Access denied.")),
+                Outcome::Invalid => Err(ServerFnError::new("Invitation could not be created.")),
+                _ => Err(ServerFnError::new("Invitation unavailable. Try again.")),
+            }
+        }
     });
 
+    let cancel_request = RwSignal::new(None::<(String, i64, String)>);
     let cancel_invite_action = Action::new(move |id: &String| {
         let id = id.clone();
-        async move { cancel_invitation(id).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.first().map(|member| member.revision));
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before saving."))?;
+            let request = cancel_request
+                .get_untracked()
+                .filter(|(target, rev, _)| target == &id && *rev == expected)
+                .map(|(_, _, request)| request)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            cancel_request.set(Some((id.clone(), expected, request.clone())));
+            team_change_result(cancel_invitation(id, expected, request).await?)?;
+            cancel_request.set(None);
+            Ok::<_, ServerFnError>(())
+        }
     });
 
+    let role_request = RwSignal::new(None::<(String, String, i64, String)>);
     let update_role_action = Action::new(move |(user_id, role): &(String, String)| {
         let user_id = user_id.clone();
         let role = role.clone();
-        async move { update_member_role(user_id, role).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.into_iter().find(|member| member.user_id == user_id))
+            .map(|member| member.revision);
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before saving."))?;
+            let request = role_request
+                .get_untracked()
+                .filter(|(user, value, rev, _)| {
+                    user == &user_id && value == &role && *rev == expected
+                })
+                .map(|(_, _, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            role_request.set(Some((
+                user_id.clone(),
+                role.clone(),
+                expected,
+                request.clone(),
+            )));
+            team_change_result(update_member_role(user_id, role, expected, request).await?)?;
+            role_request.set(None);
+            Ok::<_, ServerFnError>(())
+        }
     });
 
+    let removal_request = RwSignal::new(None::<(String, i64, String)>);
     let remove_action = Action::new(move |user_id: &String| {
         let user_id = user_id.clone();
-        async move { remove_member(user_id).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.into_iter().find(|member| member.user_id == user_id))
+            .map(|member| member.revision);
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before saving."))?;
+            let request = removal_request
+                .get_untracked()
+                .filter(|(user, rev, _)| user == &user_id && *rev == expected)
+                .map(|(_, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            removal_request.set(Some((user_id.clone(), expected, request.clone())));
+            team_change_result(remove_member(user_id, expected, request).await?)?;
+            removal_request.set(None);
+            Ok::<_, ServerFnError>(())
+        }
     });
 
+    let cancel_transfer_request = RwSignal::new(None::<(String, i64, String)>);
     let cancel_transfer_action = Action::new(move |id: &String| {
         let id = id.clone();
-        async move { cancel_ownership_transfer(id).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.first().map(|member| member.revision));
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before saving."))?;
+            let request = cancel_transfer_request
+                .get_untracked()
+                .filter(|(target, rev, _)| target == &id && *rev == expected)
+                .map(|(_, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            cancel_transfer_request.set(Some((id.clone(), expected, request.clone())));
+            team_change_result(cancel_ownership_transfer(id, expected, request).await?)?;
+            cancel_transfer_request.set(None);
+            Ok::<_, ServerFnError>(())
+        }
     });
 
     // Transfer Ownership modal state
@@ -127,9 +265,40 @@ fn TeamPageInner() -> impl IntoView {
     let transfer_confirmation = RwSignal::new(String::new());
     let transfer_error = RwSignal::new(Option::<String>::None);
 
+    let start_transfer_request = RwSignal::new(None::<(String, i64, String)>);
     let initiate_transfer_action = Action::new(move |user_id: &String| {
         let user_id = user_id.clone();
-        async move { initiate_ownership_transfer(user_id).await }
+        let expected = members
+            .get_untracked()
+            .and_then(Result::ok)
+            .and_then(|list| list.first().map(|member| member.revision));
+        async move {
+            let expected =
+                expected.ok_or_else(|| ServerFnError::new("Reload the team before saving."))?;
+            let request = start_transfer_request
+                .get_untracked()
+                .filter(|(target, rev, _)| target == &user_id && *rev == expected)
+                .map(|(_, _, id)| id)
+                .or_else(crate::utils::request_id::new_request_id)
+                .ok_or_else(|| ServerFnError::new("Unable to create request identity."))?;
+            start_transfer_request.set(Some((user_id.clone(), expected, request.clone())));
+            use krausen_types::account::OwnershipStartOutcome as Outcome;
+            match initiate_ownership_transfer(user_id, expected, request).await? {
+                Outcome::Queued(_) => {
+                    start_transfer_request.set(None);
+                    Ok(())
+                }
+                Outcome::Conflict { .. } => Err(ServerFnError::new(
+                    "Team changed elsewhere. Reload to continue.",
+                )),
+                Outcome::DeliveryUnavailable => {
+                    Err(ServerFnError::new("Email delivery is unavailable."))
+                }
+                Outcome::Forbidden => Err(ServerFnError::new("Access denied.")),
+                Outcome::Invalid => Err(ServerFnError::new("Transfer could not be started.")),
+                _ => Err(ServerFnError::new("Transfer unavailable. Try again.")),
+            }
+        }
     });
 
     // Derived memos for transfer modal — avoids passing Resource through props
@@ -174,6 +343,7 @@ fn TeamPageInner() -> impl IntoView {
             set_invite_email.set(String::new());
             set_invite_role.set("user".to_string());
             set_invitations_version.update(|v| *v += 1);
+            set_members_version.update(|v| *v += 1);
         }
     });
 
@@ -182,6 +352,7 @@ fn TeamPageInner() -> impl IntoView {
             && result.is_ok()
         {
             set_invitations_version.update(|v| *v += 1);
+            set_members_version.update(|v| *v += 1);
         }
     });
 
@@ -206,6 +377,7 @@ fn TeamPageInner() -> impl IntoView {
             && result.is_ok()
         {
             set_transfers_version.update(|v| *v += 1);
+            set_members_version.update(|v| *v += 1);
         }
     });
 
@@ -219,6 +391,7 @@ fn TeamPageInner() -> impl IntoView {
                     transfer_confirmation.set(String::new());
                     transfer_error.set(None);
                     set_transfers_version.update(|v| *v += 1);
+                    set_members_version.update(|v| *v += 1);
                 }
                 Err(e) => {
                     transfer_error.set(Some(e.to_string()));
@@ -262,9 +435,8 @@ fn TeamPageInner() -> impl IntoView {
 
     let request_remove_member = move |id: String| {
         set_dialog_title.set("Remove Team Member?".to_string());
-        set_dialog_message.set(
-            "Are you sure you want to remove this member from the workspace?".to_string(),
-        );
+        set_dialog_message
+            .set("Are you sure you want to remove this member from the workspace?".to_string());
         set_dialog_confirm_text.set("Remove Member".to_string());
         set_pending_action.set(Some(PendingAction::RemoveMember(id)));
         dialog_open.set(true);
@@ -272,9 +444,8 @@ fn TeamPageInner() -> impl IntoView {
 
     let request_cancel_transfer = move |id: String| {
         set_dialog_title.set("Cancel Ownership Transfer?".to_string());
-        set_dialog_message.set(
-            "Are you sure you want to cancel this ownership transfer request?".to_string(),
-        );
+        set_dialog_message
+            .set("Are you sure you want to cancel this ownership transfer request?".to_string());
         set_dialog_confirm_text.set("Cancel Transfer".to_string());
         set_pending_action.set(Some(PendingAction::CancelTransfer(id)));
         dialog_open.set(true);
@@ -314,11 +485,15 @@ fn TeamPageInner() -> impl IntoView {
             >
                 "Send Invitation"
             </Button>
-        }.into_any()
+        }
+        .into_any()
     });
 
     view! {
         <div class="p-4 sm:p-6">
+            {move || invite_action.value().get().is_some_and(|result| result.is_ok()).then(|| view! {
+                <p role="status" class="mb-4 text-sm text-muted-foreground">"Invitation queued for email delivery."</p>
+            })}
             // Header
             <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <div class="min-w-0">
@@ -909,41 +1084,41 @@ fn TransferOwnershipModal(
     });
 
     // Footer — re-callable Arc<dyn Fn> (required by Modal's ChildrenFn)
-    let transfer_modal_footer: Arc<dyn Fn() -> AnyView + Send + Sync> =
-        Arc::new(move || {
-            let step = transfer_step.get();
-            let _ws_name = workspace_name.get();
+    let transfer_modal_footer: Arc<dyn Fn() -> AnyView + Send + Sync> = Arc::new(move || {
+        let step = transfer_step.get();
+        let _ws_name = workspace_name.get();
 
-            if step == 1 {
-                let no_selection = transfer_selected_user_id.get().is_empty();
-                view! {
-                    <Button
-                        variant=ButtonVariant::Outline
-                        on:click=move |_| {
-                            show_modal.set(false);
+        if step == 1 {
+            let no_selection = transfer_selected_user_id.get().is_empty();
+            view! {
+                <Button
+                    variant=ButtonVariant::Outline
+                    on:click=move |_| {
+                        show_modal.set(false);
+                    }
+                >
+                    "Cancel"
+                </Button>
+                <Button
+                    variant=ButtonVariant::Default
+                    disabled=no_selection
+                    on:click=move |_| {
+                        if !transfer_selected_user_id.get_untracked().is_empty() {
+                            transfer_step.set(2);
                         }
-                    >
-                        "Cancel"
-                    </Button>
-                    <Button
-                        variant=ButtonVariant::Default
-                        disabled=no_selection
-                        on:click=move |_| {
-                            if !transfer_selected_user_id.get_untracked().is_empty() {
-                                transfer_step.set(2);
-                            }
-                        }
-                    >
-                        "Next"
-                    </Button>
-                }.into_any()
-            } else {
-                let transfer_disabled = Signal::derive(move || {
-                    initiate_transfer_action.pending().get()
-                        || transfer_confirmation.get() != workspace_name.get()
-                });
-                let is_submitting = Signal::derive(move || initiate_transfer_action.pending().get());
-                view! {
+                    }
+                >
+                    "Next"
+                </Button>
+            }
+            .into_any()
+        } else {
+            let transfer_disabled = Signal::derive(move || {
+                initiate_transfer_action.pending().get()
+                    || transfer_confirmation.get() != workspace_name.get()
+            });
+            let is_submitting = Signal::derive(move || initiate_transfer_action.pending().get());
+            view! {
                     <Button
                         variant=ButtonVariant::Outline
                         on:click=move |_| {
@@ -966,8 +1141,8 @@ fn TransferOwnershipModal(
                         {move || if is_submitting.get() { "Transferring..." } else { "Transfer Ownership" }}
                     </Button>
                 }.into_any()
-            }
-        });
+        }
+    });
 
     view! {
         <Modal

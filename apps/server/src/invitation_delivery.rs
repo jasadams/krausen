@@ -9,6 +9,11 @@ struct Outbox {
     payload_json: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct Recipient {
+    email: String,
+}
+
 pub async fn deliver_pending(
     db: &DbPool,
     base_url: &str,
@@ -19,10 +24,119 @@ pub async fn deliver_pending(
         return Ok(());
     }
     deliver_pending_with(db, base_url, key, |email, url| async move {
-        let text = format!("Confirm your workspace invitation request: {url}\nIf you did not request this, ignore this message.");
-        let html = format!(r#"<p>Confirm your workspace invitation request:</p><p><a href="{url}">Open confirmation</a></p><p>If you did not request this, ignore this message.</p>"#);
-        mail.send_email(&email, "Confirm workspace invitation request", &html, Some(&text), None, &[]).await
+        let text = format!("Review your account confirmation request: {url}\nIf you did not request this, ignore this message.");
+        let html = format!(r#"<p>Review your account confirmation request:</p><p><a href="{url}">Open confirmation</a></p><p>If you did not request this, ignore this message.</p>"#);
+        mail.send_email(&email, "Review account confirmation request", &html, Some(&text), None, &[]).await
+    }).await?;
+    deliver_invitations_with(db, base_url, |email, url| async move {
+        let text = format!("You have a workspace invitation. Sign in and verify your mailbox to review it: {url}");
+        let html = format!("<p>You have a workspace invitation. Sign in and verify your mailbox to review it.</p><p><a href=\"{url}\">Open profile</a></p>");
+        mail.send_email(&email, "Workspace invitation", &html, Some(&text), None, &[]).await
+    }).await?;
+    deliver_ownership_with(db, base_url, |email, url| async move {
+        let text = format!("A workspace ownership transfer is awaiting your review: {url}");
+        let html = format!("<p>A workspace ownership transfer is awaiting your review.</p><p><a href=\"{url}\">Review transfer</a></p>");
+        mail.send_email(&email, "Review ownership transfer", &html, Some(&text), None, &[]).await
     }).await
+}
+
+/// Notify only the account explicitly named on a committed pending transfer.
+pub async fn deliver_ownership_with<F, Fut>(
+    db: &DbPool,
+    base_url: &str,
+    mut send: F,
+) -> krausen_core::Result<()>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let records = krausen_core::db_fetch_all!(
+        db,
+        Outbox,
+        "SELECT outbox_id,payload_json FROM app_outbox WHERE operation='workspace.ownership.notify.v1' AND delivered_at IS NULL ORDER BY created_at LIMIT 50"
+    )?;
+    for record in records {
+        let payload: serde_json::Value = serde_json::from_str(&record.payload_json)?;
+        let Some(id) = payload
+            .get("transfer_id")
+            .and_then(|value| value.as_str())
+            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+        else {
+            continue;
+        };
+        let sql = if db.is_postgres() {
+            "SELECT u.email FROM ownership_transfers t JOIN users u ON u.user_id=t.to_user_id WHERE t.transfer_id=$1 AND t.status='pending' AND t.expires_at>CURRENT_TIMESTAMP AND u.active=TRUE"
+        } else {
+            "SELECT u.email FROM ownership_transfers t JOIN users u ON u.user_id=t.to_user_id WHERE t.transfer_id=$1 AND t.status='pending' AND julianday(t.expires_at)>julianday('now') AND u.active=TRUE"
+        };
+        let recipient = krausen_core::db_fetch_optional!(db, Recipient, sql, id)?;
+        let delivered = if let Some(recipient) = recipient {
+            let mut url = url::Url::parse(base_url)
+                .map_err(|_| krausen_core::Error::Internal("invalid delivery origin".into()))?;
+            url.set_path(&format!("/accept-ownership/{id}"));
+            send(recipient.email, url.to_string()).await
+        } else {
+            true
+        };
+        if delivered {
+            krausen_core::db_execute!(
+                db,
+                "UPDATE app_outbox SET delivered_at=$1 WHERE outbox_id=$2 AND delivered_at IS NULL",
+                chrono::Utc::now().timestamp(),
+                &record.outbox_id
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Deliver only committed invitation notifications; failed sends stay pending.
+pub async fn deliver_invitations_with<F, Fut>(
+    db: &DbPool,
+    base_url: &str,
+    mut send: F,
+) -> krausen_core::Result<()>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let records = krausen_core::db_fetch_all!(
+        db,
+        Outbox,
+        "SELECT outbox_id,payload_json FROM app_outbox WHERE operation='workspace.invitation.notify.v1' AND delivered_at IS NULL ORDER BY created_at LIMIT 50"
+    )?;
+    for record in records {
+        let payload: serde_json::Value = serde_json::from_str(&record.payload_json)?;
+        let Some(id) = payload
+            .get("invitation_id")
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+        let sql = if db.is_postgres() {
+            "SELECT email FROM workspace_invitations WHERE invitation_id=$1 AND status='pending' AND expires_at>CURRENT_TIMESTAMP"
+        } else {
+            "SELECT email FROM workspace_invitations WHERE invitation_id=$1 AND status='pending' AND julianday(expires_at)>julianday('now')"
+        };
+        let recipient = krausen_core::db_fetch_optional!(db, Recipient, sql, id)?;
+        let delivered = if let Some(recipient) = recipient {
+            let mut url = url::Url::parse(base_url)
+                .map_err(|_| krausen_core::Error::Internal("invalid delivery origin".into()))?;
+            url.set_path("/settings/profile");
+            send(recipient.email, url.to_string()).await
+        } else {
+            true
+        };
+        if delivered {
+            krausen_core::db_execute!(
+                db,
+                "UPDATE app_outbox SET delivered_at=$1 WHERE outbox_id=$2 AND delivered_at IS NULL",
+                chrono::Utc::now().timestamp(),
+                &record.outbox_id
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Dispatch committed outbox work through the supplied delivery transport.

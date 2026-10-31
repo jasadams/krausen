@@ -5,9 +5,6 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "ssr")]
-use super::IntoServerFnError;
-
 /// User info for the sidebar user menu.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SidebarUser {
@@ -29,29 +26,26 @@ pub async fn get_sidebar_user() -> Result<SidebarUser, ServerFnError> {
     let auth = super::extract_auth().await?;
     let ctx = super::extract_context()?;
 
-    // Read theme preference from user's extra_metadata (same source as profile.rs)
-    let user = krausen_auth::user_service::get_user_by_id(&ctx.db, &auth.user_id)
+    let actor = super::verified_account_actor(&auth)?;
+    let current = krausen_app::account::context(&ctx.db, &actor)
         .await
-        .into_sfn()?
-        .ok_or_else(|| ServerFnError::new("User not found"))?;
-
-    let theme_preference = user
-        .extra_metadata
-        .as_ref()
-        .and_then(|v| v.get("theme"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("system")
-        .to_string();
+        .map_err(|_| ServerFnError::new("Unable to load account"))?;
 
     Ok(SidebarUser {
-        user_id: auth.user_id.clone(),
-        workspace_id: auth.workspace.workspace_id.clone(),
-        name: auth.name.clone(),
-        email: auth.email.clone(),
-        workspace_name: auth.workspace.workspace_name.clone(),
+        user_id: current.profile.user_id,
+        workspace_id: current
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.workspace_id.clone()),
+        name: current.profile.name,
+        email: current.profile.email,
+        workspace_name: current
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.name.clone()),
         is_personal_mode: ctx.config.is_personal(),
         is_self_hosted: ctx.config.self_hosted,
-        theme_preference,
+        theme_preference: current.profile.theme,
     })
 }
 
@@ -69,15 +63,16 @@ pub async fn list_user_workspaces() -> Result<Vec<UserWorkspace>, ServerFnError>
     let ctx = super::extract_context()?;
     let auth = super::extract_auth().await?;
 
-    let workspaces = krausen_auth::workspace_service::get_user_workspaces(&ctx.db, &auth.user_id)
+    let actor = super::verified_account_actor(&auth)?;
+    let workspaces = krausen_app::account::workspaces(&ctx.db, &actor)
         .await
-        .into_sfn()?;
+        .map_err(|_| ServerFnError::new("Unable to load workspaces"))?;
 
     let current_ws_id = auth.workspace.workspace_id.as_deref().unwrap_or("");
 
     Ok(workspaces
         .into_iter()
-        .map(|(ws, _membership)| UserWorkspace {
+        .map(|ws| UserWorkspace {
             is_current: ws.workspace_id == current_ws_id,
             name: ws.name.unwrap_or_else(|| "Unnamed Workspace".to_string()),
             workspace_id: ws.workspace_id,
@@ -87,13 +82,56 @@ pub async fn list_user_workspaces() -> Result<Vec<UserWorkspace>, ServerFnError>
 
 /// Switch the user's active workspace.
 #[server(prefix = "/leptos-api")]
-pub async fn switch_workspace(workspace_id: String) -> Result<(), ServerFnError> {
+pub async fn switch_workspace(
+    workspace_id: String,
+    request_id: String,
+) -> Result<(), ServerFnError> {
     let ctx = super::extract_context()?;
     let auth = super::extract_auth().await?;
 
-    krausen_auth::user_service::update_last_workspace(&ctx.db, &auth.user_id, &workspace_id)
-        .await
-        .into_sfn()?;
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id =
+        uuid::Uuid::parse_str(&request_id).map_err(|_| ServerFnError::new("Invalid request ID"))?;
+    let selected =
+        krausen_app::account::select_workspace(&ctx.db, &actor, &workspace_id, request_id)
+            .await
+            .map_err(|_| ServerFnError::new("Unable to switch workspace"))?;
+    let mut claims = std::collections::HashMap::new();
+    claims.insert("user_id".into(), serde_json::json!(auth.user_id));
+    claims.insert("email".into(), serde_json::json!(auth.email));
+    claims.insert("name".into(), serde_json::json!(auth.name));
+    claims.insert("roles".into(), serde_json::json!(auth.roles));
+    claims.insert(
+        "credential_id".into(),
+        serde_json::json!(auth.credential_id),
+    );
+    claims.insert(
+        "workspace_id".into(),
+        serde_json::json!(selected.workspace_id),
+    );
+    claims.insert("workspace_name".into(), serde_json::json!(selected.name));
+    claims.insert("workspace_roles".into(), serde_json::json!([selected.role]));
+    claims.insert(
+        "iss".into(),
+        serde_json::json!(krausen_auth::jwt::BROWSER_ISSUER),
+    );
+    claims.insert(
+        "aud".into(),
+        serde_json::json!(krausen_auth::jwt::BROWSER_AUDIENCE),
+    );
+    let token = krausen_auth::jwt::create_access_token_until(
+        &actor.actor_id,
+        &ctx.auth_state.jwt_secret,
+        actor.access_expires_at,
+        claims,
+    )
+    .map_err(|_| ServerFnError::new("Unable to switch workspace"))?;
+    let mut headers = axum::http::HeaderMap::new();
+    krausen_auth::cookies::set_token_cookies(&mut headers, Some(&token), None);
+    let response = expect_context::<leptos_axum::ResponseOptions>();
+    for value in headers.get_all(axum::http::header::SET_COOKIE) {
+        response.append_header(axum::http::header::SET_COOKIE, value.clone());
+    }
 
     Ok(())
 }

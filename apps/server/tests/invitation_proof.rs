@@ -99,6 +99,277 @@ async fn exercise(db: DbPool) {
         credential_id: other_credential,
         ..actor.clone()
     };
+    let owner_actor = ActorContext {
+        actor_id: owner.clone(),
+        workspace_id: workspace.clone(),
+        credential_id: owner_credential.clone(),
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
+    };
+    let team = krausen_app::team::members(&db, &owner_actor).await.unwrap();
+    let promote = krausen_types::account::TeamChange::SetRole {
+        user_id: wrong.actor_id.clone(),
+        role: "workspace_admin".into(),
+    };
+    let team_request = uuid::Uuid::new_v4();
+    let team_revision = krausen_app::team::change(
+        &db,
+        &owner_actor,
+        promote.clone(),
+        team.revision,
+        team_request,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        team_revision,
+        krausen_app::team::change(&db, &owner_actor, promote, team.revision, team_request)
+            .await
+            .unwrap()
+    );
+    assert!(matches!(
+        krausen_app::team::change(
+            &db,
+            &owner_actor,
+            krausen_types::account::TeamChange::Remove {
+                user_id: owner.clone()
+            },
+            team_revision,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        krausen_app::team::change(
+            &db,
+            &owner_actor,
+            krausen_types::account::TeamChange::Remove {
+                user_id: wrong.actor_id.clone()
+            },
+            team.revision,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        Err(Error::Conflict { .. })
+    ));
+    krausen_app::team::change(
+        &db,
+        &owner_actor,
+        krausen_types::account::TeamChange::SetRole {
+            user_id: wrong.actor_id.clone(),
+            role: "workspace_user".into(),
+        },
+        team_revision,
+        uuid::Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    let invitation_revision = krausen_app::team::members(&db, &owner_actor)
+        .await
+        .unwrap()
+        .revision;
+    let invited_email = format!("new-{suffix}@example.test");
+    let create_id = uuid::Uuid::new_v4();
+    assert!(matches!(
+        krausen_app::team::invite(
+            &db,
+            &owner_actor,
+            &invited_email,
+            "workspace_user",
+            invitation_revision,
+            create_id,
+            false
+        )
+        .await,
+        Err(Error::DeliveryUnavailable)
+    ));
+    let queued = krausen_app::team::invite(
+        &db,
+        &owner_actor,
+        &invited_email,
+        "workspace_user",
+        invitation_revision,
+        create_id,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued.delivery, "pending");
+    assert!(
+        krausen_app::team::invitations(&db, &owner_actor)
+            .await
+            .unwrap()
+            .iter()
+            .any(|item| item.invitation_id == queued.invitation_id)
+    );
+    assert!(matches!(
+        krausen_app::team::invitations(&db, &wrong).await,
+        Err(Error::Forbidden)
+    ));
+    assert_eq!(
+        queued,
+        krausen_app::team::invite(
+            &db,
+            &owner_actor,
+            &invited_email,
+            "workspace_user",
+            invitation_revision,
+            create_id,
+            false
+        )
+        .await
+        .unwrap()
+    );
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let failed = sent.clone();
+    krausen_server::invitation_delivery::deliver_invitations_with(
+        &db,
+        "https://example.test",
+        move |email, url| {
+            let sent = failed.clone();
+            async move {
+                sent.lock().unwrap().push((email, url));
+                false
+            }
+        },
+    )
+    .await
+    .unwrap();
+    let retry = sent.clone();
+    krausen_server::invitation_delivery::deliver_invitations_with(
+        &db,
+        "https://example.test",
+        move |email, url| {
+            let sent = retry.clone();
+            async move {
+                sent.lock().unwrap().push((email, url));
+                true
+            }
+        },
+    )
+    .await
+    .unwrap();
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0], sent[1]);
+    assert_eq!(sent[0].0, invited_email);
+    drop(sent);
+    run!(
+        "UPDATE users SET extra_metadata = '{\"other\":\"kept\"}' WHERE user_id=$1",
+        &owner
+    );
+    let initial_profile = krausen_app::account::profile(&db, &owner_actor)
+        .await
+        .unwrap();
+    let profile_request = uuid::Uuid::new_v4();
+    let change = krausen_types::account::ProfileChange::Theme {
+        theme: "dark".into(),
+    };
+    let updated = krausen_app::account::save(
+        &db,
+        &owner_actor,
+        change.clone(),
+        initial_profile.revision,
+        profile_request,
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.theme, "dark");
+    assert_eq!(
+        updated,
+        krausen_app::account::save(
+            &db,
+            &owner_actor,
+            change,
+            initial_profile.revision,
+            profile_request
+        )
+        .await
+        .unwrap()
+    );
+    assert!(matches!(
+        krausen_app::account::save(
+            &db,
+            &owner_actor,
+            krausen_types::account::ProfileChange::Name {
+                name: "Changed".into()
+            },
+            initial_profile.revision,
+            uuid::Uuid::new_v4()
+        )
+        .await,
+        Err(Error::Conflict { .. })
+    ));
+    assert!(matches!(
+        krausen_app::account::save(
+            &db,
+            &owner_actor,
+            krausen_types::account::ProfileChange::Name {
+                name: "Changed".into()
+            },
+            initial_profile.revision,
+            profile_request
+        )
+        .await,
+        Err(Error::RequestIdentityConflict)
+    ));
+    let metadata: String = match &db {
+        DbPool::Postgres(p) => {
+            sqlx::query_scalar("SELECT CAST(extra_metadata AS TEXT) FROM users WHERE user_id=$1")
+                .bind(&owner)
+                .fetch_one(p)
+                .await
+                .unwrap()
+        }
+        DbPool::Sqlite(p) => {
+            sqlx::query_scalar("SELECT CAST(extra_metadata AS TEXT) FROM users WHERE user_id=$1")
+                .bind(&owner)
+                .fetch_one(p)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&metadata).unwrap()["other"],
+        "kept"
+    );
+    let selection_request = uuid::Uuid::new_v4();
+    let selected = krausen_app::account::select_workspace(&db, &wrong, &foreign, selection_request)
+        .await
+        .unwrap();
+    assert_eq!(selected.workspace_id, foreign);
+    assert_eq!(
+        selected,
+        krausen_app::account::select_workspace(&db, &wrong, &foreign, selection_request)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        krausen_app::account::workspaces(&db, &wrong)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(matches!(
+        krausen_app::account::select_workspace(&db, &owner_actor, &foreign, uuid::Uuid::new_v4())
+            .await,
+        Err(Error::Forbidden)
+    ));
+    run!(
+        "UPDATE workspace_users SET active=FALSE WHERE workspace_id=$1 AND user_id=$2",
+        &foreign,
+        &wrong.actor_id
+    );
+    assert!(matches!(
+        krausen_app::account::select_workspace(&db, &wrong, &foreign, selection_request).await,
+        Err(Error::Forbidden)
+    ));
+    run!(
+        "UPDATE workspace_users SET active=TRUE WHERE workspace_id=$1 AND user_id=$2",
+        &foreign,
+        &wrong.actor_id
+    );
     assert!(matches!(
         invitation::begin_discovery(&db, &actor, uuid::Uuid::new_v4(), false).await,
         Err(Error::DeliveryUnavailable)
@@ -647,6 +918,30 @@ async fn exercise(db: DbPool) {
     .unwrap();
     let acode = invitation::delivery_token(secret, &a).unwrap();
     let dcode = invitation::delivery_token(secret, &d).unwrap();
+    assert_eq!(
+        invitation::preview(&db, &browser, &accept.interaction_id, &acode, secret)
+            .await
+            .unwrap()
+            .action,
+        "accept"
+    );
+    assert_eq!(
+        invitation::preview(&db, &browser, &decline.interaction_id, &dcode, secret)
+            .await
+            .unwrap()
+            .action,
+        "decline"
+    );
+    assert!(
+        invitation::preview(&db, &wrong, &accept.interaction_id, &acode, secret)
+            .await
+            .is_err()
+    );
+    assert!(
+        invitation::preview(&db, &browser, &accept.interaction_id, &dcode, secret)
+            .await
+            .is_err()
+    );
     assert!(
         invitation::complete(
             &db,
@@ -750,6 +1045,10 @@ async fn exercise(db: DbPool) {
     .unwrap()
     .unwrap();
     let code = invitation::delivery_token(secret, &row).unwrap();
+    let race_revision = krausen_app::team::members(&db, &race_owner)
+        .await
+        .unwrap()
+        .revision;
     let (accepted, cancelled) = tokio::join!(
         invitation::complete(
             &db,
@@ -759,7 +1058,13 @@ async fn exercise(db: DbPool) {
             uuid::Uuid::parse_str(&race_proof.interaction_id).unwrap(),
             secret
         ),
-        invitation::cancel(&db, &race_owner, &race_invite)
+        invitation::cancel(
+            &db,
+            &race_owner,
+            &race_invite,
+            race_revision,
+            uuid::Uuid::new_v4()
+        )
     );
     assert_ne!(accepted.is_ok(), cancelled.is_ok());
 
@@ -775,6 +1080,154 @@ async fn exercise(db: DbPool) {
         .await
         .is_err()
     );
+    let transfer_revision = krausen_app::team::members(&db, &owner_actor)
+        .await
+        .unwrap()
+        .revision;
+    let transfer_request = uuid::Uuid::new_v4();
+    assert!(matches!(
+        krausen_app::ownership::start(
+            &db,
+            &owner_actor,
+            &wrong.actor_id,
+            transfer_revision,
+            transfer_request,
+            false
+        )
+        .await,
+        Err(Error::DeliveryUnavailable)
+    ));
+    let transfer = krausen_app::ownership::start(
+        &db,
+        &owner_actor,
+        &wrong.actor_id,
+        transfer_revision,
+        transfer_request,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transfer,
+        krausen_app::ownership::start(
+            &db,
+            &owner_actor,
+            &wrong.actor_id,
+            transfer_revision,
+            transfer_request,
+            false
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        krausen_app::ownership::get(&db, &wrong, &transfer.transfer_id)
+            .await
+            .is_ok()
+    );
+    assert!(
+        krausen_app::ownership::get(&db, &actor, &transfer.transfer_id)
+            .await
+            .is_err()
+    );
+    assert!(
+        krausen_app::ownership::begin_response(
+            &db,
+            &actor,
+            &transfer.transfer_id,
+            true,
+            transfer.revision,
+            uuid::Uuid::new_v4(),
+            true
+        )
+        .await
+        .is_err()
+    );
+    let action_id = uuid::Uuid::new_v4();
+    let action = krausen_app::ownership::begin_response(
+        &db,
+        &wrong,
+        &transfer.transfer_id,
+        true,
+        transfer.revision,
+        action_id,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        action,
+        krausen_app::ownership::begin_response(
+            &db,
+            &wrong,
+            &transfer.transfer_id,
+            true,
+            transfer.revision,
+            action_id,
+            false
+        )
+        .await
+        .unwrap()
+    );
+    let transfer_proof: Proof = krausen_core::db_fetch_optional!(
+        &db,
+        Proof,
+        "SELECT * FROM account_action_proofs WHERE proof_id=$1",
+        &action.interaction_id
+    )
+    .unwrap()
+    .unwrap();
+    let transfer_code = invitation::delivery_token(secret, &transfer_proof).unwrap();
+    assert_eq!(
+        invitation::preview(&db, &wrong, &action.interaction_id, &transfer_code, secret)
+            .await
+            .unwrap()
+            .action,
+        "ownership_accept"
+    );
+    assert!(
+        invitation::complete(
+            &db,
+            &actor,
+            &action.interaction_id,
+            &transfer_code,
+            uuid::Uuid::new_v4(),
+            secret
+        )
+        .await
+        .is_err()
+    );
+    let completion_id = uuid::Uuid::new_v4();
+    let completed = invitation::complete(
+        &db,
+        &wrong,
+        &action.interaction_id,
+        &transfer_code,
+        completion_id,
+        secret,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        completed,
+        krausen_types::account::InvitationProofOutcome::OwnershipAccepted
+    );
+    assert_eq!(
+        completed,
+        invitation::complete(
+            &db,
+            &wrong,
+            &action.interaction_id,
+            &transfer_code,
+            completion_id,
+            secret
+        )
+        .await
+        .unwrap()
+    );
+    let context = krausen_app::account::context(&db, &wrong).await.unwrap();
+    assert!(context.is_owner);
+    assert_eq!(context.workspace.unwrap().role, "workspace_admin");
 }
 #[tokio::test]
 async fn sqlite_recipient_proofs() {

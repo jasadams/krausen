@@ -71,12 +71,23 @@ pub fn create_access_token_str(
     expires_minutes: i64,
     extra: std::collections::HashMap<String, serde_json::Value>,
 ) -> krausen_core::Result<String> {
+    let expires_at = (Utc::now() + Duration::minutes(expires_minutes)).timestamp();
+    create_access_token_until(sub, secret, expires_at, extra)
+}
+
+/// Mint a browser context token without extending the verified token's lifetime.
+pub fn create_access_token_until(
+    sub: &str,
+    secret: &str,
+    expires_at: i64,
+    extra: std::collections::HashMap<String, serde_json::Value>,
+) -> krausen_core::Result<String> {
     let now = Utc::now();
     let jti = generate_jti();
     let claims = Claims {
         sub: sub.to_string(),
         iat: now.timestamp(),
-        exp: (now + Duration::minutes(expires_minutes)).timestamp(),
+        exp: expires_at,
         jti: Some(jti),
         extra,
     };

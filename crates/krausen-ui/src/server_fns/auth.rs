@@ -477,7 +477,6 @@ pub async fn recovery_start(email: String) -> Result<(), ServerFnError> {
                 tracing::info!("Account recovery email sent to {email_clone}");
             } else {
                 tracing::warn!("Failed to send account recovery email to {email_clone}");
-                tracing::info!("ACCOUNT RECOVERY LINK for {email_clone}: {recovery_url}");
             }
         });
     }

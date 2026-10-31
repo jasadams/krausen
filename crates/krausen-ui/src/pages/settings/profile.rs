@@ -7,8 +7,8 @@
 use leptos::prelude::*;
 
 use crate::components::{
-    ActionStatus, Button, ButtonSize, Card, CardContent, CardDescription, CardHeader, CardTitle, Label,
-    SettingsPageSkeleton, INPUT_CLASS,
+    ActionStatus, Button, ButtonSize, Card, CardContent, CardDescription, CardHeader, CardTitle,
+    INPUT_CLASS, Label, SettingsPageSkeleton,
 };
 use crate::server_fns::profile::*;
 use crate::types::ProfileData;
@@ -24,7 +24,10 @@ pub fn ProfilePage() -> impl IntoView {
     let query = leptos_router::hooks::use_query_map();
     let discovery = move || query.with(|q| q.get("invitation_discovery"));
     let invitations = Resource::new(discovery, |proof| async move {
-        match proof { Some(proof) => get_pending_invitations(proof).await, None => Ok(Vec::new()) }
+        match proof {
+            Some(proof) => get_pending_invitations(proof).await,
+            None => Ok(Vec::new()),
+        }
     });
 
     view! {
@@ -46,12 +49,13 @@ pub fn ProfilePage() -> impl IntoView {
                             let discovery_id = discovery();
                             let data_profile = data.clone();
                             let data_appearance = data.clone();
+                            let revision = RwSignal::new(data.revision);
                             view! {
                                 <div class="space-y-6">
                                     <Show when=move || !is_personal>
-                                        <ProfileInfoCard data=data_profile.clone()/>
+                                        <ProfileInfoCard data=data_profile.clone() revision=revision/>
                                     </Show>
-                                    <AppearanceCard data=data_appearance/>
+                                    <AppearanceCard data=data_appearance revision=revision/>
                                     <McpConnectionCard is_personal=is_personal/>
                                     <InvitationsCard invitations=inv_list.clone() discovery_id=discovery_id.clone()/>
 
@@ -80,17 +84,38 @@ pub fn ProfilePage() -> impl IntoView {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[component]
-fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
+fn ProfileInfoCard(data: ProfileData, revision: RwSignal<i64>) -> impl IntoView {
     let (name, set_name) = signal(data.name.clone().unwrap_or_default());
-    let save_action = Action::new(|name: &String| {
-        let name = name.clone();
-        async move { update_profile_name(name).await }
+    let pending_request = RwSignal::new(None::<(String, i64, String)>);
+    let save_action = Action::new(move |request: &(String, i64, String)| {
+        let (name, expected, id) = request.clone();
+        async move {
+            let profile = save_profile_change(
+                krausen_types::account::ProfileChange::Name { name },
+                expected,
+                id,
+            )
+            .await?;
+            revision.set(profile.revision);
+            pending_request.set(None);
+            Ok::<_, ServerFnError>(profile)
+        }
     });
 
     let on_blur = move |_| {
         let current = name.get();
         if !current.trim().is_empty() {
-            save_action.dispatch(current);
+            let expected = revision.get_untracked();
+            let request = pending_request
+                .get_untracked()
+                .filter(|(value, rev, _)| value == &current && *rev == expected)
+                .or_else(|| {
+                    crate::utils::request_id::new_request_id().map(|id| (current, expected, id))
+                });
+            if let Some(request) = request {
+                pending_request.set(Some(request.clone()));
+                save_action.dispatch(request);
+            }
         }
     };
 
@@ -138,7 +163,7 @@ fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[component]
-fn AppearanceCard(data: ProfileData) -> impl IntoView {
+fn AppearanceCard(data: ProfileData, revision: RwSignal<i64>) -> impl IntoView {
     // Get the theme state from context (provided by ThemeProvider at app root)
     let theme_state = crate::components::theme::use_theme();
 
@@ -148,9 +173,20 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
     }
 
     let (current_theme, set_current_theme) = signal(data.theme.clone());
-    let save_action = Action::new(|theme: &String| {
-        let theme = theme.clone();
-        async move { update_theme(theme).await }
+    let pending_request = RwSignal::new(None::<(String, i64, String)>);
+    let save_action = Action::new(move |request: &(String, i64, String)| {
+        let (theme, expected, id) = request.clone();
+        async move {
+            let profile = save_profile_change(
+                krausen_types::account::ProfileChange::Theme { theme },
+                expected,
+                id,
+            )
+            .await?;
+            revision.set(profile.revision);
+            pending_request.set(None);
+            Ok::<_, ServerFnError>(profile)
+        }
     });
 
     static THEME_OPTIONS: &[(&str, &str, phosphor_leptos::IconData)] = &[
@@ -164,6 +200,7 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
             <CardHeader>
                 <CardTitle>"Appearance"</CardTitle>
                 <CardDescription>"Choose how Krausen looks to you."</CardDescription>
+                <ActionStatus action=save_action/>
             </CardHeader>
             <CardContent>
                 <div class="flex flex-wrap gap-3">
@@ -200,7 +237,10 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
                                         crate::components::theme::set_theme(&value_for_click);
                                         crate::components::theme::save_theme_to_local_storage(&value_for_click);
                                         // Persist to server
-                                        action.dispatch(value_for_click.clone());
+                                        let expected = revision.get_untracked();
+                                        let request = pending_request.get_untracked().filter(|(value, rev, _)| value == &value_for_click && *rev == expected)
+                                            .or_else(|| crate::utils::request_id::new_request_id().map(|id| (value_for_click.clone(), expected, id)));
+                                        if let Some(request) = request { pending_request.set(Some(request.clone())); action.dispatch(request); }
                                     }
                                 }
                             >
@@ -212,6 +252,33 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
                 </div>
             </CardContent>
         </Card>
+    }
+}
+
+async fn save_profile_change(
+    change: krausen_types::account::ProfileChange,
+    expected: i64,
+    request_id: String,
+) -> Result<krausen_types::account::Profile, ServerFnError> {
+    use krausen_types::account::ProfileSaveOutcome;
+    let change_json = serde_json::to_string(&change)
+        .map_err(|_| ServerFnError::new("Invalid profile change."))?;
+    match update_profile(change_json, expected, request_id).await? {
+        ProfileSaveOutcome::Saved(profile) => Ok(profile),
+        ProfileSaveOutcome::Conflict { .. } => Err(ServerFnError::new(
+            "Profile changed elsewhere. Reload to continue.",
+        )),
+        ProfileSaveOutcome::RequestIdentityConflict => {
+            Err(ServerFnError::new("Request identity conflict."))
+        }
+        ProfileSaveOutcome::ResultExpired => Err(ServerFnError::new(
+            "Request result expired. Reload to continue.",
+        )),
+        ProfileSaveOutcome::Forbidden => Err(ServerFnError::new("Access denied.")),
+        ProfileSaveOutcome::Invalid => Err(ServerFnError::new("Invalid profile value.")),
+        ProfileSaveOutcome::Retryable | ProfileSaveOutcome::Unavailable => {
+            Err(ServerFnError::new("Could not save. Try again."))
+        }
     }
 }
 
@@ -233,7 +300,11 @@ fn McpConnectionCard(is_personal: bool) -> impl IntoView {
             let origin = location.origin().unwrap_or_default();
 
             if is_personal {
-                let p = if port.is_empty() { "3000".to_string() } else { port };
+                let p = if port.is_empty() {
+                    "3000".to_string()
+                } else {
+                    port
+                };
                 format!("http://localhost:{p}/mcp")
             } else if hostname == "localhost" || hostname == "127.0.0.1" {
                 format!("http://{hostname}:8002/mcp")
@@ -253,7 +324,11 @@ fn McpConnectionCard(is_personal: bool) -> impl IntoView {
             let port = web_sys::window()
                 .and_then(|w| w.location().port().ok())
                 .unwrap_or_default();
-            if port.is_empty() { "3000".to_string() } else { port }
+            if port.is_empty() {
+                "3000".to_string()
+            } else {
+                port
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -261,9 +336,8 @@ fn McpConnectionCard(is_personal: bool) -> impl IntoView {
         }
     };
 
-    let claude_code_command = format!(
-        "claude mcp add --transport http krausen http://localhost:{mcp_port}/mcp"
-    );
+    let claude_code_command =
+        format!("claude mcp add --transport http krausen http://localhost:{mcp_port}/mcp");
 
     let claude_desktop_config = format!(
         "{{\n  \"mcpServers\": {{\n    \"krausen\": {{\n      \"url\": \"{mcp_url}\"\n    }}\n  }}\n}}"
@@ -456,22 +530,44 @@ fn CopyButton(text: String) -> impl IntoView {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[component]
-fn InvitationsCard(invitations: Vec<crate::types::InvitationData>, discovery_id: Option<String>) -> impl IntoView {
+fn InvitationsCard(
+    invitations: Vec<crate::types::InvitationData>,
+    discovery_id: Option<String>,
+) -> impl IntoView {
     let discovery_request = RwSignal::new(None::<String>);
     let response_requests = RwSignal::new(std::collections::HashMap::<String, String>::new());
     let identity_error = RwSignal::new(false);
-    let discovery_action = Action::new(|request: &String| { let request = request.clone(); async move { begin_invitation_discovery(request).await } });
-    let response_action = Action::new(|args: &(String, String, String, krausen_types::account::InvitationAction, String)| {
-        let (workspace, invitation, proof, action, request) = args.clone();
-        async move { begin_invitation_response(workspace, invitation, proof, action, request).await }
+    let discovery_action = Action::new(|request: &String| {
+        let request = request.clone();
+        async move { begin_invitation_discovery(request).await }
     });
+    let response_action = Action::new(
+        |args: &(
+            String,
+            String,
+            String,
+            krausen_types::account::InvitationAction,
+            String,
+        )| {
+            let (workspace, invitation, proof, action, request) = args.clone();
+            async move { begin_invitation_response(workspace, invitation, proof, action, request).await }
+        },
+    );
     let proof = discovery_id.clone();
     let begin_discovery = move |_| {
-        let request = match discovery_request.get_untracked().or_else(crate::utils::request_id::new_request_id) {
+        let request = match discovery_request
+            .get_untracked()
+            .or_else(crate::utils::request_id::new_request_id)
+        {
             Some(request) => request,
-            None => { identity_error.set(true); return; }
+            None => {
+                identity_error.set(true);
+                return;
+            }
         };
-        identity_error.set(false); discovery_request.set(Some(request.clone())); discovery_action.dispatch(request);
+        identity_error.set(false);
+        discovery_request.set(Some(request.clone()));
+        discovery_action.dispatch(request);
     };
     view! {
         <Card><CardHeader><CardTitle>"Workspace invitations"</CardTitle>

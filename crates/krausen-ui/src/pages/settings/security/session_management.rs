@@ -13,15 +13,15 @@
 //! - Security tip alert when sessions exist
 //! - Uses Card, Button, Badge, ConfirmDialog
 
-use leptos::prelude::*;
-use phosphor_leptos::Icon;
 use crate::components::{
-    Alert, AlertDescription, AlertVariant, Badge, BadgeVariant, Button, ButtonVariant,
-    Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, EmptyState,
+    Alert, AlertDescription, AlertVariant, Badge, BadgeVariant, Button, ButtonVariant, Card,
+    CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, EmptyState,
 };
 use crate::server_fns::security::{
-    get_sessions, logout_all_sessions, revoke_session, SessionEntry,
+    SessionEntry, get_sessions, logout_all_sessions, revoke_session,
 };
+use leptos::prelude::*;
+use phosphor_leptos::Icon;
 
 /// Parse a user agent string to extract browser, OS, and mobile status.
 ///
@@ -73,6 +73,9 @@ fn parse_user_agent(user_agent: &str) -> (&'static str, &'static str, bool) {
 fn session_display_name(session: &SessionEntry) -> String {
     if let Some(ref name) = session.oauth_client_name {
         return name.clone();
+    }
+    if session.kind == "mcp" {
+        return "MCP connection".into();
     }
     let (browser, os, _) = match session.user_agent.as_deref() {
         Some(ua) => parse_user_agent(ua),
@@ -140,6 +143,8 @@ pub fn SessionManagement() -> impl IntoView {
     let sessions = RwSignal::new(Vec::<SessionEntry>::new());
     let error = RwSignal::new(Option::<String>::None);
     let revoking_id = RwSignal::new(Option::<String>::None);
+    let revoke_request = RwSignal::new(None::<(String, i64, String)>);
+    let logout_all_request = RwSignal::new(None::<String>);
 
     // ── Confirm dialog state ─────────────────────────────────────────────
     let dialog_open = RwSignal::new(false);
@@ -188,7 +193,7 @@ pub fn SessionManagement() -> impl IntoView {
     let open_logout_all_dialog = move |_| {
         dialog_title.set("Log Out From All Devices?".to_string());
         dialog_message.set(
-            "Are you sure you want to log out from all devices? You will need to log in again."
+            "This signs out every browser and disconnects every MCP connection. You will need to sign in again."
                 .to_string(),
         );
         dialog_confirm_text.set("Log Out All".to_string());
@@ -207,13 +212,26 @@ pub fn SessionManagement() -> impl IntoView {
         if action_id == "__all__" {
             // Logout all sessions
             loading.set(true);
+            let request = logout_all_request
+                .get_untracked()
+                .or_else(crate::utils::request_id::new_request_id);
+            let Some(request) = request else {
+                error.set(Some("Unable to create request identity.".into()));
+                loading.set(false);
+                return;
+            };
+            logout_all_request.set(Some(request.clone()));
             leptos::task::spawn_local(async move {
-                match logout_all_sessions().await {
-                    Ok(_) => {
+                match logout_all_sessions(request).await {
+                    Ok(krausen_types::account::RevokeAllOutcome::Revoked { .. }) => {
                         // Redirect to login page
                         if let Some(window) = web_sys::window() {
                             let _ = window.location().set_href("/login");
                         }
+                    }
+                    Ok(_) => {
+                        error.set(Some("Could not log out all sessions.".into()));
+                        loading.set(false);
                     }
                     Err(e) => {
                         error.set(Some(format!("Failed to logout from all devices: {e}")));
@@ -226,10 +244,32 @@ pub fn SessionManagement() -> impl IntoView {
             let token_id = action_id.clone();
             revoking_id.set(Some(action_id));
             error.set(None);
+            let Some(expected) = sessions
+                .get_untracked()
+                .iter()
+                .find(|session| session.token_id == token_id)
+                .map(|session| session.revision)
+            else {
+                revoking_id.set(None);
+                error.set(Some("Reload sessions before disconnecting.".into()));
+                return;
+            };
+            let request = revoke_request
+                .get_untracked()
+                .filter(|(id, revision, _)| id == &token_id && *revision == expected)
+                .map(|(_, _, request)| request)
+                .or_else(crate::utils::request_id::new_request_id);
+            let Some(request) = request else {
+                revoking_id.set(None);
+                error.set(Some("Unable to create request identity.".into()));
+                return;
+            };
+            revoke_request.set(Some((token_id.clone(), expected, request.clone())));
 
             leptos::task::spawn_local(async move {
-                match revoke_session(token_id).await {
-                    Ok(_) => {
+                match revoke_session(token_id, expected, request).await {
+                    Ok(krausen_types::account::TeamChangeOutcome::Saved { .. }) => {
+                        revoke_request.set(None);
                         revoking_id.set(None);
                         // Reload sessions
                         loading.set(true);
@@ -243,6 +283,12 @@ pub fn SessionManagement() -> impl IntoView {
                                 loading.set(false);
                             }
                         }
+                    }
+                    Ok(_) => {
+                        revoking_id.set(None);
+                        error.set(Some(
+                            "Could not disconnect this session. Reload and try again.".into(),
+                        ));
                     }
                     Err(e) => {
                         revoking_id.set(None);
@@ -360,7 +406,7 @@ pub fn SessionManagement() -> impl IntoView {
                             <div>
                                 <h3 class="text-lg font-semibold text-foreground mb-2">"Sign Out All Devices"</h3>
                                 <p class="text-sm text-muted-foreground">
-                                    "This will end all active sessions and require you to log in again on all devices."
+                                    "This ends all browser sessions and disconnects MCP connections."
                                 </p>
                             </div>
                         </div>
