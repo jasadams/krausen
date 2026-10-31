@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 
 /// Stored revision envelope. Legacy backfills may lack an observed actor/time;
 /// migration time is recorded separately rather than invented as authorship.
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RecipeRevisionV1 {
@@ -25,7 +24,6 @@ pub struct RecipeRevisionV1 {
 }
 
 /// A recipe's editable content; identity and authorship live in its revision.
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RecipeDocumentV1 {
@@ -71,7 +69,6 @@ impl Default for RecipeDocumentV1 {
     }
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StyleReference {
@@ -81,7 +78,6 @@ pub struct StyleReference {
 }
 
 /// Sparse settings represent absence, including an explicit recipe override.
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
@@ -124,7 +120,6 @@ impl Default for EquipmentSettingsV1 {
 }
 
 /// Absent settings are distinct from an explicit choice of natural cooling.
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -139,7 +134,6 @@ pub enum ChillingV1 {
     },
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientSource {
@@ -149,7 +143,6 @@ pub struct IngredientSource {
     pub version: Option<u64>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FermentableSpecification {
@@ -161,7 +154,6 @@ pub struct FermentableSpecification {
     pub colour_ebc: Option<f64>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AdditionStage {
@@ -169,7 +161,6 @@ pub struct AdditionStage {
     pub time_minutes: Option<f64>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FermentableAddition {
@@ -180,7 +171,6 @@ pub struct FermentableAddition {
     pub source: Option<IngredientSource>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HopSpecification {
@@ -189,7 +179,6 @@ pub struct HopSpecification {
     pub alpha_fraction: Option<f64>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HopAddition {
@@ -202,7 +191,6 @@ pub struct HopAddition {
     pub source: Option<IngredientSource>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientSpecification {
@@ -212,7 +200,6 @@ pub struct IngredientSpecification {
     pub extensions: BTreeMap<String, Value>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngredientAddition {
@@ -223,7 +210,6 @@ pub struct IngredientAddition {
     pub source: Option<IngredientSource>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ProcessStep {
@@ -235,7 +221,6 @@ pub struct ProcessStep {
     pub extensions: BTreeMap<String, Value>,
 }
 
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]

@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Authorized native recipe reads and revision-checked explicit saves.
 use crate::{
-    ActorContext, Error, RequestIdentity, authorize_workspace, boundary_error, db_error,
-    record_change, record_request, recover_request,
+    ActorContext, Error, RequestIdentity, authorize_workspace, boundary_error, check_intent,
+    db_error, record_change, record_request, recover_request,
 };
 use krausen_brewery::{native_store, validation::validate_draft};
 use krausen_core::{DbPool, DbTx, canonical_json};
 use krausen_types::{
     brewery::RecipeDocumentV1,
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome, RecipeSnapshot},
+    request_context::OperationIntent,
 };
 
 /// Read a current, non-archived recipe under current workspace authority.
-pub async fn read(pool: &DbPool, actor: &ActorContext, recipe_id: &str) -> RecipeReadOutcome {
-    match read_inner(pool, actor, recipe_id).await {
+pub async fn read(
+    pool: &DbPool,
+    actor: &ActorContext,
+    intent: &OperationIntent,
+    recipe_id: &str,
+) -> RecipeReadOutcome {
+    match read_inner(pool, actor, intent, recipe_id).await {
         Ok(Some(snapshot)) => RecipeReadOutcome::Found(snapshot),
         Ok(None) => RecipeReadOutcome::NotFound,
         Err(Error::Forbidden) => RecipeReadOutcome::Forbidden,
+        Err(Error::ContextChanged) => RecipeReadOutcome::ContextChanged,
         Err(e) => {
             tracing::error!(error = %e, "recipe read failed");
             RecipeReadOutcome::Unavailable
@@ -26,10 +33,12 @@ pub async fn read(pool: &DbPool, actor: &ActorContext, recipe_id: &str) -> Recip
 async fn read_inner(
     pool: &DbPool,
     actor: &ActorContext,
+    intent: &OperationIntent,
     recipe_id: &str,
 ) -> Result<Option<RecipeSnapshot>, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
+    check_intent(actor, intent)?;
     let revision = scalar!(&mut tx, i64, "SELECT native_head_revision FROM recipes WHERE workspace_id = $1 AND recipe_id = $2 AND deleted_at IS NULL AND native_head_revision > 0 AND EXISTS (SELECT 1 FROM workspaces w WHERE w.workspace_id = recipes.workspace_id AND w.status = 'active')", &actor.workspace_id, recipe_id).map_err(db_error)?;
     let Some(revision) = revision else {
         tx.commit().await.map_err(boundary_error)?;
@@ -79,6 +88,7 @@ fn source_references_preserved(
 pub async fn save(
     pool: &DbPool,
     actor: &ActorContext,
+    intent: &OperationIntent,
     recipe_id: Option<&str>,
     expected_revision: Option<i64>,
     document: &RecipeDocumentV1,
@@ -87,6 +97,7 @@ pub async fn save(
     match save_inner(
         pool,
         actor,
+        intent,
         recipe_id,
         expected_revision,
         document,
@@ -96,6 +107,7 @@ pub async fn save(
     {
         Ok(result) => result,
         Err(Error::Forbidden) => RecipeSaveOutcome::Forbidden,
+        Err(Error::ContextChanged) => RecipeSaveOutcome::ContextChanged,
         Err(Error::Invalid(_)) => RecipeSaveOutcome::InvalidRequest,
         Err(Error::RequestIdentityConflict) => RecipeSaveOutcome::RequestIdentityConflict,
         Err(Error::ResultExpired { resource_id }) => {
@@ -111,6 +123,7 @@ pub async fn save(
 async fn save_inner(
     pool: &DbPool,
     actor: &ActorContext,
+    intent: &OperationIntent,
     recipe_id: Option<&str>,
     expected: Option<i64>,
     document: &RecipeDocumentV1,
@@ -118,6 +131,7 @@ async fn save_inner(
 ) -> Result<RecipeSaveOutcome, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
+    check_intent(actor, intent)?;
     // Serialize request identity across both creation and edits before retry lookup.
     let ws_sql = if matches!(&tx, DbTx::Postgres(_)) {
         "SELECT revision FROM workspaces WHERE workspace_id = $1 AND status = 'active' FOR UPDATE"

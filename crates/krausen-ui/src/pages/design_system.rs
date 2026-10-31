@@ -2,9 +2,10 @@
 
 //! Live showcase: these are the components used by the recipe editor.
 use crate::components::{
-    BreweryDialog, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel,
-    BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, Button, ButtonSize,
-    ButtonVariant, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch,
+    BreweryAddition, BreweryDialog, BreweryField, BreweryIngredientRow, BreweryMetric,
+    BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea,
+    Button, ButtonSize, ButtonVariant, CatalogueItem, SaveState, StyleRange, StyleState,
+    SwatchRole, TokenSwatch,
 };
 use leptos::prelude::*;
 
@@ -40,9 +41,11 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
                 </BreweryPanel>
                 <BreweryPanel title="Ingredients" description="Editable quantities stay with their source specification.">
+                    <BreweryAddition>
                     <Show when=move || show_grain.get() fallback=move || view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_grain.set(true)>"Restore example"</Button> }>
                         <BreweryIngredientRow name="Pilsner malt" description="Weyermann · 3 EBC" unit="kg" amount=grain on_remove=Callback::new(move |()| show_grain.set(false))/>
                     </Show>
+                    </BreweryAddition>
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
                     <div class="kit-showcase__row"><BrewerySaveStatus state=SaveState::Saved/><BrewerySaveStatus state=SaveState::Unsaved/><BrewerySaveStatus state=SaveState::Saving/><BrewerySaveStatus state=SaveState::Conflict/><BrewerySaveStatus state=SaveState::Error/></div>

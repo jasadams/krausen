@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Presentation state for a native recipe draft. Brewing policy remains shared.
-use super::recipe_preview_gate::PreviewGate;
 use krausen_types::brewery::RecipeDocumentV1;
 use std::collections::BTreeMap;
 
@@ -10,7 +9,6 @@ pub struct RecipeDraft {
     raw_numbers: BTreeMap<String, String>,
     malformed: BTreeMap<String, String>,
     diagnostics: Vec<krausen_types::validation::Diagnostic>,
-    pub preview: PreviewGate,
     pub dirty: bool,
     pub generation: u64,
 }
@@ -22,7 +20,6 @@ impl RecipeDraft {
             raw_numbers: BTreeMap::new(),
             malformed: BTreeMap::new(),
             diagnostics: Vec::new(),
-            preview: PreviewGate::default(),
             dirty: false,
             generation: 0,
         }
@@ -34,7 +31,10 @@ impl RecipeDraft {
         change(&mut self.document);
         self.diagnostics.clear();
         self.dirty = true;
-        self.generation = self.preview.invalidate();
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("draft generation exhausted");
     }
     pub fn number_text(&self, path: &str, value: Option<f64>) -> String {
         self.raw_numbers
@@ -42,20 +42,22 @@ impl RecipeDraft {
             .cloned()
             .unwrap_or_else(|| value.map(|v| v.to_string()).unwrap_or_default())
     }
+    pub fn validation_error(&self, path: &str) -> Option<&str> {
+        self.diagnostics
+            .iter()
+            .find(|d| d.path == path && d.severity == krausen_types::validation::Readiness::Invalid)
+            .map(|d| match d.code.as_str() {
+                "negative" => "Enter a non-negative value",
+                "out_of_range" => "Value is out of range",
+                "non_finite" => "Enter a finite number",
+                _ => "Check this value",
+            })
+    }
     pub fn number_error(&self, path: &str) -> Option<&str> {
-        self.malformed.get(path).map(String::as_str).or_else(|| {
-            self.diagnostics
-                .iter()
-                .find(|d| {
-                    d.path == path && d.severity == krausen_types::validation::Readiness::Invalid
-                })
-                .map(|d| match d.code.as_str() {
-                    "negative" => "Enter a non-negative value",
-                    "out_of_range" => "Value is out of range",
-                    "non_finite" => "Enter a finite number",
-                    _ => "Check this value",
-                })
-        })
+        self.malformed
+            .get(path)
+            .map(String::as_str)
+            .or_else(|| self.validation_error(path))
     }
     pub fn edit_number(
         &mut self,
@@ -85,7 +87,10 @@ impl RecipeDraft {
             }
         }
         self.dirty = true;
-        self.generation = self.preview.invalidate();
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("draft generation exhausted");
     }
     pub fn set_validation(&mut self, validation: krausen_types::validation::Validation) {
         self.diagnostics = validation.diagnostics;
@@ -127,12 +132,12 @@ mod tests {
             draft.number_error("batch_size_l"),
             Some("Enter a non-negative value")
         );
-        let prior = draft.preview.invalidate();
+        let prior = draft.generation;
         draft.edit_number("batch_size_l", "10".into(), |doc, value| {
             doc.batch_size_l = value
         });
         assert!(draft.diagnostics().is_empty());
-        assert!(!draft.preview.accept(prior, "old", None));
+        assert_ne!(draft.generation, prior);
     }
 
     #[test]

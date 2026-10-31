@@ -56,6 +56,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib verified_browser_principal_is_required_for_recovery
       - run: cargo test -p krausen-ui --features ssr --lib request_id::tests
       - run: cargo test -p krausen-ui --features ssr --lib recipe_draft::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_preview_gate::tests
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown

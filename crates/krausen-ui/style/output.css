@@ -248,6 +248,9 @@
   .pointer-events-none {
     pointer-events: none;
   }
+  .\!visible {
+    visibility: visible !important;
+  }
   .invisible {
     visibility: hidden;
   }
@@ -684,9 +687,6 @@
   .appearance-none {
     appearance: none;
   }
-  .grid-cols-2 {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .flex-col {
     flex-direction: column;
   }
@@ -798,9 +798,6 @@
       margin-block-end: calc(calc(var(--spacing) * 8) * calc(1 - var(--tw-space-y-reverse)));
     }
   }
-  .gap-x-6 {
-    column-gap: calc(var(--spacing) * 6);
-  }
   .space-x-2 {
     :where(& > :not(:last-child)) {
       --tw-space-x-reverse: 0;
@@ -821,9 +818,6 @@
       margin-inline-start: calc(calc(var(--spacing) * 4) * var(--tw-space-x-reverse));
       margin-inline-end: calc(calc(var(--spacing) * 4) * calc(1 - var(--tw-space-x-reverse)));
     }
-  }
-  .gap-y-1 {
-    row-gap: calc(var(--spacing) * 1);
   }
   .divide-y {
     :where(& > :not(:last-child)) {
@@ -907,12 +901,6 @@
   }
   .border-border {
     border-color: var(--color-border);
-  }
-  .border-border\/50 {
-    border-color: var(--color-border);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in oklab, var(--color-border) 50%, transparent);
-    }
   }
   .border-current {
     border-color: currentcolor;
@@ -1323,10 +1311,6 @@
   }
   .italic {
     font-style: italic;
-  }
-  .tabular-nums {
-    --tw-numeric-spacing: tabular-nums;
-    font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
   }
   .underline {
     text-decoration-line: underline;
@@ -3329,14 +3313,25 @@
     grid-template-columns: 1fr;
   }
 }
-.recipe-editor__addition {
+.k-addition {
   display: grid;
   gap: var(--k-space-3);
   padding: var(--k-space-4) 0;
   border-bottom: 1px solid var(--k-color-border);
 }
-.recipe-editor__addition > button {
+.k-addition > button {
   justify-self: start;
+}
+.recipe-editor__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--k-space-4);
+  margin-top: var(--k-space-4);
+}
+.recipe-editor__provenance {
+  margin-top: var(--k-space-4);
+  color: var(--k-color-muted);
+  font-size: var(--k-font-xs);
 }
 html {
   font-size: 15px;
@@ -3585,26 +3580,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
   syntax: "*";
   inherits: false;
 }
-@property --tw-ordinal {
-  syntax: "*";
-  inherits: false;
-}
-@property --tw-slashed-zero {
-  syntax: "*";
-  inherits: false;
-}
-@property --tw-numeric-figure {
-  syntax: "*";
-  inherits: false;
-}
-@property --tw-numeric-spacing {
-  syntax: "*";
-  inherits: false;
-}
-@property --tw-numeric-fraction {
-  syntax: "*";
-  inherits: false;
-}
 @property --tw-shadow {
   syntax: "*";
   inherits: false;
@@ -3746,11 +3721,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
       --tw-leading: initial;
       --tw-font-weight: initial;
       --tw-tracking: initial;
-      --tw-ordinal: initial;
-      --tw-slashed-zero: initial;
-      --tw-numeric-figure: initial;
-      --tw-numeric-spacing: initial;
-      --tw-numeric-fraction: initial;
       --tw-shadow: 0 0 #0000;
       --tw-shadow-color: initial;
       --tw-shadow-alpha: 100%;

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Recipes — list, import, inspect, delete.
-//!
-//! Enough of a page to exercise the whole path end to end: store a recipe,
-//! read it back, watch the engine derive it. The bench sheet, which is the
-//! thing a brewer actually holds, comes later.
+//! Transitional list and legacy-source recovery; native editing uses shared APIs.
 
 use leptos::prelude::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -160,7 +156,7 @@ pub fn RecipesPage() -> impl IntoView {
                                 Ok(Some(d)) => recipe_detail(d, remove).into_any(),
                                 Ok(None) => view! {
                                     <p class="text-sm text-muted-foreground">
-                                        "Select a recipe to see what the engine makes of it."
+                                        "Select a recipe for its stored legacy source, or open the editor."
                                     </p>
                                 }.into_any(),
                                 Err(e) => view! {
@@ -241,20 +237,7 @@ fn recipe_detail(
                 </Button>
             </div>
 
-            {d.derived.map(|v| view! {
-                <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                    {figure("Pre-boil", format!("{:.4}", v.pre_boil_gravity))}
-                    {figure("OG", format!("{:.4}", v.original_gravity))}
-                    {figure("FG", format!("{:.4}", v.final_gravity))}
-                    {figure("ABV", format!("{:.1}%", v.abv_percent))}
-                    {figure("Colour", format!("{:.1} EBC", v.colour_ebc))}
-                    {figure("IBU", format!("{:.1}", v.ibu_total))}
-                    {figure("IBU (boil only)", format!("{:.1}", v.ibu_boil_only))}
-                    {figure("Pre-boil volume", format!("{:.2} L", v.pre_boil_l))}
-                    {figure("Mash water", format!("{:.2} L", v.mash_water_l))}
-                    {figure("Sparge water", format!("{:.2} L", v.sparge_water_l))}
-                </div>
-            })}
+            <p class="text-sm text-muted-foreground">"Open the editor for current formulation estimates."</p>
 
             <Show when={let w = warnings.clone(); move || !w.is_empty()}>
                 <div class="rounded-md border border-border bg-muted p-3">
@@ -275,15 +258,6 @@ fn recipe_detail(
                     {d.beerxml}
                 </pre>
             </details>
-        </div>
-    }
-}
-
-fn figure(label: &'static str, value: String) -> impl IntoView {
-    view! {
-        <div class="flex justify-between gap-2 border-b border-border/50 py-0.5">
-            <span class="text-muted-foreground">{label}</span>
-            <span class="font-medium tabular-nums">{value}</span>
         </div>
     }
 }

@@ -15,6 +15,7 @@ pub enum RecipeReadOutcome {
     Found(RecipeSnapshot),
     NotFound,
     Forbidden,
+    ContextChanged,
     Unavailable,
 }
 
@@ -29,6 +30,7 @@ pub enum RecipeSaveOutcome {
     Conflict { expected: i64, actual: i64 },
     NotFound,
     Forbidden,
+    ContextChanged,
     RequestIdentityConflict,
     ResultExpired { resource_id: Option<String> },
     Retryable,

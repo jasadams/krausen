@@ -12,7 +12,7 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   const volume = page.getByLabel('Batch volume (L)');
   await volume.fill('-');
   await page.getByRole('button', { name: 'Save recipe' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields before saving.' })).toBeVisible();
   await expect(volume).toHaveValue('-');
   await volume.fill('20');
   await page.getByRole('button', { name: 'Save recipe' }).click();
@@ -21,6 +21,43 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   await page.reload();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  await page.getByLabel('Whole-wort apparent attenuation (%)').fill('75');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  await page.reload();
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  await expect(page.getByLabel('Whole-wort apparent attenuation (%)')).toHaveValue('75');
+});
+
+test('shared preview exposes style ranges and rejects an older response', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const style = page.getByLabel('Beer style');
+  await expect(style.getByRole('option', { name: '4A · Munich Helles' })).toBeAttached();
+  await style.selectOption({ label: '4A · Munich Helles' });
+  await expect(page.getByLabel(/Original gravity.*Style reference/)).toBeVisible();
+
+  let firstStarted!: () => void;
+  const started = new Promise<void>(resolve => { firstStarted = resolve; });
+  let delayed = false;
+  await page.route('**/leptos-api/preview_formulation*', async route => {
+    const response = await route.fetch();
+    if (!delayed) {
+      delayed = true;
+      firstStarted();
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+    await route.fulfill({ response });
+  });
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.fill('-1');
+  await started;
+  await volume.fill('20');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.waitForTimeout(1500);
+  await expect(page.getByRole('status').filter({ hasText: 'Invalid' })).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
 });
 
 test('editor controls remain usable on mobile and in dark mode', async ({ page }) => {
@@ -43,9 +80,8 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
 test('a dirty new recipe remains private to its original account and workspace', async ({ page }) => {
   const ownerId = getDefaultUserId();
   const originalWorkspace = getDefaultWorkspaceId();
-  const originalName = db.exec(`SELECT name FROM workspaces WHERE workspace_id = '${originalWorkspace}'`);
   const otherName = `Editor workspace ${Date.now()}`;
-  seedWorkspace({ ownerId, name: otherName });
+  const otherWorkspace = seedWorkspace({ ownerId, name: otherName });
   db.exec(`UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${ownerId}'`);
   const secondEmail = `editor-switch-${Date.now()}@example.test`;
   const secondPassword = 'EditorSwitchTest1234';
@@ -55,6 +91,7 @@ test('a dirty new recipe remains private to its original account and workspace',
   await page.goto('/recipe-editor/new');
   const title = page.getByLabel('Recipe name', { exact: true });
   await title.fill('Private unsaved switch draft');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   let watchForDraft = false;
   const leakedRequests: string[] = [];
   page.on('request', request => {
@@ -68,11 +105,16 @@ test('a dirty new recipe remains private to its original account and workspace',
   await expect(title).toHaveValue('Private unsaved switch draft');
 
   const other = await page.context().newPage();
-  await other.goto('/settings/profile');
-  await other.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
-  await other.getByRole('button', { name: otherName }).click();
-  await expect(other.getByRole('button', { name: new RegExp(otherName) })).toBeVisible();
-  await other.waitForLoadState('networkidle');
+  // Establish independently signed sessions for each selected workspace. The
+  // legacy workspace switch is covered by the account feature's own tests.
+  db.exec(`UPDATE users SET last_workspace_id = '${otherWorkspace}' WHERE user_id = '${ownerId}'`);
+  walCheckpoint();
+  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  const [otherContext] = await Promise.all([
+    other.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
+    other.goto('/recipe-editor/new'),
+  ]);
+  expect((await otherContext.json()).workspace_id).toBe(otherWorkspace);
   watchForDraft = true;
   await page.bringToFront();
   await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
@@ -81,10 +123,14 @@ test('a dirty new recipe remains private to its original account and workspace',
   watchForDraft = false;
 
   await other.bringToFront();
-  await other.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
-  await other.getByRole('button', { name: originalName, exact: true }).click();
-  await expect(other.getByRole('button', { name: new RegExp(originalName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeVisible();
-  await other.waitForLoadState('networkidle');
+  db.exec(`UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${ownerId}'`);
+  walCheckpoint();
+  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  const [originalContext] = await Promise.all([
+    other.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
+    other.goto('/recipe-editor/new'),
+  ]);
+  expect((await originalContext.json()).workspace_id).toBe(originalWorkspace);
   await page.bringToFront();
   await expect(title).toBeVisible();
   await expect(title).toHaveValue('Private unsaved switch draft');

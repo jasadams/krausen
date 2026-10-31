@@ -3,7 +3,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8099';
-const DB_PATH = path.resolve(__dirname, '../data/krausen.db');
+const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
+  ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
+  : path.resolve(__dirname, '../data/krausen.db');
 const AUTH_STATE_PATH = path.resolve(__dirname, '.auth-state.json');
 
 function getKrausenMode(): string {

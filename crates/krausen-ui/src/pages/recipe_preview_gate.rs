@@ -19,6 +19,10 @@ impl PreviewGate {
         self.generation
     }
 
+    pub fn is_current(&self, generation: u64) -> bool {
+        generation == self.generation
+    }
+
     /// Accept only the newest response and, where one was explicitly expected,
     /// the same server-produced calculation context.
     pub fn accept(

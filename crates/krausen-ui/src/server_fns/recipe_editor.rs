@@ -17,10 +17,11 @@ pub async fn read_recipe(
 ) -> Result<RecipeReadOutcome, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let actor = super::verified_actor(&ac.auth)?;
-    if actor.actor_id != account_id || actor.workspace_id != workspace_id {
-        return Ok(RecipeReadOutcome::Forbidden);
-    }
-    Ok(krausen_app::recipe_editor::read(ac.db(), &actor, &recipe_id).await)
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id,
+        workspace_id,
+    };
+    Ok(krausen_app::recipe_editor::read(ac.db(), &actor, &intent, &recipe_id).await)
 }
 
 #[server(prefix = "/leptos-api", input = Json)]
@@ -34,15 +35,17 @@ pub async fn save_recipe(
 ) -> Result<RecipeSaveOutcome, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let actor = super::verified_actor(&ac.auth)?;
-    if actor.actor_id != account_id || actor.workspace_id != workspace_id {
-        return Ok(RecipeSaveOutcome::Forbidden);
-    }
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id,
+        workspace_id,
+    };
     let Ok(request_id) = uuid::Uuid::parse_str(&request_id) else {
         return Ok(RecipeSaveOutcome::InvalidRequest);
     };
     Ok(krausen_app::recipe_editor::save(
         ac.db(),
         &actor,
+        &intent,
         recipe_id.as_deref(),
         expected_revision,
         &document,

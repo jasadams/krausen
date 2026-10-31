@@ -1,14 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use krausen_app::{
-    ActorContext,
-    recipe_editor::{read, save},
-};
+use krausen_app::{ActorContext, recipe_editor};
 use krausen_core::DbPool;
 use krausen_types::{
     brewery::RecipeDocumentV1,
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome},
 };
 use uuid::Uuid;
+
+async fn read(db: &DbPool, actor: &ActorContext, recipe_id: &str) -> RecipeReadOutcome {
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id: actor.actor_id.clone(),
+        workspace_id: actor.workspace_id.clone(),
+    };
+    recipe_editor::read(db, actor, &intent, recipe_id).await
+}
+async fn save(
+    db: &DbPool,
+    actor: &ActorContext,
+    recipe_id: Option<&str>,
+    expected: Option<i64>,
+    document: &RecipeDocumentV1,
+    request_id: Uuid,
+) -> RecipeSaveOutcome {
+    let intent = krausen_types::request_context::OperationIntent {
+        account_id: actor.actor_id.clone(),
+        workspace_id: actor.workspace_id.clone(),
+    };
+    recipe_editor::save(
+        db, actor, &intent, recipe_id, expected, document, request_id,
+    )
+    .await
+}
 
 async fn exercise(db: DbPool) {
     let suffix = Uuid::new_v4().to_string();
@@ -159,6 +181,91 @@ async fn exercise(db: DbPool) {
         read(&db, &foreign_actor, recipe_id).await,
         RecipeReadOutcome::NotFound
     );
+    let original_intent = krausen_types::request_context::OperationIntent {
+        account_id: actor.actor_id.clone(),
+        workspace_id: actor.workspace_id.clone(),
+    };
+    assert_eq!(
+        recipe_editor::read(&db, &foreign_actor, &original_intent, recipe_id).await,
+        RecipeReadOutcome::ContextChanged
+    );
+    assert_eq!(
+        recipe_editor::save(
+            &db,
+            &foreign_actor,
+            &original_intent,
+            None,
+            None,
+            &draft,
+            Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::ContextChanged
+    );
+    let other_user = format!("other-{suffix}");
+    let other_email = format!("other-{suffix}@example.test");
+    let other_credential = format!("other-c-{suffix}");
+    run!(
+        "INSERT INTO users (user_id,email) VALUES ($1,$2)",
+        &other_user,
+        &other_email
+    );
+    run!(
+        "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,'member')",
+        &workspace,
+        &other_user
+    );
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+        &other_credential,
+        &other_user,
+        chrono::Utc::now().timestamp() + 3600
+    );
+    let other_actor = ActorContext {
+        actor_id: other_user,
+        workspace_id: workspace.clone(),
+        credential_id: other_credential,
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
+    };
+    assert_eq!(
+        recipe_editor::read(&db, &other_actor, &original_intent, recipe_id).await,
+        RecipeReadOutcome::ContextChanged
+    );
+    assert_eq!(
+        recipe_editor::save(
+            &db,
+            &other_actor,
+            &original_intent,
+            None,
+            None,
+            &draft,
+            Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::ContextChanged
+    );
+    let wrong_account = krausen_types::request_context::OperationIntent {
+        account_id: "different-account".into(),
+        workspace_id: actor.workspace_id.clone(),
+    };
+    assert_eq!(
+        recipe_editor::read(&db, &actor, &wrong_account, recipe_id).await,
+        RecipeReadOutcome::ContextChanged
+    );
+    assert_eq!(
+        recipe_editor::save(
+            &db,
+            &actor,
+            &wrong_account,
+            None,
+            None,
+            &draft,
+            Uuid::new_v4()
+        )
+        .await,
+        RecipeSaveOutcome::ContextChanged
+    );
+
     assert_eq!(
         save(
             &db,

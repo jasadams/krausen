@@ -474,3 +474,9 @@ pub fn BreweryDraftArea(
 ) -> impl IntoView {
     view! { <div class="k-field"><label class="k-field__label" for=id.clone()>{label}</label><div class="k-field__control"><textarea id=id rows="3" prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev))></textarea></div></div> }
 }
+
+/// A compact editable addition with shared spacing and separation.
+#[component]
+pub fn BreweryAddition(children: Children) -> impl IntoView {
+    view! { <div class="k-addition">{children()}</div> }
+}

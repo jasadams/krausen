@@ -208,5 +208,7 @@
 .recipe-editor__preview { position: sticky; top: var(--k-space-4); }
 @media (max-width: 850px) { .recipe-editor__layout { grid-template-columns: 1fr; } .recipe-editor__preview { position: static; grid-row: 1; } }
 @media (max-width: 600px) { .recipe-editor { padding: var(--k-space-4); } .recipe-editor__header { flex-direction: column; } .recipe-editor__summary, .recipe-editor__fields { grid-template-columns: 1fr; } }
-.recipe-editor__addition { display: grid; gap: var(--k-space-3); padding: var(--k-space-4) 0; border-bottom: 1px solid var(--k-color-border); }
-.recipe-editor__addition > button { justify-self: start; }
+.k-addition { display: grid; gap: var(--k-space-3); padding: var(--k-space-4) 0; border-bottom: 1px solid var(--k-color-border); }
+.k-addition > button { justify-self: start; }
+.recipe-editor__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); margin-top: var(--k-space-4); }
+.recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); }

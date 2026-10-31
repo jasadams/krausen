@@ -69,37 +69,26 @@ struct LegacyAuthoring {
     workspace_id: String,
     beerxml: String,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecipeRead {
     workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
     recipe_id: String,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecipeSave {
     workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
     recipe_id: Option<String>,
     expected_revision: Option<i64>,
     document: krausen_types::brewery::RecipeDocumentV1,
     request_id: String,
 }
-fn recipe_save_schema() -> serde_json::Map<String, serde_json::Value> {
-    // Generate from the native contract rather than maintaining an adapter model.
-    let mut document = serde_json::to_value(schemars::schema_for!(
-        krausen_types::brewery::RecipeDocumentV1
-    ))
-    .expect("native schema");
-    let definitions = document
-        .as_object_mut()
-        .and_then(|object| object.remove("$defs"));
-    let mut root = schema(
-        json!({"type":"object","properties":{"workspace_id":{"type":"string"},"recipe_id":{"type":["string","null"]},"expected_revision":{"type":["integer","null"]},"document":document,"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","document","request_id"],"additionalProperties":false}),
-    );
-    if let Some(definitions) = definitions {
-        root.insert("$defs".into(), definitions);
-    }
-    root
+fn typed_schema<T: schemars::JsonSchema>() -> serde_json::Map<String, serde_json::Value> {
+    let value = serde_json::to_value(schemars::schema_for!(T)).expect("shared input schema");
+    schema(value)
 }
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
@@ -187,14 +176,12 @@ impl ServerHandler for McpHandler {
             Tool::new(
                 operations::RECIPE_READ.mcp_tool,
                 "Read the current native recipe revision in a workspace",
-                schema(
-                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"recipe_id":{"type":"string"}},"required":["workspace_id","recipe_id"],"additionalProperties":false}),
-                ),
+                typed_schema::<RecipeRead>(),
             ),
             Tool::new(
                 operations::RECIPE_SAVE.mcp_tool,
                 "Create or explicitly save a native recipe using its observed revision and a stable request UUID",
-                recipe_save_schema(),
+                typed_schema::<RecipeSave>(),
             ),
         ]))
     }
@@ -366,8 +353,13 @@ impl ServerHandler for McpHandler {
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
-                let outcome =
-                    krausen_app::recipe_editor::read(&self.db, &actor, &input.recipe_id).await;
+                let outcome = krausen_app::recipe_editor::read(
+                    &self.db,
+                    &actor,
+                    &input.intent,
+                    &input.recipe_id,
+                )
+                .await;
                 let success = matches!(
                     outcome,
                     krausen_types::recipe_editor::RecipeReadOutcome::Found(_)
@@ -394,6 +386,7 @@ impl ServerHandler for McpHandler {
                 let outcome = krausen_app::recipe_editor::save(
                     &self.db,
                     &actor,
+                    &input.intent,
                     input.recipe_id.as_deref(),
                     input.expected_revision,
                     &input.document,

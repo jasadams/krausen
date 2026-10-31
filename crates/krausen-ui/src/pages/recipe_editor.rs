@@ -2,8 +2,8 @@
 //! Recipe editor over the shared, authorized recipe operations.
 use crate::{
     components::{
-        BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryNotice,
-        BreweryPanel, Button,
+        BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
+        BreweryDraftSelect, BreweryNotice, BreweryPanel, Button,
     },
     pages::recipe_draft::RecipeDraft,
     server_fns::recipe_editor::{read_recipe, save_recipe},
@@ -15,11 +15,7 @@ use krausen_types::{
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-#[derive(Clone)]
-struct EditorIdentity {
-    account_id: String,
-    workspace_id: String,
-}
+type EditorIdentity = krausen_types::request_context::OperationIntent;
 
 async fn current_context_matches(expected: &EditorIdentity) -> bool {
     let result = crate::server_fns::context::get_user_context().await;
@@ -101,6 +97,7 @@ pub fn RecipeEditorPage() -> impl IntoView {
             Ok((identity, Some(RecipeReadOutcome::Found(snapshot)))) => view! { <RecipeForm identity=identity initial=Some(snapshot)/> }.into_any(),
             Ok((_, Some(RecipeReadOutcome::NotFound))) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
             Ok((_, Some(RecipeReadOutcome::Forbidden))) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::ContextChanged))) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
             _ => view! { <BreweryNotice title="Unable to load recipe" body="Try again when the connection is available." warning=true/> }.into_any(),
         } })}
     </Suspense> }
@@ -119,6 +116,7 @@ struct PendingRecipeSave {
 fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
     let identity = RwSignal::new(identity);
     let context_visible = RwSignal::new(true);
+    let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
     let draft = RwSignal::new(RecipeDraft::new(
@@ -129,8 +127,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         let check_generation = RwSignal::new(0_u64);
         let recheck = Callback::new(move |()| {
             context_visible.set(false);
-            draft.update(|d| {
-                d.preview.invalidate();
+            preview_gate.update_value(|gate| {
+                gate.invalidate();
             });
             let generation = check_generation
                 .get_untracked()
@@ -166,6 +164,95 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     });
     on_cleanup(move || editor_guard.dirty.set(false));
     let retry = RwSignal::new(None::<PendingRecipeSave>);
+    let styles = RwSignal::new(Vec::<krausen_types::brewery::StyleReference>::new());
+    let style_sequence = RwSignal::new(0_u64);
+    Effect::new(move |_| {
+        let visible = context_visible.get();
+        let sequence = style_sequence
+            .get_untracked()
+            .checked_add(1)
+            .expect("style request generation exhausted");
+        style_sequence.set(sequence);
+        if !visible {
+            styles.set(Vec::new());
+            return;
+        }
+        let expected = identity.get_untracked();
+        leptos::task::spawn_local(async move {
+            if !current_context_matches(&expected).await {
+                if style_sequence.try_get_untracked() == Some(sequence) {
+                    context_visible.set(false);
+                }
+                return;
+            }
+            let result = crate::server_fns::formulation::list_formulation_styles(
+                expected.account_id.clone(),
+                expected.workspace_id.clone(),
+            )
+            .await;
+            #[cfg(target_arch = "wasm32")]
+            let result = if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                && crate::utils::auth_refresh::try_refresh().await
+            {
+                if !current_context_matches(&expected).await {
+                    if style_sequence.try_get_untracked() == Some(sequence) {
+                        context_visible.set(false);
+                    }
+                    return;
+                }
+                crate::server_fns::formulation::list_formulation_styles(
+                    expected.account_id.clone(),
+                    expected.workspace_id.clone(),
+                )
+                .await
+            } else {
+                result
+            };
+            if style_sequence.try_get_untracked() != Some(sequence)
+                || context_visible.try_get_untracked() != Some(true)
+            {
+                return;
+            }
+            match result {
+                Ok(krausen_types::formulation::StyleListOutcome::Styles(list)) => styles.set(list),
+                Ok(
+                    krausen_types::formulation::StyleListOutcome::ContextChanged
+                    | krausen_types::formulation::StyleListOutcome::Forbidden,
+                ) => context_visible.set(false),
+                Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    context_visible.set(false)
+                }
+                _ => styles.set(Vec::new()),
+            }
+        });
+    });
+    let selected_style = Signal::derive(move || {
+        draft.with(|d| {
+            d.document()
+                .style
+                .as_ref()
+                .map(|style| {
+                    if styles.with(|list| list.contains(style)) {
+                        style.name.clone()
+                    } else {
+                        format!("Unavailable: {}", style.name)
+                    }
+                })
+                .unwrap_or_default()
+        })
+    });
+    let change_style = Callback::new(move |value: String| {
+        if value.is_empty() {
+            draft.update(|d| d.edit(|doc| doc.style = None));
+        } else if let Some(style) =
+            styles.with_untracked(|list| list.iter().find(|style| style.name == value).cloned())
+        {
+            draft.update(|d| d.edit(|doc| doc.style = Some(style)));
+        }
+    });
     let title = Signal::derive(move || draft.with(|d| d.document().title.clone()));
     let title_change =
         Callback::new(move |value: String| draft.update(|d| d.edit(|doc| doc.title = value)));
@@ -256,7 +343,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             #[cfg(target_arch = "wasm32")]
             let creating = attempt.recipe_id.is_none();
             let identity = identity.get_untracked();
-            if !current_context_matches(&identity).await {
+            let same_context = current_context_matches(&identity).await;
+            if pending.try_get_untracked().is_none() {
+                return;
+            }
+            if !same_context {
                 context_visible.set(false);
                 pending.set(false);
                 return;
@@ -294,6 +385,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             } else {
                 result
             };
+            if pending.try_get_untracked().is_none() {
+                return;
+            }
             pending.set(false);
             match result {
                 Ok(RecipeSaveOutcome::Saved {
@@ -367,6 +461,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     retry.set(None);
                     status.set("The save request was invalid. Your draft is still open.".into());
                 }
+                Ok(RecipeSaveOutcome::ContextChanged) => {
+                    context_visible.set(false);
+                    status.set("Your account or workspace changed. The draft is held in its original context.".into());
+                }
                 Ok(RecipeSaveOutcome::Forbidden) => {
                     context_visible.set(false);
                     status.set("You no longer have access to this workspace.".into())
@@ -396,7 +494,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         });
     };
     view! { <Show when=move || !context_visible.get()><BreweryNotice title="Recipe held in its original workspace" body="Return to the account and workspace where you opened this draft to continue." warning=true/></Show><div class="recipe-editor" hidden=move || !context_visible.get()>
-        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>"Recipe editor"</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
+        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { "Unsaved changes".to_owned() } else { message }
         }}</span><Button disabled=pending on:click=save>"Save recipe"</Button></div></header>
@@ -404,13 +502,14 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change/>
             <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
             <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
+            {move || { let mut options = vec![(String::new(), "No style".to_owned())]; options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name)))); view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=selected_style on_change=change_style options=options/> } }}
         </div>
         <div class="recipe-editor__layout"><div class="recipe-editor__sections">
             <IngredientEditor draft=draft/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>
             <BreweryDisclosure title="Recipe process and notes"><div class="recipe-editor__fields">
-                <NumberField id="recipe-attenuation" label="Whole-wort apparent attenuation" unit="fraction" path="process.apparent_attenuation_fraction" draft=draft read=|d: &RecipeDocumentV1| d.process.apparent_attenuation_fraction write=|d: &mut RecipeDocumentV1,n| d.process.apparent_attenuation_fraction=n/>
+                <NumberField id="recipe-attenuation" label="Whole-wort apparent attenuation" unit="%" scale=100.0 path="process.apparent_attenuation_fraction" draft=draft read=|d: &RecipeDocumentV1| d.process.apparent_attenuation_fraction write=|d: &mut RecipeDocumentV1,n| d.process.apparent_attenuation_fraction=n/>
                 <BreweryDraftArea id="recipe-description" label="Description" value=description on_change=description_change/>
                 <BreweryDraftArea id="recipe-notes" label="Notes" value=notes on_change=notes_change/>
                 <BreweryDraftSelect id="recipe-mash-method" label="Mash water method" value=mash_method on_change=mash_method_change options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
@@ -425,8 +524,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| draft.update(|d| d.edit(|doc| doc.equipment_profile_id=None))>"Use draft equipment settings"</Button>
                 </Show>
                 <div class="recipe-editor__fields">
-                <NumberField id="recipe-efficiency-override" label="Brewhouse efficiency override" unit="fraction" path="equipment_overrides.efficiency_override_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.efficiency_override_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.efficiency_override_fraction=n/>
-                <NumberField id="recipe-efficiency" label="Mash efficiency" unit="fraction" path="equipment_overrides.mash_efficiency_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_efficiency_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_efficiency_fraction=n/>
+                <NumberField id="recipe-efficiency-override" label="Brewhouse efficiency override" unit="%" scale=100.0 path="equipment_overrides.efficiency_override_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.efficiency_override_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.efficiency_override_fraction=n/>
+                <NumberField id="recipe-efficiency" label="Mash efficiency" unit="%" scale=100.0 path="equipment_overrides.mash_efficiency_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_efficiency_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_efficiency_fraction=n/>
                 <NumberField id="recipe-boil-off" label="Boil-off" unit="L/h" path="equipment_overrides.boil_off_l_per_hour" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.boil_off_l_per_hour write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.boil_off_l_per_hour=n/>
                 <NumberField id="recipe-loss" label="Transfer loss" unit="L" path="equipment_overrides.transfer_loss_l" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.transfer_loss_l write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.transfer_loss_l=n/>
                 <NumberField id="recipe-deadspace" label="Pre-boil deadspace" unit="L" path="equipment_overrides.pre_boil_deadspace_l" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.pre_boil_deadspace_l write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.pre_boil_deadspace_l=n/>
@@ -440,10 +539,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Show when=move || chilling.get() == "forced"><NumberField id="recipe-chilling-rate" label="Cooling rate" unit="per min" path="equipment_overrides.chilling.rate_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..}) => *rate_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..})=&mut d.equipment_overrides.chilling { *rate_per_minute=n }/><NumberField id="recipe-chilling-plateau" label="Cooling plateau" unit="°C" path="equipment_overrides.chilling.plateau_c" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..}) => *plateau_c, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..})=&mut d.equipment_overrides.chilling { *plateau_c=n }/></Show>
                 <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
             </div></BreweryDisclosure>
-        </div><aside class="recipe-editor__preview"><BreweryPanel title="Your formulation" description="Estimates use the current draft.">
-            <p>"Awaiting preview."</p>
-            <div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
-        </BreweryPanel></aside></div>
+        </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate/></aside></div>
     </div> }
 }
 
@@ -454,12 +550,17 @@ fn NumberField(
     unit: &'static str,
     path: &'static str,
     draft: RwSignal<RecipeDraft>,
+    #[prop(default = 1.0)] scale: f64,
     read: fn(&RecipeDocumentV1) -> Option<f64>,
     write: fn(&mut RecipeDocumentV1, Option<f64>),
 ) -> impl IntoView {
-    let value = Signal::derive(move || draft.with(|d| d.number_text(path, read(d.document()))));
+    let value = Signal::derive(move || {
+        draft.with(|d| d.number_text(path, read(d.document()).map(|v| v * scale)))
+    });
     let error = Signal::derive(move || draft.with(|d| d.number_error(path).map(str::to_owned)));
-    let change = Callback::new(move |text| draft.update(|d| d.edit_number(path, text, write)));
+    let change = Callback::new(move |text| {
+        draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
+    });
     view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
 }
 
@@ -470,6 +571,8 @@ fn diagnostic_message(diagnostic: &krausen_types::validation::Diagnostic) -> Str
         "Hop addition"
     } else if diagnostic.path.starts_with("yeast[") {
         "Yeast"
+    } else if diagnostic.path.starts_with("ingredients[") {
+        "Ingredient"
     } else if diagnostic.path.starts_with("process.") {
         "Process"
     } else if diagnostic.path.starts_with("equipment") {
@@ -602,18 +705,18 @@ fn IngredientFields(
     let measure_id = id.clone();
     let extra_id = id.clone();
     let stage_detail_id = id.clone();
-    view! { <div class="recipe-editor__addition">
+    view! { <BreweryAddition>
         <div class="recipe-editor__fields"><IngredientTextField draft=draft id=name_id kind=kind field=IngredientText::Name label="Name"/>
         <IngredientNumberField draft=draft id=quantity_id kind=kind field=IngredientNumber::Amount label="Amount" unit=if matches!(kind, IngredientKind::Hop) {"g"} else {"kg"}/></div>
         <BreweryDisclosure title="Addition details"><div class="recipe-editor__fields">
             {matches!(kind, IngredientKind::Fermentable).then(|| view! { <IngredientTextField draft=draft id=type_id kind=kind field=IngredientText::Kind label="Type"/> })}
             <IngredientTextField draft=draft id=stage_id kind=kind field=IngredientText::Stage label="Stage"/>
-            <IngredientNumberField draft=draft id=measure_id kind=kind field=IngredientNumber::YieldOrAlpha label=if matches!(kind, IngredientKind::Hop) {"Alpha acid"} else {"Yield"} unit="fraction"/>
+            <IngredientNumberField draft=draft id=measure_id kind=kind field=IngredientNumber::YieldOrAlpha label=if matches!(kind, IngredientKind::Hop) {"Alpha acid"} else {"Yield"} unit="%"/>
             <IngredientNumberField draft=draft id=extra_id kind=kind field=IngredientNumber::ColourOrTime label=if matches!(kind, IngredientKind::Hop) {"Contact time"} else {"Colour"} unit=if matches!(kind, IngredientKind::Hop) {"min"} else {"EBC"}/>
             <IngredientNumberField draft=draft id=stage_detail_id kind=kind field=IngredientNumber::StageDetail label=if matches!(kind, IngredientKind::Hop) {"Whirlpool temperature"} else {"Boil addition time"} unit=if matches!(kind, IngredientKind::Hop) {"°C"} else {"min"}/>
         </div></BreweryDisclosure>
         <Button variant=crate::components::ButtonVariant::GhostDestructive on:click=remove>"Remove addition"</Button>
-    </div> }
+    </BreweryAddition> }
 }
 
 fn ingredient_text(
@@ -816,7 +919,13 @@ fn IngredientNumberField(
         draft.with(|d| {
             d.number_text(
                 &read_path,
-                ingredient_number(d.document(), &read_id, kind, field),
+                ingredient_number(d.document(), &read_id, kind, field).map(|n| {
+                    if matches!(field, IngredientNumber::YieldOrAlpha) {
+                        n * 100.0
+                    } else {
+                        n
+                    }
+                }),
             )
         })
     });
@@ -827,7 +936,19 @@ fn IngredientNumberField(
         let path = path.clone();
         draft.update(|d| {
             d.edit_number(&path, text, |doc, n| {
-                set_ingredient_number(doc, &id, kind, field, n)
+                set_ingredient_number(
+                    doc,
+                    &id,
+                    kind,
+                    field,
+                    n.map(|v| {
+                        if matches!(field, IngredientNumber::YieldOrAlpha) {
+                            v / 100.0
+                        } else {
+                            v
+                        }
+                    }),
+                )
             })
         });
     });
@@ -920,14 +1041,14 @@ fn AdditionalFields(
     let unit_id = id.clone();
     let amount_id = id.clone();
     let attenuation_id = id.clone();
-    view! { <div class="kit-showcase__stack">
+    view! { <BreweryAddition>
         <AdditionalTextField draft=draft id=name_id kind=kind field=AdditionalText::Name label="Name"/>
         <AdditionalTextField draft=draft id=producer_id kind=kind field=AdditionalText::Producer label="Producer"/>
         <AdditionalTextField draft=draft id=unit_id kind=kind field=AdditionalText::Unit label="Unit"/>
         <AdditionalNumberField draft=draft id=amount_id kind=kind attenuation=false/>
         {matches!(kind, AdditionalKind::Yeast).then(|| view! { <AdditionalNumberField draft=draft id=attenuation_id kind=kind attenuation=true/> })}
         <Button variant=crate::components::ButtonVariant::GhostDestructive on:click=remove>"Remove ingredient"</Button>
-    </div> }
+    </BreweryAddition> }
 }
 #[component]
 fn AdditionalTextField(
@@ -987,6 +1108,11 @@ fn AdditionalNumberField(
     let read_id = id.clone();
     let read_path = path.clone();
     let error_path = path.clone();
+    let diagnostic_path = if attenuation {
+        format!("yeast[{id}].specification.attenuation_fraction")
+    } else {
+        format!("ingredients[{id}].amount")
+    };
     let value = Signal::derive(move || {
         draft.with(|d| {
             let n = kind
@@ -1000,11 +1126,19 @@ fn AdditionalNumberField(
                         r.amount
                     }
                 });
-            d.number_text(&read_path, n)
+            d.number_text(
+                &read_path,
+                n.map(|v| if attenuation { v * 100.0 } else { v }),
+            )
         })
     });
-    let error =
-        Signal::derive(move || draft.with(|d| d.number_error(&error_path).map(str::to_owned)));
+    let error = Signal::derive(move || {
+        draft.with(|d| {
+            d.number_error(&error_path)
+                .or_else(|| d.validation_error(&diagnostic_path))
+                .map(str::to_owned)
+        })
+    });
     let change = Callback::new(move |text| {
         let id = id.clone();
         let path = path.clone();
@@ -1012,7 +1146,7 @@ fn AdditionalNumberField(
             d.edit_number(&path, text, |doc, n| {
                 if let Some(r) = kind.rows_mut(doc).iter_mut().find(|r| r.row_id == id) {
                     if attenuation {
-                        r.specification.attenuation_fraction = n
+                        r.specification.attenuation_fraction = n.map(|v| v / 100.0)
                     } else {
                         r.amount = n
                     }
@@ -1020,7 +1154,11 @@ fn AdditionalNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=if attenuation {"Yeast attenuation (informational)"} else {"Amount"} value=value error=error on_change=change numeric=true/> }
+    if attenuation {
+        view! { <BreweryDraftField id=input_id label="Yeast attenuation (informational)" unit="%" value=value error=error on_change=change numeric=true/> }.into_any()
+    } else {
+        view! { <BreweryDraftField id=input_id label="Amount" value=value error=error on_change=change numeric=true/> }.into_any()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1118,12 +1256,12 @@ fn StepFields(draft: RwSignal<RecipeDraft>, id: String, kind: StepKind) -> impl 
     let time_id = id.clone();
     let temp_id = id.clone();
     let volume_id = id.clone();
-    view! { <div class="kit-showcase__stack"><BreweryDraftField id=name_id label="Step name" value=name on_change=change/>
+    view! { <BreweryAddition><BreweryDraftField id=name_id label="Step name" value=name on_change=change/>
         <StepNumberField draft=draft id=time_id kind=kind field=StepNumber::Time label="Time" unit="min"/>
         <StepNumberField draft=draft id=temp_id kind=kind field=StepNumber::Temperature label="Temperature" unit="°C"/>
         <StepNumberField draft=draft id=volume_id kind=kind field=StepNumber::Volume label="Volume" unit="L"/>
         <Button variant=crate::components::ButtonVariant::GhostDestructive on:click=remove>"Remove step"</Button>
-    </div> }
+    </BreweryAddition> }
 }
 #[component]
 fn StepNumberField(
@@ -1176,4 +1314,201 @@ fn StepNumberField(
         });
     });
     view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change numeric=true/> }
+}
+
+#[component]
+fn FormulationPreview(
+    draft: RwSignal<RecipeDraft>,
+    identity: RwSignal<EditorIdentity>,
+    context_visible: RwSignal<bool>,
+    gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
+) -> impl IntoView {
+    use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
+    let result = RwSignal::new(None::<(u64, Preview)>);
+    let message = RwSignal::new("Awaiting preview.".to_owned());
+    let message_generation = RwSignal::new(0_u64);
+    let trigger = Memo::new(move |_| (draft.with(|d| d.generation), context_visible.get()));
+    Effect::new(move |_| {
+        let (draft_generation, visible) = trigger.get();
+        let mut generation = 0;
+        gate.update_value(|g| generation = g.invalidate());
+        result.set(None);
+        message_generation.set(draft_generation);
+        if !visible {
+            return;
+        }
+        let Ok(document) = draft.with_untracked(|d| d.snapshot()) else {
+            message.set("Complete invalid number fields to see estimates.".into());
+            return;
+        };
+        message.set("Calculating…".into());
+        let expected = identity.get_untracked();
+        let request = PreviewRequest {
+            draft_generation: generation.to_string(),
+            intent: expected.clone(),
+            draft: document,
+            equipment_draft: Default::default(),
+        };
+        leptos::task::spawn_local(async move {
+            #[cfg(target_arch = "wasm32")]
+            gloo_timers::future::TimeoutFuture::new(250).await;
+            if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
+                || context_visible.try_get_untracked() != Some(true)
+                || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
+            {
+                return;
+            }
+            if !current_context_matches(&expected).await {
+                if gate.try_with_value(|g| g.is_current(generation)) == Some(true) {
+                    context_visible.set(false);
+                }
+                return;
+            }
+            if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
+                || context_visible.try_get_untracked() != Some(true)
+                || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
+            {
+                return;
+            }
+            let response =
+                crate::server_fns::formulation::preview_formulation_shared(request.clone()).await;
+            #[cfg(target_arch = "wasm32")]
+            let response = if response
+                .as_ref()
+                .err()
+                .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
+                && crate::utils::auth_refresh::try_refresh().await
+            {
+                if !current_context_matches(&expected).await {
+                    context_visible.set(false);
+                    return;
+                }
+                if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
+                    || context_visible.try_get_untracked() != Some(true)
+                    || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
+                {
+                    return;
+                }
+                crate::server_fns::formulation::preview_formulation_shared(request.clone()).await
+            } else {
+                response
+            };
+            if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
+                || context_visible.try_get_untracked() != Some(true)
+                || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
+            {
+                return;
+            }
+            match response {
+                Ok(PreviewOutcome::Preview(preview))
+                    if preview.draft_generation == request.draft_generation =>
+                {
+                    let context_matches = preview.context.as_ref().is_some_and(|context| {
+                        context.workspace_id == expected.workspace_id
+                            && context.draft == request.draft
+                            && context.equipment_draft == request.equipment_draft
+                    });
+                    let mut accepted = false;
+                    if context_matches {
+                        if let Some(digest) = preview.context_digest.as_deref() {
+                            gate.update_value(|g| accepted = g.accept(generation, digest, None));
+                        }
+                    }
+                    if accepted {
+                        message.set(match preview.validation.state {
+                            krausen_types::validation::Readiness::Ready => "Ready".into(),
+                            krausen_types::validation::Readiness::Incomplete => "Incomplete".into(),
+                            krausen_types::validation::Readiness::Invalid => "Invalid".into(),
+                        });
+                        draft.update(|d| d.set_validation(preview.validation.clone()));
+                        result.set(Some((draft_generation, preview)));
+                    } else if preview.validation.state
+                        == krausen_types::validation::Readiness::Invalid
+                        && preview.context.is_none()
+                        && preview.context_digest.is_none()
+                    {
+                        draft.update(|d| d.set_validation(preview.validation));
+                        message.set("Invalid: correct the highlighted inputs.".into());
+                    } else {
+                        message.set("Preview context changed. Try again.".into());
+                    }
+                }
+                Ok(PreviewOutcome::UnresolvedProfile) => message.set(
+                    "Equipment profile unavailable. Use draft settings or select a valid profile."
+                        .into(),
+                ),
+                Ok(PreviewOutcome::UnresolvedStyle) => message.set(
+                    "Style reference unavailable. Choose a supported style or clear it.".into(),
+                ),
+                Ok(PreviewOutcome::ContextChanged | PreviewOutcome::Forbidden) => {
+                    context_visible.set(false)
+                }
+                Ok(PreviewOutcome::Invalid) => {
+                    message.set("Invalid draft. Correct the inputs before previewing.".into())
+                }
+                Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    context_visible.set(false)
+                }
+                _ => message.set("Preview unavailable. Your draft remains open.".into()),
+            }
+        });
+    });
+    view! { <BreweryPanel title="Your formulation" description="Estimates use the current draft.">
+        <p role="status">{move || if draft.with(|d| d.generation) == message_generation.get() { message.get() } else { "Awaiting preview.".into() }}</p>
+        {move || { let current = draft.with(|d| d.generation); result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| view! { <PreviewMetrics preview=preview/> }) }}
+        <div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
+    </BreweryPanel> }
+}
+
+#[component]
+fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView {
+    let style = preview.style.as_ref();
+    let comparison = preview.style_comparison.as_ref();
+    view! { <div class="recipe-editor__metrics">
+        {preview_metric("Original gravity", preview.targets.original_sg, style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3)}
+        {preview_metric("Final gravity", preview.targets.final_sg, style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3)}
+        {preview_metric("Alcohol", preview.targets.abv_percent, style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1)}
+        {preview_metric("Bitterness", preview.targets.ibu, style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1)}
+        {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1)}
+        {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1)}
+    </div>
+    <BreweryDisclosure title="Water and gravity details"><div class="recipe-editor__metrics">
+        {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1)}
+        {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1)}
+        {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1)}
+        {preview_metric("Grain absorption", preview.targets.grain_absorption_l, None, None, "L", 1)}
+        {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1)}
+        {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1)}
+        {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3)}
+    </div></BreweryDisclosure>
+    {preview.style.as_ref().map(|style| view! { <p class="recipe-editor__provenance">{format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition)}</p> })}
+    {preview.context.as_ref().map(|context| {
+        let assumptions = context.assumptions.iter().filter_map(|value| match value.as_str() {
+            "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
+            "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
+            "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
+            "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
+            _ => None,
+        }).collect::<Vec<_>>();
+        view! { <BreweryDisclosure title="Assumptions"><ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul></BreweryDisclosure> }
+    })}
+    }
+}
+fn preview_metric(
+    label: &'static str,
+    value: Option<f64>,
+    range: Option<&krausen_types::formulation::Range>,
+    comparison: Option<krausen_types::formulation::RangeStatus>,
+    unit: &'static str,
+    digits: usize,
+) -> AnyView {
+    use krausen_types::formulation::RangeStatus;
+    let formatted = value
+        .map(|n| format!("{n:.digits$}"))
+        .unwrap_or_else(|| "—".into());
+    let range_view = range.map(|r| {
+        let state = match comparison { Some(RangeStatus::Below) => crate::components::StyleState::Below, Some(RangeStatus::Within) => crate::components::StyleState::Within, Some(RangeStatus::Above) => crate::components::StyleState::Above, None => crate::components::StyleState::Awaiting };
+        view! { <crate::components::StyleRange label=label min=r.min max=r.max value=value state=state unit=unit digits=digits/> }
+    });
+    view! { <crate::components::BreweryMetric label=label value=formatted unit=unit>{range_view}</crate::components::BreweryMetric> }.into_any()
 }
