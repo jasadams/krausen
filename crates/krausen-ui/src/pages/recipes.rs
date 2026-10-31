@@ -87,6 +87,7 @@ pub fn RecipesPage() -> impl IntoView {
                 <h1 class="text-2xl font-semibold">"Recipes"</h1>
                 <p class="text-muted-foreground mt-1">"Browse stored recipes and open the editor."</p>
                 <ButtonLink href="/recipe-editor/new">"New recipe"</ButtonLink>
+                <ButtonLink href="/beerxml">"Import BeerXML"</ButtonLink>
             </div>
 
             {move || message.get().map(|m| view! {

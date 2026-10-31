@@ -173,5 +173,6 @@ impl<T, E: std::fmt::Display> IntoServerFnError<T> for Result<T, E> {
 
 pub mod formulation;
 pub mod recipe_editor;
+pub mod interchange;
 
 pub mod equipment;

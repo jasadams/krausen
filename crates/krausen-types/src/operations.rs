@@ -61,6 +61,30 @@ pub const RECIPE_SAVE: Operation = Operation {
     input_contract: "recipe-save.v1",
     output_contract: "RecipeSaveOutcome",
 };
+pub const BEERXML_PREVIEW: Operation = Operation {
+    id: "beerxml.preview.v1",
+    mcp_tool: "beerxml_preview",
+    input_contract: "ImportRequest",
+    output_contract: "ImportPreviewOutcome",
+};
+pub const BEERXML_IMPORT: Operation = Operation {
+    id: "beerxml.import.v1",
+    mcp_tool: "beerxml_import",
+    input_contract: "ImportRequest",
+    output_contract: "ImportCommitOutcome",
+};
+pub const BEERXML_EXPORT: Operation = Operation {
+    id: "beerxml.export.v1",
+    mcp_tool: "beerxml_export",
+    input_contract: "ExportRequest",
+    output_contract: "ExportOutcome",
+};
+pub const BEERXML_ORIGINAL: Operation = Operation {
+    id: "beerxml.original.v1",
+    mcp_tool: "beerxml_original",
+    input_contract: "beerxml-original.v1",
+    output_contract: "OriginalOutcome",
+};
 pub const EQUIPMENT_SAVE: Operation = Operation {
     id: "equipment.save.v1",
     mcp_tool: "equipment_save",
@@ -92,6 +116,10 @@ pub const EQUIPMENT_REVISION: Operation = Operation {
     output_contract: "EquipmentOutcome",
 };
 pub const OPERATIONS: &[Operation] = &[
+    BEERXML_PREVIEW,
+    BEERXML_IMPORT,
+    BEERXML_EXPORT,
+    BEERXML_ORIGINAL,
     EQUIPMENT_SAVE,
     EQUIPMENT_ARCHIVE,
     EQUIPMENT_GET,

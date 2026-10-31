@@ -7,6 +7,17 @@ use chrono::{DateTime, Utc};
 use krausen_core::{DbTx, Error, Result};
 use krausen_types::brewery::RecipeDocumentV1;
 
+// The legacy summary column is INTEGER on PostgreSQL and SQLite. The native
+// revision retains full precision; do not publish a truncated or saturated
+// summary when the source cannot be represented by both backends.
+fn legacy_whole_minutes(value: Option<f64>) -> Option<i64> {
+    value
+        .filter(|v| {
+            v.is_finite() && v.fract() == 0.0 && *v >= i32::MIN as f64 && *v <= i32::MAX as f64
+        })
+        .map(|v| v as i64)
+}
+
 macro_rules! execute {
     ($tx:expr, $sql:expr $(, $arg:expr)* $(,)?) => {{
         match &mut *$tx {
@@ -78,7 +89,7 @@ pub async fn backfill(
     );
     execute!(
         tx,
-        "INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, provenance_id, format, source_record, mapping_version, diagnostics) VALUES ($1, $2, 1, $3, 'legacy-beerxml-record', $4, 'native-v1', $5)",
+        "INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, provenance_id, format, source_record, mapping_version, diagnostics) VALUES ($1, $2, 1, $3, 'legacy-beerxml-record', $4, 'legacy-native-v2', $5)",
         workspace,
         recipe,
         &provenance_id,
@@ -93,7 +104,7 @@ pub async fn backfill(
         &document.title,
         document.style.as_ref().map(|s| s.name.as_str()),
         document.batch_size_l,
-        document.boil_minutes.map(|v| v as i64)
+        legacy_whole_minutes(document.boil_minutes)
     );
     Ok(true)
 }
@@ -115,7 +126,7 @@ pub async fn create(
 ) -> Result<()> {
     let (json, digest) = encode_document(document).map_err(|e| Error::BadRequest(e.to_string()))?;
     let style = document.style.as_ref().map(|s| s.name.as_str());
-    let boil = document.boil_minutes.map(|v| v as i64);
+    let boil = legacy_whole_minutes(document.boil_minutes);
     execute!(
         tx,
         "INSERT INTO recipes (workspace_id, recipe_id, name, style_name, batch_size_l, boil_minutes, document, source, created_by, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, '{}', 'krausen', $7, $8, $8)",
@@ -169,17 +180,27 @@ pub async fn create_imported(
     let provenance_id = format!("imp-{}", uuid::Uuid::new_v4());
     imported.document.import_provenance_id = Some(provenance_id.clone());
     create(tx, workspace, recipe, &imported.document, actor, saved_at).await?;
-    let record = serde_json::to_string(&imported.legacy_record)?;
+    // The complete original bytes remain authoritative provenance; this index
+    // records exact source locations (including attributes and envelope nodes)
+    // alongside the parsed legacy projection and the user's mapping choices.
+    let record = serde_json::to_string(&serde_json::json!({
+        "legacy_record": imported.legacy_record,
+        "source_elements": imported.source_elements,
+        "choices": imported.choices,
+        "source_recipe_index": imported.source_recipe_index,
+        "source_estimates": imported.source_estimates,
+    }))?;
     let diagnostics = serde_json::to_string(&imported.warnings)?;
     execute!(
         tx,
-        "INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, provenance_id, format, original_bytes, original_hash, source_record, mapping_version, diagnostics) VALUES ($1, $2, 1, $3, 'BeerXML', $4, $5, $6, 'native-v1', $7)",
+        "INSERT INTO recipe_import_provenance (workspace_id, recipe_id, revision, provenance_id, format, original_bytes, original_hash, source_record, mapping_version, diagnostics) VALUES ($1, $2, 1, $3, 'BeerXML', $4, $5, $6, $7, $8)",
         workspace,
         recipe,
         &provenance_id,
         &source.bytes,
         &source.sha256,
         &record,
+        krausen_beerxml::native::MAPPING_VERSION,
         &diagnostics
     );
     Ok(imported.document)
@@ -265,6 +286,7 @@ pub struct ImportProvenance {
     pub original_bytes: Option<Vec<u8>>,
     pub original_hash: Option<String>,
     pub source_record: Option<String>,
+    pub mapping_version: String,
     pub diagnostics: String,
 }
 
@@ -274,7 +296,7 @@ pub async fn load_provenance(
     recipe: &str,
     revision: i64,
 ) -> Result<Option<ImportProvenance>> {
-    let sql = "SELECT provenance_id, original_bytes, original_hash, source_record, diagnostics FROM recipe_import_provenance WHERE workspace_id = $1 AND recipe_id = $2 AND revision = $3";
+    let sql = "SELECT provenance_id, original_bytes, original_hash, source_record, mapping_version, diagnostics FROM recipe_import_provenance WHERE workspace_id = $1 AND recipe_id = $2 AND revision = $3";
     Ok(match &mut *tx {
         DbTx::Postgres(inner) => {
             sqlx::query_as(sql)
@@ -369,7 +391,7 @@ pub async fn save(
         restored_from
     );
     let style = document.style.as_ref().map(|s| s.name.as_str());
-    let boil = document.boil_minutes.map(|v| v as i64);
+    let boil = legacy_whole_minutes(document.boil_minutes);
     let updated = execute!(
         tx,
         "UPDATE recipes SET native_head_revision = $1, name = $2, style_name = $3, batch_size_l = $4, boil_minutes = $5, updated_at = $6 WHERE workspace_id = $7 AND recipe_id = $8 AND native_head_revision = $9 AND deleted_at IS NULL",

@@ -2,10 +2,9 @@
 
 //! Writing a BeerXML document.
 //!
-//! Everything that was read is written back: known fields in declaration
-//! order, then anything preserved as an extension. A document that goes
-//! through [`crate::parse`] and back out through here carries the same
-//! information it arrived with.
+//! Known fields are written in declaration order, followed by structural
+//! extensions. This is not byte-preserving; original source and export-loss
+//! diagnostics are handled by the native interchange layer.
 
 use std::fmt::Write as _;
 

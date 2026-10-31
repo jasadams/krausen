@@ -8,6 +8,7 @@ license.workspace = true
 krausen-core.workspace = true
 krausen-types.workspace = true
 krausen-brewery.workspace = true
+krausen-beerxml.workspace = true
 krausen-calc.workspace = true
 sqlx.workspace = true
 serde.workspace = true

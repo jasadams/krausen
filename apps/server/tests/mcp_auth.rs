@@ -933,6 +933,105 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(denied.is_error, Some(true));
     assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
+    let import_request = json!({
+        "intent": intent,
+        "xml": "<RECIPES><RECIPE><NAME>SDK import</NAME></RECIPE></RECIPES>",
+        "recipe_index": 0,
+        "choices": {"colour":null,"efficiency":null},
+        "equipment_profile_id": null,
+        "expected_profile_revision": null,
+        "expected_profile_metadata_revision": null,
+        "equipment_draft": krausen_types::brewery::EquipmentSettingsV1::default(),
+        "draft_generation": "sdk-test"
+    });
+    let import_args = json!({"workspace_id":ws,"request":import_request})
+        .as_object()
+        .unwrap()
+        .clone();
+    let mcp_preview = modern
+        .call_tool(CallToolRequestParams::new("beerxml_preview").with_arguments(import_args))
+        .await
+        .unwrap();
+    let browser_path = <krausen_ui::server_fns::interchange::PreviewBeerxml as ServerFn>::PATH;
+    let browser_preview = reqwest::Client::new()
+        .post(format!("{base}{browser_path}"))
+        .bearer_auth(&browser.access_token)
+        .json(&json!({"request":import_request}))
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_preview.status().is_success());
+    assert_eq!(
+        mcp_preview.structured_content.unwrap()["outcome"],
+        browser_preview.json::<serde_json::Value>().await.unwrap()
+    );
+    let import_key = uuid::Uuid::new_v4().to_string();
+    let import_args = json!({"workspace_id":ws,"request":import_request,"request_id":import_key})
+        .as_object()
+        .unwrap()
+        .clone();
+    let imported = modern
+        .call_tool(CallToolRequestParams::new("beerxml_import").with_arguments(import_args))
+        .await
+        .unwrap();
+    let browser_path = <krausen_ui::server_fns::interchange::CommitBeerxml as ServerFn>::PATH;
+    let browser_import = reqwest::Client::new()
+        .post(format!("{base}{browser_path}"))
+        .bearer_auth(&browser.access_token)
+        .json(&json!({"request":import_request,"request_id":import_key}))
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_import.status().is_success());
+    let imported = imported.structured_content.unwrap()["outcome"].clone();
+    assert_eq!(
+        imported,
+        browser_import.json::<serde_json::Value>().await.unwrap()
+    );
+    let imported_id = imported["Imported"]["recipe_id"].as_str().unwrap();
+    let export_request = json!({"intent":intent,"selection":{"Saved":{"recipe_id":imported_id,"revision":1}},"acknowledge_loss":true});
+    let export_args = json!({"workspace_id":ws,"request":export_request})
+        .as_object()
+        .unwrap()
+        .clone();
+    let exported = modern
+        .call_tool(CallToolRequestParams::new("beerxml_export").with_arguments(export_args))
+        .await
+        .unwrap();
+    let browser_path = <krausen_ui::server_fns::interchange::ExportBeerxml as ServerFn>::PATH;
+    let browser_export = reqwest::Client::new()
+        .post(format!("{base}{browser_path}"))
+        .bearer_auth(&browser.access_token)
+        .json(&json!({"request":export_request}))
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_export.status().is_success());
+    assert_eq!(
+        exported.structured_content.unwrap()["outcome"],
+        browser_export.json::<serde_json::Value>().await.unwrap()
+    );
+    let original_args = json!({"workspace_id":ws,"intent":intent,"recipe_id":imported_id})
+        .as_object()
+        .unwrap()
+        .clone();
+    let original = modern
+        .call_tool(CallToolRequestParams::new("beerxml_original").with_arguments(original_args))
+        .await
+        .unwrap();
+    let browser_path = <krausen_ui::server_fns::interchange::OriginalBeerxml as ServerFn>::PATH;
+    let browser_original = reqwest::Client::new()
+        .post(format!("{base}{browser_path}"))
+        .bearer_auth(&browser.access_token)
+        .json(&json!({"intent":intent,"recipe_id":imported_id}))
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_original.status().is_success());
+    assert_eq!(
+        original.structured_content.unwrap()["outcome"],
+        browser_original.json::<serde_json::Value>().await.unwrap()
+    );
     let recipe_tool = discovered
         .tools
         .iter()

@@ -30,7 +30,7 @@ pub mod tooltip;
 pub use action_status::ActionStatus;
 pub use alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
-pub use button::{Button, ButtonLink, ButtonSize, ButtonVariant, ToggleButton};
+pub use button::{Button, ButtonLink, ButtonSize, ButtonVariant, DownloadLink, ToggleButton};
 pub use card::{Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle};
 pub use checkbox::Checkbox;
 pub use confirm_dialog::ConfirmDialog;

@@ -3,9 +3,9 @@
 //! The BeerXML 1.0 record set, complete.
 //!
 //! Every field is modelled whether or not Krausen currently uses it. A recipe
-//! that comes in with a step mash, a water profile and a fermentation schedule
-//! keeps all of it, so that importing and exporting is not a way to lose data,
-//! and so the fields are already here when the features that need them arrive.
+//! with a step mash, a water profile and a fermentation schedule can carry
+//! those fields in this structural representation. Native import retains the
+//! original file separately and edited export reports omitted data.
 //!
 //! Units follow the standard: volumes in litres, weights in kilograms,
 //! temperatures in Celsius, times in minutes, colour in SRM, and percentages

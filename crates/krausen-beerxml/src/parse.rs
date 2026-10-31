@@ -5,11 +5,12 @@
 //! Deliberately permissive about structure and strict about data. Real
 //! exports vary — unexpected elements, unexpected nesting, elements in a
 //! different order — and none of that is a reason to refuse a brewer's
-//! recipe. What is never done is discarding something: anything unrecognised
-//! becomes a [`RawElement`] and comes back out on export.
+//! recipe. Unrecognised elements can become [`RawElement`]s, but this parser
+//! is not byte-preserving and does not retain all XML attributes. Native
+//! imports retain original bytes separately.
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::{
     document::{BeerXml, Mash, Recipe},
@@ -68,9 +69,23 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                     message: e.to_string(),
                 });
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) => {
+                if !stack.is_empty() {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "unclosed element".into(),
+                    });
+                }
+                break;
+            }
 
             Ok(Event::Start(e)) => {
+                if stack.len() >= 96 {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "XML nesting limit exceeded".into(),
+                    });
+                }
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 stack.push(RawElement {
                     name,
@@ -88,19 +103,36 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                 };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(element),
-                    None => root = Some(element),
+                    None if root.is_none() => root = Some(element),
+                    None => {
+                        return Err(ParseError::Xml {
+                            position: reader.buffer_position(),
+                            message: "multiple root elements".into(),
+                        });
+                    }
                 }
             }
 
             Ok(Event::Text(e)) => {
                 if let Some(current) = stack.last_mut() {
-                    let text = e.unescape().map(|t| t.into_owned()).unwrap_or_default();
+                    let text =
+                        e.unescape()
+                            .map(|t| t.into_owned())
+                            .map_err(|error| ParseError::Xml {
+                                position: reader.buffer_position(),
+                                message: error.to_string(),
+                            })?;
                     if !text.is_empty() {
                         current.text = Some(match current.text.take() {
                             Some(existing) => existing + &text,
                             None => text,
                         });
                     }
+                } else if !e.as_ref().iter().all(u8::is_ascii_whitespace) {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "text outside root element".into(),
+                    });
                 }
             }
 
@@ -111,6 +143,11 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                         Some(existing) => existing + &text,
                         None => text,
                     });
+                } else {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "CDATA outside root element".into(),
+                    });
                 }
             }
 
@@ -118,8 +155,19 @@ fn read_tree(xml: &str) -> Result<RawElement, ParseError> {
                 if let Some(finished) = stack.pop() {
                     match stack.last_mut() {
                         Some(parent) => parent.children.push(finished),
-                        None => root = Some(finished),
+                        None if root.is_none() => root = Some(finished),
+                        None => {
+                            return Err(ParseError::Xml {
+                                position: reader.buffer_position(),
+                                message: "multiple root elements".into(),
+                            });
+                        }
                     }
+                } else {
+                    return Err(ParseError::Xml {
+                        position: reader.buffer_position(),
+                        message: "unexpected closing element".into(),
+                    });
                 }
             }
 
@@ -332,7 +380,10 @@ mod tests {
         .expect("parses");
 
         let mash = doc.recipes[0].mash.as_ref().expect("has a mash");
-        assert_eq!(mash.header.name().map(String::as_str), Some("Single Infusion"));
+        assert_eq!(
+            mash.header.name().map(String::as_str),
+            Some("Single Infusion")
+        );
         assert_eq!(mash.steps.len(), 2);
         assert_eq!(mash.steps[1].step_temp().copied(), Some(75.0));
     }
@@ -350,6 +401,10 @@ mod tests {
     fn malformed_xml_is_an_error_rather_than_a_guess() {
         assert!(parse("<RECIPES><RECIPE></RECIPES>").is_err());
         assert!(parse("").is_err());
+        assert!(parse("<RECIPE/><RECIPE/>").is_err());
+        assert!(parse("<RECIPES><RECIPE>").is_err());
+        assert!(parse("<RECIPE/>extra").is_err());
+        assert!(parse("<RECIPE><NAME>&unknown;</NAME></RECIPE>").is_err());
     }
 
     #[test]
