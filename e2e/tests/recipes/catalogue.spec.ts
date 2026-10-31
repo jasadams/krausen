@@ -174,9 +174,21 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await picker.getByRole('button', { name: 'Edit library entry' }).click();
   await expect(edit).toBeVisible();
   await edit.getByLabel('Colour (EBC)').fill('9.5');
-  const editSearch = waitForCatalogueSearch(page);
+  page.on('request', request => {
+    if (request.url().includes('execute_ingredient_command')) {
+      console.log('EDIT REQUEST', request.postData());
+    }
+  });
+  page.on('response', async response => {
+    if (response.url().includes('execute_ingredient_command')) {
+      console.log('EDIT RESPONSE', response.status(), await response.text().catch(() => '<no body>'));
+    }
+  });
+  const editSearch = waitForCatalogueSearch(page).catch(() => null);
   await edit.getByRole('button', { name: 'Save changes' }).click();
   await editSearch;
+  await page.waitForTimeout(500);
+  console.log('EDIT PAGE', await page.locator('body').innerText());
   await expect(picker).toBeVisible();
   await expect(picker.getByRole('button', { name: /9\.5 EBC/ })).toHaveCount(1);
 
