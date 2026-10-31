@@ -96,6 +96,12 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await page.keyboard.press('Escape');
       await expect(dialog).toBeHidden();
       await expect(opener).toBeFocused();
+      await opener.click();
+      await dialog.getByRole('button', { name: 'Close' }).click();
+      await opener.click();
+      await page.waitForTimeout(100);
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press('Escape');
     }
   }
 });
@@ -122,9 +128,9 @@ test('a dirty new recipe remains private to its original account and workspace',
   });
   await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
   await page.getByRole('button', { name: otherName }).click();
-  const guard = page.getByRole('dialog', { name: 'Save your recipe first' });
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
-  await guard.getByRole('button', { name: 'Close' }).click();
+  await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(title).toHaveValue('Private unsaved switch draft');
 
   const other = await page.context().newPage();
@@ -269,4 +275,291 @@ test('profile pagination exposes later active and archived profiles', async ({ p
   await expect(manage.getByRole('option', { name: 'Paged profile 101 (archived)' })).toBeAttached();
   await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 100' })).toBeAttached();
   await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 101 (archived)' })).toHaveCount(0);
+});
+
+test('undo and retained raw draft survive reload without becoming saved history', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const title = page.getByLabel('Recipe name', { exact: true });
+  const volume = page.getByLabel('Batch volume (L)');
+  await title.fill('Recover unfinished recipe');
+  await volume.fill('-');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  let unload = false;
+  page.once('dialog', async dialog => { unload = dialog.type() === 'beforeunload'; await dialog.accept(); });
+  await page.reload();
+  expect(unload).toBe(true);
+  await expect(page.getByText('A retained draft is available')).toBeVisible();
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(title).toHaveValue('Recover unfinished recipe');
+  await expect(volume).toHaveValue('-');
+  await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields to see estimates.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields before saving.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(title).toHaveValue('');
+});
+
+test('navigation offers stay, blocks failed save, and discards only on request', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Navigation draft');
+  await page.getByLabel('Batch volume (L)').fill('-');
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
+  await expect(guard.getByRole('status')).toContainText('Complete invalid number fields');
+  await expect(page).toHaveURL(/recipe-editor/);
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Navigation draft');
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.route('**/leptos-api/save_recipe*', route => route.abort('failed'));
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
+  await expect(guard.getByRole('status')).toContainText('Save failed');
+  await expect(page).toHaveURL(/recipe-editor/);
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await page.unroute('**/leptos-api/save_recipe*');
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/settings\/profile/);
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByText('A retained draft is available')).toHaveCount(0);
+});
+
+test('stale saves retain edits and require deliberate reapply against current head', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Conflict base');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  const other = await page.context().newPage();
+  await other.goto(url);
+  await other.getByLabel('Recipe name', { exact: true }).fill('Remote edit');
+  await page.getByLabel('Recipe name', { exact: true }).fill('My retained edit');
+  await other.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('region', { name: 'Save conflict' })).toBeVisible();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('My retained edit');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  const conflict = page.getByRole('region', { name: 'Save conflict' });
+  await expect(conflict).toBeVisible();
+  await conflict.getByText('Compare saved revision and your draft').click();
+  await expect(conflict).toContainText('Remote edit');
+  await expect(conflict).toContainText('My retained edit');
+  await conflict.getByRole('button', { name: 'Reapply my draft' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('My retained edit');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
+  await other.close();
+});
+
+test('browser back keeps a dirty draft until an explicit navigation choice', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe' }).click();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Back navigation draft');
+  await page.evaluate(() => history.back());
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Back navigation draft');
+  await page.evaluate(() => history.back());
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes/);
+});
+
+test('retained draft stays isolated across sign-out and a different account', async ({ page }) => {
+  const secondEmail = `recovery-${Date.now()}@example.test`;
+  const password = 'RecoveryTest1234';
+  await createSecondUser(null, { email: secondEmail, name: 'Second brewer', password, workspaceId: getDefaultWorkspaceId() });
+  walCheckpoint();
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Private retained draft');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  const other = await page.context().newPage();
+  await loginUser(other, secondEmail, password);
+  await other.goto('/recipe-editor/new');
+  await expect(other.getByLabel('Recipe name', { exact: true })).toHaveValue('');
+  await expect(other.getByText('A retained draft is available')).toHaveCount(0);
+  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  await other.goto('/recipe-editor/new');
+  await expect(other.getByText('A retained draft is available')).toBeVisible();
+  await other.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(other.getByLabel('Recipe name', { exact: true })).toHaveValue('Private retained draft');
+  await other.close();
+});
+
+test('save and leave waits for a successful revision before navigating', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const name = `Save before leave ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(name);
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
+  await expect(page).toHaveURL(/settings\/profile/);
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}' AND native_head_revision = 1`)).toBe('1');
+});
+
+test('revoked credentials cannot read the retained draft until reauthentication', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Draft after revocation');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  const userId = getDefaultUserId();
+  db.exec(`UPDATE auth_credentials SET revoked_at = ${Math.floor(Date.now() / 1000)} WHERE user_id = '${userId}' AND revoked_at IS NULL`);
+  walCheckpoint();
+  const other = await page.context().newPage();
+  await other.goto('/recipe-editor/new');
+  await expect(other.getByText('A retained draft is available')).toHaveCount(0);
+  await expect(other.getByLabel('Recipe name', { exact: true })).toHaveCount(0);
+  await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  await other.goto('/recipe-editor/new');
+  await expect(other.getByText('A retained draft is available')).toBeVisible();
+  await other.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(other.getByLabel('Recipe name', { exact: true })).toHaveValue('Draft after revocation');
+  await other.close();
+});
+
+test('recovered uncertain create retries its original request without a duplicate', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const name = `Uncertain create ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(name);
+  let intercepted = false;
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    if (!intercepted) {
+      intercepted = true;
+      await route.fetch();
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Save failed' })).toBeVisible();
+  await expect.poll(() => db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
+});
+
+test('separate local drafts remain individually recoverable', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('First local draft');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('krausen-draft-v1:')).length)).toBe(1);
+  const other = await page.context().newPage();
+  await other.goto('/recipe-editor/new');
+  await expect(other.getByText('A retained draft is available')).toBeVisible();
+  await other.getByRole('button', { name: 'Start a separate draft' }).click();
+  await other.getByLabel('Recipe name', { exact: true }).fill('Second local draft');
+  await expect.poll(() => other.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('krausen-draft-v1:')).length)).toBe(2);
+  other.once('dialog', dialog => dialog.accept());
+  await other.reload();
+  await expect(other.getByText(/First local draft.*based on/)).toBeVisible();
+  await expect(other.getByText(/Second local draft.*based on/)).toBeVisible();
+  await other.close();
+});
+
+test('a pending save cannot be discarded while its result is uncertain', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Pending navigation save');
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    const response = await route.fetch();
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    await route.fulfill({ response });
+  });
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
+  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeDisabled();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('clean focus refetch invalidates preview before showing a newer saved recipe', async ({ page }) => {
+  const previews: any[] = [];
+  page.on('response', async response => {
+    if (response.url().includes('/preview_formulation') && response.ok()) {
+      try { previews.push(await response.json()); } catch { /* Transport error, not a preview. */ }
+    }
+  });
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Clean original');
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  await page.reload();
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Clean original')).toBe(true);
+  const other = await page.context().newPage();
+  await other.goto(url);
+  await other.getByLabel('Recipe name', { exact: true }).fill('Clean remote update');
+  await other.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Clean remote update');
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Clean remote update')).toBe(true);
+  await other.close();
+});
+
+test('recovered draft retains saved profile selection and resolves its preview', async ({ page }) => {
+  const previews: any[] = [];
+  page.on('response', async response => {
+    if (response.url().includes('/preview_formulation') && response.ok()) {
+      try { previews.push(await response.json()); } catch { /* Transport errors are not previews. */ }
+    }
+  });
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const profileName = `Recovery profile ${Date.now()}`;
+  await page.getByLabel('Profile name').fill(profileName);
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  const selector = page.getByLabel('Equipment profile', { exact: true });
+  if (await selector.getByRole('option', { name: profileName }).count() === 0 && await page.getByRole('button', { name: 'Load more profiles' }).isVisible()) {
+    await page.getByRole('button', { name: 'Load more profiles' }).click();
+  }
+  await expect(selector.getByRole('option', { name: profileName })).toBeAttached();
+  await selector.selectOption({ label: profileName });
+  const profileId = await selector.inputValue();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Profile recovery draft');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+  await expect.poll(() => previews.some(result => result.Preview?.context?.draft?.title === 'Profile recovery draft' && result.Preview.context.equipment_profile?.profile_id === profileId)).toBe(true);
+});
+
+test('a failed workspace switch is reported after choosing to discard', async ({ page }) => {
+  const owner = getDefaultUserId();
+  const original = getDefaultWorkspaceId();
+  const name = `Unavailable workspace ${Date.now()}`;
+  seedWorkspace({ ownerId: owner, name });
+  db.exec(`UPDATE users SET last_workspace_id = '${original}' WHERE user_id = '${owner}'`);
+  walCheckpoint();
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Draft before switch');
+  await page.route('**/leptos-api/switch_workspace*', route => route.abort('failed'));
+  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name, exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not switch workspaces.');
+  await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('a failed sign-out is reported after choosing to discard', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Draft before sign-out');
+  await page.route('**/leptos-api/logout*', route => route.abort('failed'));
+  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not sign out.');
+  await expect(page).toHaveURL(/recipe-editor/);
 });

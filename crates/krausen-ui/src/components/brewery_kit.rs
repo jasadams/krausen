@@ -154,6 +154,7 @@ pub fn BreweryDialog(
     children: Children,
 ) -> impl IntoView {
     let dialog = NodeRef::<leptos::html::Dialog>::new();
+    let programmatic_closes = RwSignal::new(0_u32);
     let title_id = format!("{id}-title");
     let description_id = format!("{id}-description");
     #[cfg(target_arch = "wasm32")]
@@ -168,12 +169,15 @@ pub fn BreweryDialog(
                 }
             }
             if !is_open && native.open() {
+                programmatic_closes.update(|count| *count += 1);
                 native.close();
             }
         }
     });
     view! {
-        <dialog id=id class="k-dialog" node_ref=dialog aria-labelledby=title_id.clone() aria-describedby=description_id.clone() on:close=move |_| open.set(false)>
+        <dialog id=id class="k-dialog" node_ref=dialog aria-labelledby=title_id.clone() aria-describedby=description_id.clone() on:close=move |_| {
+            if programmatic_closes.get_untracked() > 0 { programmatic_closes.update(|count| *count -= 1); } else { open.set(false); }
+        }>
             <header class="k-dialog__header"><div><h2 id=title_id.clone()>{title}</h2><p id=description_id.clone()>{description}</p></div></header>
             <div class="k-dialog__body">{children()}</div>
             <div class="k-dialog__actions"><crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| open.set(false)>"Close"</crate::components::Button></div>
