@@ -690,7 +690,7 @@ pub fn CataloguePicker(
         <div class="k-catalogue-filters">
             <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm aria_pressed=Signal::derive(move || (filter.get() == CatalogueFilter::All).to_string()) on:click=move |_| filter.set(CatalogueFilter::All)>"All fermentables"</Button>
             <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_pressed=Signal::derive(move || (filter.get() == CatalogueFilter::Workspace).to_string()) on:click=move |_| filter.set(CatalogueFilter::Workspace)>"Your library"</Button>
-            <span class="note-caption" role="status">{count_label}</span>
+            <span class="note-caption" role="status">{move || count_label.get()}</span>
         </div>
         {notice_view()}
         <Show
@@ -739,7 +739,7 @@ pub fn CataloguePicker(
         <div class="k-catalogue-selection">
             <div>
                 <span class="note-caption">"SELECTED FERMENTABLE"</span>
-                <strong>{selected_name}</strong>
+                <strong>{move || selected_name.get()}</strong>
             </div>
             <BreweryDraftField id="catalogue-amount" label="Amount in recipe" value=Signal::from(amount) on_change=Callback::new(move |text| amount.set(text)) unit="kg" numeric=true/>
         </div>
@@ -915,7 +915,7 @@ mod tests {
             });
             let html = view! {
                 <Show when=move || selected_workspace.get() fallback=|| view! { <span>"none"</span> }>
-                    <Button variant=ButtonVariant::Secondary disabled=move || selected_archived.get()>"Edit library entry"</Button>
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || selected_archived.get())>"Edit library entry"</Button>
                 </Show>
             }
             .to_html();
