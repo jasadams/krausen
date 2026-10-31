@@ -58,7 +58,7 @@ async fn start_inner(
             return Ok(StartBrewOutcome::InvalidRequest);
         }
     }
-    let Ok(request_id) = Uuid::parse_str(&request.request_id) else {
+    let Ok(_request_id) = Uuid::parse_str(&request.request_id) else {
         return Ok(StartBrewOutcome::InvalidRequest);
     };
 
