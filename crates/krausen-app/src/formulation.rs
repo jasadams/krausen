@@ -84,6 +84,7 @@ pub async fn preview(
         assumptions.push("whirlpool_duration_default_zero".into());
     }
     let envelope = krausen_types::formulation::CalculationContext {
+        workspace_id: actor.workspace_id.clone(),
         draft: request.draft.clone(),
         equipment_draft: request.equipment_draft.clone(),
         effective_equipment: e,

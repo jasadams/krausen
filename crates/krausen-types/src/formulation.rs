@@ -18,6 +18,10 @@ pub struct Targets {
     pub total_water_l: Option<f64>,
     pub pre_boil_l: Option<f64>,
     pub post_boil_l: Option<f64>,
+    pub grain_absorption_l: Option<f64>,
+    pub mash_water_l: Option<f64>,
+    pub sparge_water_l: Option<f64>,
+    pub kettle_water_l: Option<f64>,
     pub pre_boil_sg: Option<f64>,
     pub original_sg: Option<f64>,
     pub final_sg: Option<f64>,
@@ -78,6 +82,7 @@ pub struct StyleComparison {
 /// Complete unrounded resolved inputs and version identities used for context hashing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalculationContext {
+    pub workspace_id: String,
     pub draft: RecipeDocumentV1,
     pub equipment_draft: EquipmentSettingsV1,
     pub effective_equipment: EquipmentSettingsV1,

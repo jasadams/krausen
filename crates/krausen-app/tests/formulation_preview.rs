@@ -81,6 +81,72 @@ async fn exercise(db: DbPool) {
     assert!((first.targets.original_sg.unwrap() - 1.0429545454545455).abs() < 1e-9);
     assert_eq!(first.targets.ibu, Some(0.0));
     assert!(first.context_digest.is_some());
+    let other_ws = format!("w-other-{id}");
+    run!(
+        "INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ($1,$2)",
+        &other_ws,
+        &actor.actor_id
+    );
+    run!(
+        "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,'workspace_member')",
+        &other_ws,
+        &actor.actor_id
+    );
+    let other_actor = ActorContext {
+        actor_id: actor.actor_id.clone(),
+        workspace_id: other_ws.clone(),
+    };
+    let PreviewOutcome::Preview(other) = preview(&db, &other_actor, req.clone()).await.unwrap()
+    else {
+        panic!("preview")
+    };
+    assert_ne!(first.context_digest, other.context_digest);
+    assert_eq!(other.context.unwrap().workspace_id, other_ws);
+    assert!(
+        (first.targets.mash_water_l.unwrap()
+            + first.targets.sparge_water_l.unwrap()
+            + first.targets.kettle_water_l.unwrap()
+            - first.targets.total_water_l.unwrap())
+        .abs()
+            < 1e-9
+    );
+    assert!((first.targets.grain_absorption_l.unwrap() - 3.36).abs() < 1e-9);
+    let mut thickness = req.clone();
+    thickness.draft.process.mash_water_method = Some("profile_thickness".into());
+    thickness.draft.process.mash_water_l = None;
+    thickness.equipment_draft.mash_thickness_l_per_kg = Some(3.0);
+    thickness.draft.process.kettle_top_up_l = Some(2.0);
+    let PreviewOutcome::Preview(thick) = preview(&db, &actor, thickness).await.unwrap() else {
+        panic!("preview")
+    };
+    assert!((thick.targets.mash_water_l.unwrap() - 12.6).abs() < 1e-9);
+    assert!(
+        (thick.targets.mash_water_l.unwrap()
+            + thick.targets.sparge_water_l.unwrap()
+            + thick.targets.kettle_water_l.unwrap()
+            - thick.targets.total_water_l.unwrap())
+        .abs()
+            < 1e-9
+    );
+    let mut extract = req.clone();
+    extract.draft.fermentables[0].specification.kind = Some("extract".into());
+    extract.draft.fermentables[0].addition.stage = "boil".into();
+    extract.draft.fermentables[0].addition.time_minutes = Some(60.0);
+    extract.draft.process.mash_water_method = None;
+    extract.draft.process.mash_water_l = None;
+    extract.equipment_draft.mash_efficiency_fraction = None;
+    extract.equipment_draft.grain_absorption_l_per_kg = None;
+    let PreviewOutcome::Preview(extract_result) = preview(&db, &actor, extract).await.unwrap()
+    else {
+        panic!("preview")
+    };
+    assert_eq!(extract_result.targets.mash_water_l, Some(0.0));
+    assert_eq!(extract_result.targets.sparge_water_l, Some(0.0));
+    assert_eq!(extract_result.targets.grain_absorption_l, Some(0.0));
+    assert_eq!(
+        extract_result.targets.kettle_water_l,
+        extract_result.targets.total_water_l
+    );
     let mut styled = req.clone();
     styled.draft.style = Some(StyleReference {
         name: "Munich Helles".into(),
@@ -160,6 +226,23 @@ async fn exercise(db: DbPool) {
     assert!(partial_yield.targets.original_sg.is_none());
     assert!(partial_yield.targets.colour_ebc.is_some());
     assert_eq!(partial_yield.targets.ibu, Some(0.0));
+    let mut overflow = req.clone();
+    overflow.draft.fermentables[0].specification.yield_fraction = None;
+    overflow.draft.fermentables[0].specification.colour_ebc = Some(1e308);
+    let PreviewOutcome::Preview(overflow_result) = preview(&db, &actor, overflow).await.unwrap()
+    else {
+        panic!("preview")
+    };
+    assert_eq!(overflow_result.validation.state, Readiness::Invalid);
+    assert!(
+        overflow_result
+            .validation
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "nonfinite_colour")
+    );
+    assert!(overflow_result.targets.total_water_l.is_some());
+    assert!(overflow_result.targets.colour_ebc.is_none());
     let mut extreme = req.clone();
     extreme.draft.fermentables[0].amount_kg = Some(1e300);
     let PreviewOutcome::Preview(extreme_result) = preview(&db, &actor, extreme).await.unwrap()

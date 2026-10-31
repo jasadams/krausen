@@ -48,10 +48,43 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                 let post = batch + loss;
                 let pre = post + rate * boil / 60.0;
                 let total = pre + absorption + dead;
-                if [post, pre, total].iter().all(|v| v.is_finite()) {
+                let mash = if grain == 0.0 {
+                    Some(0.0)
+                } else {
+                    match d.process.mash_water_method.as_deref() {
+                        Some("manual") => d.process.mash_water_l,
+                        Some("profile_thickness") => e.mash_thickness_l_per_kg.map(|v| v * grain),
+                        _ => None,
+                    }
+                };
+                let top_up = d.process.kettle_top_up_l.unwrap_or(0.0);
+                let sparge = mash.map(|m| {
+                    if grain == 0.0 {
+                        0.0
+                    } else {
+                        total - m - top_up
+                    }
+                });
+                let kettle = if grain == 0.0 { total } else { top_up };
+                if [
+                    Some(post),
+                    Some(pre),
+                    Some(total),
+                    Some(absorption),
+                    mash,
+                    sparge,
+                    Some(kettle),
+                ]
+                .into_iter()
+                .all(|v| v.is_some_and(f64::is_finite))
+                {
                     out.post_boil_l = Some(post);
                     out.pre_boil_l = Some(pre);
                     out.total_water_l = Some(total);
+                    out.grain_absorption_l = Some(absorption);
+                    out.mash_water_l = mash;
+                    out.sparge_water_l = sparge;
+                    out.kettle_water_l = Some(kettle);
                 } else {
                     v.state = Readiness::Invalid;
                     v.diagnostics.push(Diagnostic {
@@ -81,8 +114,17 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
         if let (Some(batch), Some(loss), Some(ingredients)) =
             (d.batch_size_l, e.transfer_loss_l, ingredients)
         {
-            if let Ok(colour) = formulation::colour_ebc(batch + loss, &ingredients) {
-                out.colour_ebc = Some(colour);
+            match formulation::colour_ebc(batch + loss, &ingredients) {
+                Ok(colour) => out.colour_ebc = Some(colour),
+                Err(_) => {
+                    v.state = Readiness::Invalid;
+                    v.diagnostics.push(Diagnostic {
+                        code: "nonfinite_colour".into(),
+                        path: "colour".into(),
+                        severity: Readiness::Invalid,
+                        affected_targets: vec![Target::Colour],
+                    });
+                }
             }
         }
     }
