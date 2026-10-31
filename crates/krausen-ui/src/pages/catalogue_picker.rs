@@ -1025,9 +1025,10 @@ mod tests {
         assert!(!archived_html.contains("Archive"));
         assert!(!button_is_disabled(&archived_html, "Restore"));
 
-        // An uncertain archive outcome retains and disables the retry action.
+        // An uncertain archive outcome retains an enabled retry action; only
+        // an in-flight request disables it.
         let retrying = render_selection(Some(workspace_entry()), true);
         assert!(retrying.contains("Retry previous request"));
-        assert!(button_is_disabled(&retrying, "Retry previous request"));
+        assert!(!button_is_disabled(&retrying, "Retry previous request"));
     }
 }

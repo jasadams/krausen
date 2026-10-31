@@ -852,6 +852,34 @@ async fn exercise(db: DbPool) {
         .await,
         RecipeSaveOutcome::UnresolvedIngredientSource
     ));
+    // Versions outside the signed storage range must be rejected rather than
+    // passing the comparison because the conversion failed.
+    for (row_id, version) in [
+        ("grain-11", i64::MAX as u64 + 1),
+        ("grain-12", u64::MAX),
+    ] {
+        let mut overflow = recipe_in_a.clone();
+        overflow.fermentables[0].row_id = row_id.into();
+        overflow.fermentables[0].source = Some(IngredientSource {
+            scope: "workspace".into(),
+            catalogue_id: None,
+            entry_id: entry_id.clone(),
+            version: Some(version),
+        });
+        assert!(matches!(
+            recipe_editor::save(
+                &db,
+                &actor_a,
+                &intent_a,
+                Some(&recipe_a),
+                Some(third_revision),
+                &overflow,
+                uuid::Uuid::new_v4()
+            )
+            .await,
+            RecipeSaveOutcome::UnresolvedIngredientSource
+        ));
+    }
     // Failed source resolution must commit nothing: every rejected attempt
     // above left the head revision untouched (atomic rollback of the save).
     let krausen_types::recipe_editor::RecipeReadOutcome::Found(snapshot) =

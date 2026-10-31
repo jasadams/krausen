@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, db, loginUser, sqlText } from '../../helpers/test-helpers';
 
 async function waitForCatalogueSearch(page: Page) {
   await page.waitForResponse(response => {
@@ -139,14 +139,16 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await expect(picker).toBeVisible();
 
   // Create with a real lost response: the command commits server-side but the
-  // client never receives the result, so the retry must replay the SAME
-  // request identity instead of minting a second entry.
-  let saveAttempt = 0;
+  // client never receives the result. The form is locked and the retry must
+  // replay the stored command, not a rebuild from editable signals.
+  const createRequests: any[] = [];
+  let createAttempt = 0;
   await page.route('**/leptos-api/execute_ingredient_command*', async route => {
     const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
     const command = payload ? JSON.parse(payload) : null;
-    if (saveAttempt === 0 && command?.Save) {
-      saveAttempt += 1;
+    if (command?.Save) createRequests.push(command.Save);
+    if (createAttempt === 0 && command?.Save) {
+      createAttempt += 1;
       await route.fetch();
       await route.fulfill({ status: 503, body: 'response lost' });
       return;
@@ -161,6 +163,9 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await page.getByLabel('Potential yield (%)').fill('80');
   await create.getByRole('button', { name: 'Save to library' }).click();
   await expect(create.getByText('Save may not have completed')).toBeVisible();
+  await expect(create.getByLabel('Fermentable name')).toBeDisabled();
+  await expect(create.getByLabel('Colour (EBC)')).toBeDisabled();
+  await expect(create.getByLabel('Potential yield (%)')).toBeDisabled();
   await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
   const retrySearch = waitForCatalogueSearch(page);
   await create.getByRole('button', { name: 'Retry previous request' }).click();
@@ -168,43 +173,116 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await expect(picker).toBeVisible();
   await page.unroute('**/leptos-api/execute_ingredient_command*');
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
+  expect(createRequests).toHaveLength(2);
+  expect(createRequests[1].request_id).toBe(createRequests[0].request_id);
+  expect(createRequests[1].document).toEqual(createRequests[0].document);
 
-  // Edit the library entry through the guarded edit form.
+  // Edit with a lost response: retry must recover the original edit command.
   await picker.getByRole('button', { name: entryName }).click();
   await picker.getByRole('button', { name: 'Edit library entry' }).click();
   await expect(edit).toBeVisible();
   await edit.getByLabel('Colour (EBC)').fill('9.5');
-  const editSearch = waitForCatalogueSearch(page);
+  const editRequests: any[] = [];
+  let editAttempt = 0;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Save) editRequests.push(command.Save);
+    if (editAttempt === 0 && command?.Save) {
+      editAttempt += 1;
+      await route.fetch();
+      await route.fulfill({ status: 503, body: 'response lost' });
+      return;
+    }
+    await route.continue();
+  });
   await edit.getByRole('button', { name: 'Save changes' }).click();
+  await expect(edit.getByText('Save may not have completed')).toBeVisible();
+  await expect(edit.getByLabel('Colour (EBC)')).toBeDisabled();
+  await expect(edit.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+  const editSearch = waitForCatalogueSearch(page);
+  await edit.getByRole('button', { name: 'Retry previous request' }).click();
   await editSearch;
+  await page.unroute('**/leptos-api/execute_ingredient_command*');
   await expect(picker).toBeVisible();
-  // Scope to this entry's own row: earlier attempts can leave identically
-  // valued entries in the workspace, which would mask or fake a match.
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText(/9\.5 EBC/),
   ).toBeVisible();
+  expect(editRequests).toHaveLength(2);
+  expect(editRequests[1].request_id).toBe(editRequests[0].request_id);
+  expect(editRequests[1].document).toEqual(editRequests[0].document);
 
-  // Archive keeps the entry discoverable in the workspace library, marked
-  // Archived, and blocks adding it to a recipe until restored.
+  // Archive with a lost response: the retry must stay enabled and recover the
+  // same command without appending a second event.
   await picker.getByRole('button', { name: entryName }).click();
-  const archiveSearch = waitForCatalogueSearch(page);
+  const archiveRequests: any[] = [];
+  let archiveAttempt = 0;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Archive) archiveRequests.push(command.Archive);
+    if (archiveAttempt === 0 && command?.Archive && command.Archive.archived === true) {
+      archiveAttempt += 1;
+      await route.fetch();
+      await route.fulfill({ status: 503, body: 'response lost' });
+      return;
+    }
+    await route.continue();
+  });
   await picker.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(picker.getByText('Change may not have completed')).toBeVisible();
+  const archiveRetry = picker.getByRole('button', { name: 'Retry previous request' });
+  await expect(archiveRetry).toBeEnabled();
+  const archiveSearch = waitForCatalogueSearch(page);
+  await archiveRetry.click();
   await archiveSearch;
+  await page.unroute('**/leptos-api/execute_ingredient_command*');
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Archived'),
   ).toBeVisible();
   await expect(picker.getByRole('button', { name: 'Add ingredient' })).toBeDisabled();
   await expect(picker.getByRole('button', { name: 'Edit library entry' })).toBeDisabled();
+  expect(archiveRequests).toHaveLength(2);
+  expect(archiveRequests[1].request_id).toBe(archiveRequests[0].request_id);
+  expect(archiveRequests[1]).toEqual(archiveRequests[0]);
+  expect(
+    db.exec(`SELECT COUNT(*) FROM ingredient_archive_events e JOIN ingredient_entries i ON i.workspace_id = e.workspace_id AND i.entry_id = e.entry_id WHERE i.name = ${sqlText(entryName)}`),
+  ).toBe('1');
 
-  // Restore returns it to the active library.
+  // Restore with a lost response follows the same retained-command path.
   await picker.getByRole('button', { name: entryName }).click();
-  const restoreSearch = waitForCatalogueSearch(page);
+  const restoreRequests: any[] = [];
+  let restoreAttempt = 0;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (command?.Archive) restoreRequests.push(command.Archive);
+    if (restoreAttempt === 0 && command?.Archive && command.Archive.archived === false) {
+      restoreAttempt += 1;
+      await route.fetch();
+      await route.fulfill({ status: 503, body: 'response lost' });
+      return;
+    }
+    await route.continue();
+  });
   await picker.getByRole('button', { name: 'Restore' }).click();
+  await expect(picker.getByText('Change may not have completed')).toBeVisible();
+  const restoreRetry = picker.getByRole('button', { name: 'Retry previous request' });
+  await expect(restoreRetry).toBeEnabled();
+  const restoreSearch = waitForCatalogueSearch(page);
+  await restoreRetry.click();
   await restoreSearch;
+  await page.unroute('**/leptos-api/execute_ingredient_command*');
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Your library'),
   ).toBeVisible();
+  expect(restoreRequests).toHaveLength(2);
+  expect(restoreRequests[1].request_id).toBe(restoreRequests[0].request_id);
+  expect(restoreRequests[1]).toEqual(restoreRequests[0]);
+  expect(
+    db.exec(`SELECT COUNT(*) FROM ingredient_archive_events e JOIN ingredient_entries i ON i.workspace_id = e.workspace_id AND i.entry_id = e.entry_id WHERE i.name = ${sqlText(entryName)}`),
+  ).toBe('2');
 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await page.getByLabel('Batch volume (L)').fill('20');
