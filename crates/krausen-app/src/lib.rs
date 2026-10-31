@@ -12,6 +12,9 @@ pub mod recipe_migration;
 pub struct ActorContext {
     pub actor_id: String,
     pub workspace_id: String,
+    pub credential_id: String,
+    /// Expiry of the verified access token, rechecked after acquiring authority locks.
+    pub access_expires_at: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -191,14 +194,49 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
     {
         return Err(Error::Forbidden);
     }
+    let credential_sql = if pg {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3 FOR SHARE"
+    } else {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3"
+    };
+    if scalar!(
+        tx,
+        String,
+        credential_sql,
+        &actor.credential_id,
+        &actor.actor_id,
+        chrono::Utc::now().timestamp()
+    )
+    .map_err(db_error)?
+    .is_none()
+    {
+        return Err(Error::Forbidden);
+    }
     let member_sql = if pg {
         "SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2 AND active = TRUE FOR SHARE"
     } else {
         "SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2 AND active = 1"
     };
-    scalar!(tx, String, member_sql, &actor.workspace_id, &actor.actor_id)
+    let role = scalar!(tx, String, member_sql, &actor.workspace_id, &actor.actor_id)
         .map_err(db_error)?
-        .ok_or(Error::Forbidden)
+        .ok_or(Error::Forbidden)?;
+    // Lock waits can cross either expiry boundary. Re-read with the current
+    // clock after acquiring authority locks.
+    if actor.access_expires_at <= chrono::Utc::now().timestamp()
+        || scalar!(
+            tx,
+            String,
+            credential_sql,
+            &actor.credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        )
+        .map_err(db_error)?
+        .is_none()
+    {
+        return Err(Error::Forbidden);
+    }
+    Ok(role)
 }
 
 /// Read the name and revision as one snapshot under current authority.
@@ -282,6 +320,8 @@ async fn rename_in_tx(
     let current = scalar!(tx, i64, ws_sql, &actor.workspace_id)
         .map_err(db_error)?
         .ok_or(Error::Forbidden)?;
+    // The resource lock may have waited past token expiry.
+    authorize_workspace(tx, actor).await?;
     let key = RequestIdentity {
         actor,
         operation: "workspace.rename.v1",

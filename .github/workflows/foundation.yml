@@ -23,10 +23,22 @@ jobs:
       KRAUSEN_TEST_POSTGRES_URL: postgres://krausen:krausen@localhost:5432/krausen_test
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install playwright==1.58.0
+      - run: python3 -m playwright install --with-deps chromium
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y socat openssl
+      - run: cargo test -p krausen-auth --test credential_lifecycle
+      - run: FRONTEND_URL=https://example.test cargo test -p krausen-auth --test secure_cookie
+      - run: FRONTEND_URL=https://localhost cargo test -p krausen-server --test https_proxy
+      - run: cargo test -p krausen-server --test browser_refresh
+      - run: cargo test -p krausen-server --lib security_tests
+      - run: cargo test -p krausen-server --test bootstrap --test migration_orders --test mcp_auth
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-beerxml -p krausen-types
       - run: cargo test -p krausen-calc

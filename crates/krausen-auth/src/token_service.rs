@@ -15,9 +15,9 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
+use krausen_core::DbPool;
 use krausen_core::models::VerificationToken;
 use krausen_core::sql_compat;
-use krausen_core::DbPool;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
@@ -43,10 +43,7 @@ pub enum RefreshTokenVerifyResult {
     GracePeriod(RefreshTokenUserData),
     /// Token was replaced AND used after the grace period expired.
     /// This indicates theft — the entire family has been revoked.
-    TheftDetected {
-        family_id: String,
-        user_id: String,
-    },
+    TheftDetected { family_id: String, user_id: String },
     /// Token not found, expired, or revoked.
     Invalid,
 }
@@ -82,15 +79,47 @@ pub async fn store_refresh_token(
     let random_bytes: [u8; 16] = rand::rng().random();
     let token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
 
-    krausen_core::db_execute!(
-        pool,
+    let mut tx = pool.begin_write().await?;
+    #[derive(sqlx::FromRow)]
+    struct ActiveUser {
+        user_id: String,
+    }
+    let account_sql = if pool.is_postgres() {
+        "SELECT user_id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
+    } else {
+        "SELECT user_id FROM users WHERE user_id = $1 AND active = 1"
+    };
+    if krausen_core::dbtx_fetch_optional!(&mut tx, ActiveUser, account_sql, user_id)?.is_none() {
+        return Err(krausen_core::Error::Unauthorized(
+            "Account unavailable".into(),
+        ));
+    }
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "INSERT INTO auth_credentials (credential_id, user_id, kind, issuer, audience, expires_at) VALUES ($1, $2, 'browser', $3, $4, $5)",
+        family_id,
+        user_id,
+        crate::jwt::BROWSER_ISSUER,
+        crate::jwt::BROWSER_AUDIENCE,
+        expires_at.timestamp()
+    )?;
+    krausen_core::dbtx_execute!(
+        &mut tx,
         "INSERT INTO refresh_tokens \
          (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id, oauth_client_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        &token_id, user_id, token_hash, &expires_at,
-        &device_info.user_agent, &device_info.ip_address,
-        &device_info.country_code, family_id, &device_info.oauth_client_id
+        &token_id,
+        user_id,
+        token_hash,
+        &expires_at,
+        &device_info.user_agent,
+        &device_info.ip_address,
+        &device_info.country_code,
+        family_id,
+        &device_info.oauth_client_id
     )?;
+
+    tx.commit().await?;
 
     Ok(token_id)
 }
@@ -116,9 +145,7 @@ pub async fn verify_refresh_token(
            AND rt.is_active = {bt} \
            AND {rt_unexpired}"
     );
-    let row = krausen_core::db_fetch_optional!(
-        pool, RefreshTokenWithUser, &sql, &token_hash
-    )?;
+    let row = krausen_core::db_fetch_optional!(pool, RefreshTokenWithUser, &sql, &token_hash)?;
 
     let Some(row) = row else {
         return Ok(RefreshTokenVerifyResult::Invalid);
@@ -129,7 +156,8 @@ pub async fn verify_refresh_token(
     }
 
     // Extract roles from extra_metadata
-    let roles = row.extra_metadata
+    let roles = row
+        .extra_metadata
         .as_ref()
         .and_then(|m| m.get("roles"))
         .and_then(|r| serde_json::from_value::<Vec<String>>(r.clone()).ok())
@@ -146,15 +174,16 @@ pub async fn verify_refresh_token(
 
     // Check if this token has been replaced (rotated)
     if let Some(replaced_at) = row.replaced_at {
-        let grace_seconds = krausen_core::constants::get().jwt.refresh_token_grace_period_seconds;
+        let grace_seconds = krausen_core::constants::get()
+            .jwt
+            .refresh_token_grace_period_seconds;
         let grace_deadline = replaced_at + Duration::seconds(grace_seconds);
 
         if Utc::now() <= grace_deadline {
             // Within grace period — allow but don't rotate again
             // Update last_used
-            let update_sql = format!(
-                "UPDATE refresh_tokens SET last_used = {now} WHERE token_id = $1"
-            );
+            let update_sql =
+                format!("UPDATE refresh_tokens SET last_used = {now} WHERE token_id = $1");
             krausen_core::db_execute!(pool, &update_sql, &user_data.token_id)?;
 
             return Ok(RefreshTokenVerifyResult::GracePeriod(user_data));
@@ -175,9 +204,7 @@ pub async fn verify_refresh_token(
     }
 
     // Token is current (not replaced) — update last_used
-    let update_sql = format!(
-        "UPDATE refresh_tokens SET last_used = {now} WHERE token_id = $1"
-    );
+    let update_sql = format!("UPDATE refresh_tokens SET last_used = {now} WHERE token_id = $1");
     krausen_core::db_execute!(pool, &update_sql, &user_data.token_id)?;
 
     Ok(RefreshTokenVerifyResult::Valid(user_data))
@@ -199,9 +226,7 @@ pub async fn rotate_refresh_token(
     let now = sql_compat::now(is_pg);
 
     // Mark the old token as replaced
-    let replace_sql = format!(
-        "UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1"
-    );
+    let replace_sql = format!("UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1");
     krausen_core::db_execute!(pool, &replace_sql, old_token_id)?;
 
     // Create the new token in the same family
@@ -213,47 +238,55 @@ pub async fn rotate_refresh_token(
         "INSERT INTO refresh_tokens \
          (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-        &new_token_id, user_id, new_token_hash, &expires_at,
-        &device_info.user_agent, &device_info.ip_address,
-        &device_info.country_code, family_id
+        &new_token_id,
+        user_id,
+        new_token_hash,
+        &expires_at,
+        &device_info.user_agent,
+        &device_info.ip_address,
+        &device_info.country_code,
+        family_id
     )?;
 
     Ok(new_token_id)
 }
 
 /// Revoke all tokens in a family (theft detection or logout).
-pub async fn revoke_token_family(
-    pool: &DbPool,
-    family_id: &str,
-) -> krausen_core::Result<u64> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let bf = sql_compat::bool_false(is_pg);
-    let bt = sql_compat::bool_true(is_pg);
+pub async fn revoke_token_family(pool: &DbPool, family_id: &str) -> krausen_core::Result<u64> {
+    #[derive(sqlx::FromRow)]
+    struct UserId {
+        user_id: String,
+    }
+    let mut tx = pool.begin_write().await?;
+    let user = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        UserId,
+        "SELECT user_id FROM refresh_tokens WHERE family_id = $1 LIMIT 1",
+        family_id
+    )?;
+    let Some(user) = user else { return Ok(0) };
+    let pg = pool.is_postgres();
+    let lock = if pg {
+        "SELECT user_id FROM users WHERE user_id = $1 FOR SHARE"
+    } else {
+        "SELECT user_id FROM users WHERE user_id = $1"
+    };
+    let _ = krausen_core::dbtx_fetch_optional!(&mut tx, UserId, lock, &user.user_id)?;
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND user_id = $3 AND revoked_at IS NULL",
+        Utc::now().timestamp(),
+        family_id,
+        &user.user_id
+    )?;
+    let false_value = sql_compat::bool_false(pg);
+    let true_value = sql_compat::bool_true(pg);
     let sql = format!(
-        "UPDATE refresh_tokens \
-         SET is_active = {bf}, revoked_at = {now} \
-         WHERE family_id = $1 AND is_active = {bt}"
+        "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE family_id = $1 AND is_active = {true_value}"
     );
-    let result = krausen_core::db_execute!(pool, &sql, family_id)?;
+    let result = krausen_core::dbtx_execute!(&mut tx, &sql, family_id)?;
+    tx.commit().await?;
     Ok(result.rows_affected())
-}
-
-/// Revoke a specific refresh token.
-pub async fn revoke_refresh_token(
-    pool: &DbPool,
-    token_id: &str,
-) -> krausen_core::Result<bool> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let bf = sql_compat::bool_false(is_pg);
-    let sql = format!(
-        "UPDATE refresh_tokens \
-         SET is_active = {bf}, revoked_at = {now} \
-         WHERE token_id = $1"
-    );
-    let result = krausen_core::db_execute!(pool, &sql, token_id)?;
-    Ok(result.rows_affected() > 0)
 }
 
 /// Revoke a specific refresh token owned by a user — revokes the entire family.
@@ -293,16 +326,34 @@ pub async fn revoke_all_user_refresh_tokens(
     pool: &DbPool,
     user_id: &str,
 ) -> krausen_core::Result<u64> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let bf = sql_compat::bool_false(is_pg);
-    let bt = sql_compat::bool_true(is_pg);
+    #[derive(sqlx::FromRow)]
+    struct UserId {
+        user_id: String,
+    }
+    let mut tx = pool.begin_write().await?;
+    let pg = pool.is_postgres();
+    let lock = if pg {
+        "SELECT user_id FROM users WHERE user_id = $1 FOR UPDATE"
+    } else {
+        "SELECT user_id FROM users WHERE user_id = $1"
+    };
+    let user = krausen_core::dbtx_fetch_optional!(&mut tx, UserId, lock, user_id)?;
+    if user.is_none() {
+        return Ok(0);
+    }
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE auth_credentials SET revoked_at = $1 WHERE user_id = $2 AND kind = 'browser' AND revoked_at IS NULL",
+        Utc::now().timestamp(),
+        user_id
+    )?;
+    let false_value = sql_compat::bool_false(pg);
+    let true_value = sql_compat::bool_true(pg);
     let sql = format!(
-        "UPDATE refresh_tokens \
-         SET is_active = {bf}, revoked_at = {now} \
-         WHERE user_id = $1 AND is_active = {bt}"
+        "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND is_active = {true_value}"
     );
-    let result = krausen_core::db_execute!(pool, &sql, user_id)?;
+    let result = krausen_core::dbtx_execute!(&mut tx, &sql, user_id)?;
+    tx.commit().await?;
     Ok(result.rows_affected())
 }
 
@@ -392,7 +443,9 @@ pub async fn create_verification_token_with_expiry(
     let id_bytes: [u8; 16] = rand::rng().random();
     let token_id = format!("vt_{}", URL_SAFE_NO_PAD.encode(id_bytes));
 
-    let default_hours = krausen_core::constants::get().jwt.email_verification_expire_hours as f64;
+    let default_hours = krausen_core::constants::get()
+        .jwt
+        .email_verification_expire_hours as f64;
     let hours = expire_hours.unwrap_or(default_hours);
     let expires_at = Utc::now() + Duration::seconds((hours * 3600.0) as i64);
 
@@ -401,7 +454,11 @@ pub async fn create_verification_token_with_expiry(
         "INSERT INTO verification_tokens \
          (token_id, email, token_hash, token_type, expires_at) \
          VALUES ($1, $2, $3, $4, $5)",
-        &token_id, email, &token_hash, token_type, &expires_at
+        &token_id,
+        email,
+        &token_hash,
+        token_type,
+        &expires_at
     )?;
 
     Ok(raw_token)
@@ -429,8 +486,7 @@ pub async fn verify_verification_token(
     let tokens = krausen_core::db_fetch_all!(pool, VerificationToken, &fetch_sql, token_type)?;
 
     for db_token in tokens {
-        let is_match = bcrypt::verify(raw_token, &db_token.token_hash)
-            .unwrap_or(false);
+        let is_match = bcrypt::verify(raw_token, &db_token.token_hash).unwrap_or(false);
 
         if is_match {
             // Mark as used
@@ -493,4 +549,121 @@ pub struct SessionInfo {
     pub ip_address: Option<String>,
     pub country_code: Option<String>,
     pub oauth_client_name: Option<String>,
+}
+
+/// Rotate a browser refresh token atomically. Reuse revokes the entire durable
+/// credential family; an old unbound token cannot create a new session.
+pub async fn rotate_browser_refresh(
+    pool: &DbPool,
+    raw_token: &str,
+    device: &DeviceInfo,
+) -> krausen_core::Result<(String, String, String)> {
+    #[derive(sqlx::FromRow)]
+    struct TokenRef {
+        token_id: String,
+        user_id: String,
+        family_id: String,
+    }
+    #[derive(sqlx::FromRow)]
+    struct Id {
+        id: String,
+    }
+    #[derive(sqlx::FromRow)]
+    struct TokenState {
+        used: i64,
+    }
+    let hash = hash_refresh_token(raw_token);
+    let mut tx = pool.begin_write().await?;
+    let token = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        TokenRef,
+        "SELECT token_id,user_id,family_id FROM refresh_tokens WHERE token_hash = $1",
+        &hash
+    )?
+    .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid refresh token".into()))?;
+    let pg = pool.is_postgres();
+    let account_sql = if pg {
+        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
+    } else {
+        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = 1"
+    };
+    let account = krausen_core::dbtx_fetch_optional!(&mut tx, Id, account_sql, &token.user_id)?;
+    if account.is_none() {
+        return Err(krausen_core::Error::Unauthorized(
+            "Invalid refresh token".into(),
+        ));
+    }
+    let credential_sql = if pg {
+        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3 FOR UPDATE"
+    } else {
+        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3"
+    };
+    let now_ts = Utc::now().timestamp();
+    let credential = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        Id,
+        credential_sql,
+        &token.family_id,
+        &token.user_id,
+        now_ts
+    )?;
+    if credential.is_none() {
+        return Err(krausen_core::Error::Unauthorized(
+            "Invalid refresh token".into(),
+        ));
+    }
+    let active = sql_compat::bool_true(pg);
+    let future = sql_compat::is_future(pg, "expires_at");
+    let lock = if pg { " FOR UPDATE" } else { "" };
+    let sql = format!(
+        "SELECT CAST(CASE WHEN replaced_at IS NULL THEN 0 ELSE 1 END AS BIGINT) AS used FROM refresh_tokens WHERE token_id = $1 AND is_active = {active} AND {future}{lock}"
+    );
+    let state = krausen_core::dbtx_fetch_optional!(&mut tx, TokenState, &sql, &token.token_id)?
+        .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid refresh token".into()))?;
+    if state.used != 0 {
+        krausen_core::dbtx_execute!(
+            &mut tx,
+            "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND revoked_at IS NULL",
+            now_ts,
+            &token.family_id
+        )?;
+        let false_value = sql_compat::bool_false(pg);
+        let sql = format!(
+            "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE family_id = $1"
+        );
+        krausen_core::dbtx_execute!(&mut tx, &sql, &token.family_id)?;
+        tx.commit().await?;
+        return Err(krausen_core::Error::Unauthorized(
+            "Refresh token replayed".into(),
+        ));
+    }
+    let replaced = krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE refresh_tokens SET replaced_at = CURRENT_TIMESTAMP WHERE token_id = $1 AND replaced_at IS NULL",
+        &token.token_id
+    )?;
+    if replaced.rows_affected() != 1 {
+        return Err(krausen_core::Error::Conflict(
+            "Refresh token changed".into(),
+        ));
+    }
+    let new_raw = crate::jwt::create_refresh_token();
+    let new_hash = hash_refresh_token(&new_raw);
+    let id = format!("rt_{}", uuid::Uuid::new_v4());
+    let expires =
+        Utc::now() + Duration::days(krausen_core::constants::get().jwt.refresh_token_expire_days);
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "INSERT INTO refresh_tokens (token_id,user_id,token_hash,expires_at,user_agent,ip_address,country_code,family_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        &id,
+        &token.user_id,
+        &new_hash,
+        &expires,
+        &device.user_agent,
+        &device.ip_address,
+        &device.country_code,
+        &token.family_id
+    )?;
+    tx.commit().await?;
+    Ok((token.user_id, token.family_id, new_raw))
 }

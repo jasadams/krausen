@@ -27,9 +27,14 @@ async fn exercise(db: DbPool) {
             .failed
             .contains(&("migration-w".to_owned(), "migration-bad".to_owned()))
     );
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('migration-c','migration-u','browser','test','test',4102444800)"
+    );
     let actor = ActorContext {
         actor_id: "migration-u".into(),
         workspace_id: "migration-w".into(),
+        credential_id: "migration-c".into(),
+        access_expires_at: 4102444800,
     };
     assert!(matches!(
         reject_legacy_authoring(&db, &actor).await,
@@ -65,6 +70,8 @@ async fn exercise(db: DbPool) {
     let wrong = ActorContext {
         actor_id: "migration-u".into(),
         workspace_id: "wrong-workspace".into(),
+        credential_id: "migration-c".into(),
+        access_expires_at: 4102444800,
     };
     assert!(matches!(
         reject_legacy_authoring(&db, &wrong).await,

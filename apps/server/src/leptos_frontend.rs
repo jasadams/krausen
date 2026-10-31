@@ -14,8 +14,7 @@ use tower_http::services::ServeDir;
 /// Path to Trunk dist directory (relative to where the binary runs).
 /// Set via TRUNK_DIST_DIR env var, or defaults to crates/krausen-ui/dist.
 fn dist_dir() -> String {
-    std::env::var("TRUNK_DIST_DIR")
-        .unwrap_or_else(|_| "crates/krausen-ui/dist".to_string())
+    std::env::var("TRUNK_DIST_DIR").unwrap_or_else(|_| "crates/krausen-ui/dist".to_string())
 }
 
 /// Build a ServeDir service for static assets from trunk dist.
@@ -28,7 +27,11 @@ pub async fn serve() -> Response {
     let index_path = format!("{}/index.html", dist_dir());
     match tokio::fs::read_to_string(&index_path).await {
         Ok(html) => Html(html).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "Frontend not built. Run: cd crates/krausen-ui && trunk build").into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            "Frontend not built. Run: cd crates/krausen-ui && trunk build",
+        )
+            .into_response(),
     }
 }
 

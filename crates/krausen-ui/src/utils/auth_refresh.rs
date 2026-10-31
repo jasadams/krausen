@@ -51,7 +51,7 @@ pub async fn try_refresh() -> bool {
     use wasm_bindgen::prelude::*;
 
     let promise = js_sys::Function::new_no_args(
-        "return fetch('/api/v1/auth/refresh', { method: 'POST', credentials: 'include' }).then(r => r.ok)",
+        "return window.krausenRefresh ? window.krausenRefresh() : Promise.resolve(false)",
     )
     .call0(&JsValue::NULL);
 

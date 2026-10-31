@@ -11,6 +11,7 @@ Production implementation and its acceptance tests remain separate work.
 | --- | --- |
 | [Agent guidance](../AGENTS.md) | Required reading, checkout/delegation/review rules and current scope |
 | [Adoption record](ADOPTION.md) | Review resolutions, delivery dependencies and required implementation acceptance |
+| [Installation authentication](AUTHENTICATION.md) | Credential cutover, local owner setup and supported MCP authorization |
 | [Architecture](ARCHITECTURE.md) | Shared UI/MCP operations, transaction/auth/tenant and crate boundaries |
 | [Data model](DATA_MODEL.md) | Versioned native records, immutable plans, readings/corrections and lifecycle |
 | [Calculations](CALCULATIONS.md) | Versioned formula/input/context, equipment, scaling and preservation contracts |

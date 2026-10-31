@@ -33,3 +33,5 @@ pub fn http_client() -> krausen_core::Result<reqwest::Client> {
         .build()
         .map_err(|e| krausen_core::Error::Internal(format!("Failed to build HTTP client: {e}")))
 }
+
+pub mod oauth_service;

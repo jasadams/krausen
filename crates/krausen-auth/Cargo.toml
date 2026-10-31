@@ -21,6 +21,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
+subtle = "2"
 redis = { workspace = true }
 webauthn-rs = { workspace = true }
 url = { workspace = true }
@@ -38,4 +39,7 @@ totp-rs = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
+workspace = true
+
+[dev-dependencies.krausen-app]
 workspace = true

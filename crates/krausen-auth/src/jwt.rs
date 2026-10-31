@@ -10,6 +10,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Internal browser-token issuer/audience; MCP uses its resource URI instead.
+pub const BROWSER_ISSUER: &str = "krausen-browser";
+pub const BROWSER_AUDIENCE: &str = "krausen-ui";
+
 /// Claims embedded in every JWT access token.
 ///
 /// Unknown claims are preserved via `extra` so externally-issued tokens
@@ -49,7 +53,12 @@ pub fn create_access_token(
     secret: &str,
     expires_minutes: i64,
 ) -> krausen_core::Result<String> {
-    create_access_token_str(&user_id.to_string(), secret, expires_minutes, Default::default())
+    create_access_token_str(
+        &user_id.to_string(),
+        secret,
+        expires_minutes,
+        Default::default(),
+    )
 }
 
 /// Create a JWT access token with extra claims.
@@ -129,6 +138,25 @@ pub fn validate_token(token: &str, secret: &str) -> krausen_core::Result<TokenDa
     })
 }
 
+/// Reject legacy unbound browser tokens and require the intended issuer/audience.
+pub fn validate_browser_token(
+    token: &str,
+    secret: &str,
+) -> krausen_core::Result<TokenData<Claims>> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[BROWSER_ISSUER]);
+    validation.set_audience(&[BROWSER_AUDIENCE]);
+    validation
+        .required_spec_claims
+        .extend(["iss".into(), "aud".into()]);
+    jsonwebtoken::decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|_| krausen_core::Error::Unauthorized("Invalid browser credential".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,7 +171,10 @@ mod tests {
 
         assert_eq!(decoded.claims.sub, user_id.to_string());
         assert!(decoded.claims.jti.is_some(), "access tokens must have jti");
-        assert!(decoded.claims.extra.is_empty(), "Rust-created tokens have no extra fields");
+        assert!(
+            decoded.claims.extra.is_empty(),
+            "Rust-created tokens have no extra fields"
+        );
     }
 
     #[test]
@@ -153,7 +184,10 @@ mod tests {
         let _ = krausen_core::constants::load_with_fallback();
 
         let token = create_refresh_token();
-        assert!(token.starts_with("rt_"), "refresh token must start with rt_ prefix");
+        assert!(
+            token.starts_with("rt_"),
+            "refresh token must start with rt_ prefix"
+        );
         assert!(token.len() >= 40, "refresh token must be at least 40 chars");
     }
 
@@ -215,12 +249,21 @@ mod tests {
         // Build the payload manually
         let now = Utc::now();
         let mut payload = serde_json::Map::new();
-        payload.insert("sub".into(), serde_json::json!("550e8400-e29b-41d4-a716-446655440000"));
-        payload.insert("exp".into(), serde_json::json!((now + Duration::minutes(15)).timestamp()));
+        payload.insert(
+            "sub".into(),
+            serde_json::json!("550e8400-e29b-41d4-a716-446655440000"),
+        );
+        payload.insert(
+            "exp".into(),
+            serde_json::json!((now + Duration::minutes(15)).timestamp()),
+        );
         payload.insert("iat".into(), serde_json::json!(now.timestamp()));
         payload.insert("jti".into(), serde_json::json!("abc123def456"));
         // Extra fields an external issuer includes
-        payload.insert("user_id".into(), serde_json::json!("550e8400-e29b-41d4-a716-446655440000"));
+        payload.insert(
+            "user_id".into(),
+            serde_json::json!("550e8400-e29b-41d4-a716-446655440000"),
+        );
         payload.insert("email".into(), serde_json::json!("user@example.com"));
         payload.insert("name".into(), serde_json::json!("Test User"));
         payload.insert("roles".into(), serde_json::json!(["admin"]));

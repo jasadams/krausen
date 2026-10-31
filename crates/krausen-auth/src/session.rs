@@ -79,6 +79,11 @@ pub async fn create_authenticated_session(
         workspace_roles = vec![wu.role];
     }
 
+    // Bind this access token to the durable refresh-family credential.
+    let family_id = token_service::generate_family_id();
+    extra.insert("credential_id".into(), serde_json::json!(&family_id));
+    extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
+    extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
     // Create access token
     let access_token = jwt::create_access_token_str(
         &user.user_id,
@@ -91,9 +96,15 @@ pub async fn create_authenticated_session(
     let raw_refresh = jwt::create_refresh_token();
     let token_hash = token_service::hash_refresh_token(&raw_refresh);
     let expires_at = Utc::now() + Duration::days(jwt_config.refresh_token_expire_days);
-    let family_id = token_service::generate_family_id();
-    token_service::store_refresh_token(db, &user.user_id, &token_hash, expires_at, device_info, &family_id)
-        .await?;
+    token_service::store_refresh_token(
+        db,
+        &user.user_id,
+        &token_hash,
+        expires_at,
+        device_info,
+        &family_id,
+    )
+    .await?;
 
     // Set cookies
     let mut cookie_headers = HeaderMap::new();

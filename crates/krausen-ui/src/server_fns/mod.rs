@@ -30,25 +30,36 @@ pub struct ServerContext {
 
 #[cfg(feature = "ssr")]
 impl ServerContext {
-    pub(crate) fn webauthn(&self) -> Result<&std::sync::Arc<webauthn_rs::Webauthn>, leptos::prelude::ServerFnError> {
-        self.webauthn.as_ref().ok_or_else(|| leptos::prelude::ServerFnError::new("WebAuthn not configured"))
+    pub(crate) fn webauthn(
+        &self,
+    ) -> Result<&std::sync::Arc<webauthn_rs::Webauthn>, leptos::prelude::ServerFnError> {
+        self.webauthn
+            .as_ref()
+            .ok_or_else(|| leptos::prelude::ServerFnError::new("WebAuthn not configured"))
     }
 
     pub(crate) fn kv(&self) -> Result<krausen_core::KVPool, leptos::prelude::ServerFnError> {
-        self.kv.clone().ok_or_else(|| leptos::prelude::ServerFnError::new("KV store not available"))
+        self.kv
+            .clone()
+            .ok_or_else(|| leptos::prelude::ServerFnError::new("KV store not available"))
     }
 }
 
 /// Extract the authenticated user from the Axum request.
 #[cfg(feature = "ssr")]
-pub(crate) async fn extract_auth() -> Result<krausen_auth::middleware::AuthUser, leptos::prelude::ServerFnError> {
+pub(crate) async fn extract_auth()
+-> Result<krausen_auth::middleware::AuthUser, leptos::prelude::ServerFnError> {
     let ctx = extract_context()?;
-    match leptos_axum::extract_with_state::<krausen_auth::middleware::AuthUser, _>(&ctx.auth_state).await {
+    match leptos_axum::extract_with_state::<krausen_auth::middleware::AuthUser, _>(&ctx.auth_state)
+        .await
+    {
         Ok(auth) => Ok(auth),
         Err(e) => {
             leptos::prelude::expect_context::<leptos_axum::ResponseOptions>()
                 .set_status(axum::http::StatusCode::UNAUTHORIZED);
-            Err(leptos::prelude::ServerFnError::new(format!("Authentication required: {e}")))
+            Err(leptos::prelude::ServerFnError::new(format!(
+                "Authentication required: {e}"
+            )))
         }
     }
 }
@@ -64,23 +75,33 @@ pub(crate) fn extract_context() -> Result<ServerContext, leptos::prelude::Server
 
 /// Get workspace_id from the auth user, or error.
 #[cfg(feature = "ssr")]
-pub(crate) fn workspace_id(auth: &krausen_auth::middleware::AuthUser) -> Result<&str, leptos::prelude::ServerFnError> {
-    auth.workspace
-        .workspace_id
-        .as_deref()
-        .ok_or_else(|| {
-            tracing::error!("Workspace context required");
-            leptos::prelude::ServerFnError::new("Workspace context required")
-        })
+pub(crate) fn workspace_id(
+    auth: &krausen_auth::middleware::AuthUser,
+) -> Result<&str, leptos::prelude::ServerFnError> {
+    auth.workspace.workspace_id.as_deref().ok_or_else(|| {
+        tracing::error!("Workspace context required");
+        leptos::prelude::ServerFnError::new("Workspace context required")
+    })
 }
 
 /// Only an identity produced by JWT verification may cross into shared app operations.
 #[cfg(feature = "ssr")]
-pub(crate) fn verified_actor(auth: &krausen_auth::middleware::AuthUser) -> Result<krausen_app::ActorContext, leptos::prelude::ServerFnError> {
+pub(crate) fn verified_actor(
+    auth: &krausen_auth::middleware::AuthUser,
+) -> Result<krausen_app::ActorContext, leptos::prelude::ServerFnError> {
     if auth.token_exp.is_none() {
-        return Err(leptos::prelude::ServerFnError::new("Authentication required"));
+        return Err(leptos::prelude::ServerFnError::new(
+            "Authentication required",
+        ));
     }
-    Ok(krausen_app::ActorContext { actor_id: auth.user_id.clone(), workspace_id: workspace_id(auth)?.to_owned() })
+    Ok(krausen_app::ActorContext {
+        actor_id: auth.user_id.clone(),
+        workspace_id: workspace_id(auth)?.to_owned(),
+        credential_id: auth.credential_id.clone(),
+        access_expires_at: auth
+            .token_exp
+            .ok_or_else(|| leptos::prelude::ServerFnError::new("Authentication required"))?,
+    })
 }
 
 /// Bundles the three values every authenticated server function needs.
@@ -119,13 +140,18 @@ pub(crate) struct AuthFlowContext {
 impl AuthFlowContext {
     pub(crate) async fn extract() -> Result<Self, leptos::prelude::ServerFnError> {
         let ctx = extract_context()?;
-        let headers: axum::http::HeaderMap = leptos_axum::extract()
-            .await
-            .map_err(|e| leptos::prelude::ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+        let headers: axum::http::HeaderMap = leptos_axum::extract().await.map_err(|e| {
+            leptos::prelude::ServerFnError::new(format!("Failed to extract headers: {e}"))
+        })?;
         let kv = ctx.kv()?;
         let ip = auth::extract_client_ip(&headers);
         let device = auth::extract_device_info(&headers);
-        Ok(Self { ctx, kv, ip, device })
+        Ok(Self {
+            ctx,
+            kv,
+            ip,
+            device,
+        })
     }
 }
 
