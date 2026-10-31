@@ -273,10 +273,6 @@ pub fn TwoFactorAuth() -> impl IntoView {
                         "Disabling 2FA is temporarily unavailable. Try again.".into(),
                     ));
                 }
-                Ok(_) => {
-                    disable_request.set(None);
-                    error.set(Some("Disabling 2FA is unavailable. Try again.".into()));
-                }
                 Err(e) => {
                     error.set(Some(e.to_string()));
                 }
