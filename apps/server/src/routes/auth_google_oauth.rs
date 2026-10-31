@@ -9,7 +9,11 @@
 //! - `GET /google/login` — build the Google authorization URL and stash a CSRF
 //!   state token so the callback can verify it.
 
-use axum::{extract::{Query, State}, routing::get, Json, Router};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    routing::get,
+};
 use serde::Deserialize;
 
 use krausen_auth::{google_oauth, redis_ops};
@@ -36,13 +40,9 @@ async fn google_login(
     State(state): State<AppState>,
     Query(query): Query<GoogleLoginQuery>,
 ) -> Result<Json<serde_json::Value>, krausen_core::Error> {
-    let client_id = state
-        .config
-        .google_oauth_client_id
-        .clone()
-        .ok_or_else(|| {
-            krausen_core::Error::BadRequest("Google OAuth is not configured on this server".into())
-        })?;
+    let client_id = state.config.google_oauth_client_id.clone().ok_or_else(|| {
+        krausen_core::Error::BadRequest("Google OAuth is not configured on this server".into())
+    })?;
 
     let csrf_state = redis_ops::generate_token();
 

@@ -1,285 +1,334 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-//! MCP Server endpoints — JSON-RPC over Streamable HTTP.
-//!
-//! Implements the MCP 2025-03-26 spec with an empty tool registry.
-//! Domain-specific tools are added when domain code is written.
-//!
-//! ## Endpoints
-//!
-//! - `POST /mcp` — JSON-RPC 2.0 request/response (initialize, tools/list, tools/call)
-//! - `GET  /mcp` — SSE stream for server-initiated notifications
-//! - `DELETE /mcp` — Terminate an MCP session
-
-use std::convert::Infallible;
-use std::time::Duration;
-
-use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        IntoResponse, Response,
-    },
-    routing::{delete, get, post},
-    Json, Router,
-};
-use futures_util::stream;
-use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio::sync::mpsc;
-
+//! Authenticated MCP Streamable HTTP adapter; policy stays in krausen-app.
 use crate::state::AppState;
+use axum::{
+    Router,
+    body::Body,
+    extract::{Request, State},
+    http::{StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+};
+use krausen_auth::oauth_service::{self, Principal};
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler,
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, InitializeRequestParams,
+        InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ServerCapabilities, ServerConfig, Tool,
+    },
+    service::RequestContext,
+    transport::streamable_http_server::{
+        session::local::LocalSessionManager,
+        tower::{StreamableHttpServerConfig, StreamableHttpService},
+    },
+};
+use serde::Deserialize;
+use serde_json::json;
+use std::{borrow::Cow, sync::Arc};
 
-const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
-const MCP_SERVER_NAME: &str = "krausen-mcp";
-const MCP_SERVER_VERSION: &str = "0.1.0";
-const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
-
-/// Comment-only heartbeat frames keep proxies from closing an idle stream.
-const SSE_HEARTBEAT_SECONDS: u64 = 30;
-
-/// Buffered server -> client notifications before the stream applies backpressure.
-const SSE_CHANNEL_CAPACITY: usize = 32;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// JSON-RPC 2.0 types
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    id: Option<Value>,
-    method: String,
-    #[serde(default)]
-    params: Option<Value>,
+#[derive(Clone)]
+struct McpHandler {
+    db: krausen_core::DbPool,
 }
-
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceQuery {
+    workspace_id: String,
 }
-
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rename {
+    workspace_id: String,
+    name: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
 }
-
-impl JsonRpcResponse {
-    fn success(id: Option<Value>, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, result: Some(result), error: None }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recovery {
+    workspace_id: String,
+    recipe_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAuthoring {
+    workspace_id: String,
+    beerxml: String,
+}
+fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    value.as_object().cloned().expect("static schema")
+}
+impl ServerHandler for McpHandler {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
-
-    fn error(id: Option<Value>, code: i32, message: impl Into<String>) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(JsonRpcError { code, message: message.into() }),
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Owned(vec![
+            ProtocolVersion::V_2025_11_25,
+            ProtocolVersion::V_2026_07_28,
+        ])
+    }
+    fn negotiate_initialize(
+        &self,
+        request: &InitializeRequestParams,
+    ) -> Result<InitializeResult, ErrorData> {
+        if request.protocol_version != ProtocolVersion::V_2025_11_25 {
+            return Err(ErrorData::unsupported_protocol_version(
+                request.protocol_version.clone(),
+                &self.supported_protocol_versions(),
+            ));
         }
+        Ok(self
+            .get_info()
+            .with_protocol_version(ProtocolVersion::V_2025_11_25))
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Routes
-// ─────────────────────────────────────────────────────────────────────────────
-
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/", post(handle_post))
-        .route("/", get(handle_sse))
-        .route("/", delete(handle_delete))
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /mcp — JSON-RPC request handler
-// ─────────────────────────────────────────────────────────────────────────────
-
-async fn handle_post(
-    State(state): State<AppState>,
-    _headers: HeaderMap,
-    Json(request): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
-    let is_initialize = request.method == "initialize";
-
-    let response = match request.method.as_str() {
-        "initialize" => handle_initialize(request.id, request.params),
-        "notifications/initialized" => {
-            return (StatusCode::ACCEPTED, "").into_response();
-        }
-        "tools/list" => handle_tools_list(request.id),
-        "tools/call" => handle_tools_call(request.id, request.params),
-        "resources/list" => handle_resources_list(request.id),
-        "ping" => JsonRpcResponse::success(request.id, json!({})),
-        _ => JsonRpcResponse::error(request.id, -32601, format!("Method not found: {}", request.method)),
-    };
-
-    let mut resp_headers = HeaderMap::new();
-
-    if is_initialize {
-        let session_id = state.mcp_sessions.create_session("anonymous").await;
-        if let Ok(val) = session_id.parse() {
-            resp_headers.insert(MCP_SESSION_ID_HEADER, val);
-        }
+    async fn list_tools(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(
+                "workspace_get",
+                "Read workspace settings",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                "workspace_rename",
+                "Rename a workspace using its observed revision and a stable request UUID",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"name":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["workspace_id","name","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                "recipe_recover_legacy",
+                "Recover the original source and diagnostic for a failed native recipe migration",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"recipe_id":{"type":"string"}},"required":["workspace_id","recipe_id"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                "recipe_create",
+                "Create a recipe from BeerXML; currently unavailable during native migration",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"beerxml":{"type":"string"}},"required":["workspace_id","beerxml"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                "recipe_import",
+                "Import BeerXML recipes; currently unavailable during native migration",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"beerxml":{"type":"string"}},"required":["workspace_id","beerxml"],"additionalProperties":false}),
+                ),
+            ),
+        ]))
     }
-
-    (StatusCode::OK, resp_headers, Json(response)).into_response()
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /mcp — SSE stream for server-initiated notifications
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Open the server -> client notification stream.
-///
-/// Requires an `Mcp-Session-Id` header, obtained from the `initialize` response.
-/// A session the server no longer knows about (restart, eviction) is re-created
-/// rather than rejected — the client would otherwise be stuck retrying a session
-/// it cannot recover on its own.
-///
-/// The stream stays open and carries whatever the session manager publishes —
-/// `notifications/tools/list_changed`, for instance — with periodic heartbeats
-/// so intermediaries do not drop an idle connection.
-async fn handle_sse(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let requested_session = headers
-        .get(MCP_SESSION_ID_HEADER)
-        .and_then(|v| v.to_str().ok());
-
-    // A session id the server does not recognise is healed into a new one, so
-    // refusing a request that carries none would be the stricter of the two —
-    // presenting a bogus id would get further than presenting nothing. Both
-    // mean the same thing here: the client has no usable session yet, and the
-    // server can give it one.
-    let session_id = match requested_session {
-        Some(id) if state.mcp_sessions.validate_session(id).await.is_some() => id.to_string(),
-        other => {
-            let new_id = state.mcp_sessions.create_session("anonymous").await;
-            tracing::info!(
-                old_session_id = other.unwrap_or("<none>"),
-                new_session_id = %new_id,
-                "MCP SSE session issued"
-            );
-            new_id
-        }
-    };
-
-    let (tx, rx) = mpsc::channel::<String>(SSE_CHANNEL_CAPACITY);
-    state.mcp_sessions.set_sse_sender(&session_id, tx);
-
-    tracing::info!(session_id = %session_id, "MCP SSE stream opened");
-
-    // An SSE response's headers are not flushed until something is written, so
-    // a stream that stays silent until the first notification leaves the client
-    // waiting with no way to tell a live stream from a stalled one — and any
-    // proxy in between free to decide the connection is idle. Lead with a ping
-    // so the stream announces itself the moment it opens.
-    let hello = stream::once(async {
-        Ok::<_, Infallible>(Event::default().event("ping").data("{}"))
-    });
-
-    let notifications = stream::unfold(rx, |mut rx| async move {
-        let msg = rx.recv().await?;
-        Some((Ok::<_, Infallible>(Event::default().data(msg)), rx))
-    });
-
-    let sse = Sse::new(hello.chain(notifications))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(SSE_HEARTBEAT_SECONDS)));
-
-    let mut resp = sse.into_response();
-    if let Ok(val) = session_id.parse() {
-        resp.headers_mut().insert(MCP_SESSION_ID_HEADER, val);
-    }
-    resp
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DELETE /mcp — session termination
-// ─────────────────────────────────────────────────────────────────────────────
-
-async fn handle_delete(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if let Some(session_id) = headers.get(MCP_SESSION_ID_HEADER).and_then(|v| v.to_str().ok()) {
-        state.mcp_sessions.remove_session(session_id).await;
-    }
-    StatusCode::NO_CONTENT
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Method handlers
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn handle_initialize(id: Option<Value>, _params: Option<Value>) -> JsonRpcResponse {
-    JsonRpcResponse::success(id, json!({
-        "protocolVersion": MCP_PROTOCOL_VERSION,
-        "serverInfo": {
-            "name": MCP_SERVER_NAME,
-            "version": MCP_SERVER_VERSION,
-        },
-        "capabilities": {
-            "tools": { "listChanged": true },
-            "resources": { "subscribe": false, "listChanged": false },
-        },
-    }))
-}
-
-fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
-    JsonRpcResponse::success(id, json!({
-        "tools": [
-            {
-                "name": "hello",
-                "description": "Returns a greeting message. Use this to verify the MCP connection is working.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "Name to greet"
-                        }
-                    }
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let principal = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|p| p.extensions.get::<Principal>())
+            .ok_or_else(|| ErrorData::invalid_request("Authenticated principal required", None))?;
+        let input = serde_json::Value::Object(request.arguments.unwrap_or_default());
+        let result = match request.name.as_ref() {
+            "workspace_get" => {
+                let input: WorkspaceQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::workspace_snapshot(&self.db, &actor).await {
+                    Ok(snapshot) => CallToolResult::structured(
+                        json!({"workspace_name":snapshot.name.unwrap_or_default(),"revision":snapshot.revision}),
+                    ),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
                 }
             }
-        ]
-    }))
-}
-
-fn handle_tools_call(id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
-    let tool_name = params
-        .as_ref()
-        .and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or("unknown");
-
-    match tool_name {
-        "hello" => {
-            let name = params
-                .as_ref()
-                .and_then(|p| p.get("arguments"))
-                .and_then(|a| a.get("name"))
-                .and_then(|n| n.as_str())
-                .unwrap_or("world");
-
-            JsonRpcResponse::success(id, json!({
-                "content": [
-                    {
-                        "type": "text",
-                        "text": format!("Hello, {name}! Krausen MCP server is running.")
+            "workspace_rename" => {
+                let input: Rename = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid workspace rename", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::project_rename_result(
+                    krausen_app::rename_workspace(
+                        &self.db,
+                        &actor,
+                        &input.name,
+                        input.expected_revision,
+                        input.request_id,
+                    )
+                    .await,
+                );
+                let success = matches!(
+                    outcome,
+                    krausen_types::workspace::WorkspaceRenameOutcome::Saved { .. }
+                );
+                let value = serde_json::to_value(outcome)
+                    .map_err(|_| ErrorData::internal_error("Result unavailable", None))?;
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe_recover_legacy" => {
+                let input: Recovery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid recovery query", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::recipe_migration::recover_legacy_recipe(
+                    &self.db,
+                    &actor,
+                    &input.recipe_id,
+                )
+                .await
+                {
+                    Ok(Some((source, diagnostic))) => {
+                        CallToolResult::structured(json!({"source":source,"diagnostic":diagnostic}))
                     }
-                ]
-            }))
-        }
-        _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
+                    Ok(None) => CallToolResult::structured(json!({"source":null})),
+                    Err(_) => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            "recipe_create" | "recipe_import" => {
+                let input: LegacyAuthoring = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid recipe input", None))?;
+                let _ = input.beerxml;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                match krausen_app::recipe_migration::reject_legacy_authoring(&self.db, &actor).await
+                {
+                    Err(krausen_app::Error::LegacyAuthoringUnavailable) => {
+                        CallToolResult::structured_error(
+                            json!({"error":"legacy_authoring_unavailable"}),
+                        )
+                    }
+                    _ => CallToolResult::structured_error(
+                        json!({"error":"unavailable_or_forbidden"}),
+                    ),
+                }
+            }
+            _ => return Err(ErrorData::invalid_params("Unknown tool", None)),
+        };
+        Ok(result.into())
     }
 }
 
-fn handle_resources_list(id: Option<Value>) -> JsonRpcResponse {
-    JsonRpcResponse::success(id, json!({ "resources": [] }))
+pub fn routes(state: AppState) -> Router<AppState> {
+    let db = state.db.clone();
+    let base = url::Url::parse(&state.config.base_url).expect("valid BASE_URL for MCP");
+    let front = url::Url::parse(&state.config.frontend_url).expect("valid FRONTEND_URL for MCP");
+    let host = base.host_str().expect("BASE_URL host");
+    let mut config = StreamableHttpServerConfig::default();
+    config.legacy_session_mode = true;
+    config.allowed_hosts = vec![match base.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    }];
+    config.allowed_origins = vec![front.origin().ascii_serialization()];
+    config = config.enforce_origin_validation();
+    let service = StreamableHttpService::new(
+        move || Ok(McpHandler { db: db.clone() }),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
+    Router::new()
+        .route_service("/", service)
+        .layer(middleware::from_fn_with_state(state, authenticate))
+}
+async fn authenticate(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    let base = state.config.base_url.trim_end_matches('/');
+    if !super::oauth::secure_external_origin(base) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Ok(base_url) = url::Url::parse(base) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Some(host) = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let actual = url::Url::parse(&format!("{}://{host}/", base_url.scheme()));
+    if actual.as_ref().map(|u| u.origin()).ok() != Some(base_url.origin())
+        || actual.as_ref().is_ok_and(|u| {
+            !u.username().is_empty()
+                || u.password().is_some()
+                || u.path() != "/"
+                || u.query().is_some()
+                || u.fragment().is_some()
+        })
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(origin) = request.headers().get(header::ORIGIN) {
+        let permitted = origin
+            .to_str()
+            .ok()
+            .and_then(|v| url::Url::parse(v).ok())
+            .zip(url::Url::parse(&state.config.frontend_url).ok())
+            .is_some_and(|(a, b)| a.origin() == b.origin());
+        if !permitted {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    let audience = format!("{base}/mcp");
+    let token = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| v.split_once(' '))
+        .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("bearer").then_some(value));
+    let principal = match token {
+        Some(token) => oauth_service::verify_access(&state.db, base, &audience, token)
+            .await
+            .ok(),
+        None => None,
+    };
+    let Some(principal) = principal else {
+        let challenge =
+            format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\"");
+        let Ok(challenge) = header::HeaderValue::from_str(&challenge) else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, challenge)],
+        )
+            .into_response();
+    };
+    request.extensions_mut().insert(principal);
+    next.run(request).await
 }

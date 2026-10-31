@@ -20,8 +20,6 @@ use crate::jwt;
 pub struct AuthState {
     pub jwt_secret: String,
     pub db: krausen_core::DbPool,
-    /// When true, skip JWT validation and inject the local user context.
-    pub is_personal: bool,
 }
 
 /// Workspace context enriched from the database.
@@ -45,6 +43,7 @@ pub struct WorkspaceContext {
 pub struct AuthUser {
     /// User ID from the database (String, not UUID).
     pub user_id: String,
+    pub credential_id: String,
     /// User's email address.
     pub email: String,
     /// User's display name.
@@ -72,22 +71,46 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_state = AuthState::from_ref(state);
 
-        // ── Personal mode: skip JWT, inject local user ──────────────
-        if auth_state.is_personal {
-            return load_personal_user(&auth_state.db).await;
-        }
-
         // Try Authorization header first, then cookie
         let token = extract_token(parts)?;
 
-        let token_data = jwt::validate_token(&token, &auth_state.jwt_secret)?;
+        let token_data = jwt::validate_browser_token(&token, &auth_state.jwt_secret)?;
 
         // Get user_id from claims — carried in the `extra` map as "user_id"
-        let user_id = token_data.claims.extra
+        let user_id = token_data
+            .claims
+            .extra
             .get("user_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| token_data.claims.sub.clone());
+        if user_id != token_data.claims.sub {
+            return Err(krausen_core::Error::Unauthorized(
+                "Invalid browser credential".into(),
+            ));
+        }
+        let credential_id = token_data
+            .claims
+            .extra
+            .get("credential_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| krausen_core::Error::Unauthorized("Browser credential required".into()))?
+            .to_string();
+        let credential = krausen_core::db_fetch_optional!(
+            &auth_state.db,
+            CredentialIdRow,
+            "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND issuer = $3 AND audience = $4 AND revoked_at IS NULL AND expires_at > $5",
+            &credential_id,
+            &user_id,
+            jwt::BROWSER_ISSUER,
+            jwt::BROWSER_AUDIENCE,
+            Utc::now().timestamp()
+        )?;
+        if credential.is_none() {
+            return Err(krausen_core::Error::Unauthorized(
+                "Browser credential revoked or expired".into(),
+            ));
+        }
 
         // Load user from database
         let user = crate::user_service::get_user_by_id(&auth_state.db, &user_id)
@@ -99,13 +122,17 @@ where
             .ok_or_else(|| krausen_core::Error::Unauthorized("User not found".into()))?;
 
         if !user.active {
-            return Err(krausen_core::Error::Unauthorized("User account is inactive".into()));
+            return Err(krausen_core::Error::Unauthorized(
+                "User account is inactive".into(),
+            ));
         }
 
         // Build workspace context from JWT's workspace_id claim
         let mut workspace_ctx = WorkspaceContext::default();
 
-        let jwt_workspace_id = token_data.claims.extra
+        let jwt_workspace_id = token_data
+            .claims
+            .extra
             .get("workspace_id")
             .and_then(|v| v.as_str());
 
@@ -113,7 +140,9 @@ where
             // Fetch fresh workspace details from database
             match crate::user_service::get_workspace(&auth_state.db, ws_id).await {
                 Ok(Some(ws)) => {
-                    match crate::user_service::get_workspace_user(&auth_state.db, ws_id, &user_id).await {
+                    match crate::user_service::get_workspace_user(&auth_state.db, ws_id, &user_id)
+                        .await
+                    {
                         Ok(Some(wu)) => {
                             workspace_ctx.workspace_id = Some(ws_id.to_string());
                             workspace_ctx.workspace_name = ws.name.clone();
@@ -124,7 +153,7 @@ where
                         Ok(None) => {
                             // User was removed from this workspace
                             return Err(krausen_core::Error::Unauthorized(
-                                "Workspace membership revoked. Please log in again.".into()
+                                "Workspace membership revoked. Please log in again.".into(),
                             ));
                         }
                         Err(e) => {
@@ -150,6 +179,7 @@ where
         let roles = user.roles();
         Ok(AuthUser {
             user_id: user.user_id,
+            credential_id,
             email: user.email,
             name: user.name,
             roles,
@@ -160,6 +190,12 @@ where
             token_jti,
         })
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct CredentialIdRow {
+    #[allow(dead_code)]
+    credential_id: String,
 }
 
 impl AuthUser {
@@ -207,62 +243,6 @@ fn extract_token(parts: &Parts) -> krausen_core::Result<String> {
     Err(krausen_core::Error::Unauthorized(
         "Not authenticated".into(),
     ))
-}
-
-/// Load the personal-mode user and workspace context.
-///
-/// In personal mode there is no JWT — a single local user ("user-local") and
-/// workspace ("workspace-local") are provisioned at first boot. This function
-/// loads them from the database and returns a fully-populated `AuthUser`.
-///
-/// Returns 503 if the local user doesn't exist yet (first-boot race condition).
-async fn load_personal_user(db: &krausen_core::DbPool) -> krausen_core::Result<AuthUser> {
-    let user = crate::user_service::get_user_by_id(db, "user-local")
-        .await
-        .map_err(|e| {
-            tracing::error!("personal mode: database error loading local user: {e}");
-            krausen_core::Error::Internal("database error".into())
-        })?
-        .ok_or_else(|| {
-            tracing::warn!("personal mode: user-local not found — still initializing");
-            krausen_core::Error::ServiceUnavailable(
-                "Personal mode initializing, please retry".into(),
-            )
-        })?;
-
-    let workspace = crate::user_service::get_workspace(db, "workspace-local")
-        .await
-        .map_err(|e| {
-            tracing::error!("personal mode: database error loading local workspace: {e}");
-            krausen_core::Error::Internal("database error".into())
-        })?
-        .ok_or_else(|| {
-            tracing::warn!("personal mode: workspace-local not found — still initializing");
-            krausen_core::Error::ServiceUnavailable(
-                "Personal mode initializing, please retry".into(),
-            )
-        })?;
-
-    let workspace_ctx = WorkspaceContext {
-        workspace_id: Some(workspace.workspace_id),
-        workspace_name: workspace.name,
-        workspace_roles: vec![WorkspaceRole::WorkspaceAdmin],
-        workspace_status: Some(workspace.status),
-        is_owner: true,
-    };
-
-    let roles = user.roles();
-    Ok(AuthUser {
-        user_id: user.user_id,
-        email: user.email,
-        name: user.name,
-        roles,
-        active: user.active,
-        verified: user.verified,
-        workspace: workspace_ctx,
-        token_exp: None,
-        token_jti: None,
-    })
 }
 
 // Identity impl — when the state IS AuthState directly.

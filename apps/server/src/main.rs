@@ -30,21 +30,46 @@ async fn serve() {
     match &db {
         krausen_core::DbPool::Postgres(pool) => sqlx::migrate!("./migrations").run(pool).await,
         krausen_core::DbPool::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite").run(pool).await,
-    }.expect("failed to apply database migrations");
-
-    let migration = krausen_app::recipe_migration::backfill_legacy_recipes(&db)
-        .await.expect("failed to run native recipe migration");
-    if migration.failed.is_empty() {
-        tracing::info!(migrated = migration.migrated, "native recipe migration complete");
-    } else {
-        tracing::warn!(migrated = migration.migrated, failed = migration.failed.len(), "native recipe migration incomplete; original records remain recoverable");
     }
-
-    // Personal mode: auto-provision local user and workspace on first boot
-    if config.is_personal() {
-        krausen_server::auto_provision_personal_mode(&db)
-            .await
-            .expect("failed to auto-provision personal mode");
+    .expect("failed to apply database migrations");
+    let migration = krausen_app::recipe_migration::backfill_legacy_recipes(&db)
+        .await
+        .expect("failed to run native recipe migration");
+    if migration.failed.is_empty() {
+        tracing::info!(
+            migrated = migration.migrated,
+            "native recipe migration complete"
+        );
+    } else {
+        tracing::warn!(
+            migrated = migration.migrated,
+            failed = migration.failed.len(),
+            "native recipe migration incomplete; original records remain recoverable"
+        );
+    }
+    let args: Vec<String> = std::env::args().collect();
+    if matches!(
+        args.get(1).map(String::as_str),
+        Some("bootstrap-owner" | "claim-legacy-owner")
+    ) {
+        let email = args
+            .get(2)
+            .expect("usage: krausen bootstrap-owner EMAIL (password on stdin)");
+        let mut password = String::new();
+        std::io::stdin()
+            .read_line(&mut password)
+            .expect("failed to read password");
+        let password = password.trim_end_matches(['\r', '\n']);
+        if args[1] == "claim-legacy-owner" {
+            krausen_server::claim_legacy_personal_owner(&db, email, password)
+                .await
+                .expect("legacy claim failed");
+        } else {
+            krausen_server::bootstrap_owner(&db, email, password)
+                .await
+                .expect("bootstrap failed");
+        }
+        return;
     }
 
     // KVStore
@@ -68,8 +93,8 @@ async fn serve() {
     };
 
     // WebAuthn
-    let rp_origin = url::Url::parse(&config.frontend_url)
-        .expect("FRONTEND_URL must be a valid URL");
+    let rp_origin =
+        url::Url::parse(&config.frontend_url).expect("FRONTEND_URL must be a valid URL");
     let webauthn = match krausen_auth::webauthn::build_webauthn(
         &config.webauthn_rp_id,
         &config.webauthn_rp_name,
@@ -79,8 +104,12 @@ async fn serve() {
         Err(e) if config.self_hosted => {
             tracing::warn!("WebAuthn unavailable ({e}) — passkeys disabled.");
             let localhost_origin = url::Url::parse("http://localhost").expect("hardcoded");
-            krausen_auth::webauthn::build_webauthn("localhost", &config.webauthn_rp_name, &localhost_origin)
-                .expect("fallback WebAuthn should succeed")
+            krausen_auth::webauthn::build_webauthn(
+                "localhost",
+                &config.webauthn_rp_name,
+                &localhost_origin,
+            )
+            .expect("fallback WebAuthn should succeed")
         }
         Err(e) => panic!("failed to build WebAuthn: {e}"),
     };
@@ -88,7 +117,8 @@ async fn serve() {
     // Encryption key (stub — derive from config.encryption_key)
     let encryption_key: [u8; 32] = {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
-        let bytes = STANDARD.decode(&config.encryption_key)
+        let bytes = STANDARD
+            .decode(&config.encryption_key)
             .expect("ENCRYPTION_KEY must be valid base64");
         let mut key = [0u8; 32];
         let len = bytes.len().min(32);
@@ -97,7 +127,12 @@ async fn serve() {
     };
 
     // WebSocket manager
-    let ws_redis = redis.as_ref().map(|pool| (pool.clone(), redis_url.clone().expect("redis pool implies url")));
+    let ws_redis = redis.as_ref().map(|pool| {
+        (
+            pool.clone(),
+            redis_url.clone().expect("redis pool implies url"),
+        )
+    });
     let ws_manager = krausen_auth::websocket::WebSocketManager::new(ws_redis, db.clone());
 
     // MCP session manager
@@ -131,7 +166,5 @@ async fn serve() {
 
     tracing::info!("Krausen listening on port {port}");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }

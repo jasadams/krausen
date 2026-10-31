@@ -115,10 +115,13 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('w', 'u', 'workspace_admin')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','u','browser','test','test',4102444800)").execute(&pool).await.unwrap();
         let db = krausen_core::DbPool::Sqlite(pool);
         let actor = krausen_app::ActorContext {
             actor_id: "u".into(),
             workspace_id: "w".into(),
+            credential_id: "c".into(),
+            access_expires_at: 4102444800,
         };
         let request = uuid::Uuid::new_v4().to_string();
         assert!(matches!(

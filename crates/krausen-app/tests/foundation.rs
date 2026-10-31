@@ -27,10 +27,27 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
+    let credential = format!("c-{suffix}");
+    run!(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+        &credential,
+        &user,
+        chrono::Utc::now().timestamp() + 3600
+    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
+        credential_id: credential,
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
+    let expired_actor = ActorContext {
+        access_expires_at: chrono::Utc::now().timestamp() - 1,
+        ..actor.clone()
+    };
+    assert!(matches!(
+        krausen_app::workspace_snapshot(&db, &expired_actor).await,
+        Err(krausen_app::Error::Forbidden)
+    ));
     let key = Uuid::new_v4();
     let first = rename_workspace(&db, &actor, "New name", 0, key)
         .await
@@ -191,6 +208,42 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
+    let mut revocation = db.begin_write().await.unwrap();
+    match &mut revocation {
+        krausen_core::DbTx::Postgres(t) => {
+            sqlx::query("SELECT user_id FROM users WHERE user_id = $1 FOR SHARE")
+                .bind(&user)
+                .fetch_one(&mut **t)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2")
+                .bind(chrono::Utc::now().timestamp())
+                .bind(&actor.credential_id)
+                .execute(&mut **t)
+                .await
+                .unwrap();
+        }
+        krausen_core::DbTx::Sqlite(t) => {
+            sqlx::query("UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2")
+                .bind(chrono::Utc::now().timestamp())
+                .bind(&actor.credential_id)
+                .execute(&mut **t)
+                .await
+                .unwrap();
+        }
+    }
+    let waiting_db = db.clone();
+    let waiting_actor = actor.clone();
+    let mut waiting = tokio::spawn(async move {
+        rename_workspace(&waiting_db, &waiting_actor, "Blocked", 2, Uuid::new_v4()).await
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+            .await
+            .is_err()
+    );
+    revocation.commit().await.unwrap();
+    assert!(matches!(waiting.await.unwrap(), Err(Error::Forbidden)));
     run!(
         &format!("UPDATE users SET active = {false_value} WHERE user_id = $1"),
         &user
@@ -291,11 +344,19 @@ async fn postgres_foundation() {
 fn shared_projection_preserves_conflicts_and_redacts_internal_errors() {
     use krausen_types::workspace::WorkspaceRenameOutcome as Outcome;
     assert_eq!(
-        krausen_app::project_rename_result(Err(Error::Conflict { expected: 1, actual: 2 })),
-        Outcome::Conflict { expected: 1, actual: 2 }
+        krausen_app::project_rename_result(Err(Error::Conflict {
+            expected: 1,
+            actual: 2
+        })),
+        Outcome::Conflict {
+            expected: 1,
+            actual: 2
+        }
     );
     assert_eq!(
-        krausen_app::project_rename_result(Err(Error::Database(krausen_core::Error::Internal("private detail".into())))),
+        krausen_app::project_rename_result(Err(Error::Database(krausen_core::Error::Internal(
+            "private detail".into()
+        )))),
         Outcome::Unavailable
     );
 }

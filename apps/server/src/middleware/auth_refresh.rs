@@ -53,7 +53,9 @@ pub async fn auth_refresh_middleware(
     // Fast path: if access_token is present AND valid, pass through with no
     // work. This is the common case on every request and must stay cheap.
     let access_ok = extract_cookie(req.headers(), access_cookie_name)
-        .map(|tok| krausen_auth::jwt::validate_token(&tok, &state.config.jwt_secret).is_ok())
+        .map(|tok| {
+            krausen_auth::jwt::validate_browser_token(&tok, &state.config.jwt_secret).is_ok()
+        })
         .unwrap_or(false);
 
     if access_ok {
@@ -65,7 +67,11 @@ pub async fn auth_refresh_middleware(
 
     let refreshed = if let Some(refresh_value) = refresh_cookie {
         let device = krausen_auth::token_service::DeviceInfo {
-            user_agent: req.headers().get("user-agent").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
+            user_agent: req
+                .headers()
+                .get("user-agent")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string()),
             ip_address: Some("unknown".to_string()),
             country_code: None,
             oauth_client_id: None,
@@ -134,11 +140,7 @@ pub(crate) fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> 
 /// Preserves all other cookies verbatim. If the named cookie is not present,
 /// it is appended. If the `Cookie` header itself is missing, a new one is
 /// inserted containing just the named cookie.
-pub(crate) fn rewrite_access_token_cookie(
-    headers: &mut HeaderMap,
-    name: &str,
-    new_value: &str,
-) {
+pub(crate) fn rewrite_access_token_cookie(headers: &mut HeaderMap, name: &str, new_value: &str) {
     let existing = headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -211,11 +213,7 @@ mod tests {
     fn rewrite_replaces_existing_cookie_preserving_others() {
         let mut h = headers_with_cookie("a=1; access_token=old; b=2");
         rewrite_access_token_cookie(&mut h, "access_token", "new-token");
-        let cookie = h
-            .get(axum::http::header::COOKIE)
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let cookie = h.get(axum::http::header::COOKIE).unwrap().to_str().unwrap();
         // Other cookies must survive; access_token must be the new value.
         assert!(cookie.contains("a=1"));
         assert!(cookie.contains("b=2"));
@@ -227,11 +225,7 @@ mod tests {
     fn rewrite_appends_when_cookie_absent() {
         let mut h = headers_with_cookie("a=1; b=2");
         rewrite_access_token_cookie(&mut h, "access_token", "fresh");
-        let cookie = h
-            .get(axum::http::header::COOKIE)
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let cookie = h.get(axum::http::header::COOKIE).unwrap().to_str().unwrap();
         assert!(cookie.contains("a=1"));
         assert!(cookie.contains("b=2"));
         assert!(cookie.contains("access_token=fresh"));

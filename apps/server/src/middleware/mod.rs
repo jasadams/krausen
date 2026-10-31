@@ -18,16 +18,20 @@ use tower_http::cors::{AllowHeaders, CorsLayer};
 pub fn cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers(AllowHeaders::mirror_request())
         .allow_credentials(false)
 }
 
 /// Security headers middleware.
-pub async fn security_headers(
-    request: Request<Body>,
-    next: Next,
-) -> Response {
+pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 

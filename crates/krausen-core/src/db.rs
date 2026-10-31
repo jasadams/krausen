@@ -63,8 +63,7 @@ impl DbPool {
             Ok(Self::Postgres(pool))
         } else {
             // SQLite WAL mode serialises writes; a single connection avoids contention.
-            let opts = sqlx::sqlite::SqliteConnectOptions::from_str(url)?
-                .create_if_missing(true);
+            let opts = sqlx::sqlite::SqliteConnectOptions::from_str(url)?.create_if_missing(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(1)
                 .connect_with(opts)
@@ -131,12 +130,47 @@ pub struct DbQueryResult {
     rows: u64,
 }
 
+/// Execute on a borrowed application transaction without acquiring a pool lease.
+#[macro_export]
+macro_rules! dbtx_execute {
+    ($tx:expr, $query:expr $(, $bind:expr)*) => {
+        match $tx {
+            $crate::DbTx::Postgres(tx) => sqlx::query($query)$(.bind($bind))*.execute(&mut **tx).await.map($crate::db::DbQueryResult::from_pg),
+            $crate::DbTx::Sqlite(tx) => sqlx::query($query)$(.bind($bind))*.execute(&mut **tx).await.map($crate::db::DbQueryResult::from_sqlite),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! dbtx_fetch_optional {
+    ($tx:expr, $type:ty, $query:expr $(, $bind:expr)*) => {
+        match $tx {
+            $crate::DbTx::Postgres(tx) => sqlx::query_as::<_, $type>($query)$(.bind($bind))*.fetch_optional(&mut **tx).await,
+            $crate::DbTx::Sqlite(tx) => sqlx::query_as::<_, $type>($query)$(.bind($bind))*.fetch_optional(&mut **tx).await,
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! dbtx_fetch_scalar {
+    ($tx:expr, $type:ty, $query:expr $(, $bind:expr)*) => {
+        match $tx {
+            $crate::DbTx::Postgres(tx) => sqlx::query_scalar::<_, $type>($query)$(.bind($bind))*.fetch_one(&mut **tx).await,
+            $crate::DbTx::Sqlite(tx) => sqlx::query_scalar::<_, $type>($query)$(.bind($bind))*.fetch_one(&mut **tx).await,
+        }
+    }
+}
+
 impl DbQueryResult {
     pub fn from_pg(r: sqlx::postgres::PgQueryResult) -> Self {
-        Self { rows: r.rows_affected() }
+        Self {
+            rows: r.rows_affected(),
+        }
     }
     pub fn from_sqlite(r: sqlx::sqlite::SqliteQueryResult) -> Self {
-        Self { rows: r.rows_affected() }
+        Self {
+            rows: r.rows_affected(),
+        }
     }
     pub fn rows_affected(&self) -> u64 {
         self.rows
@@ -215,10 +249,10 @@ macro_rules! db_execute {
 macro_rules! db_with_pool {
     ($pool:expr, |$p:ident| $body:expr) => {
         match &$pool {
-            $crate::db::DbPool::Postgres($p) => { $body }
-            $crate::db::DbPool::Sqlite($p) => { $body }
+            $crate::db::DbPool::Postgres($p) => $body,
+            $crate::db::DbPool::Sqlite($p) => $body,
         }
-    }
+    };
 }
 
 /// Fetch a single scalar value.
@@ -237,9 +271,7 @@ macro_rules! db_fetch_scalar {
 /// Build a SQL IN clause with numbered placeholders starting at `start_idx`.
 /// Returns the clause `($N, $N+1, ...)` and the next available index.
 pub fn in_clause_placeholders(count: usize, start_idx: usize) -> (String, usize) {
-    let placeholders: Vec<String> = (0..count)
-        .map(|i| format!("${}", start_idx + i))
-        .collect();
+    let placeholders: Vec<String> = (0..count).map(|i| format!("${}", start_idx + i)).collect();
     let clause = format!("({})", placeholders.join(", "));
     (clause, start_idx + count)
 }

@@ -13,13 +13,7 @@
 //! which requires a real HTTP handler — Leptos server functions cannot set
 //! arbitrary response headers.
 
-use axum::{
-    extract::State,
-    http::HeaderMap,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{Json, Router, extract::State, http::HeaderMap, response::IntoResponse, routing::post};
 
 use krausen_auth::{cookies, rate_limiter, token_refresh};
 
@@ -48,8 +42,14 @@ async fn refresh_token(
 
     // Rate limit check
     let device = krausen_auth::token_service::DeviceInfo {
-        user_agent: headers.get("user-agent").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
-        ip_address: headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
+        user_agent: headers
+            .get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string()),
+        ip_address: headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string()),
         country_code: None,
         oauth_client_id: None,
     };
@@ -57,7 +57,10 @@ async fn refresh_token(
     let rate_result = rate_limiter::check_rate_limit(&state.kv, ip, "refresh", None).await?;
     if !rate_result.allowed {
         return Err(krausen_core::Error::TooManyRequests(
-            format!("Rate limited. Try again in {} seconds", rate_result.retry_after_secs),
+            format!(
+                "Rate limited. Try again in {} seconds",
+                rate_result.retry_after_secs
+            ),
             rate_result.retry_after_secs,
         ));
     }
