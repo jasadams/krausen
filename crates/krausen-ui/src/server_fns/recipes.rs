@@ -180,7 +180,7 @@ pub async fn list_recipes() -> Result<Vec<RecipeListItem>, ServerFnError> {
 #[server(prefix = "/leptos-api")]
 pub async fn recover_legacy_recipe(recipe_id: String) -> Result<Option<(String, String)>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    let actor = super::verified_actor(&ac.auth)?;
     krausen_app::recipe_migration::recover_legacy_recipe(&ac.ctx.db, &actor, &recipe_id)
         .await.map_err(|_| ServerFnError::new("Could not recover that recipe"))
 }
@@ -241,7 +241,7 @@ pub async fn search_recipes(query: String) -> Result<Vec<RecipeListItem>, Server
 pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let _ = beerxml;
-    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    let actor = super::verified_actor(&ac.auth)?;
     match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
         Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe creation is unavailable while native authoring is being introduced")),
         _ => Err(ServerFnError::new("Recipe creation is unavailable")),
@@ -255,7 +255,7 @@ pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnErro
 pub async fn import_beerxml(beerxml: String) -> Result<Vec<RecipeListItem>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
     let _ = beerxml;
-    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    let actor = super::verified_actor(&ac.auth)?;
     match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
         Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe import is unavailable while native authoring is being introduced")),
         _ => Err(ServerFnError::new("Recipe import is unavailable")),
@@ -315,4 +315,36 @@ pub async fn restore_recipe(recipe_id: String) -> Result<bool, ServerFnError> {
                 _ => ServerFnError::new("Could not restore that recipe"),
             }
         })
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod principal_tests {
+    use axum::extract::FromRequestParts;
+    use krausen_auth::middleware::{AuthState, AuthUser};
+    use krausen_core::DbPool;
+
+    #[tokio::test]
+    async fn verified_browser_principal_is_required_for_recovery() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id, email) VALUES ('user-local', 'local@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id, name, owner_user_id) VALUES ('workspace-local', 'Local', 'user-local')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('workspace-local', 'user-local', 'workspace_admin')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document, native_migration_error) VALUES ('workspace-local', 'broken', 'Broken', 'original', 'Recovery required')").execute(&pool).await.unwrap();
+        let db = DbPool::Sqlite(pool);
+        let secret = "test-only-jwt-secret-for-principal-boundary";
+        let personal = AuthState { jwt_secret: secret.into(), db: db.clone(), is_personal: true };
+        let (mut parts, _) = axum::http::Request::builder().body(()).unwrap().into_parts();
+        let synthetic = AuthUser::from_request_parts(&mut parts, &personal).await.unwrap();
+        assert!(super::super::verified_actor(&synthetic).is_err());
+        let mut claims = std::collections::HashMap::new();
+        claims.insert("workspace_id".into(), serde_json::json!("workspace-local"));
+        let token = krausen_auth::jwt::create_access_token_str("user-local", secret, 10, claims).unwrap();
+        let state = AuthState { jwt_secret: secret.into(), db: db.clone(), is_personal: false };
+        let (mut parts, _) = axum::http::Request::builder().header("authorization", format!("Bearer {token}")).body(()).unwrap().into_parts();
+        let verified = AuthUser::from_request_parts(&mut parts, &state).await.unwrap();
+        let actor = super::super::verified_actor(&verified).unwrap();
+        let source = krausen_app::recipe_migration::recover_legacy_recipe(&db, &actor, "broken").await.unwrap().unwrap();
+        assert_eq!(source.0, "original");
+    }
 }

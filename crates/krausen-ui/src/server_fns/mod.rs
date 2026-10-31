@@ -74,6 +74,15 @@ pub(crate) fn workspace_id(auth: &krausen_auth::middleware::AuthUser) -> Result<
         })
 }
 
+/// Only an identity produced by JWT verification may cross into shared app operations.
+#[cfg(feature = "ssr")]
+pub(crate) fn verified_actor(auth: &krausen_auth::middleware::AuthUser) -> Result<krausen_app::ActorContext, leptos::prelude::ServerFnError> {
+    if auth.token_exp.is_none() {
+        return Err(leptos::prelude::ServerFnError::new("Authentication required"));
+    }
+    Ok(krausen_app::ActorContext { actor_id: auth.user_id.clone(), workspace_id: workspace_id(auth)?.to_owned() })
+}
+
 /// Bundles the three values every authenticated server function needs.
 #[cfg(feature = "ssr")]
 pub(crate) struct AuthenticatedContext {
