@@ -3,7 +3,6 @@
 use crate::{
     components::{
         BreweryDisclosure, BreweryDraftField, BreweryMetric, BreweryNotice, BreweryPanel, Button,
-        ButtonVariant,
     },
     pages::recipe_editor::current_context_matches,
     server_fns::{brew::start_brew_shared, process_summary::request_process_summary_shared},
@@ -136,6 +135,7 @@ pub fn StartBrewPanel(
                     revision: selected,
                 },
             };
+            #[cfg(target_arch = "wasm32")]
             let retry_recipe_id = recipe_id;
             let result = request_process_summary_shared(request).await;
             #[cfg(target_arch = "wasm32")]
