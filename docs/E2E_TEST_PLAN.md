@@ -1,5 +1,22 @@
 # E2E Test Plan
 
+## Current acceptance scope
+
+The cases below originated in the starter. Authentication/settings cases remain
+useful regression coverage, but anonymous MCP/hello and login-free personal-mode
+cases describe legacy behavior, not the adopted production acceptance target.
+Replace them under KRA-10/11/23; do not preserve a login bypass to satisfy an old
+case. Hosted and self-hosted protected operations require the same account rules.
+
+[ADOPTION.md](ADOPTION.md#acceptance-scenarios) defines the additional boundary
+scenarios required before implementation tickets are accepted: cross-interface
+conflicts, tenant/parent linkage, transaction rollback, retries, revoked identity,
+historical revision starts, engine-context changes and retained corrections.
+Run relevant database cases on both SQLite and PostgreSQL. UI rendering tests and
+prototype checks do not replace shared-operation/integration acceptance. Follow
+[architecture](ARCHITECTURE.md) and [coding standards](CODING_STANDARDS.md) when an
+old setup, session or notification expectation conflicts with the new contract.
+
 Comprehensive test plan for the Krausen app starter template. Covers all user-facing authentication, settings, workspace management, and MCP flows. Intended for implementation as Playwright tests.
 
 ---

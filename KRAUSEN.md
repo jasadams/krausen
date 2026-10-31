@@ -1,11 +1,18 @@
-# Krausen
+# Krausen — historical product reasoning
+
+> Historical context, superseded by [the documentation index](docs/README.md),
+> [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md),
+> [calculations](docs/CALCULATIONS.md) and [DESIGN.md](DESIGN.md). The original
+> learning/sensor/bench-sheet vision below is not first-release scope. Equipment
+> profile edits affect future previews/new brews; automatic fitted-model changes
+> remain deferred. Current shared UI/MCP, snapshot and preservation contracts
+> override conflicting instructions below. Do not execute this as a task plan.
 
 A brewing application that learns your equipment from your own brew history and
 tells you what to measure, when to adjust, and where things are drifting.
 
-This document is the project's orientation. Read it before writing code. It
-records decisions that have already been made and the reasoning behind them, so
-that they don't get relitigated or quietly undone.
+The remaining text preserves the earlier rationale. Read current canonical
+guidance before using a historical formula or example; it is not adoption evidence.
 
 ---
 

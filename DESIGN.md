@@ -10,7 +10,8 @@ generated file are review artifacts; edit the shared source, then regenerate.
 Status: **visual design and component-system reference approved on
 2026-10-31**, following the compact-density review. This is the agreed visual
 target for implementation. Production Leptos migration, database/MCP integration
-and combined architecture adoption under KRA-5 remain separate work. The working
+and implementation acceptance remain separate work; KRA-5 adoption status is
+recorded in `docs/ADOPTION.md`. The working
 prototype does not establish production backend or historical guarantees.
 
 Krausen is a brewing recipe workspace: formulate a recipe, understand its
@@ -31,7 +32,7 @@ data-model and calculation documents before changing UI components. Follow
 explicit current user decisions when older repository guidance conflicts.
 `KRAUSEN.md` contains useful calculation/history principles, but its broader
 product scope and some profile-adoption guidance predate the current decisions.
-Architecture adoption and reconciliation belong to KRA-5.
+The adoption record defines current contract status and implementation ownership.
 
 | Source | Authority in this design work |
 | --- | --- |
@@ -135,8 +136,8 @@ precision, format only for display, and expose numeric ranges/status in the
 future shared UI/MCP contract. Future historical records must retain the style
 identity/edition they were formulated against.
 
-This interaction is a confirmed user request; reference-data and numeric
-semantics remain subject to the overall KRA-3/KRA-5 review.
+This interaction is confirmed; reference-data and numeric semantics follow
+`docs/CALCULATIONS.md` and its versioned policy.
 
 Use a warm ivory canvas, clear paper-like surfaces, charcoal text/brand details,
 warm stone navigation, copper for the primary action, and restrained sage for
@@ -329,9 +330,62 @@ typography, surfaces, calculated figures, ingredient patterns and feedback; stat
 examples must use the same variants and semantics as product composition.
 
 Before production integration, reconcile this approved visual reference with the agreed
-architecture/data/calculation documents, record remaining limitations, and port
+architecture/data/calculation documents, retain documented limitations, and port
 approved contracts into Leptos. Production token changes belong in
 `crates/krausen-ui/style/main.css`, not a competing page stylesheet.
+
+## Supporting production workflows
+
+These interactions use the approved shared kit and application contracts. They
+specify behavior for the existing implementation tickets, not a new visual theme.
+
+- **Incomplete recipes (KRA-12/13):** explicit Save may persist a structurally valid
+  unfinished recipe. Show Saved plus a separate Incomplete diagnostic, not a fake
+  target. Invalid numeric/structural input prevents save with field feedback;
+  starting a brew requires a Ready calculation. Debounce server previews and accept
+  a result only for the current draft generation/context so delayed responses
+  cannot replace newer figures. MCP uses the same preview/readiness result.
+- **Import/export (KRA-17):** choose/paste BeerXML, preview parsed native content,
+  preservation warnings, missing inputs, equipment and resolved targets; commit
+  explicitly through the shared import command. Export a chosen saved revision,
+  disclose native fields not representable in BeerXML, and provide original-source
+  download separately. Cancellation does not create a recipe. Exporting a local
+  unsaved draft must be explicitly labelled and use the same export query.
+- **Scaling/duplication (KRA-18):** choose target fermenter volume, preview changed
+  ingredient amounts, water and recalculated targets with warnings. Confirm
+  explicitly with the expected head/context or cancel without saving. Preserve
+  timing and selected equipment; capacity/target differences are visible. Duplicate
+  creates a new recipe identity and no historical brew markers.
+- **Print/process summary (KRA-19):** identify saved revision and calculation/profile
+  context, include amounts, units, process order, assumptions and diagnostics.
+  Historical brew print uses its frozen plan/targets, with actuals clearly separate.
+  A draft print is labelled Unsaved. Produce the same structured process summary
+  via MCP; the browser print dialog is a presentation action.
+- **Start/history (KRA-20/22):** default to the saved current revision and show
+  effective equipment/targets. Explicit historical selection displays its revision
+  and permits starting it without restoring the recipe. Unsaved changes require
+  Save, use the selected saved revision explicitly, or Cancel; never silently turn
+  the draft into a historical brew. Changed calculation context shows refreshed
+  targets for acceptance rather than silently committing new values.
+- **Actuals and corrections (KRA-21/22):** optional values beside targets and notes,
+  with provenance automatic. Editing corrects the selected observation; clearing
+  retracts it. Keep original plan and prior evidence. If another user/agent changed
+  the reading/selection, retain the attempted value, show the current value and
+  require a deliberate retry from the new revision. Extra readings and primary
+  selection are shared operations; no mandatory timeline/questionnaire UI.
+- **Save/conflict/recovery (KRA-13):** a stale expected head never overwrites remote
+  work. Preserve the local draft, show current saved revision and offer compare,
+  reload/discard or deliberate reapply-and-save. No silent merge. Workspace switch
+  and browser history navigation use the same Save/Discard/Stay guard. Recovery
+  storage keys include installation/account/workspace/recipe/base revision; logout
+  hides or clears recovered content so another account cannot see it. Expired
+  credentials retain edits while reconnecting, without reporting a successful save.
+
+These state patterns appear in the shared showcase as the production components
+are implemented. Backend conflict, authorization and diagnostics come from the
+same operations available to agents; components render them rather than inventing
+business policy. Additional screen mockups can illustrate these contracts during
+implementation without reopening the approved visual direction.
 
 ## Prototype and its limits
 
@@ -348,7 +402,7 @@ operations, identity, database migrations or durable historical persistence.
 Figures use the existing engine's semantics; displaying its real outputs does
 not adopt proposed calculation changes or resolve known model issues.
 
-The approved visual reference and pending production architecture remain
-distinct. Visual approval does not complete unimplemented application services
-or resolve the remaining technical design. Do not mark broader planning tickets
-complete from prototype existence or screenshots alone.
+The approved visual reference and production implementation remain distinct.
+Visual approval and architecture adoption do not complete application services.
+Use the adoption record and implementation acceptance evidence for ticket status,
+not prototype existence or screenshots alone.

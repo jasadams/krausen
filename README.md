@@ -1,86 +1,58 @@
-# Krausen (種)
+# Krausen
 
-A Rust app starter template with full authentication, workspace management, settings UI, and MCP server built in. Fork it, rename it, add your domain code.
+A brewing recipe workspace with formulation calculations, recipe revision history
+and historical brew records. Released as AGPL-3.0-or-later, with hosted and
+self-hosted deployment targets.
 
-Built with the same stack as [Kyomi](https://kyomi.ai) -- battle-tested patterns for auth, sessions, email verification, and multi-tenant workspaces extracted into a reusable starting point.
+UI and MCP are two interfaces to the same application: the same operations,
+permissions, calculation results and historical-integrity rules. Read the
+[documentation index](docs/README.md) and [agent guidance](AGENTS.md) before
+implementation.
 
-## What's Included
+## Project state
 
-**Authentication:**
-- Password-based signup and login
-- Passkey / WebAuthn (register, login, account recovery)
-- Google OAuth
-- TOTP two-factor authentication
-- Email verification (link-based)
-- Account recovery (forgot password flow)
-- Session management (view active sessions, revoke, logout all)
+The repository contains the Rust/Leptos foundation, existing account/workspace
+services, pure calculation and BeerXML crates, and an approved interactive
+[recipe/component design reference](docs/design/prototype/README.md).
+The shared application layer, authenticated MCP operation catalogue, native recipe
+revisions and immutable production brew records are implementation targets,
+not completed features. The prototype uses browser-local fixtures and WASM.
 
-**Workspaces:**
-- Create workspace on signup
-- Invite members by email
-- Role management (owner, admin, member)
-- Transfer ownership (dual-party email confirmation)
-- Workspace switcher for multi-workspace users
+[Architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md),
+[calculations](docs/CALCULATIONS.md) and [design system](DESIGN.md) define the
+implementation contracts. [ADOPTION.md](docs/ADOPTION.md) records boundary decisions,
+acceptance scenarios and delivery ownership. Historical `KRAUSEN.md` and the old
+starter plan are context, not current feature or coding instructions.
 
-**Settings UI:**
-- Profile (display name)
-- Appearance (light / dark / system theme)
-- Security (password, TOTP, passkeys, sessions)
-- Workspace (name)
-- Team (invite, remove, change roles, transfer ownership)
+## Code boundaries
 
-**MCP Server:**
-- Streamable HTTP transport at `/mcp` (POST for JSON-RPC, GET for the server-push SSE stream)
-- Session-based authentication
-- Ships with a `hello` tool as a starting point
+| Boundary | Role |
+| --- | --- |
+| `krausen-app` (planned) | Shared commands, queries, policy and transaction ownership |
+| `krausen-types` | Versioned native data and transport-neutral DTOs |
+| `krausen-brewery` | Brewing persistence helpers and native-to-engine projection |
+| `krausen-calc` | Pure deterministic calculation library |
+| `krausen-beerxml` | Format parsing, serialization and native mappings |
+| `krausen-auth` | Account/session/security primitives |
+| `krausen-core` | Database/transaction/configuration infrastructure |
+| `krausen-ui`, server adapters | Presentation and protocol envelopes; invoke app |
 
-**Infrastructure:**
-- SQLite (self-hosted / personal) or PostgreSQL (SaaS)
-- Redis (SaaS) or in-memory KV (self-hosted)
-- JWT dual-token auth (access + refresh)
-- Rate limiting
-- WebSocket support (`GET /ws/{user_id}?token={jwt}`)
+The diagram describes the target division of responsibility; the existing starter
+still has logic to migrate. Do not add brewing policy to auth or either adapter.
 
-## Tech Stack
+## Deployment contract
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Rust, Axum 0.8, SQLx 0.8 |
-| Frontend | Leptos 0.8 (SSR + WASM hydration) |
-| Styling | Tailwind CSS v4 |
-| Icons | Phosphor Icons |
-| Auth | JWT (HS256), Argon2/bcrypt, WebAuthn |
-| Email | Lettre (SMTP) |
-| 2FA | TOTP (totp-rs) |
-| MCP | Streamable HTTP (SSE) |
+Hosted uses PostgreSQL; self-hosted supports SQLite. Both use authenticated
+installation-local accounts and workspace ownership. A personal collection is a
+one-member workspace, not a login bypass. The starter's `personal` mode remains
+legacy code to retire in KRA-10 and must not be used to claim protected-operation
+acceptance. Shared database state owns request results, credentials and history;
+process-local caches and notifications are not sources of authority.
 
-## Crate Structure
-
-```
-krausen/
-├── Cargo.toml              # Workspace root
-├── crates/
-│   ├── krausen-core/          # Config, database, KV store, models, error types
-│   ├── krausen-auth/          # Auth service, sessions, user/workspace/email services
-│   ├── krausen-types/         # Shared DTOs (serde-only, WASM-safe)
-│   └── krausen-ui/            # Leptos frontend (pages, components, server functions)
-│       └── Trunk.toml      # WASM build config
-├── apps/
-│   └── server/             # Axum binary (routes, middleware, MCP, state)
-│       ├── migrations/         # PostgreSQL migrations
-│       └── migrations-sqlite/  # SQLite migrations
-└── docs/
-```
-
-## Deployment Modes
-
-Set via the `KRAUSEN_MODE` environment variable:
-
-| Mode | `KRAUSEN_MODE` | Database | Auth Behavior |
-|------|-------------|----------|---------------|
-| **SaaS** | `saas` | PostgreSQL + Redis | Full auth, email verification required |
-| **Self-hosted** | `self_hosted` | SQLite | Full auth; if no SMTP, first user creates account directly (no email verification) |
-| **Personal** | `personal` | SQLite | No login required, auto-provisioned user and workspace |
+Initial acceptance is one application process with either supported database.
+Additional application instances are future deployment work requiring shared
+credential/retry state and transport checks; no horizontal scalability has been
+benchmarked or promised by the design review.
 
 ## Running in Development
 
@@ -102,7 +74,7 @@ JWT_SECRET_KEY=your-secret-key-here
 ENCRYPTION_KEY=base64-encoded-32-byte-key
 
 # Optional
-KRAUSEN_MODE=self_hosted                    # saas | self_hosted | personal
+KRAUSEN_MODE=self_hosted                    # saas | self_hosted (personal is legacy)
 PORT=8003                                # default: 8003
 FRONTEND_URL=http://localhost:5173       # Trunk dev server
 BASE_URL=http://localhost:8003           # Backend URL
@@ -135,50 +107,13 @@ cargo run --package krausen-server
 
 The server starts at `http://localhost:8003`. In development with Trunk, the frontend is served from `http://localhost:5173` with proxy to the backend.
 
-## Creating a New App From This Template
+## Repository
 
-1. Fork or clone this repository:
-   ```bash
-   git clone https://github.com/kyomi-ai/krausen.git myapp
-   cd myapp
-   ```
-
-2. Rename the crates (replace `krausen` with your app name, e.g., `myapp`):
-   ```bash
-   # Rename directories
-   mv crates/krausen-core crates/myapp-core
-   mv crates/krausen-auth crates/myapp-auth
-   mv crates/krausen-types crates/myapp-types
-   mv crates/krausen-ui crates/myapp-ui
-
-   # Rename in all files
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen-core/myapp-core/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen-auth/myapp-auth/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen-types/myapp-types/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen-ui/myapp-ui/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen-server/myapp-server/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen_core/myapp_core/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen_auth/myapp_auth/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen_types/myapp_types/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen_ui/myapp_ui/g'
-   find . -name "*.toml" -o -name "*.rs" | xargs sed -i 's/krausen_server/myapp_server/g'
-
-   # Update binary name in apps/server/Cargo.toml
-   sed -i 's/name = "krausen"/name = "myapp"/' apps/server/Cargo.toml
-
-   # Update env var prefix if desired
-   find . -name "*.rs" | xargs sed -i 's/KRAUSEN_MODE/MYAPP_MODE/g'
-   ```
-
-3. Add your domain code:
-   - Models go in `crates/myapp-core/src/models.rs`
-   - Business logic services go in `crates/myapp-auth/src/` (or create a new service crate)
-   - UI pages go in `crates/myapp-ui/src/pages/`
-   - API routes go in `apps/server/src/routes/`
-   - MCP tools go in `apps/server/src/mcp/tools.rs`
-
-4. Run migrations, build, and start developing.
+```sh
+git clone https://github.com/jasadams/krausen.git
+cd krausen
+```
 
 ## License
 
-AGPL-3.0-or-later
+AGPL-3.0-or-later.

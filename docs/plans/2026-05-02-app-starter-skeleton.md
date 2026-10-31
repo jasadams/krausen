@@ -1,4 +1,10 @@
-# App Starter Skeleton
+# App Starter Skeleton — historical plan
+
+> Archived implementation history. Do not follow the copy-without-rewrite or
+> auth-owned business-logic instructions below for new work. Use
+> [architecture](../ARCHITECTURE.md), [coding standards](../CODING_STANDARDS.md)
+> and [adoption contracts](../ADOPTION.md). The original text is retained to
+> explain the starter's provenance, not to prescribe current boundaries.
 
 **Goal:** Get the Krausen app starter to a working state where you can sign in (password, passkey, Google OAuth), see settings pages, and have MCP/OAuth infrastructure ready. No domain-specific features yet.
 

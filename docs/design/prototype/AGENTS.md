@@ -12,8 +12,8 @@ Read root `DESIGN.md` and this directory's `README.md` before changing the proto
 - All derived brewing figures come from the existing `krausen-calc` crate via
   the small WASM bridge. Do not write another calculator in JavaScript.
 - This is a local design review artifact, not a production UI or backend. Keep
-  fixture/browser storage limitations explicit. Production implementation and
-  architecture adoption remain gated by KRA-5.
+  fixture/browser storage limitations explicit. Production work follows the root
+  adoption record and implementation ticket prerequisites.
 
 Check desktop/mobile, light/dark, keyboard focus, explicit Save and dirty-draft
 navigation behavior when changing component behavior or layout.

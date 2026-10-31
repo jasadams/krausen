@@ -2,8 +2,8 @@
 
 Status: **approved visual reference and local design prototype**, part of KRA-4.
 The compact design/component system was accepted on 2026-10-31. Production
-application services, Leptos migration and KRA-5 architecture adoption remain
-separate deliverables.
+application services and Leptos migration remain implementation deliverables.
+See [the adoption record](../../ADOPTION.md) for architecture status.
 
 Read [`../../../DESIGN.md`](../../../DESIGN.md) for the component ownership rules,
 confirmed product interactions, approved visual direction and production Leptos

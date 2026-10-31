@@ -6,7 +6,9 @@ Date: 2026-10-31. Reviewed baseline:
 Three independent reviewers read all 14 Markdown files at that baseline. They
 received separate scopes, did not share findings while reviewing, and made no
 edits. The coordinator checked their evidence and consolidated overlaps below.
-This report records findings, not architecture changes or resolved decisions.
+This report records its baseline findings. Their subsequent resolutions and
+independent changed-contract approval are in [ADOPTION.md](../ADOPTION.md);
+recommendations below are historical evidence, not unresolved current status.
 
 ## Verdicts
 
