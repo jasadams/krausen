@@ -191,7 +191,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    projection_defaults,
+                                    &mut projection_defaults,
                                     format!("fermentables[{}].specification.colour_ebc", f.row_id),
                                     0.0,
                                     "EBC",
@@ -222,7 +222,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    projection_defaults,
+                                    &mut projection_defaults,
                                     format!("hops[{}].specification.alpha_fraction", h.row_id),
                                     0.0,
                                     "fraction",
@@ -240,7 +240,7 @@ pub fn targets_with_defaults(
                             Some(value) => value,
                             None => {
                                 record_default(
-                                    projection_defaults,
+                                    &mut projection_defaults,
                                     format!("hops[{}].contact_minutes", h.row_id),
                                     0.0,
                                     "minutes",
@@ -288,7 +288,7 @@ pub fn targets_with_defaults(
                     Some(value) => value,
                     None => {
                         record_default(
-                            projection_defaults,
+                            &mut projection_defaults,
                             "process.kettle_top_up_l".into(),
                             0.0,
                             "L",
@@ -311,7 +311,7 @@ pub fn targets_with_defaults(
                     Some(value) => value,
                     None => {
                         record_default(
-                            projection_defaults,
+                            &mut projection_defaults,
                             "process.whirlpool_minutes".into(),
                             0.0,
                             "minutes",
@@ -351,7 +351,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                projection_defaults,
+                                &mut projection_defaults,
                                 "equipment.kettle_diameter_cm".into(),
                                 1.0,
                                 "cm",
@@ -367,7 +367,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                projection_defaults,
+                                &mut projection_defaults,
                                 "equipment.kettle_opening_cm".into(),
                                 1.0,
                                 "cm",
@@ -383,7 +383,7 @@ pub fn targets_with_defaults(
                         Some(value) => value,
                         None => {
                             record_default(
-                                projection_defaults,
+                                &mut projection_defaults,
                                 "equipment.boil_temperature_c".into(),
                                 100.0,
                                 "C",
