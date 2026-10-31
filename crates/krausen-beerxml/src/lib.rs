@@ -38,6 +38,7 @@
 pub mod convert;
 mod document;
 mod error;
+pub mod native;
 mod parse;
 pub mod raw;
 pub mod record;

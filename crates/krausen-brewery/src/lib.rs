@@ -7,5 +7,6 @@
 //! below the web layer, which only extracts a request and calls in here.
 
 pub mod recipe_service;
+pub mod native_recipe;
 
 pub use recipe_service::{Recipe, RecipeSource, RecipeSummary};

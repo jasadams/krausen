@@ -23,3 +23,4 @@ pub use websocket_types::{MessageType, WebSocketMessage};
 
 /// Current terms of service version.
 pub const TERMS_VERSION: &str = "1.0";
+pub mod canonical_json;

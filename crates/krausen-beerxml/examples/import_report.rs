@@ -1,8 +1,8 @@
-//! Run real BeerXML through the whole pipeline and report what it cost.
+//! Run the synthetic BeerXML fixture through the calculation pipeline.
 
 use krausen_beerxml::{convert::to_calc, parse};
 
-const EXAMPLES: &str = include_str!("../tests/data/beerxml_com_examples.xml");
+const EXAMPLES: &str = include_str!("../tests/fixtures/synthetic.xml");
 
 fn main() {
     let doc = parse(EXAMPLES).expect("parses");
