@@ -14,7 +14,7 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Name', { exact: true }).fill('Pale malt');
   await page.getByLabel('Amount (kg)', { exact: true }).fill('4');
   await page.getByText('Addition details', { exact: true }).click();
-  await page.getByLabel('Type', { exact: true }).fill('grain');
+  await page.getByLabel('Type', { exact: true }).selectOption('grain');
   await page.getByLabel('Yield (%)', { exact: true }).fill('80');
   await page.getByLabel('Colour (EBC)', { exact: true }).fill('5');
   await page.getByText('Equipment settings', { exact: true }).click();
