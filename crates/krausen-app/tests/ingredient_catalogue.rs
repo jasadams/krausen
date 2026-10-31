@@ -852,6 +852,18 @@ async fn exercise(db: DbPool) {
         .await,
         RecipeSaveOutcome::UnresolvedIngredientSource
     ));
+    // Failed source resolution must commit nothing: every rejected attempt
+    // above left the head revision untouched (atomic rollback of the save).
+    let krausen_types::recipe_editor::RecipeReadOutcome::Found(snapshot) =
+        recipe_editor::read(&db, &actor_a, &intent_a, &recipe_a).await
+    else {
+        panic!("recipe must remain readable after rejected saves");
+    };
+    assert_eq!(
+        snapshot.revision, third_revision,
+        "rejected saves must not advance the recipe head"
+    );
+
     // A recipe-specific specification edit with an unchanged source must
     // still save: catalogue validation never compares copied specifications.
     let mut recipe_specific_edit = recipe_in_a.clone();
