@@ -432,7 +432,7 @@ pub fn StartBrewPanel(
             <p role="status">{move || status.get()}</p>
             {move || prepared.get().map(|summary| view! {
                 <div class="recipe-editor__summary">
-                    <p>{format!("Selected source: saved revision {}.", match summary.source {
+                    <p>{format!("Selected source: saved revision {}.", match &summary.source {
                         SummarySource::Saved { revision, .. } => revision.to_string(),
                         SummarySource::UnsavedDraft { .. } => "unsaved".into(),
                     })}</p>
