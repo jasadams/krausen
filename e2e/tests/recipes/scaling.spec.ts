@@ -15,8 +15,13 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Amount (kg)', { exact: true }).fill('4');
   await page.getByText('Addition details', { exact: true }).click();
   await page.getByLabel('Type', { exact: true }).selectOption('grain');
+  await page.getByLabel('Stage', { exact: true }).selectOption('mash');
   await page.getByLabel('Yield (%)', { exact: true }).fill('80');
   await page.getByLabel('Colour (EBC)', { exact: true }).fill('5');
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  await page.locator('#recipe-attenuation').fill('80');
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.locator('#recipe-mash-water').fill('15');
   await page.getByText('Equipment settings', { exact: true }).click();
   await page.locator('#recipe-efficiency').fill('75');
   await page.locator('#recipe-boil-off').fill('3');
