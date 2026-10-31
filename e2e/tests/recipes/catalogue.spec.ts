@@ -376,7 +376,15 @@ test('a stale catalogue search denial still redacts the mounted editor', async (
 test('a delayed catalogue search denial cannot touch a disposed picker', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
+  const marker = `catalogue-search-${Date.now()}`;
   await page.goto('/recipe-editor/new');
+  await page.evaluate(value => {
+    (window as any).__krausenLifecycleMarker = value;
+  }, marker);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let delivered!: () => void;
+  const deliveredPromise = new Promise<void>(resolve => { delivered = resolve; });
   let started!: () => void;
   const requestStarted = new Promise<void>(resolve => { started = resolve; });
   await page.route('**/leptos-api/execute_ingredient_command*', async route => {
@@ -384,17 +392,13 @@ test('a delayed catalogue search denial cannot touch a disposed picker', async (
     const command = payload ? JSON.parse(payload) : null;
     if (command?.Search) {
       started();
-      try {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify('Forbidden'),
-        });
-      } catch {
-        // Navigation may cancel the in-flight request; the app still must not
-        // touch disposed signals when its future resolves.
-      }
+      await gate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify('Forbidden'),
+      });
+      delivered();
       return;
     }
     await route.continue();
@@ -403,9 +407,16 @@ test('a delayed catalogue search denial cannot touch a disposed picker', async (
   const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
   await expect(picker).toBeVisible();
   await requestStarted;
-  await page.goto('/recipes');
+  await page.keyboard.press('Escape');
+  await expect(picker).toBeHidden();
+  // Real SPA navigation disposes the picker without unloading the JS realm.
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
   await expect(page).toHaveURL(/\/recipes$/);
-  await page.waitForTimeout(2000);
+  expect(await page.evaluate(() => (window as any).__krausenLifecycleMarker)).toBe(marker);
+  // Deliver the held denial only after unmount; it must actually complete.
+  release();
+  await deliveredPromise;
+  await page.waitForTimeout(200);
   await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -415,7 +426,11 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
   page.on('pageerror', error => errors.push(error.message));
   const unique = Date.now();
   const entryName = `E2E disposed malt ${unique}`;
+  const marker = `catalogue-save-${unique}`;
   await page.goto('/recipe-editor/new');
+  await page.evaluate(value => {
+    (window as any).__krausenLifecycleMarker = value;
+  }, marker);
   await page.getByLabel('Recipe name', { exact: true }).fill(`Disposed recipe ${unique}`);
   await page.getByRole('button', { name: 'Add fermentable' }).click();
   const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
@@ -426,6 +441,10 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
   await create.getByLabel('Fermentable name').fill(entryName);
   await create.getByLabel('Colour (EBC)').fill('4.5');
   await create.getByLabel('Potential yield (%)').fill('80');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let delivered!: () => void;
+  const deliveredPromise = new Promise<void>(resolve => { delivered = resolve; });
   let started!: () => void;
   const requestStarted = new Promise<void>(resolve => { started = resolve; });
   await page.route('**/leptos-api/execute_ingredient_command*', async route => {
@@ -433,25 +452,31 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
     const command = payload ? JSON.parse(payload) : null;
     if (command?.Save) {
       started();
-      try {
-        const response = await route.fetch();
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await route.fulfill({ response });
-      } catch {
-        // Navigation may cancel the in-flight request; see the search denial.
-      }
+      const response = await route.fetch();
+      await gate;
+      await route.fulfill({ response });
+      delivered();
       return;
     }
     await route.continue();
   });
   await create.getByRole('button', { name: 'Save to library' }).click();
   await requestStarted;
-  await page.goto('/recipes');
+  await page.keyboard.press('Escape');
+  await expect(picker).toBeHidden();
+  // The dirty recipe draft opens Save/Discard/Stay; discard to navigate.
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const discard = page.getByRole('button', { name: 'Discard and leave' });
+  await expect(discard).toBeVisible();
+  await discard.click();
   await expect(page).toHaveURL(/\/recipes$/);
-  await page.waitForTimeout(2000);
+  expect(await page.evaluate(() => (window as any).__krausenLifecycleMarker)).toBe(marker);
+  // Deliver the held mutation response only after unmount; it must complete.
+  release();
+  await deliveredPromise;
+  await page.waitForTimeout(200);
   await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toHaveCount(0);
-  // The mutation response must not be applied to a disposed editor: the
-  // library entry exists, but no recipe was created or copied.
+  // The mutation committed the library entry but no recipe was created/copied.
   expect(
     db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(entryName)}`),
   ).toBe('1');
