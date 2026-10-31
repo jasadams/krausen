@@ -1,0 +1,338 @@
+/* Tailwind v4 removed --content from the CLI (silently ignored). Source
+   detection is CSS-only: source(none) disables CWD auto-scan, @source
+   directives list what to scan explicitly. Do NOT add --content to Trunk.toml. */
+@import "tailwindcss" source(none);
+@source "../src";
+@plugin "@tailwindcss/typography";
+
+/* Enable class-based dark mode (Tailwind v4 syntax) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Global font size */
+html {
+  font-size: 15px;
+}
+
+@theme {
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-display: 'Instrument Serif', Georgia, serif;
+
+  /* Container query breakpoints — adjusted for 15px root font size.
+   * Tailwind defaults are rem-based (designed for 16px root), so we
+   * override to hit the intended pixel widths at 15px root. */
+  --container-xs: 21.333rem;  /* 320px at 15px root */
+  --container-md: 29.867rem;  /* 448px at 15px root */
+  --container-3xl: 51.2rem;   /* 768px at 15px root */
+  --container-6xl: 85.333rem; /* 1280px at 15px root */
+
+  /* === Design System Color Tokens ===
+   * Reference: DESIGN.md */
+
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #F5F3EF;
+  --color-secondary-foreground: #3D3835;
+  --color-accent: #FEF3C7;
+  --color-accent-foreground: #1C1917;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+  --color-muted: #F5F3EF;
+  --color-muted-foreground: #6B6660;
+  --color-background: #FAFAF8;
+  --color-foreground: #1C1917;
+  --color-card: #ffffff;
+  --color-card-foreground: #1C1917;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1C1917;
+  --color-border: #E8E5DE;
+  --color-border-strong: #D4D0C8;
+  --color-input: #E8E5DE;
+  --color-ring: #4f46e5;
+  --color-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Status Colors */
+  --color-success: #F0FDF4;
+  --color-success-border: #BBF7D0;
+  --color-success-foreground: #15803D;
+  --color-warning: #FEFCE8;
+  --color-warning-border: #FDE68A;
+  --color-warning-foreground: #CA8A04;
+  --color-error: #FEF2F2;
+  --color-error-border: #FECDD3;
+  --color-error-foreground: #DC2626;
+  --color-info: #EFF6FF;
+  --color-info-border: #BFDBFE;
+  --color-info-foreground: #2563EB;
+
+  /* Sidebar — warm near-black, reuses the --color-foreground ramp.
+   * Separate tokens so the sidebar can be re-skinned independently. */
+  --color-sidebar: #1C1917;
+  --color-sidebar-foreground: #F5F3EF;
+  --color-sidebar-foreground-secondary: #A8A29E;
+  --color-sidebar-foreground-muted: #78716C;
+  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
+  --color-sidebar-active: #2C241E;
+  --color-sidebar-border: rgba(255, 255, 255, 0.08);
+
+  --radius: 0.5rem;
+  --radius-sm: 0.25rem;  /* 4px — inputs, buttons, chips */
+  --radius-md: 0.5rem;    /* 8px — cards, dropdowns, panels */
+  --radius-lg: 0.75rem;   /* 12px — modals, dialogs, large containers */
+
+  /* Animation tokens */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+:root:not(.dark) { color-scheme: light; }
+
+/* === Animation Keyframes ===
+ * Replaces tailwindcss-animate plugin (not available in standalone Tailwind CLI).
+ * React uses these via the plugin; Leptos defines them manually. */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes zoom-in-95 {
+  from { transform: scale(0.95); }
+  to { transform: scale(1); }
+}
+
+@keyframes slide-in-from-top-2 {
+  from { transform: translateY(-0.5rem); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slide-in-from-bottom-2 {
+  from { transform: translateY(0.5rem); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slide-in-from-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Animation utility classes */
+.animate-fade-in {
+  animation: fade-in var(--duration-normal) var(--ease-out);
+}
+
+.animate-fade-in-fast {
+  animation: fade-in var(--duration-fast) var(--ease-out);
+}
+
+.animate-zoom-fade-in {
+  animation: fade-in var(--duration-normal) var(--ease-out),
+             zoom-in-95 var(--duration-normal) var(--ease-out);
+}
+
+.animate-slide-fade-in {
+  animation: fade-in var(--duration-normal) var(--ease-out),
+             slide-in-from-top-2 var(--duration-normal) var(--ease-out);
+}
+
+.animate-slide-in-right {
+  animation: fade-in var(--duration-slow) var(--ease-out),
+             slide-in-from-right var(--duration-slow) var(--ease-out);
+}
+
+/* Display font utility — Instrument Serif for page headings & section titles.
+ * Weight 400 is forced because Instrument Serif only has one weight. */
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+/* ── Layout: one continuous warm surface ────────────────────────────
+ * DESIGN.md: "No visual separation between header and content."
+ * The only hard border is between the warm-stone sidebar and content area. */
+
+/* Page headers: same bg as content, no bottom border */
+.page-header {
+  background-color: var(--color-background);
+  border-bottom: none;
+}
+
+/* Footer metadata bar: same bg as content */
+.metadata-footer {
+  background-color: var(--color-background);
+}
+
+/* ── Auth brand panel ─────────────────────────────────────────────────
+ * Left-side dark branded panel on auth pages (login, recovery, signup).
+ * Extracted from inline style= attrs per DESIGN.md "no inline styles
+ * for color" rule — keeps theming greppable and theme-switchable. */
+.auth-brand-panel {
+  background-color: var(--color-sidebar);
+}
+
+.auth-brand-gradient-1 {
+  background:
+    radial-gradient(
+      ellipse at center,
+      color-mix(in srgb, var(--color-primary) 10%, transparent) 0%,
+      color-mix(in srgb, var(--color-foreground) 90%, transparent) 50%,
+      var(--color-foreground) 100%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-foreground) 80%, white) 0%,
+      var(--color-foreground) 100%
+    );
+}
+
+.auth-brand-gradient-2 {
+  background-image:
+    radial-gradient(
+      circle at 20% 80%,
+      color-mix(in srgb, var(--color-primary) 15%, transparent) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 80% 20%,
+      color-mix(in srgb, var(--color-primary) 10%, transparent) 0%,
+      transparent 50%
+    );
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────────
+ * DESIGN.md: thin scrollbars that match their container's background.
+ * Light mode: border-color thumb on transparent track.
+ * Dark mode: warm stone thumb on transparent track.
+ * Sidebar (always dark): light-on-dark regardless of theme. */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+:where(.dark, .dark *) {
+  scrollbar-color: #3B3530 transparent;
+}
+
+/* Sidebar scrollbar — always dark warm-stone context */
+.scrollbar-sidebar {
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+/* Button styles are in the <Button> Leptos component (button.rs).
+ * Do NOT add .btn classes here — use the component instead. */
+
+/* ── Dropdown menu items ────────────────────────────────────────────
+ * DESIGN.md: text-foreground, hover bg-secondary, 14px, full-width.
+ * These are NOT buttons — they're menu actions inside a dropdown. */
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.1s ease-out;
+}
+
+.menu-item:hover {
+  background: var(--color-secondary);
+}
+
+.menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-ring);
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Accessibility: respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* === Dark Mode Color Overrides === */
+.dark {
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #24201E;
+  --color-secondary-foreground: #A8A29E;
+  --color-accent: #451A03;
+  --color-accent-foreground: #F5F3EF;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+  --color-muted: #1C1917;
+  --color-muted-foreground: #A8A29E;
+  --color-background: #12100F;
+  --color-foreground: #F5F3EF;
+  --color-card: #24201E;
+  --color-card-foreground: #F5F3EF;
+  --color-popover: #2A2623;
+  --color-popover-foreground: #F5F3EF;
+  --color-border: #2E2925;
+  --color-input: #2E2925;
+  --color-ring: #4f46e5;
+  --color-overlay: rgba(0, 0, 0, 0.7);
+
+  --color-warning: #422006;
+  --color-warning-border: #4f46e5;
+  --color-warning-foreground: #f59e0b;
+  --color-error: #450a0a;
+  --color-error-border: #dc2626;
+  --color-error-foreground: #ef4444;
+  --color-success: #052e16;
+  --color-success-border: #16a34a;
+  --color-success-foreground: #22c55e;
+  --color-info: #101318;
+  --color-info-border: #2563eb;
+  --color-info-foreground: #3b82f6;
+}
+
+:root.dark { color-scheme: dark; }
+
+/* Interactive element defaults */
+button, [role="button"] {
+  cursor: pointer;
+}
+
+button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Text selection */
+::selection {
+  background-color: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+}
+
+/* Warm stone dark-surface tokens — used by the sidebar and the .dark block. */
+:root {
+  --warm-dark: #2C241E;
+  --warm-dark-deep: #1C1917;
+}

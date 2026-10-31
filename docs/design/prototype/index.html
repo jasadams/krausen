@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Krausen's proposed component system and interactive brewing recipe design.">
+  <title>Krausen · Recipe studio</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="components.css">
+  <link rel="stylesheet" href="layout.css">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('krausen.design.theme') || 'light'; } catch {}</script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div id="app"><main class="page"><p>Opening your recipe studio…</p></main></div>
+  <div id="dialogs"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div class="sr-only" id="calculation-announcement" aria-live="polite"></div>
+</body>
+</html>

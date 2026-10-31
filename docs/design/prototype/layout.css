@@ -1,0 +1,52 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Page composition only. Component appearance belongs to components.css. */
+.recipe-main > .page-footer { margin-top: 0; }
+.recipe-aside > #summary { display: grid; gap: var(--space-5); }
+.recipe-aside > .k-button { width: 100%; }
+.form-grid > .k-field { align-self: start; }
+.yeast-layout { display: grid; grid-template-columns: 38px minmax(0, 1fr) 120px; gap: var(--space-4); align-items: center; }
+.library-toolbar { display: flex; gap: var(--space-4); justify-content: space-between; align-items: center; margin-bottom: var(--space-6); }
+.library-toolbar > .k-field { max-width: 350px; flex: 1; }
+.library-grid { grid-template-columns: minmax(0, 450px); }
+.library-grid + .note-caption { margin-top: var(--space-6); }
+.library-grid .k-panel__footer { display: flex; align-items: center; justify-content: space-between; }
+.recipe-card-preview { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: var(--space-5); align-items: center; }
+.recipe-card-preview .beer-portrait { height: 110px; }
+.system-principles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); margin-bottom: var(--space-8); }
+.system-principles p { margin-top: var(--space-2); }
+.page--system .page-heading { margin-bottom: var(--space-8); }
+.tone-demo { margin-top: var(--space-5); }
+.component-demo > .k-save-status { justify-self: start; }
+.component-demo > .k-notice { margin-top: 0; }
+.history-content .demo-row { margin-bottom: var(--space-2); }
+.history-ingredients .k-ingredient-row { grid-template-columns: minmax(0, 1fr) 90px; }
+.history-ingredients .k-ingredient-row__percent, .history-ingredients .k-ingredient-row__actions { display: none; }
+.brew-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5); margin-bottom: var(--space-5); }
+.brew-metrics + .note-caption { margin-bottom: var(--space-2); }
+.k-dialog__body > .form-grid + .k-field { margin-top: var(--space-5); }
+.mobile-nav-links { display: grid; gap: var(--space-2); }
+.mobile-nav-links .k-button { justify-content: flex-start; }
+.mobile-summary { display: none; }
+.mobile-save-state { margin: calc(-1 * var(--space-3)) 0 var(--space-5); }
+#calculation-error:not(:empty), #editor-notice:not(:empty) { margin-bottom: var(--space-5); }
+@media (max-width: 1030px) {
+  .mobile-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-6); }
+  .recipe-aside > #summary { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recipe-aside > #summary > .summary-panel { display: none; }
+}
+@media (max-width: 760px) {
+  #mobile-style-reference { display: block !important; margin-bottom: var(--space-3); }
+  .recipe-settings > :last-child { grid-column: auto; }
+  .mobile-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+  .recipe-aside > #summary { grid-template-columns: minmax(0, 1fr); }
+  .system-principles { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+  .system-principles > :not(:first-child) { display: none; }
+  .yeast-layout { grid-template-columns: minmax(0, 1fr) 100px; gap: var(--space-3); }
+  .yeast-emblem { display: none; }
+  .library-toolbar { gap: var(--space-2); }
+  .recipe-card-preview { grid-template-columns: minmax(0, 1fr); }
+  .recipe-card-preview > .beer-portrait { display: none; }
+  .history-entry { flex-wrap: wrap; }
+  .history-content { flex-basis: 65%; }
+  .brew-metrics { gap: var(--space-3); }
+}

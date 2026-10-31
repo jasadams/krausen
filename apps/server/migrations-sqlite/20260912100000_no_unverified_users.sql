@@ -1,0 +1,12 @@
+-- Reconcile rows left behind by the old two-phase signup.
+--
+-- Signup used to write a `users` row when an email address was submitted and
+-- flip `verified` when the emailed link was clicked, which left rows for people
+-- who never came back. Signup now writes no row until the token is redeemed, so
+-- an unverified row can no longer be created and nothing knows how to finish
+-- one: the account it belongs to would be unreachable.
+--
+-- These rows pre-date the change. Mark them verified — the alternative is
+-- deleting accounts that may already own a workspace. A stale link redeemed
+-- later adopts the row rather than colliding with it.
+UPDATE users SET verified = 1 WHERE verified = 0;

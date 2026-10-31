@@ -1,0 +1,20 @@
+[package]
+name = "krausen-beerxml"
+version = "0.1.0"
+edition = "2024"
+license = { workspace = true }
+
+# The interchange layer. Unlike krausen-calc this may take dependencies — it
+# has to parse a real file format — but it stays free of any web framework or
+# database, and depends on krausen-calc only to convert into its input types.
+[dependencies]
+krausen-calc = { workspace = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

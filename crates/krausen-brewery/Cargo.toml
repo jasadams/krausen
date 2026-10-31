@@ -1,0 +1,24 @@
+[package]
+name = "krausen-brewery"
+version = "0.1.0"
+edition = "2024"
+license = { workspace = true }
+
+# Domain services: recipes now, equipment profiles and brews later. Sits above
+# the pure crates and below the web layer.
+[dependencies]
+krausen-beerxml = { workspace = true }
+krausen-calc = { workspace = true }
+krausen-core = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

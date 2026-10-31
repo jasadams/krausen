@@ -1,0 +1,23 @@
+[package]
+name = "krausen-calc"
+version = "0.1.0"
+edition = "2024"
+license = { workspace = true }
+
+# The calculation core is deliberately framework-free: no database, no web
+# framework, no workspace crates. It must stay testable — and reusable — on
+# its own. See KRAUSEN.md §4.1 and §6.
+[dependencies]
+serde = { workspace = true, optional = true }
+
+# Only for tests: proving a preset can arrive as config data rather than code
+# is the whole point of the interface, and that needs a concrete format.
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+[lints]
+workspace = true
