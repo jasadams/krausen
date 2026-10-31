@@ -17,7 +17,7 @@ use leptos_router::hooks::use_params_map;
 
 type EditorIdentity = krausen_types::request_context::OperationIntent;
 
-async fn current_context_matches(expected: &EditorIdentity) -> bool {
+pub(super) async fn current_context_matches(expected: &EditorIdentity) -> bool {
     let result = crate::server_fns::context::get_user_context().await;
     #[cfg(target_arch = "wasm32")]
     let result = if result
@@ -116,6 +116,7 @@ struct PendingRecipeSave {
 fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
     let identity = RwSignal::new(identity);
     let context_visible = RwSignal::new(true);
+    let profile_generation = RwSignal::new(0_u64);
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
@@ -519,10 +520,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <NumberField id="recipe-whirlpool-temp" label="Whirlpool temperature" unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_temperature_c=n/>
             </div></BreweryDisclosure>
             <BreweryDisclosure title="Equipment settings">
-                <Show when=move || draft.with(|d| d.document().equipment_profile_id.is_some())>
-                    <BreweryNotice title="Equipment profile unavailable" body="The stored profile cannot be resolved yet. You may explicitly use the draft equipment settings instead." warning=true/>
-                    <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| draft.update(|d| d.edit(|doc| doc.equipment_profile_id=None))>"Use draft equipment settings"</Button>
-                </Show>
+                <crate::pages::equipment_profiles::EquipmentProfiles draft=draft identity=identity context_visible=context_visible refresh_preview=profile_generation/>
                 <div class="recipe-editor__fields">
                 <NumberField id="recipe-efficiency-override" label="Brewhouse efficiency override" unit="%" scale=100.0 path="equipment_overrides.efficiency_override_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.efficiency_override_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.efficiency_override_fraction=n/>
                 <NumberField id="recipe-efficiency" label="Mash efficiency" unit="%" scale=100.0 path="equipment_overrides.mash_efficiency_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_efficiency_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_efficiency_fraction=n/>
@@ -539,7 +537,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Show when=move || chilling.get() == "forced"><NumberField id="recipe-chilling-rate" label="Cooling rate" unit="per min" path="equipment_overrides.chilling.rate_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..}) => *rate_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..})=&mut d.equipment_overrides.chilling { *rate_per_minute=n }/><NumberField id="recipe-chilling-plateau" label="Cooling plateau" unit="°C" path="equipment_overrides.chilling.plateau_c" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..}) => *plateau_c, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..})=&mut d.equipment_overrides.chilling { *plateau_c=n }/></Show>
                 <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
             </div></BreweryDisclosure>
-        </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate/></aside></div>
+        </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation/></aside></div>
     </div> }
 }
 
@@ -1322,14 +1320,21 @@ fn FormulationPreview(
     identity: RwSignal<EditorIdentity>,
     context_visible: RwSignal<bool>,
     gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
+    profile_generation: RwSignal<u64>,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
     let result = RwSignal::new(None::<(u64, Preview)>);
     let message = RwSignal::new("Awaiting preview.".to_owned());
     let message_generation = RwSignal::new(0_u64);
-    let trigger = Memo::new(move |_| (draft.with(|d| d.generation), context_visible.get()));
+    let trigger = Memo::new(move |_| {
+        (
+            draft.with(|d| d.generation),
+            context_visible.get(),
+            profile_generation.get(),
+        )
+    });
     Effect::new(move |_| {
-        let (draft_generation, visible) = trigger.get();
+        let (draft_generation, visible, _) = trigger.get();
         let mut generation = 0;
         gate.update_value(|g| generation = g.invalidate());
         result.set(None);
@@ -1406,7 +1411,21 @@ fn FormulationPreview(
                     let context_matches = preview.context.as_ref().is_some_and(|context| {
                         context.workspace_id == expected.workspace_id
                             && context.draft == request.draft
-                            && context.equipment_draft == request.equipment_draft
+                            && match &request.draft.equipment_profile_id {
+                                Some(id) => {
+                                    context.equipment_profile.as_ref().is_some_and(|profile| {
+                                        profile.workspace_id == expected.workspace_id
+                                            && profile.profile_id == *id
+                                            && !profile.archived
+                                            && context.equipment_draft == profile.settings
+                                            && context.equipment_provenance == "saved_profile"
+                                    })
+                                }
+                                None => {
+                                    context.equipment_profile.is_none()
+                                        && context.equipment_draft == request.equipment_draft
+                                }
+                            }
                     });
                     let mut accepted = false;
                     if context_matches {

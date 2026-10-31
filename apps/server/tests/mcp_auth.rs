@@ -542,6 +542,320 @@ async fn exercise(db: DbPool) {
         account_id: browser_actor.actor_id.clone(),
         workspace_id: ws.clone(),
     };
+    // One equipment mutation through MCP, then retry the identical command
+    // through the authenticated browser HTTP adapter and the other SDK.
+    let equipment_request = krausen_types::equipment::SaveEquipment {
+        intent: intent.clone(),
+        profile_id: uuid::Uuid::new_v4().to_string(),
+        name: "Shared equipment".into(),
+        settings: krausen_types::brewery::EquipmentSettingsV1::default(),
+        provenance: krausen_types::equipment::EquipmentProvenance {
+            source: "manual".into(),
+            assumptions: vec![],
+        },
+        expected_revision: 0,
+        expected_metadata_revision: 0,
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let args = json!({"workspace_id":ws,"request":equipment_request})
+        .as_object()
+        .unwrap()
+        .clone();
+    let saved = modern
+        .call_tool(CallToolRequestParams::new("equipment_save").with_arguments(args.clone()))
+        .await
+        .unwrap();
+    let retried = legacy
+        .call_tool(CallToolRequestParams::new("equipment_save").with_arguments(args))
+        .await
+        .unwrap();
+    assert_eq!(saved.structured_content, retried.structured_content);
+    let equipment_path =
+        <krausen_ui::server_fns::equipment::ExecuteEquipmentCommand as ServerFn>::PATH;
+    let command = krausen_types::equipment::EquipmentCommand::Save(equipment_request.clone());
+    let http_equipment = reqwest::Client::new()
+        .post(format!("{base}{equipment_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[("command_json", serde_json::to_string(&command).unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert!(http_equipment.status().is_success());
+    let browser_equipment: serde_json::Value = http_equipment.json().await.unwrap();
+    assert_eq!(
+        saved.structured_content.unwrap()["outcome"],
+        browser_equipment
+    );
+    // Read, list and immutable revision results must use the same shared
+    // outcome through both protocol clients and the browser adapter.
+    use krausen_types::equipment::{
+        EquipmentCommand, EquipmentListQuery, EquipmentQuery, EquipmentRevisionQuery,
+    };
+    let query = EquipmentQuery {
+        intent: intent.clone(),
+        profile_id: equipment_request.profile_id.clone(),
+    };
+    let list = EquipmentListQuery {
+        intent: intent.clone(),
+        cursor: None,
+        limit: 20,
+        include_archived: false,
+    };
+    let revision = EquipmentRevisionQuery {
+        intent: intent.clone(),
+        profile_id: equipment_request.profile_id.clone(),
+        revision: 1,
+    };
+    for (tool, request, command) in [
+        (
+            "equipment_get",
+            serde_json::to_value(&query).unwrap(),
+            EquipmentCommand::Get(query),
+        ),
+        (
+            "equipment_list",
+            serde_json::to_value(&list).unwrap(),
+            EquipmentCommand::List(list),
+        ),
+        (
+            "equipment_revision",
+            serde_json::to_value(&revision).unwrap(),
+            EquipmentCommand::Revision(revision),
+        ),
+    ] {
+        let args = json!({"workspace_id":ws,"request":request})
+            .as_object()
+            .unwrap()
+            .clone();
+        let a = modern
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(args.clone()))
+            .await
+            .unwrap();
+        let b = legacy
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(args))
+            .await
+            .unwrap();
+        assert_eq!(a.structured_content, b.structured_content);
+        let response = reqwest::Client::new()
+            .post(format!("{base}{equipment_path}"))
+            .bearer_auth(&browser.access_token)
+            .form(&[("command_json", serde_json::to_string(&command).unwrap())])
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let browser_result: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(a.structured_content.unwrap()["outcome"], browser_result);
+    }
+    let mut second_profile = equipment_request.clone();
+    second_profile.profile_id = uuid::Uuid::new_v4().to_string();
+    second_profile.request_id = uuid::Uuid::new_v4().to_string();
+    second_profile.name = "Second shared equipment".into();
+    let second_args = json!({"workspace_id":ws,"request":second_profile})
+        .as_object()
+        .unwrap()
+        .clone();
+    let second_save = modern
+        .call_tool(CallToolRequestParams::new("equipment_save").with_arguments(second_args))
+        .await
+        .unwrap();
+    assert!(second_save.structured_content.unwrap()["outcome"]["Profile"].is_object());
+    let first_query = EquipmentListQuery {
+        intent: intent.clone(),
+        cursor: None,
+        limit: 1,
+        include_archived: false,
+    };
+    let first_args = json!({"workspace_id":ws,"request":first_query})
+        .as_object()
+        .unwrap()
+        .clone();
+    let first_result = modern
+        .call_tool(CallToolRequestParams::new("equipment_list").with_arguments(first_args))
+        .await
+        .unwrap();
+    let first_outcome = first_result.structured_content.unwrap();
+    let next = first_outcome["outcome"]["Profiles"]["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let next_query = EquipmentListQuery {
+        cursor: Some(next),
+        ..first_query
+    };
+    let next_args = json!({"workspace_id":ws,"request":next_query})
+        .as_object()
+        .unwrap()
+        .clone();
+    let next_result = legacy
+        .call_tool(CallToolRequestParams::new("equipment_list").with_arguments(next_args))
+        .await
+        .unwrap();
+    let next_outcome = next_result.structured_content.unwrap();
+    assert_ne!(
+        first_outcome["outcome"]["Profiles"]["items"][0]["profile_id"],
+        next_outcome["outcome"]["Profiles"]["items"][0]["profile_id"]
+    );
+    let next_http = reqwest::Client::new()
+        .post(format!("{base}{equipment_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "command_json",
+            serde_json::to_string(&EquipmentCommand::List(next_query)).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_http.json::<serde_json::Value>().await.unwrap(),
+        next_outcome["outcome"]
+    );
+    // The saved profile is usable by recipe save and preview through the
+    // browser and both MCP protocol clients under the same verified principal.
+    let linked_document = krausen_types::brewery::RecipeDocumentV1 {
+        title: "Profile linked recipe".into(),
+        equipment_profile_id: Some(equipment_request.profile_id.clone()),
+        ..Default::default()
+    };
+    let linked_key = uuid::Uuid::new_v4().to_string();
+    let linked_args = json!({"workspace_id":ws,"intent":intent,"document":linked_document,"request_id":linked_key}).as_object().unwrap().clone();
+    let linked_a = modern
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(linked_args.clone()))
+        .await
+        .unwrap();
+    let linked_b = legacy
+        .call_tool(CallToolRequestParams::new("recipe_save").with_arguments(linked_args))
+        .await
+        .unwrap();
+    assert_eq!(linked_a.structured_content, linked_b.structured_content);
+    let linked_outcome = linked_a.structured_content.unwrap();
+    assert_eq!(linked_outcome["outcome"]["Saved"]["revision"], 1);
+    let recipe_save_path = <krausen_ui::server_fns::recipe_editor::SaveRecipe as ServerFn>::PATH;
+    let linked_http = reqwest::Client::new().post(format!("{base}{recipe_save_path}"))
+        .bearer_auth(&browser.access_token).json(&json!({"account_id":intent.account_id,"workspace_id":ws,"recipe_id":null,"expected_revision":null,"document":linked_document,"request_id":linked_key}))
+        .send().await.unwrap();
+    assert!(linked_http.status().is_success());
+    assert_eq!(
+        linked_http.json::<serde_json::Value>().await.unwrap(),
+        linked_outcome["outcome"]
+    );
+    let linked_preview = krausen_types::formulation::PreviewRequest {
+        draft_generation: "profile-generation".into(),
+        intent: intent.clone(),
+        draft: linked_document.clone(),
+        equipment_draft: Default::default(),
+    };
+    let linked_preview_args = json!({"workspace_id":ws,"request":linked_preview})
+        .as_object()
+        .unwrap()
+        .clone();
+    let preview_a = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview")
+                .with_arguments(linked_preview_args.clone()),
+        )
+        .await
+        .unwrap();
+    let preview_b = legacy
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(linked_preview_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_a.structured_content, preview_b.structured_content);
+    let profile_preview = preview_a.structured_content.unwrap();
+    assert_eq!(
+        profile_preview["outcome"]["Preview"]["context"]["equipment_profile"]["profile_id"],
+        equipment_request.profile_id
+    );
+    let preview_http = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "request_json",
+            serde_json::to_string(&linked_preview).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert!(preview_http.status().is_success());
+    assert_eq!(
+        preview_http.json::<serde_json::Value>().await.unwrap(),
+        profile_preview["outcome"]
+    );
+    let archive = krausen_types::equipment::ArchiveEquipment {
+        intent: intent.clone(),
+        profile_id: equipment_request.profile_id.clone(),
+        archived: true,
+        expected_metadata_revision: 1,
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let archive_args = json!({"workspace_id":ws,"request":archive})
+        .as_object()
+        .unwrap()
+        .clone();
+    let archived = modern
+        .call_tool(
+            CallToolRequestParams::new("equipment_archive").with_arguments(archive_args.clone()),
+        )
+        .await
+        .unwrap();
+    let retried_archive = legacy
+        .call_tool(CallToolRequestParams::new("equipment_archive").with_arguments(archive_args))
+        .await
+        .unwrap();
+    assert_eq!(
+        archived.structured_content,
+        retried_archive.structured_content
+    );
+    let archive_command = EquipmentCommand::Archive(archive);
+    let archived_http = reqwest::Client::new()
+        .post(format!("{base}{equipment_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "command_json",
+            serde_json::to_string(&archive_command).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert!(archived_http.status().is_success());
+    let archive_value: serde_json::Value = archived_http.json().await.unwrap();
+    assert_eq!(
+        archived.structured_content.unwrap()["outcome"],
+        archive_value
+    );
+    let archived_preview_args = json!({"workspace_id":ws,"request":linked_preview})
+        .as_object()
+        .unwrap()
+        .clone();
+    let archived_preview = modern
+        .call_tool(
+            CallToolRequestParams::new("formulation_preview").with_arguments(archived_preview_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        archived_preview.structured_content.unwrap()["outcome"],
+        "UnresolvedProfile"
+    );
+    let archived_http_preview = reqwest::Client::new()
+        .post(format!("{base}{ui_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[(
+            "request_json",
+            serde_json::to_string(&linked_preview).unwrap(),
+        )])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        archived_http_preview
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        "UnresolvedProfile"
+    );
     let browser_styles =
         krausen_ui::server_fns::formulation::execute_styles(&db, &browser_actor, &intent).await;
     let style_path = <krausen_ui::server_fns::formulation::ListFormulationStyles as ServerFn>::PATH;

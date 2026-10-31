@@ -101,6 +101,8 @@ pub struct CalculationContext {
     pub equipment_draft: EquipmentSettingsV1,
     pub effective_equipment: EquipmentSettingsV1,
     pub equipment_provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipment_profile: Option<crate::equipment::EquipmentProfile>,
     pub assumptions: Vec<String>,
     pub engine_version: String,
     pub engine_build: String,
@@ -115,22 +117,7 @@ pub struct CalculationContext {
 /// Encode the transport envelope without allowing JSON to turn NaN/Infinity
 /// into null, which would otherwise change Invalid into Incomplete.
 pub fn checked_request_json(request: &PreviewRequest) -> Result<String, ()> {
-    fn finite(v: &serde_value::Value) -> bool {
-        use serde_value::Value as V;
-        match v {
-            V::F32(n) => n.is_finite(),
-            V::F64(n) => n.is_finite(),
-            V::Option(Some(v)) | V::Newtype(v) => finite(v),
-            V::Seq(values) => values.iter().all(finite),
-            V::Map(values) => values.iter().all(|(k, v)| finite(k) && finite(v)),
-            _ => true,
-        }
-    }
-    let value = serde_value::to_value(request).map_err(|_| ())?;
-    if !finite(&value) {
-        return Err(());
-    }
-    serde_json::to_string(request).map_err(|_| ())
+    crate::request_context::checked_json(request)
 }
 
 #[cfg(test)]

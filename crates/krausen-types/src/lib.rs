@@ -16,3 +16,5 @@ pub mod formulation;
 
 pub mod request_context;
 pub mod recipe_editor;
+
+pub mod equipment;

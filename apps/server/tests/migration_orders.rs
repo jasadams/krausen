@@ -5,6 +5,7 @@ use sqlx::migrate::Migrator;
 use std::borrow::Cow;
 const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
+const EQUIPMENT: i64 = 20261031040000;
 fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
     Migrator {
         migrations: Cow::Owned(
@@ -54,11 +55,22 @@ async fn exercise(db: DbPool, all: &Migrator, skip: Option<i64>) {
             .unwrap(),
     };
     assert_eq!(count, 0);
+    let profiles: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM equipment_profiles")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM equipment_profiles")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(profiles, 0);
 }
 #[tokio::test]
 async fn sqlite_empty_and_both_upgrade_orders() {
     let all = sqlx::migrate!("./migrations-sqlite");
-    for skip in [None, Some(NATIVE), Some(CREDENTIALS)] {
+    for skip in [None, Some(NATIVE), Some(CREDENTIALS), Some(EQUIPMENT)] {
         let p = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -73,7 +85,7 @@ async fn postgres_empty_and_both_upgrade_orders() {
         std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
     let all = sqlx::migrate!("./migrations");
-    for skip in [None, Some(NATIVE), Some(CREDENTIALS)] {
+    for skip in [None, Some(NATIVE), Some(CREDENTIALS), Some(EQUIPMENT)] {
         let name = format!("krausen_migration_{}", uuid::Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE DATABASE {name}"))
             .execute(&admin)

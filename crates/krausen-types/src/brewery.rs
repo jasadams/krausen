@@ -238,6 +238,43 @@ pub struct ProcessV1 {
     pub unsupported: BTreeMap<String, Value>,
 }
 
+/// Caller-declared origin and assumptions retained with each settings revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct EquipmentProvenance {
+    pub source: String,
+    pub assumptions: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct EquipmentProfile {
+    pub workspace_id: String,
+    pub profile_id: String,
+    pub created_at: i64,
+    pub name: String,
+    pub revision: i64,
+    pub metadata_revision: i64,
+    pub archived: bool,
+    pub settings: EquipmentSettingsV1,
+    pub provenance: EquipmentProvenance,
+    pub saved_by: String,
+    pub saved_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct EquipmentRevision {
+    pub workspace_id: String,
+    pub profile_id: String,
+    pub revision: i64,
+    pub name: String,
+    pub settings: EquipmentSettingsV1,
+    pub provenance: EquipmentProvenance,
+    pub content_digest: String,
+    pub saved_by: String,
+    pub saved_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
