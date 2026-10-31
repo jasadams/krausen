@@ -179,3 +179,4 @@ pub mod equipment;
 
 pub mod recipe_library;
 pub mod process_summary;
+pub mod brew;

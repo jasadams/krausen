@@ -422,6 +422,7 @@ pub async fn enqueue_outbox(
 }
 
 pub mod formulation;
+mod formulation_kernel;
 pub mod interchange;
 
 mod style_reference;
@@ -431,3 +432,5 @@ pub mod equipment;
 
 pub mod recipe_library;
 pub mod process_summary;
+
+pub mod brew_start;

@@ -7,13 +7,14 @@ const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
 const EQUIPMENT: i64 = 20261031040000;
 const RECIPE_ARCHIVE: i64 = 20261031060000;
+const BREWS: i64 = 20261101000000;
 fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
     Migrator {
         migrations: Cow::Owned(
             all.iter()
                 .filter(|m| {
                     Some(m.version) != skip
-                        && !(skip == Some(NATIVE) && m.version == RECIPE_ARCHIVE)
+                        && !(skip == Some(NATIVE) && matches!(m.version, RECIPE_ARCHIVE | BREWS))
                 })
                 .cloned()
                 .collect(),
@@ -81,6 +82,17 @@ async fn exercise(db: DbPool, all: &Migrator, skip: Option<i64>) {
             .unwrap(),
     };
     assert_eq!(archives, 0);
+    let brews: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM brews")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM brews")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(brews, 0);
 }
 #[tokio::test]
 async fn sqlite_empty_and_both_upgrade_orders() {
@@ -91,6 +103,7 @@ async fn sqlite_empty_and_both_upgrade_orders() {
         Some(CREDENTIALS),
         Some(EQUIPMENT),
         Some(RECIPE_ARCHIVE),
+        Some(BREWS),
     ] {
         let p = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -112,6 +125,7 @@ async fn postgres_empty_and_both_upgrade_orders() {
         Some(CREDENTIALS),
         Some(EQUIPMENT),
         Some(RECIPE_ARCHIVE),
+        Some(BREWS),
     ] {
         let name = format!("krausen_migration_{}", uuid::Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE DATABASE {name}"))
