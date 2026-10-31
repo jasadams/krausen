@@ -416,14 +416,12 @@ async fn exercise(db: DbPool) {
             .any(|t| t.name == "workspace_rename")
     );
     let discovered = modern.list_tools(None).await.unwrap();
-    let notification = rmcp::model::CancelledNotification {
-        params: rmcp::model::CancelledNotificationParam::new(
+    let notification = rmcp::model::CancelledNotification::new(
+        rmcp::model::CancelledNotificationParam::new(
             Some(rmcp::model::RequestId::Number(987654)),
             Some(NOTIFICATION_SENTINEL.into()),
         ),
-        method: rmcp::model::CancelledNotificationMethod,
-        extensions: Default::default(),
-    };
+    );
     modern
         .peer()
         .send_notification(notification.into())
