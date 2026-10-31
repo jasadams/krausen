@@ -275,6 +275,130 @@ pub struct EquipmentRevision {
     pub saved_at: i64,
 }
 
+/// Where a catalogue entry lives. `Starter` is the explicit global-read
+/// exception carrying catalogue/edition identity instead of workspace ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogueScope {
+    Starter,
+    Workspace,
+}
+
+impl CatalogueScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Starter => "starter",
+            Self::Workspace => "workspace",
+        }
+    }
+}
+
+/// V1 catalogue entry kind vocabulary accepted by validation.
+pub const INGREDIENT_ENTRY_KINDS: &[&str] = &["fermentable"];
+
+/// Complete versioned ingredient catalogue entry specification.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct IngredientEntryDocumentV1 {
+    pub schema_version: u32,
+    /// Entry kind; V1 accepts `fermentable`.
+    pub kind: String,
+    /// Picker display category, e.g. `Base malt`.
+    pub category: String,
+    /// Specification copied into recipe rows. `specification.kind` keeps the
+    /// calculation vocabulary (`grain`/`extract`/`sugar`); `category` above is
+    /// the display label.
+    pub specification: FermentableSpecification,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl IngredientEntryDocumentV1 {
+    pub fn fermentable(category: String, specification: FermentableSpecification) -> Self {
+        Self {
+            schema_version: 1,
+            kind: "fermentable".to_owned(),
+            category,
+            specification,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+/// Declared origin, licensing and retained provenance notes for an entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct IngredientProvenance {
+    /// Declared origin, e.g. `krausen-starter-catalogue-v1`.
+    pub source: String,
+    /// License/attribution for bundled starter data.
+    pub license: Option<String>,
+    /// Bounded retained provenance notes.
+    pub notes: Vec<String>,
+}
+
+impl IngredientProvenance {
+    /// The only origin a workspace-created entry may carry; callers never
+    /// supply provenance, so a custom entry cannot claim starter identity.
+    pub fn workspace_custom() -> Self {
+        Self {
+            source: "workspace-custom".to_owned(),
+            license: None,
+            notes: Vec::new(),
+        }
+    }
+}
+
+/// A catalogue aggregate. `workspace_id` is `None` for starter entries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IngredientEntry {
+    pub scope: CatalogueScope,
+    pub workspace_id: Option<String>,
+    pub entry_id: String,
+    pub created_at: i64,
+    /// Content revision. This is the version copied into recipe rows.
+    pub revision: i64,
+    pub metadata_revision: i64,
+    pub archived: bool,
+    pub document: IngredientEntryDocumentV1,
+    pub provenance: IngredientProvenance,
+    pub saved_by: Option<String>,
+    pub saved_at: i64,
+}
+
+impl IngredientEntry {
+    pub fn name(&self) -> &str {
+        self.document.specification.name.as_deref().unwrap_or("")
+    }
+    pub fn producer(&self) -> &str {
+        self.document
+            .specification
+            .producer
+            .as_deref()
+            .unwrap_or("")
+    }
+    /// The source a recipe row copies when this entry is added.
+    pub fn ingredient_source(&self) -> IngredientSource {
+        IngredientSource {
+            scope: self.scope.as_str().to_owned(),
+            catalogue_id: match self.scope {
+                CatalogueScope::Starter => Some("krausen-starter-catalogue-v1".to_owned()),
+                CatalogueScope::Workspace => None,
+            },
+            entry_id: self.entry_id.clone(),
+            version: Some(self.revision as u64),
+        }
+    }
+    /// Human label distinguishing starter entries from the workspace library.
+    pub fn source_label(&self) -> &'static str {
+        match self.scope {
+            CatalogueScope::Starter => "Starter catalogue",
+            CatalogueScope::Workspace => "Your library",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

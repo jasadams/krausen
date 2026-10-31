@@ -6,6 +6,7 @@ use std::borrow::Cow;
 const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
 const EQUIPMENT: i64 = 20261031040000;
+const CATALOGUE: i64 = 20261031050000;
 const RECIPE_ARCHIVE: i64 = 20261031060000;
 fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
     Migrator {
@@ -81,6 +82,28 @@ async fn exercise(db: DbPool, all: &Migrator, skip: Option<i64>) {
             .unwrap(),
     };
     assert_eq!(archives, 0);
+    let entries: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM ingredient_entries")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM ingredient_entries")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(entries, 0);
+    let starters: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM starter_ingredient_entries")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM starter_ingredient_entries")
+            .fetch_one(p)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(starters, 4);
 }
 #[tokio::test]
 async fn sqlite_empty_and_both_upgrade_orders() {
@@ -90,6 +113,7 @@ async fn sqlite_empty_and_both_upgrade_orders() {
         Some(NATIVE),
         Some(CREDENTIALS),
         Some(EQUIPMENT),
+        Some(CATALOGUE),
         Some(RECIPE_ARCHIVE),
     ] {
         let p = sqlx::sqlite::SqlitePoolOptions::new()
@@ -111,6 +135,7 @@ async fn postgres_empty_and_both_upgrade_orders() {
         Some(NATIVE),
         Some(CREDENTIALS),
         Some(EQUIPMENT),
+        Some(CATALOGUE),
         Some(RECIPE_ARCHIVE),
     ] {
         let name = format!("krausen_migration_{}", uuid::Uuid::new_v4().simple());

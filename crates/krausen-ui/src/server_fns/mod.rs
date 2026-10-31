@@ -176,6 +176,7 @@ pub mod recipe_editor;
 pub mod interchange;
 
 pub mod equipment;
+pub mod catalogue;
 
 pub mod recipe_library;
 pub mod process_summary;

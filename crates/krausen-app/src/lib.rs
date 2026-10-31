@@ -36,6 +36,10 @@ pub enum Error {
     ContextChanged,
     #[error("equipment profile is archived")]
     EquipmentArchived,
+    #[error("ingredient entry is archived")]
+    IngredientArchived,
+    #[error("duplicate ingredient entry")]
+    DuplicateIngredient,
     #[error("workspace revision conflict")]
     Conflict { expected: i64, actual: i64 },
     #[error("request identity reused with a different payload")]
@@ -431,3 +435,5 @@ pub mod equipment;
 
 pub mod recipe_library;
 pub mod process_summary;
+
+pub mod catalogue;

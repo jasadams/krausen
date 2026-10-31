@@ -144,6 +144,16 @@ equipment_request!(RecipeList, krausen_types::recipe_library::LibraryQuery);
 equipment_request!(RecipeHistory, krausen_types::recipe_library::HistoryQuery);
 equipment_request!(RecipeRevision, krausen_types::recipe_library::RevisionQuery);
 equipment_request!(RecipeArchive, krausen_types::recipe_library::ArchiveRecipe);
+equipment_request!(
+    IngredientSave,
+    krausen_types::catalogue::SaveIngredientEntry
+);
+equipment_request!(
+    IngredientArchive,
+    krausen_types::catalogue::ArchiveIngredientEntry
+);
+equipment_request!(IngredientGet, krausen_types::catalogue::IngredientQuery);
+equipment_request!(IngredientSearch, krausen_types::catalogue::SearchCatalogue);
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
 }
@@ -255,6 +265,38 @@ impl ServerHandler for McpHandler {
                 schema(
                     serde_json::to_value(schemars::schema_for!(EquipmentRevision))
                         .expect("equipment schema"),
+                ),
+            ),
+            Tool::new(
+                operations::INGREDIENT_SAVE.mcp_tool,
+                "Create or edit a workspace custom ingredient entry using observed revisions and a stable request UUID",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(IngredientSave))
+                        .expect("ingredient schema"),
+                ),
+            ),
+            Tool::new(
+                operations::INGREDIENT_ARCHIVE.mcp_tool,
+                "Archive or restore a workspace custom ingredient entry",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(IngredientArchive))
+                        .expect("ingredient schema"),
+                ),
+            ),
+            Tool::new(
+                operations::INGREDIENT_GET.mcp_tool,
+                "Read one ingredient entry, including public starter entries",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(IngredientGet))
+                        .expect("ingredient schema"),
+                ),
+            ),
+            Tool::new(
+                operations::INGREDIENT_SEARCH.mcp_tool,
+                "Search the ingredient catalogue with bounded cursor pagination",
+                schema(
+                    serde_json::to_value(schemars::schema_for!(IngredientSearch))
+                        .expect("ingredient schema"),
                 ),
             ),
             Tool::new(
@@ -575,6 +617,77 @@ impl ServerHandler for McpHandler {
                         | krausen_types::equipment::EquipmentOutcome::Profiles(_)
                         | krausen_types::equipment::EquipmentOutcome::Revision(_)
                         | krausen_types::equipment::EquipmentOutcome::NotFound
+                );
+                let value = json!({"outcome":outcome});
+                if is_error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "ingredient.save.v1"
+            | "ingredient.archive.v1"
+            | "ingredient.get.v1"
+            | "ingredient.search.v1" => {
+                macro_rules! parse {
+                    ($ty:ty) => {
+                        serde_json::from_value::<$ty>(input).map_err(|_| {
+                            ErrorData::invalid_params("Invalid ingredient request", None)
+                        })?
+                    };
+                }
+                macro_rules! actor {
+                    ($workspace:expr) => {
+                        krausen_app::ActorContext {
+                            actor_id: principal.user_id.clone(),
+                            credential_id: principal.credential_id.clone(),
+                            access_expires_at: principal.access_expires_at,
+                            workspace_id: $workspace,
+                        }
+                    };
+                }
+                let outcome = match operation.id {
+                    "ingredient.save.v1" => {
+                        let c = parse!(IngredientSave);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::catalogue::project(
+                            krausen_app::catalogue::save(&self.db, &actor, c.request).await,
+                        )
+                    }
+                    "ingredient.archive.v1" => {
+                        let c = parse!(IngredientArchive);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::catalogue::project(
+                            krausen_app::catalogue::set_archived(&self.db, &actor, c.request).await,
+                        )
+                    }
+                    "ingredient.get.v1" => {
+                        let c = parse!(IngredientGet);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::catalogue::project_get(
+                            krausen_app::catalogue::get(
+                                &self.db,
+                                &actor,
+                                &c.request.intent,
+                                &c.request.entry_id,
+                            )
+                            .await,
+                        )
+                    }
+                    "ingredient.search.v1" => {
+                        let c = parse!(IngredientSearch);
+                        let actor = actor!(c.workspace_id);
+                        krausen_app::catalogue::project_page(
+                            krausen_app::catalogue::search(&self.db, &actor, &c.request).await,
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+                let is_error = !matches!(
+                    outcome,
+                    krausen_types::catalogue::IngredientOutcome::Entry(_)
+                        | krausen_types::catalogue::IngredientOutcome::Entries(_)
+                        | krausen_types::catalogue::IngredientOutcome::NotFound
                 );
                 let value = json!({"outcome":outcome});
                 if is_error {

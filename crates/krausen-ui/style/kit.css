@@ -175,6 +175,19 @@
 .k-catalogue-item__unspecified { font-family: var(--k-font-sans); }
 .k-catalogue-item__selection { display: grid; place-items: center; width: 1.467rem; height: 1.467rem; border: 1px solid var(--k-color-border-strong); border-radius: var(--k-radius-pill); color: var(--k-color-primary-foreground); background: var(--k-color-surface); }
 .k-catalogue-item--selected .k-catalogue-item__selection { border-color: var(--k-color-primary); background: var(--k-color-primary); }
+.k-catalogue-list { display: grid; gap: var(--k-space-2); min-width: 0; max-height: 26rem; overflow-y: auto; padding: var(--k-space-1); margin: calc(-1 * var(--k-space-1)); }
+.k-catalogue-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: var(--k-space-3); margin-bottom: var(--k-space-4); }
+.k-catalogue-toolbar > .k-field { flex: 1 1 12rem; min-width: 0; }
+.k-catalogue-toolbar > button { flex-shrink: 0; }
+.k-catalogue-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--k-space-2); margin-bottom: var(--k-space-3); }
+.k-catalogue-selection { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--k-space-3); padding: var(--k-space-3) var(--k-space-4); margin-top: var(--k-space-4); border: 1px solid var(--k-color-border); border-radius: var(--k-radius-sm); background: var(--k-color-surface-subtle); color: var(--k-color-muted); font-size: var(--k-font-sm); line-height: 1.5; }
+.k-catalogue-selection strong { display: block; margin-top: var(--k-space-1); color: var(--k-color-foreground); font-weight: 500; }
+.k-catalogue-selection > .k-field { flex: 1 1 10rem; min-width: 0; }
+.k-catalogue-selection > div > .note-caption { display: block; }
+.k-catalogue-more { display: flex; justify-content: center; margin-top: var(--k-space-3); }
+.k-catalogue-create { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); }
+.k-catalogue-create > .k-field:first-child { grid-column: 1 / -1; }
+@media (max-width: 600px) { .k-catalogue-toolbar { align-items: stretch; } .k-catalogue-create { grid-template-columns: 1fr; } .k-catalogue-selection { flex-direction: column; align-items: stretch; } }
 .kit-showcase__swatches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--k-space-3); }
 .k-swatch { min-width: 0; }
 .k-swatch__colour { height: 3.5rem; border: 1px solid var(--k-color-border); border-radius: var(--k-radius-sm); }

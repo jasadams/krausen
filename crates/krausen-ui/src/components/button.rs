@@ -139,6 +139,9 @@ pub fn Button(
     /// Accessibility label — required for icon-only buttons.
     #[prop(optional, into)]
     aria_label: Option<String>,
+    /// Pressed/toggled state for toggle-style controls (`aria-pressed`).
+    #[prop(optional, into)]
+    aria_pressed: MaybeProp<String>,
     /// Native button `type` attribute. Defaults to `"button"` so buttons inside
     /// a `<form>` never accidentally submit. Pass `"submit"` for the form's
     /// actual submit action.
@@ -160,6 +163,7 @@ pub fn Button(
             class=classes
             disabled=move || disabled.try_get().flatten().unwrap_or(false)
             aria-label=aria_label.clone()
+            aria-pressed=move || aria_pressed.try_get().flatten()
             title=aria_label
         >
             {children()}
