@@ -4,6 +4,31 @@ use crate::{ActorContext, Error, RequestIdentity, authorize_account, boundary_er
 use krausen_core::{DbPool, DbTx};
 use krausen_types::account::Session;
 
+mod password;
+pub use password::change_password;
+
+/// Project password changes without exposing credential material.
+pub fn project_password_change(
+    result: Result<i64, Error>,
+) -> krausen_types::account::PasswordChangeOutcome {
+    use krausen_types::account::PasswordChangeOutcome as Outcome;
+    match result {
+        Ok(revision) => Outcome::Saved { revision },
+        Err(Error::InvalidPassword) => Outcome::CurrentPasswordIncorrect,
+        Err(Error::Conflict { expected, actual }) => Outcome::Conflict { expected, actual },
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::RetryKeyUnavailable) => Outcome::RetryKeyUnavailable,
+        Err(Error::ResultExpired { .. }) => Outcome::ResultExpired,
+        Err(Error::Forbidden) => Outcome::Forbidden,
+        Err(Error::Invalid(_)) => Outcome::Invalid,
+        Err(Error::Retryable) => Outcome::Retryable,
+        Err(error) => {
+            tracing::error!(%error, "password change failed");
+            Outcome::Unavailable
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     credential_id: String,
@@ -266,6 +291,14 @@ pub async fn status(
 ) -> Result<krausen_types::account::SecurityStatus, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_account(&mut tx, actor).await?;
+    let revision = scalar!(
+        &mut tx,
+        i64,
+        "SELECT account_revision FROM users WHERE user_id=$1",
+        &actor.actor_id
+    )
+    .map_err(db_error)?
+    .ok_or(Error::Forbidden)?;
     let sql = if matches!(tx, DbTx::Postgres(_)) {
         "SELECT auth_type FROM user_auth_methods WHERE user_id=$1 AND active=TRUE ORDER BY auth_type FOR SHARE"
     } else {
@@ -291,6 +324,7 @@ pub async fn status(
     Ok(krausen_types::account::SecurityStatus {
         has_password: methods.iter().any(|method| method == "password"),
         totp_enabled: methods.iter().any(|method| method == "totp"),
+        revision,
     })
 }
 

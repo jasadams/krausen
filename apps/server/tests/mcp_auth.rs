@@ -20,9 +20,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tracing_subscriber::{EnvFilter, filter::filter_fn, prelude::*};
 
 const PASSWORD_SENTINEL: &str = "password-sentinel-never-log-81f";
+const NEW_PASSWORD_SENTINEL: &str = "new-password-sentinel-never-log-82e";
+const WRONG_PASSWORD_SENTINEL: &str = "wrong-password-sentinel-never-log-92a";
+const UI_PASSWORD_SENTINEL: &str = "ui-password-sentinel-never-log-739";
 const PROOF_SENTINEL: &str = "proof-sentinel-never-log-629";
 const TOKEN_SENTINEL: &str = "token-sentinel-never-log-43d";
 const RESPONSE_SENTINEL: &str = "response-sentinel-never-log-b67";
+const NOTIFICATION_SENTINEL: &str = "notification-sentinel-never-log-0cd";
 
 #[derive(Clone)]
 struct LogCapture(Arc<Mutex<Vec<u8>>>);
@@ -412,6 +416,19 @@ async fn exercise(db: DbPool) {
             .any(|t| t.name == "workspace_rename")
     );
     let discovered = modern.list_tools(None).await.unwrap();
+    let notification = rmcp::model::CancelledNotification {
+        params: rmcp::model::CancelledNotificationParam::new(
+            Some(rmcp::model::RequestId::Number(987654)),
+            Some(NOTIFICATION_SENTINEL.into()),
+        ),
+        method: rmcp::model::CancelledNotificationMethod,
+        extensions: Default::default(),
+    };
+    modern
+        .peer()
+        .send_notification(notification.into())
+        .await
+        .unwrap();
     let secret_argument = json!({"password":PASSWORD_SENTINEL})
         .as_object()
         .unwrap()
@@ -1619,6 +1636,15 @@ async fn exercise(db: DbPool) {
         .call_tool(CallToolRequestParams::new("account_sessions"))
         .await
         .unwrap();
+    let old_hash = krausen_auth::password::hash_password(PASSWORD_SENTINEL).unwrap();
+    user_service::upsert_auth_method(
+        &db,
+        &principal.user_id,
+        "password",
+        &json!({"hash":&old_hash}),
+    )
+    .await
+    .unwrap();
     let password_path = <krausen_ui::server_fns::security::HasPassword as ServerFn>::PATH;
     let browser_password: bool = reqwest::Client::new()
         .post(format!("{base}{password_path}"))
@@ -1634,10 +1660,59 @@ async fn exercise(db: DbPool) {
         .call_tool(CallToolRequestParams::new("account_security_status"))
         .await
         .unwrap();
-    assert_eq!(
-        sdk_status.structured_content.unwrap()["has_password"],
-        browser_password
+    let sdk_status = sdk_status.structured_content.unwrap();
+    assert_eq!(sdk_status["has_password"], browser_password);
+    let observed_revision = sdk_status["revision"].as_i64().unwrap();
+    let wrong_change=modern.call_tool(CallToolRequestParams::new("account_password_change").with_arguments(json!({"current_password":WRONG_PASSWORD_SENTINEL,"new_password":NEW_PASSWORD_SENTINEL,"expected_revision":observed_revision,"request_id":uuid::Uuid::new_v4()}).as_object().unwrap().clone())).await.unwrap();
+    assert_eq!(wrong_change.is_error, Some(true));
+    let password_request = uuid::Uuid::new_v4().to_string();
+    let change_args=json!({"current_password":PASSWORD_SENTINEL,"new_password":NEW_PASSWORD_SENTINEL,"expected_revision":observed_revision,"request_id":password_request}).as_object().unwrap().clone();
+    let changed = modern
+        .call_tool(
+            CallToolRequestParams::new("account_password_change")
+                .with_arguments(change_args.clone()),
+        )
+        .await
+        .unwrap();
+    let retry = modern
+        .call_tool(
+            CallToolRequestParams::new("account_password_change").with_arguments(change_args),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.structured_content, retry.structured_content);
+    assert!(
+        changed.structured_content.unwrap()["outcome"]
+            .get("Saved")
+            .is_some()
     );
+    let intermediate_data:String=match &db {DbPool::Postgres(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&principal.user_id).fetch_one(p).await.unwrap(),DbPool::Sqlite(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&principal.user_id).fetch_one(p).await.unwrap()};
+    let intermediate_hash = serde_json::from_str::<serde_json::Value>(&intermediate_data).unwrap()
+        ["hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let change_path = <krausen_ui::server_fns::security::ChangePassword as ServerFn>::PATH;
+    let browser_change = reqwest::Client::new()
+        .post(format!("{base}{change_path}"))
+        .bearer_auth(&browser.access_token)
+        .form(&[
+            ("current_password", NEW_PASSWORD_SENTINEL.to_owned()),
+            ("new_password", UI_PASSWORD_SENTINEL.to_owned()),
+            ("expected_revision", (observed_revision + 1).to_string()),
+            ("request_id", uuid::Uuid::new_v4().to_string()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(browser_change.status().is_success());
+    let browser_change: serde_json::Value = browser_change.json().await.unwrap();
+    assert!(browser_change.get("Saved").is_some());
+    let final_data:String=match &db {DbPool::Postgres(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&principal.user_id).fetch_one(p).await.unwrap(),DbPool::Sqlite(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&principal.user_id).fetch_one(p).await.unwrap()};
+    let final_hash = serde_json::from_str::<serde_json::Value>(&final_data).unwrap()["hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert!(
         sdk_sessions.structured_content.unwrap()["sessions"]
             .as_array()
@@ -2194,13 +2269,23 @@ async fn exercise(db: DbPool) {
     );
     for sentinel in [
         PASSWORD_SENTINEL,
+        NEW_PASSWORD_SENTINEL,
+        WRONG_PASSWORD_SENTINEL,
+        UI_PASSWORD_SENTINEL,
         PROOF_SENTINEL,
         TOKEN_SENTINEL,
         RESPONSE_SENTINEL,
+        NOTIFICATION_SENTINEL,
     ] {
         assert!(
             !captured.contains(sentinel),
             "sensitive transport payload appeared in logs"
+        );
+    }
+    for hash in [&old_hash, &intermediate_hash, &final_hash] {
+        assert!(
+            !captured.contains(hash),
+            "password verifier appeared in logs"
         );
     }
 }

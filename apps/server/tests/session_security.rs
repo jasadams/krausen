@@ -65,13 +65,220 @@ async fn exercise(db: DbPool) {
         "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'webauthn','{\"credentials\":{\"public-id\":{\"device_name\":\"Test key\",\"private_material\":\"never-expose\"}}}',TRUE)",
         &user
     );
-    run!(
-        "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'password','{}',TRUE)",
-        &user
-    );
+    let old_password = "start-password-sentinel";
+    let new_password = "next-password-sentinel";
+    let old_hash = krausen_auth::password::hash_password(old_password).unwrap();
+    let auth_data = serde_json::json!({"hash":old_hash}).to_string();
+    let insert = if db.is_postgres() {
+        "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'password',CAST($2 AS JSON),TRUE)"
+    } else {
+        "INSERT INTO user_auth_methods (user_id,auth_type,auth_data,active) VALUES ($1,'password',$2,TRUE)"
+    };
+    run!(insert, &user, &auth_data);
     let status = krausen_app::security::status(&db, &actor).await.unwrap();
     assert!(status.has_password);
     assert!(!status.totp_enabled);
+    let key = b"test-only-password-commitment-key-32-bytes";
+    let password_request = uuid::Uuid::new_v4();
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            "incorrect".into(),
+            new_password.into(),
+            status.revision,
+            uuid::Uuid::new_v4(),
+            key
+        )
+        .await,
+        Err(Error::InvalidPassword)
+    ));
+    if db.is_postgres() {
+        run!(
+            "CREATE OR REPLACE FUNCTION test_fail_password_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='account.password.change.v1' THEN RAISE EXCEPTION 'test rollback'; END IF; RETURN NEW; END $$"
+        );
+        run!(
+            "CREATE TRIGGER test_fail_password_change BEFORE INSERT ON app_changes FOR EACH ROW EXECUTE FUNCTION test_fail_password_change()"
+        );
+    } else {
+        run!(
+            "CREATE TRIGGER test_fail_password_change BEFORE INSERT ON app_changes WHEN NEW.operation='account.password.change.v1' BEGIN SELECT RAISE(ABORT,'test rollback'); END"
+        );
+    }
+    assert!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await
+        .is_err()
+    );
+    if db.is_postgres() {
+        run!("DROP TRIGGER test_fail_password_change ON app_changes");
+        run!("DROP FUNCTION test_fail_password_change()");
+    } else {
+        run!("DROP TRIGGER test_fail_password_change");
+    }
+    let revision = krausen_app::security::change_password(
+        &db,
+        &actor,
+        old_password.into(),
+        new_password.into(),
+        status.revision,
+        password_request,
+        key,
+    )
+    .await
+    .unwrap();
+    assert_eq!(revision, status.revision + 1);
+    let changed_data:String=match &db { DbPool::Postgres(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&user).fetch_one(p).await.unwrap(),DbPool::Sqlite(p)=>sqlx::query_scalar("SELECT CAST(auth_data AS TEXT) FROM user_auth_methods WHERE user_id=$1 AND auth_type='password'").bind(&user).fetch_one(p).await.unwrap() };
+    let changed_data: serde_json::Value = serde_json::from_str(&changed_data).unwrap();
+    let changed_hash = changed_data["hash"].as_str().unwrap();
+    assert!(krausen_auth::password::verify_password(new_password, changed_hash).unwrap());
+    assert!(!krausen_auth::password::verify_password(old_password, changed_hash).unwrap());
+    assert_eq!(
+        revision,
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await
+        .unwrap()
+    );
+    let other_credential_actor = ActorContext {
+        credential_id: rollback.clone(),
+        ..actor.clone()
+    };
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &other_credential_actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await,
+        Err(Error::Forbidden)
+    ));
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            "different-password".into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await,
+        Err(Error::RequestIdentityConflict)
+    ));
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            b"rotated-password-commitment-key-32-bytes"
+        )
+        .await,
+        Err(Error::RetryKeyUnavailable)
+    ));
+    let expired_actor = ActorContext {
+        access_expires_at: chrono::Utc::now().timestamp() - 1,
+        ..actor.clone()
+    };
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &expired_actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await,
+        Err(Error::Forbidden)
+    ));
+    let retained:String=match &db { DbPool::Postgres(p)=>sqlx::query_scalar("SELECT payload_digest || COALESCE(result_json,'') FROM app_requests WHERE actor_id=$1 AND operation='account.password.change.v1'").bind(&user).fetch_one(p).await.unwrap(),DbPool::Sqlite(p)=>sqlx::query_scalar("SELECT payload_digest || COALESCE(result_json,'') FROM app_requests WHERE actor_id=$1 AND operation='account.password.change.v1'").bind(&user).fetch_one(p).await.unwrap() };
+    assert!(
+        !retained.contains(old_password)
+            && !retained.contains(new_password)
+            && !retained.contains("$argon2")
+    );
+    let (first_change, second_change) = tokio::join!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            new_password.into(),
+            "race-password-one".into(),
+            revision,
+            uuid::Uuid::new_v4(),
+            key
+        ),
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            new_password.into(),
+            "race-password-two".into(),
+            revision,
+            uuid::Uuid::new_v4(),
+            key
+        )
+    );
+    assert_ne!(first_change.is_ok(), second_change.is_ok());
+    assert!(
+        matches!(first_change, Err(Error::Conflict { .. }))
+            || matches!(second_change, Err(Error::Conflict { .. }))
+    );
+    assert_eq!(
+        revision,
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await
+        .unwrap()
+    );
+    run!(
+        "UPDATE app_requests SET result_expires_at=$1 WHERE actor_id=$2 AND operation='account.password.change.v1' AND request_id=$3",
+        chrono::Utc::now().timestamp() - 1,
+        &user,
+        password_request.to_string()
+    );
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await,
+        Err(Error::ResultExpired { .. })
+    ));
     let summaries = krausen_app::security::passkeys(&db, &actor).await.unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].name, "Test key");
@@ -164,6 +371,19 @@ async fn exercise(db: DbPool) {
     assert_eq!(count, 2);
     assert!(matches!(
         krausen_app::security::sessions(&db, &actor).await,
+        Err(Error::Forbidden)
+    ));
+    assert!(matches!(
+        krausen_app::security::change_password(
+            &db,
+            &actor,
+            old_password.into(),
+            new_password.into(),
+            status.revision,
+            password_request,
+            key
+        )
+        .await,
         Err(Error::Forbidden)
     ));
     assert_eq!(

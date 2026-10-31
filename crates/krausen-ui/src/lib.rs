@@ -82,6 +82,7 @@ pub fn register_server_functions() {
     // Security
     use server_fns::security::*;
     register_explicit::<HasPassword>();
+    register_explicit::<GetSecurityStatus>();
     register_explicit::<SetPassword>();
     register_explicit::<ChangePassword>();
     register_explicit::<GetTotpStatus>();

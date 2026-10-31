@@ -10,13 +10,13 @@
 //! - Show/hide toggle on password fields
 //! - Success/error feedback
 
-use leptos::prelude::*;
-use phosphor_leptos::Icon;
 use crate::components::{
     Alert, AlertDescription, AlertVariant, Button, ButtonVariant, Card, CardContent,
-    CardDescription, CardHeader, CardTitle, Label, Skeleton, INPUT_CLASS,
+    CardDescription, CardHeader, CardTitle, INPUT_CLASS, Label, Skeleton,
 };
-use crate::server_fns::security::{change_password, has_password, set_password};
+use crate::server_fns::security::{change_password, get_security_status, set_password};
+use leptos::prelude::*;
+use phosphor_leptos::Icon;
 
 /// Password field with show/hide toggle button.
 ///
@@ -33,6 +33,7 @@ fn PasswordField(
     value: RwSignal<String>,
     /// Whether the password is currently visible.
     visible: RwSignal<bool>,
+    generation: RwSignal<u64>,
     /// Whether to enforce `minlength="8"` on the input. Should be false for
     /// current-password fields (legacy passwords may be shorter).
     #[prop(optional)]
@@ -56,6 +57,7 @@ fn PasswordField(
                     prop:value=move || value.get()
                     on:input=move |ev| {
                         value.set(event_target_value(&ev));
+                        generation.update(|value| *value = value.wrapping_add(1));
                     }
                 />
                 <button
@@ -82,7 +84,7 @@ fn PasswordField(
 #[component]
 pub fn PasswordManager() -> impl IntoView {
     // ── Server data ──────────────────────────────────────────────────────
-    let has_pw = Resource::new(|| (), |_| has_password());
+    let has_pw = Resource::new(|| (), |_| get_security_status());
 
     // ── Form state ───────────────────────────────────────────────────────
     let editing = RwSignal::new(false);
@@ -95,6 +97,8 @@ pub fn PasswordManager() -> impl IntoView {
     let loading = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(Option::<String>::None);
+    let generation = RwSignal::new(0u64);
+    let pending_request = RwSignal::new(None::<(u64, i64, String)>);
 
     let reset_form = move || {
         current_password.set(String::new());
@@ -137,13 +141,49 @@ pub fn PasswordManager() -> impl IntoView {
         let current_pw = current_password.get();
 
         leptos::task::spawn_local(async move {
-            let user_has_pw = has_pw
-                .get()
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
+            let Some(status) = has_pw.get_untracked().and_then(Result::ok) else {
+                loading.set(false);
+                error.set(Some("Reload security settings before saving.".into()));
+                return;
+            };
+            let user_has_pw = status.has_password;
 
             let result = if user_has_pw {
-                change_password(current_pw, new_pw).await
+                let generation = generation.get_untracked();
+                let request = pending_request
+                    .get_untracked()
+                    .filter(|(old, revision, _)| *old == generation && *revision == status.revision)
+                    .map(|(_, _, id)| id)
+                    .or_else(crate::utils::request_id::new_request_id);
+                let Some(request) = request else {
+                    loading.set(false);
+                    error.set(Some("Unable to create request identity.".into()));
+                    return;
+                };
+                pending_request.set(Some((generation, status.revision, request.clone())));
+                match change_password(current_pw, new_pw, status.revision, request).await {
+                    Ok(krausen_types::account::PasswordChangeOutcome::Saved { .. }) => {
+                        pending_request.set(None);
+                        Ok("Password changed successfully".to_string())
+                    }
+                    Ok(krausen_types::account::PasswordChangeOutcome::CurrentPasswordIncorrect) => {
+                        Err(ServerFnError::new("Current password is incorrect."))
+                    }
+                    Ok(krausen_types::account::PasswordChangeOutcome::Conflict { .. }) => {
+                        Err(ServerFnError::new(
+                            "Security settings changed. Reload before trying again.",
+                        ))
+                    }
+                    Ok(krausen_types::account::PasswordChangeOutcome::RetryKeyUnavailable) => {
+                        Err(ServerFnError::new(
+                            "The previous request cannot be recovered after a key change. Reload before trying again.",
+                        ))
+                    }
+                    Ok(_) => Err(ServerFnError::new(
+                        "Password change unavailable. Try again.",
+                    )),
+                    Err(error) => Err(error),
+                }
             } else {
                 set_password(new_pw).await
             };
@@ -175,7 +215,7 @@ pub fn PasswordManager() -> impl IntoView {
         has_pw
             .get()
             .and_then(|r| r.ok())
-            .unwrap_or(false)
+            .is_some_and(|status| status.has_password)
     };
 
     view! {
@@ -282,6 +322,7 @@ pub fn PasswordManager() -> impl IntoView {
                                     placeholder="Enter current password"
                                     value=current_password
                                     visible=show_current
+                                    generation=generation
                                 />
                             </Show>
 
@@ -292,6 +333,7 @@ pub fn PasswordManager() -> impl IntoView {
                                 placeholder="Enter new password (min 8 characters)"
                                 value=new_password
                                 visible=show_new
+                                generation=generation
                                 enforce_min_length=true
                             />
 
@@ -302,6 +344,7 @@ pub fn PasswordManager() -> impl IntoView {
                                 placeholder="Confirm new password"
                                 value=confirm_password
                                 visible=show_confirm
+                                generation=generation
                                 enforce_min_length=true
                             />
 

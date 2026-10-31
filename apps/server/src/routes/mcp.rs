@@ -32,6 +32,7 @@ use std::{borrow::Cow, sync::Arc};
 struct McpHandler {
     db: krausen_core::DbPool,
     mail_available: bool,
+    password_key: Arc<str>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +135,14 @@ struct OwnershipResponse {
 #[serde(deny_unknown_fields)]
 struct CredentialRevoke {
     credential_id: String,
+    expected_revision: i64,
+    request_id: uuid::Uuid,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordChange {
+    current_password: String,
+    new_password: String,
     expected_revision: i64,
     request_id: uuid::Uuid,
 }
@@ -277,6 +286,13 @@ impl ServerHandler for McpHandler {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(
+                operations::PASSWORD_CHANGE.mcp_tool,
+                "Change the authenticated account password",
+                schema(
+                    json!({"type":"object","properties":{"current_password":{"type":"string"},"new_password":{"type":"string"},"expected_revision":{"type":"integer"},"request_id":{"type":"string","format":"uuid"}},"required":["current_password","new_password","expected_revision","request_id"],"additionalProperties":false}),
+                ),
+            ),
             Tool::new(
                 operations::SECURITY_STATUS.mcp_tool,
                 "Read the current account's security status",
@@ -844,6 +860,38 @@ impl ServerHandler for McpHandler {
                 );
                 let value = json!({"outcome":outcome});
                 if is_error {
+                    CallToolResult::structured_error(value)
+                } else {
+                    CallToolResult::structured(value)
+                }
+            }
+            "account.password.change.v1" => {
+                let input: PasswordChange = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid password change", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: String::new(),
+                };
+                let outcome = krausen_app::security::project_password_change(
+                    krausen_app::security::change_password(
+                        &self.db,
+                        &actor,
+                        input.current_password,
+                        input.new_password,
+                        input.expected_revision,
+                        input.request_id,
+                        self.password_key.as_bytes(),
+                    )
+                    .await,
+                );
+                let error = !matches!(
+                    outcome,
+                    krausen_types::account::PasswordChangeOutcome::Saved { .. }
+                );
+                let value = json!({"outcome":outcome});
+                if error {
                     CallToolResult::structured_error(value)
                 } else {
                     CallToolResult::structured(value)
@@ -1672,6 +1720,7 @@ impl ServerHandler for McpHandler {
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let db = state.db.clone();
+    let password_key: Arc<str> = Arc::from(state.config.jwt_secret.as_str());
     let mail_available = krausen_app::invitation::delivery_available(
         krausen_auth::email_service::EmailService::from_env().is_configured(),
         &state.config.base_url,
@@ -1692,6 +1741,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             Ok(McpHandler {
                 db: db.clone(),
                 mail_available,
+                password_key: password_key.clone(),
             })
         },
         Arc::new(LocalSessionManager::default()),

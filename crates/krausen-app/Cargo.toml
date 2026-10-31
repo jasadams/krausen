@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 krausen-core.workspace = true
+krausen-auth.workspace = true
 krausen-types.workspace = true
 krausen-brewery.workspace = true
 krausen-beerxml.workspace = true
@@ -23,6 +24,7 @@ uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

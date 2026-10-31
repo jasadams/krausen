@@ -54,6 +54,18 @@ pub async fn has_password() -> Result<bool, ServerFnError> {
     Ok(status.has_password)
 }
 
+/// Load the current account's security state and observed revision.
+#[server(prefix = "/leptos-api")]
+pub async fn get_security_status() -> Result<krausen_types::account::SecurityStatus, ServerFnError>
+{
+    let auth = extract_auth().await?;
+    let ctx = extract_context()?;
+    let actor = super::verified_account_actor(&auth)?;
+    krausen_app::security::status(&ctx.db, &actor)
+        .await
+        .map_err(|_| ServerFnError::new("Unable to load security status"))
+}
+
 /// Set a password for a user who does not yet have one (e.g. OAuth-only users).
 ///
 /// Mirrors the validation in `apps/server/src/routes/auth_password.rs::set_password`:
@@ -98,26 +110,27 @@ pub async fn set_password(new_password: String) -> Result<String, ServerFnError>
 pub async fn change_password(
     current_password: String,
     new_password: String,
-) -> Result<String, ServerFnError> {
+    expected_revision: i64,
+    request_id: String,
+) -> Result<krausen_types::account::PasswordChangeOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    if new_password.len() < 8 {
-        return Err(ServerFnError::new(
-            "New password must be at least 8 characters",
-        ));
-    }
-
-    krausen_auth::security_service::change_password(
-        &ctx.db,
-        &auth.user_id,
-        &current_password,
-        &new_password,
-    )
-    .await
-    .into_sfn()?;
-
-    Ok("Password changed successfully".to_string())
+    let actor = super::verified_account_actor(&auth)?;
+    let request_id = uuid::Uuid::parse_str(&request_id)
+        .map_err(|_| ServerFnError::new("Invalid request identity"))?;
+    Ok(krausen_app::security::project_password_change(
+        krausen_app::security::change_password(
+            &ctx.db,
+            &actor,
+            current_password,
+            new_password,
+            expected_revision,
+            request_id,
+            ctx.auth_state.jwt_secret.as_bytes(),
+        )
+        .await,
+    ))
 }
 
 // ---------------------------------------------------------------------------

@@ -265,6 +265,12 @@ pub const RECIPE_HISTORY: Operation = Operation {
     input_contract: "HistoryQuery",
     output_contract: "LibraryOutcome",
 };
+pub const PASSWORD_CHANGE: Operation = Operation {
+    id: "account.password.change.v1",
+    mcp_tool: "account_password_change",
+    input_contract: "password-change.v1",
+    output_contract: "password-change-outcome.v1",
+};
 pub const RECIPE_REVISION: Operation = Operation {
     id: "recipe.revision.v1",
     mcp_tool: "recipe_revision",
@@ -299,6 +305,7 @@ pub const OPERATIONS: &[Operation] = &[
     EQUIPMENT_GET,
     EQUIPMENT_LIST,
     EQUIPMENT_REVISION,
+    PASSWORD_CHANGE,
     SECURITY_STATUS,
     PASSKEYS_LIST,
     SESSIONS_REVOKE_ALL,

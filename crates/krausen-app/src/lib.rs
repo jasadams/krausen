@@ -43,6 +43,10 @@ pub enum Error {
     RequestIdentityConflict,
     #[error("request result expired")]
     ResultExpired { resource_id: Option<String> },
+    #[error("request cannot be recovered with the current key")]
+    RetryKeyUnavailable,
+    #[error("current password is incorrect")]
+    InvalidPassword,
     #[error("invalid input: {0}")]
     Invalid(&'static str),
     #[error("retry transaction")]
@@ -457,10 +461,10 @@ pub async fn enqueue_outbox(
 pub mod formulation;
 pub mod interchange;
 
-mod style_reference;
 pub mod recipe_editor;
 
 pub mod equipment;
 
 pub mod recipe_library;
 pub mod process_summary;
+mod style_reference;

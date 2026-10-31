@@ -71,6 +71,21 @@ pub enum RevokeAllOutcome {
 pub struct SecurityStatus {
     pub has_password: bool,
     pub totp_enabled: bool,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PasswordChangeOutcome {
+    Saved { revision: i64 },
+    CurrentPasswordIncorrect,
+    Conflict { expected: i64, actual: i64 },
+    RequestIdentityConflict,
+    RetryKeyUnavailable,
+    ResultExpired,
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

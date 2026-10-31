@@ -14,6 +14,16 @@ application-owned transport logs record fixed operation identifiers instead.
 The HTTP/SDK regression runs with `RUST_LOG=trace,rmcp=trace` and checks that
 sentinel credentials and request/response payloads do not reach the sink.
 
+Password changes use an installation-key-derived, purpose-separated HMAC
+commitment for durable retry identity. Retry records contain neither passwords
+nor password hashes. A separate binding ties each request to its initiating
+credential, and the commitment includes a key identifier; after key
+rotation, an older retained request reports that its result cannot be verified
+instead of running again or treating a new payload as a match. A user can read
+current account state and start a new request. Current credential authority is
+checked before retry recovery; a first execution verifies the old password and
+account revision inside the transaction.
+
 For an empty installation, a local operator can initialize the first owner by
 running the server binary with `bootstrap-owner EMAIL` and providing the new
 password on standard input. This operation is one-time and refuses an existing
