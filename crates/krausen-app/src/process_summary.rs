@@ -6,7 +6,7 @@
 //! context and never persists a draft or creates recipe history.
 use crate::{ActorContext, Error, authorize_workspace, boundary_error, check_intent, db_error};
 use krausen_brewery::native_store::{self, StoredReadError};
-use krausen_core::DbPool;
+use krausen_core::{DbPool, DbTx};
 use krausen_types::{
     brewery::RecipeDocumentV1,
     formulation::{Preview, PreviewOutcome, PreviewRequest},
