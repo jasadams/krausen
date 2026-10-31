@@ -1,5 +1,11 @@
 import { test, expect, type Page, type CDPSession } from '@playwright/test';
-import { gotoAuthenticated, isPersonalMode } from '../../helpers/test-helpers';
+import {
+  db,
+  getDefaultUserId,
+  gotoAuthenticated,
+  isPersonalMode,
+  walCheckpoint,
+} from '../../helpers/test-helpers';
 
 const SECURITY_URL = '/settings/security';
 
@@ -43,6 +49,14 @@ async function addPasskeyViaModal(page: Page, name: string): Promise<void> {
 }
 
 test.describe('TC-013: Security - Passkey Management', () => {
+  // Each scenario starts from a clean passkey store so accumulated virtual
+  // authenticators from an earlier test cannot change the expected row count.
+  test.beforeEach(() => {
+    const userId = getDefaultUserId();
+    db.exec(`DELETE FROM user_auth_methods WHERE user_id = '${userId}' AND auth_type = 'webauthn'`);
+    walCheckpoint();
+  });
+
   test.beforeEach(async ({ browserName }) => {
     test.skip(browserName !== 'chromium', 'CDP virtual authenticator requires Chromium');
     // Personal mode has no WebAuthn support — the server RP origin (http://localhost:5173 default)
