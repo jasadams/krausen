@@ -8,5 +8,6 @@
 
 pub mod recipe_service;
 pub mod native_recipe;
+pub mod native_store;
 
 pub use recipe_service::{Recipe, RecipeSource, RecipeSummary};

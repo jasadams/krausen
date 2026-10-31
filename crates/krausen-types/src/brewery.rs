@@ -139,7 +139,7 @@ pub struct IngredientSource {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FermentableSpecification {
-    pub name: String,
+    pub name: Option<String>,
     pub producer: Option<String>,
     #[serde(rename = "type")]
     pub kind: Option<String>,
@@ -164,7 +164,7 @@ pub struct FermentableAddition {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HopSpecification {
-    pub name: String,
+    pub name: Option<String>,
     pub producer: Option<String>,
     pub alpha_fraction: Option<f64>,
 }
@@ -182,7 +182,7 @@ pub struct HopAddition {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngredientSpecification {
-    pub name: String,
+    pub name: Option<String>,
     pub producer: Option<String>,
     pub attenuation_fraction: Option<f64>,
     pub extensions: BTreeMap<String, Value>,

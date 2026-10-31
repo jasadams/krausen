@@ -7,10 +7,11 @@
 //! thing a brewer actually holds, comes later.
 
 use leptos::prelude::*;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::components::{Button, ButtonVariant, Card, EmptyState, Spinner, INPUT_CLASS};
 use crate::server_fns::recipes::{
-    delete_recipe, get_recipe, import_beerxml, list_recipes, RecipeDetail, RecipeListItem,
+    delete_recipe, get_recipe, import_beerxml, list_recipes, recover_legacy_recipe, RecipeDetail, RecipeListItem,
 };
 
 #[component]
@@ -32,6 +33,13 @@ pub fn RecipesPage() -> impl IntoView {
                 Some(id) => get_recipe(id).await,
                 None => Ok(None),
             }
+        },
+    );
+
+    let recovery = Resource::new(
+        move || (selected.get(), revision.get()),
+        |(id, _)| async move {
+            match id { Some(id) => recover_legacy_recipe(id).await, None => Ok(None) }
         },
     );
 
@@ -159,6 +167,17 @@ pub fn RecipesPage() -> impl IntoView {
                                 Err(e) => view! {
                                     <p class="text-sm text-destructive">{format!("Could not load that recipe: {e}")}</p>
                                 }.into_any(),
+                            }
+                        })}
+                    </Suspense>
+                    <Suspense fallback=|| ()>
+                        {move || Suspend::new(async move {
+                            match recovery.await {
+                                Ok(Some((source, diagnostic))) => {
+                                    let href = format!("data:application/json;base64,{}", STANDARD.encode(source.as_bytes()));
+                                    view! { <div class="mt-4 space-y-2"><p class="text-sm text-destructive">{diagnostic}</p><a class="underline" href=href download="legacy-recipe.json">"Download stored legacy record"</a><pre class="overflow-x-auto text-xs">{source}</pre></div> }.into_any()
+                                },
+                                _ => ().into_any(),
                             }
                         })}
                     </Suspense>

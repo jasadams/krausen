@@ -176,6 +176,16 @@ pub async fn list_recipes() -> Result<Vec<RecipeListItem>, ServerFnError> {
 }
 
 /// One recipe, with its derived figures.
+/// Recover the stored legacy payload when migration cannot parse it.
+#[server(prefix = "/leptos-api")]
+pub async fn recover_legacy_recipe(recipe_id: String) -> Result<Option<(String, String)>, ServerFnError> {
+    let ac = AuthenticatedContext::extract().await?;
+    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    krausen_app::recipe_migration::recover_legacy_recipe(&ac.ctx.db, &actor, &recipe_id)
+        .await.map_err(|_| ServerFnError::new("Could not recover that recipe"))
+}
+
+/// One recipe, with its derived figures.
 #[server(prefix = "/leptos-api")]
 pub async fn get_recipe(recipe_id: String) -> Result<Option<RecipeDetail>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
@@ -229,9 +239,13 @@ pub async fn search_recipes(query: String) -> Result<Vec<RecipeListItem>, Server
 /// Store a recipe given as BeerXML.
 #[server(prefix = "/leptos-api")]
 pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnError> {
-    let _ = AuthenticatedContext::extract().await?;
+    let ac = AuthenticatedContext::extract().await?;
     let _ = beerxml;
-    Err(ServerFnError::new("Recipe creation is unavailable while native authoring is being introduced"))
+    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
+        Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe creation is unavailable while native authoring is being introduced")),
+        _ => Err(ServerFnError::new("Recipe creation is unavailable")),
+    }
 }
 
 /// Import a BeerXML file, which may hold several recipes.
@@ -239,9 +253,13 @@ pub async fn create_recipe(beerxml: String) -> Result<RecipeDetail, ServerFnErro
 /// Returns what was stored, so the caller can say how many arrived.
 #[server(prefix = "/leptos-api")]
 pub async fn import_beerxml(beerxml: String) -> Result<Vec<RecipeListItem>, ServerFnError> {
-    let _ = AuthenticatedContext::extract().await?;
+    let ac = AuthenticatedContext::extract().await?;
     let _ = beerxml;
-    Err(ServerFnError::new("Recipe import is unavailable while native authoring is being introduced"))
+    let actor = krausen_app::ActorContext { actor_id: ac.auth.user_id.clone(), workspace_id: ac.ws_id.clone() };
+    match krausen_app::recipe_migration::reject_legacy_authoring(&ac.ctx.db, &actor).await {
+        Err(krausen_app::Error::LegacyAuthoringUnavailable) => Err(ServerFnError::new("Recipe import is unavailable while native authoring is being introduced")),
+        _ => Err(ServerFnError::new("Recipe import is unavailable")),
+    }
 }
 
 /// Replace a recipe with the BeerXML given.

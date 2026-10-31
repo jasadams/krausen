@@ -138,6 +138,12 @@ mod tests {
     #[test]
     fn recipe_identity_rejects_non_finite_values_and_tracks_content() {
         let mut document = RecipeDocumentV1::default();
+        document.equipment_overrides.chilling = Some(krausen_types::brewery::ChillingV1::Forced {
+            rate_per_minute: Some(0.25),
+            plateau_c: Some(20.0),
+        });
+        let (json, _) = encode_document(&document).unwrap();
+        assert_eq!(read_document(&json).unwrap(), document);
         let (_, first) = encode_document(&document).unwrap();
         document.title = "Changed".into();
         assert_ne!(first, encode_document(&document).unwrap().1);

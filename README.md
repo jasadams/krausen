@@ -14,9 +14,17 @@ implementation.
 The repository contains the Rust/Leptos foundation, existing account/workspace
 services, pure calculation and BeerXML crates, and an approved interactive
 [recipe/component design reference](docs/design/prototype/README.md).
-The shared application layer, authenticated MCP operation catalogue, native recipe
-revisions and immutable production brew records are implementation targets,
-not completed features. The prototype uses browser-local fixtures and WASM.
+The shared application foundation and native recipe revision persistence are
+under development; authenticated MCP operations, native recipe authoring and
+immutable production brew records remain implementation targets. The prototype
+uses browser-local fixtures and WASM.
+
+On startup, legacy recipe records are converted to native revisions. If conversion
+fails, the original stored record remains available for authorized recovery and
+the failure is reported. The old editor cannot open or modify migrated recipes,
+and legacy create/import requests are unavailable until native authoring arrives.
+The recovery download contains the stored legacy JSON record; it is not a claim
+that original uploaded file bytes were retained by earlier versions.
 
 [Architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md),
 [calculations](docs/CALCULATIONS.md) and [design system](DESIGN.md) define the
@@ -28,7 +36,7 @@ starter plan are context, not current feature or coding instructions.
 
 | Boundary | Role |
 | --- | --- |
-| `krausen-app` (planned) | Shared commands, queries, policy and transaction ownership |
+| `krausen-app` | Shared commands, queries, policy and transaction ownership |
 | `krausen-types` | Versioned native data and transport-neutral DTOs |
 | `krausen-brewery` | Brewing persistence helpers and native-to-engine projection |
 | `krausen-calc` | Pure deterministic calculation library |

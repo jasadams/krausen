@@ -32,6 +32,14 @@ async fn serve() {
         krausen_core::DbPool::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite").run(pool).await,
     }.expect("failed to apply database migrations");
 
+    let migration = krausen_app::recipe_migration::backfill_legacy_recipes(&db)
+        .await.expect("failed to run native recipe migration");
+    if migration.failed.is_empty() {
+        tracing::info!(migrated = migration.migrated, "native recipe migration complete");
+    } else {
+        tracing::warn!(migrated = migration.migrated, failed = migration.failed.len(), "native recipe migration incomplete; original records remain recoverable");
+    }
+
     // Personal mode: auto-provision local user and workspace on first boot
     if config.is_personal() {
         krausen_server::auto_provision_personal_mode(&db)

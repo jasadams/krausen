@@ -1889,6 +1889,7 @@ name = "krausen-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "krausen-brewery",
  "krausen-core",
  "krausen-types",
  "serde",
@@ -2011,6 +2012,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures-util",
+ "krausen-app",
  "krausen-auth",
  "krausen-core",
  "krausen-types",

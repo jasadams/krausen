@@ -120,7 +120,7 @@ pub fn from_legacy(recipe: &crate::Recipe) -> Result<NativeMigration, serde_json
                 time_minutes: None,
             },
             specification: FermentableSpecification {
-                name: item.name().cloned().unwrap_or_default(),
+                name: item.name().cloned(),
                 producer: item.supplier().cloned(),
                 kind: item.type_().cloned(),
                 yield_fraction: item.yield_().map(|v| v / 100.0),
@@ -151,7 +151,7 @@ pub fn from_legacy(recipe: &crate::Recipe) -> Result<NativeMigration, serde_json
             contact_minutes,
             temperature_c: None,
             specification: HopSpecification {
-                name: item.name().cloned().unwrap_or_default(),
+                name: item.name().cloned(),
                 producer: None,
                 alpha_fraction: item.alpha().map(|v| v / 100.0),
             },
@@ -166,7 +166,7 @@ pub fn from_legacy(recipe: &crate::Recipe) -> Result<NativeMigration, serde_json
                 .amount_is_weight()
                 .map(|weight| if *weight { "kg" } else { "l" }.to_owned()),
             specification: IngredientSpecification {
-                name: item.name().cloned().unwrap_or_default(),
+                name: item.name().cloned(),
                 producer: item.laboratory().cloned(),
                 attenuation_fraction: item.attenuation().map(|v| v / 100.0),
                 extensions: Default::default(),
@@ -184,7 +184,7 @@ pub fn from_legacy(recipe: &crate::Recipe) -> Result<NativeMigration, serde_json
                 .amount_is_weight()
                 .map(|weight| if *weight { "kg" } else { "l" }.to_owned()),
             specification: IngredientSpecification {
-                name: item.name().cloned().unwrap_or_default(),
+                name: item.name().cloned(),
                 producer: None,
                 attenuation_fraction: None,
                 extensions,
@@ -295,8 +295,11 @@ mod tests {
             Some(65.0)
         );
         assert_eq!(
-            migrated.document.other_ingredients[0].specification.name,
-            "Example spice"
+            migrated.document.other_ingredients[0]
+                .specification
+                .name
+                .as_deref(),
+            Some("Example spice")
         );
         let legacy: crate::Recipe = serde_json::from_value(migrated.legacy_record).unwrap();
         assert_eq!(legacy, crate::parse(source).unwrap().recipes.remove(0));
