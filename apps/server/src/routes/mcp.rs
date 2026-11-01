@@ -94,6 +94,26 @@ struct ProcessSummaryQuery {
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct RecipeScalePreview {
+    workspace_id: String,
+    intent: krausen_types::request_context::OperationIntent,
+    recipe_id: String,
+    target_batch_size_l: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecipeScaleApply {
+    workspace_id: String,
+    request: krausen_types::scaling::ScaleApplyRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RecipeDuplicate {
+    workspace_id: String,
+    request: krausen_types::scaling::DuplicateRecipe,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct BeerXmlPreview {
     workspace_id: String,
     request: krausen_types::interchange::ImportRequest,
@@ -363,6 +383,23 @@ impl ServerHandler for McpHandler {
                 operations::RECIPE_PROCESS_SUMMARY.mcp_tool,
                 "Return the authorized structured process summary for a saved revision or an unsaved draft",
                 typed_schema::<ProcessSummaryQuery>(),
+            ),
+            Tool::new(
+                operations::RECIPE_SCALE_PREVIEW.mcp_tool,
+                "Preview linear-ingredients-v1 batch scaling with changed amounts, water, targets and warnings",
+                typed_schema::<RecipeScalePreview>(),
+            ),
+            Tool::new(
+                operations::RECIPE_SCALE_APPLY.mcp_tool,
+                "Apply a scaling preview guarded by the expected head and accepted calculation context",
+                schema(
+                    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"request":{"type":"object"}},"required":["workspace_id","request"],"additionalProperties":false}),
+                ),
+            ),
+            Tool::new(
+                operations::RECIPE_DUPLICATE.mcp_tool,
+                "Duplicate the current saved recipe under a new independent identity",
+                typed_schema::<RecipeDuplicate>(),
             ),
         ]))
     }
@@ -916,6 +953,77 @@ impl ServerHandler for McpHandler {
                 let success = matches!(
                     outcome,
                     krausen_types::process_summary::ProcessSummaryOutcome::Summary(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe.scale-preview.v1" => {
+                let input: RecipeScalePreview = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid scaling preview", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::scaling::preview(
+                    &self.db,
+                    &actor,
+                    krausen_types::scaling::ScalePreviewRequest {
+                        intent: input.intent,
+                        recipe_id: input.recipe_id,
+                        target_batch_size_l: input.target_batch_size_l,
+                    },
+                )
+                .await;
+                let success = matches!(outcome, krausen_types::scaling::ScaleOutcome::Preview(_));
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe.scale-apply.v1" => {
+                let input: RecipeScaleApply = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid scaling apply", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::scaling::apply(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::scaling::ScaleApplyOutcome::Applied { .. }
+                        | krausen_types::scaling::ScaleApplyOutcome::Unchanged { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "recipe.duplicate.v1" => {
+                let input: RecipeDuplicate = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid recipe duplicate", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::scaling::duplicate(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::scaling::DuplicateOutcome::Duplicated { .. }
                 );
                 let value = json!({"outcome": outcome});
                 if success {

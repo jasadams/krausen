@@ -16,3 +16,4 @@ pub mod equipment_profiles;
 pub mod catalogue_picker;
 pub mod recipe_editor;
 pub mod beerxml;
+pub mod recipe_scaling;
