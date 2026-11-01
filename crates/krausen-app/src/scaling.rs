@@ -605,6 +605,32 @@ fn target_diff(accepted: &Targets, fresh: &Targets) -> String {
     diff.join(";")
 }
 
+/// Compare recomputed targets with the reference precision documented in
+/// CALCULATIONS.md: absolute 1e-9 for litres and SG, 1e-6 for ABV/IBU/EBC.
+/// Presence must match; an absorbed None never equals a concrete value.
+fn targets_match(accepted: &Targets, fresh: &Targets) -> bool {
+    fn close(accepted: Option<f64>, fresh: Option<f64>, tolerance: f64) -> bool {
+        match (accepted, fresh) {
+            (Some(accepted), Some(fresh)) => (accepted - fresh).abs() <= tolerance,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    close(accepted.total_water_l, fresh.total_water_l, 1e-9)
+        && close(accepted.pre_boil_l, fresh.pre_boil_l, 1e-9)
+        && close(accepted.post_boil_l, fresh.post_boil_l, 1e-9)
+        && close(accepted.grain_absorption_l, fresh.grain_absorption_l, 1e-9)
+        && close(accepted.mash_water_l, fresh.mash_water_l, 1e-9)
+        && close(accepted.sparge_water_l, fresh.sparge_water_l, 1e-9)
+        && close(accepted.kettle_water_l, fresh.kettle_water_l, 1e-9)
+        && close(accepted.pre_boil_sg, fresh.pre_boil_sg, 1e-9)
+        && close(accepted.original_sg, fresh.original_sg, 1e-9)
+        && close(accepted.final_sg, fresh.final_sg, 1e-9)
+        && close(accepted.abv_percent, fresh.abv_percent, 1e-6)
+        && close(accepted.ibu, fresh.ibu, 1e-6)
+        && close(accepted.colour_ebc, fresh.colour_ebc, 1e-6)
+}
+
 fn context_mismatch(
     accepted: &AcceptedScaleContext,
     actor: &ActorContext,
@@ -666,7 +692,7 @@ fn context_mismatch(
     if context.style.as_ref() != style {
         return Some("style");
     }
-    if accepted.targets != *targets {
+    if !targets_match(&accepted.targets, targets) {
         return Some("targets");
     }
     None
@@ -1403,6 +1429,33 @@ mod tests {
             context.style,
             crate::style_reference::resolve(draft.style.as_ref().unwrap())
         );
+    }
+
+    #[test]
+    fn targets_compare_at_documented_reference_precision() {
+        let accepted = Targets {
+            pre_boil_sg: Some(1.041138613381973),
+            total_water_l: Some(51.4),
+            abv_percent: Some(4.663),
+            ..Default::default()
+        };
+        let transport_rounded = Targets {
+            pre_boil_sg: Some(1.0411386133819733),
+            total_water_l: Some(51.4 + 4e-16),
+            abv_percent: Some(4.6630000004),
+            ..Default::default()
+        };
+        assert!(targets_match(&accepted, &transport_rounded));
+        let materially_different = Targets {
+            pre_boil_sg: Some(1.0411387),
+            ..transport_rounded
+        };
+        assert!(!targets_match(&accepted, &materially_different));
+        let missing = Targets {
+            total_water_l: None,
+            ..accepted.clone()
+        };
+        assert!(!targets_match(&accepted, &missing));
     }
 
     #[test]
