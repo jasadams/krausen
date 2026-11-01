@@ -320,6 +320,7 @@ async fn head_row(
     tx: &mut DbTx<'_>,
     actor: &ActorContext,
     recipe_id: &str,
+    lock: bool,
 ) -> Result<Option<(i64, bool)>, Error> {
     #[derive(sqlx::FromRow)]
     struct HeadRow {
@@ -328,7 +329,7 @@ async fn head_row(
     }
     let sql = format!(
         "SELECT native_head_revision AS head, CAST(CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END AS BIGINT) AS archived FROM recipes WHERE workspace_id=$1 AND recipe_id=$2 AND native_head_revision>0{}",
-        if matches!(tx, DbTx::Postgres(_)) {
+        if lock && matches!(tx, DbTx::Postgres(_)) {
             " FOR UPDATE"
         } else {
             ""
@@ -495,7 +496,8 @@ async fn preview_inner(
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
     check_intent(actor, &request.intent)?;
-    let Some((revision, archived)) = head_row(&mut tx, actor, &request.recipe_id).await? else {
+    let Some((revision, archived)) = head_row(&mut tx, actor, &request.recipe_id, false).await?
+    else {
         tx.commit().await.map_err(boundary_error)?;
         return Ok(ScaleOutcome::NotFound);
     };
@@ -664,7 +666,12 @@ async fn apply_inner(
         return Ok(outcome);
     }
 
-    let Some((actual, archived)) = head_row(&mut tx, actor, &request.recipe_id).await? else {
+    // Do not hold the recipe head lock while resolving the equipment profile.
+    // Save/start lock workspace -> profile -> recipe head; locking the head
+    // first would invert that order and can deadlock. Read the expected head
+    // without a row lock, resolve the profile, then lock and re-check the head.
+    let Some((actual, archived)) = head_row(&mut tx, actor, &request.recipe_id, false).await?
+    else {
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(ScaleApplyOutcome::NotFound);
     };
@@ -688,6 +695,26 @@ async fn apply_inner(
         }
     };
     let profile = resolve_profile(&mut tx, actor, &scaled.document).await?;
+    // Profile lock acquired; now take the head lock in the save/start order.
+    let Some((locked_actual, locked_archived)) =
+        head_row(&mut tx, actor, &request.recipe_id, true).await?
+    else {
+        tx.rollback().await.map_err(boundary_error)?;
+        return Ok(ScaleApplyOutcome::NotFound);
+    };
+    // The head lock may have waited across the credential expiry boundary.
+    authorize_workspace(&mut tx, actor).await?;
+    if locked_archived {
+        tx.rollback().await.map_err(boundary_error)?;
+        return Ok(ScaleApplyOutcome::Archived);
+    }
+    if locked_actual != actual {
+        tx.rollback().await.map_err(boundary_error)?;
+        return Ok(ScaleApplyOutcome::Conflict {
+            expected: actual,
+            actual: locked_actual,
+        });
+    }
     let base = profile
         .as_ref()
         .map(|profile| profile.settings.clone())
@@ -863,7 +890,8 @@ async fn duplicate_inner(
         return Ok(outcome);
     }
 
-    let Some((actual, archived)) = head_row(&mut tx, actor, &request.source_recipe_id).await?
+    let Some((actual, archived)) =
+        head_row(&mut tx, actor, &request.source_recipe_id, true).await?
     else {
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(DuplicateOutcome::NotFound);

@@ -396,19 +396,21 @@ async fn exercise(db: DbPool) {
         browser_preview.validation.state,
         krausen_types::validation::Readiness::Ready
     );
-    let browser_outcome = scaling::apply(
-        &db,
-        &actor,
-        ScaleApplyRequest {
-            intent: intent.clone(),
-            recipe_id: browser_id.clone(),
-            expected_revision: 1,
-            target_batch_size_l: 40.0,
-            accepted: browser_preview.accepted.clone(),
-            request_id: uuid::Uuid::new_v4().to_string(),
-        },
-    )
-    .await;
+    let browser_request = ScaleApplyRequest {
+        intent: intent.clone(),
+        recipe_id: browser_id.clone(),
+        expected_revision: 1,
+        target_batch_size_l: 40.0,
+        accepted: browser_preview.accepted.clone(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    // Exercise the browser adapter's JSON round-trip before the shared apply.
+    let encoded = krausen_types::request_context::checked_json(&browser_request)
+        .expect("browser request encodes");
+    let browser_request: ScaleApplyRequest =
+        serde_json::from_str(&encoded).expect("browser request decodes");
+    assert_eq!(browser_request.accepted, browser_preview.accepted);
+    let browser_outcome = scaling::apply(&db, &actor, browser_request).await;
     match browser_outcome {
         ScaleApplyOutcome::Applied { revision: 2, .. } => {}
         ScaleApplyOutcome::ContextConflict { fresh } => {
