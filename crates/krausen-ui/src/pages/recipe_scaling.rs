@@ -185,6 +185,7 @@ pub fn ScaleDialog(
     let message = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let retry = RwSignal::new(None::<ScaleApplyRequest>);
+    let retry_document = RwSignal::new(None::<RecipeDocumentV1>);
     let generation = RwSignal::new(0_u64);
 
     let reset = Callback::new(move |()| {
@@ -198,6 +199,7 @@ pub fn ScaleDialog(
         busy.set(false);
         pending.set(false);
         retry.set(None);
+        retry_document.set(None);
         uncertain.set(false);
     });
     let close = Callback::new(move |()| {
@@ -310,6 +312,9 @@ pub fn ScaleDialog(
     });
 
     let submit = Callback::new(move |request: ScaleApplyRequest| {
+        if let Some(preview_value) = preview.get_untracked() {
+            retry_document.set(Some(preview_value.scaled_document));
+        }
         let next_generation = generation.get_untracked().wrapping_add(1);
         generation.set(next_generation);
         busy.set(true);
@@ -332,17 +337,30 @@ pub fn ScaleDialog(
             } else {
                 retry.set(None);
                 uncertain.set(false);
+                retry_document.set(None);
             }
             match outcome {
                 Ok(ScaleApplyOutcome::Applied {
                     revision: applied, ..
                 }) => {
-                    if let Some(preview_value) = preview.get_untracked() {
-                        on_applied.run((preview_value.scaled_document.clone(), applied));
+                    let document = preview
+                        .get_untracked()
+                        .map(|preview_value| preview_value.scaled_document)
+                        .or_else(|| retry_document.get_untracked());
+                    if let Some(document) = document {
+                        on_applied.run((document, applied));
+                        status.set(format!("Scaled recipe saved as revision {applied}."));
+                        open.set(false);
+                        reset.run(());
+                    } else {
+                        message.set(
+                            "Scaling committed but the editor could not be synchronized. Reload the recipe."
+                                .into(),
+                        );
+                        uncertain.set(false);
+                        retry.set(None);
+                        retry_document.set(None);
                     }
-                    status.set(format!("Scaled recipe saved as revision {applied}."));
-                    open.set(false);
-                    reset.run(());
                 }
                 Ok(ScaleApplyOutcome::Unchanged {
                     revision: current, ..

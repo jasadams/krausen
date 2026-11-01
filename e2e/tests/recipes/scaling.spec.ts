@@ -11,13 +11,12 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Batch volume (L)').fill('20');
   await page.getByLabel('Boil time (min)').fill('60');
   await page.getByRole('button', { name: 'Add fermentable' }).click();
-  await page.getByLabel('Name', { exact: true }).fill('Pale malt');
-  await page.getByLabel('Amount (kg)', { exact: true }).fill('4');
-  await page.getByText('Addition details', { exact: true }).click();
-  await page.getByLabel('Type', { exact: true }).selectOption('grain');
-  await page.getByLabel('Stage', { exact: true }).selectOption('mash');
-  await page.getByLabel('Yield (%)', { exact: true }).fill('80');
-  await page.getByLabel('Colour (EBC)', { exact: true }).fill('5');
+  await expect(page.getByRole('heading', { name: 'Build your grain bill' })).toBeVisible();
+  await page.getByLabel('Search fermentables').fill('Joe White Signature');
+  await page.getByRole('button', { name: /Joe White Signature Lager/ }).click();
+  await page.getByLabel('Amount in recipe (kg)').fill('4');
+  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^4(\.0+)?$/);
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.locator('#recipe-attenuation').fill('80');
   await page.locator('#recipe-mash-method').selectOption('manual');
@@ -114,6 +113,11 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   await page.unroute('**/execute_scale_apply*');
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue(/^40(\.0+)?$/);
+  await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^8(\.0+)?$/);
+  // The retry must synchronize the committed revision, not leave the editor at rev1.
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
 });
 
 test('uncertain duplicate keeps its identity through dismissal', async ({ page }) => {
