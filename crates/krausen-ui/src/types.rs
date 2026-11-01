@@ -14,6 +14,7 @@ pub struct ProfileData {
     pub email: String,
     pub name: Option<String>,
     pub theme: String,
+    pub settings_revision: i64,
     pub is_personal_mode: bool,
     pub is_self_hosted: bool,
 }

@@ -41,6 +41,31 @@ async fn probe(
     }
 }
 
+#[tokio::test]
+async fn authorized_workspace_preference_is_reflected_by_browser_refresh() {
+    let _ = krausen_core::constants::load_with_fallback();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("./migrations-sqlite").run(&pool).await.unwrap();
+    let db = DbPool::Sqlite(pool.clone());
+    let kv = krausen_core::kv_store_memory::InMemoryKVStore::new_pool();
+    let user = user_service::create_user(&db, "switch@example.test", Some("Switcher"), true).await.unwrap();
+    user_service::create_workspace_for_user(&db, &user.user_id, Some("Switcher"), &user.email, None).await.unwrap();
+    sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id,status) VALUES ('second',$1,'active')").bind(&user.user_id).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ('second',$1,'workspace_user',TRUE)").bind(&user.user_id).execute(&pool).await.unwrap();
+    let device = DeviceInfo { user_agent: None, ip_address: None, country_code: None, oauth_client_id: None };
+    let secret = "test-secret-at-least-32-bytes-long";
+    let session = session::create_authenticated_session(&db, &kv, secret, &user, &device).await.unwrap();
+    let token = krausen_auth::jwt::validate_browser_token(&session.access_token, secret).unwrap();
+    let actor = krausen_app::ActorContext { actor_id: user.user_id.clone(), credential_id: token.claims.extra["credential_id"].as_str().unwrap().into(), access_expires_at: token.claims.exp, workspace_id: "second".into() };
+    let account = krausen_app::invitation::AccountActor { actor_id: actor.actor_id.clone(), credential_id: actor.credential_id.clone(), access_expires_at: actor.access_expires_at };
+    let revision = krausen_app::account_read::profile(&db, &account).await.unwrap().settings_revision;
+    krausen_app::account_update::workspace(&db, &actor, revision).await.unwrap();
+    let refreshed = krausen_auth::token_refresh::refresh_tokens(&db, secret, &session.refresh_token, &device).await.unwrap();
+    let new_token = krausen_auth::jwt::validate_browser_token(&refreshed.access_token, secret).unwrap();
+    assert_eq!(new_token.claims.extra["workspace_id"].as_str(), Some("second"));
+    assert_ne!(token.claims.extra["workspace_id"].as_str(), Some("second"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_expiry_and_browser_tabs_remain_usable() {
     let _ = krausen_core::constants::load_with_fallback();

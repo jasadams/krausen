@@ -29,6 +29,18 @@ pub(crate) async fn authorize_account(
     Ok(email)
 }
 
+/// Acquire the account row exclusively before the credential lock for settings writes.
+pub(crate) async fn lock_account_settings(tx: &mut DbTx<'_>, actor: &AccountActor) -> Result<i64, Error> {
+    let sql = if matches!(tx, DbTx::Postgres(_)) {
+        "SELECT settings_revision FROM users WHERE user_id=$1 AND active=TRUE FOR UPDATE"
+    } else {
+        "SELECT settings_revision FROM users WHERE user_id=$1 AND active=TRUE"
+    };
+    let revision = scalar!(tx, i64, sql, &actor.actor_id).map_err(db_error)?.ok_or(Error::Forbidden)?;
+    recheck_credential(tx, actor).await?;
+    Ok(revision)
+}
+
 pub(crate) async fn recheck_credential(
     tx: &mut DbTx<'_>,
     actor: &AccountActor,

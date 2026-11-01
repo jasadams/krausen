@@ -5,9 +5,6 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "ssr")]
-use super::IntoServerFnError;
-
 /// User info for the sidebar user menu.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SidebarUser {
@@ -53,6 +50,7 @@ pub struct UserWorkspace {
     pub workspace_id: String,
     pub name: String,
     pub is_current: bool,
+    pub settings_revision: i64,
 }
 
 /// List all workspaces the current user belongs to.
@@ -69,6 +67,8 @@ async fn list_shared_workspaces(
     auth: &krausen_auth::middleware::AuthUser,
 ) -> Result<Vec<UserWorkspace>, ServerFnError> {
     let actor = super::verified_account_actor(&auth)?;
+    let profile = krausen_app::account_read::profile(db, &actor).await.map_err(|_| ServerFnError::new("Unable to load settings revision"))?;
+    let settings_revision = profile.settings_revision;
     let current_ws_id = auth.workspace.workspace_id.as_deref().unwrap_or("");
     let mut cursor = None;
     let mut results = Vec::new();
@@ -83,6 +83,7 @@ async fn list_shared_workspaces(
             is_current: ws.workspace_id == current_ws_id,
             name: ws.name.unwrap_or_else(|| "Unnamed Workspace".to_string()),
             workspace_id: ws.workspace_id,
+            settings_revision,
         }));
         cursor = page.next_cursor;
         if cursor.is_none() { break; }
@@ -115,18 +116,27 @@ mod tests {
         assert_eq!(list.len(), 101);
         assert_eq!(list.iter().filter(|item| item.is_current).count(), 1);
         assert!(list.iter().any(|item| item.workspace_id == "w-100" && item.is_current));
+        let result = switch_shared_workspace(&db, &auth, "w-099".into(), 0).await.unwrap();
+        assert!(matches!(result, krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision: 1 }));
+        let stale = switch_shared_workspace(&db, &auth, "w-098".into(), 0).await.unwrap();
+        assert!(matches!(stale, krausen_types::account_read::AccountUpdateOutcome::Conflict { expected: 0, current: 1 }));
+        let denied = switch_shared_workspace(&db, &auth, "foreign".into(), 1).await.unwrap();
+        assert!(matches!(denied, krausen_types::account_read::AccountUpdateOutcome::Forbidden));
     }
 }
 
 /// Switch the user's active workspace.
 #[server(prefix = "/leptos-api")]
-pub async fn switch_workspace(workspace_id: String) -> Result<(), ServerFnError> {
+pub async fn switch_workspace(workspace_id: String, expected_settings_revision: i64) -> Result<krausen_types::account_read::AccountUpdateOutcome, ServerFnError> {
     let ctx = super::extract_context()?;
     let auth = super::extract_auth().await?;
 
-    krausen_auth::user_service::update_last_workspace(&ctx.db, &auth.user_id, &workspace_id)
-        .await
-        .into_sfn()?;
+    switch_shared_workspace(&ctx.db, &auth, workspace_id, expected_settings_revision).await
+}
 
-    Ok(())
+#[cfg(feature = "ssr")]
+async fn switch_shared_workspace(db: &krausen_core::DbPool, auth: &krausen_auth::middleware::AuthUser, workspace_id: String, expected_settings_revision: i64) -> Result<krausen_types::account_read::AccountUpdateOutcome, ServerFnError> {
+    let account = super::verified_account_actor(auth)?;
+    let actor = krausen_app::ActorContext { actor_id: account.actor_id, credential_id: account.credential_id, access_expires_at: account.access_expires_at, workspace_id };
+    Ok(krausen_app::account_update::project(krausen_app::account_update::workspace(db, &actor, expected_settings_revision).await))
 }

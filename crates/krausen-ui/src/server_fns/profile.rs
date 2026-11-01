@@ -31,6 +31,7 @@ pub async fn get_profile() -> Result<ProfileData, ServerFnError> {
         email: profile.email,
         name: profile.name,
         theme: profile.theme,
+        settings_revision: profile.settings_revision,
         is_personal_mode: ctx.config.is_personal(),
         is_self_hosted: ctx.config.self_hosted,
     })
@@ -75,38 +76,27 @@ pub async fn get_pending_invitations() -> Result<Vec<InvitationData>, ServerFnEr
 
 /// Update the user's display name.
 #[server(prefix = "/leptos-api")]
-pub async fn update_profile_name(name: String) -> Result<(), ServerFnError> {
+pub async fn update_profile_name(name: String, expected_settings_revision: i64) -> Result<krausen_types::account_read::AccountUpdateOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let trimmed = name.trim().to_string();
-    if trimmed.is_empty() {
-        return Err(ServerFnError::new("Name cannot be empty"));
-    }
+    update_shared_name(&ctx.db, &auth, expected_settings_revision, &name).await
+}
 
-    krausen_auth::user_service::update_user_name(&ctx.db, &auth.user_id, &trimmed)
-        .await
-        .into_sfn()?;
-
-    Ok(())
+#[cfg(feature = "ssr")]
+async fn update_shared_name(db: &krausen_core::DbPool, auth: &krausen_auth::middleware::AuthUser, expected: i64, name: &str) -> Result<krausen_types::account_read::AccountUpdateOutcome, ServerFnError> {
+    let actor = super::verified_account_actor(auth)?;
+    Ok(krausen_app::account_update::project(krausen_app::account_update::name(db, &actor, expected, name).await))
 }
 
 /// Update user theme preference (light, dark, or system).
 #[server(prefix = "/leptos-api")]
-pub async fn update_theme(theme: String) -> Result<(), ServerFnError> {
+pub async fn update_theme(theme: String, expected_settings_revision: i64) -> Result<krausen_types::account_read::AccountUpdateOutcome, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    if !["light", "dark", "system"].contains(&theme.as_str()) {
-        return Err(ServerFnError::new("Theme must be light, dark, or system"));
-    }
-
-    let metadata = serde_json::json!({ "theme": theme });
-    krausen_auth::user_service::update_extra_metadata(&ctx.db, &auth.user_id, &metadata)
-        .await
-        .into_sfn()?;
-
-    Ok(())
+    let actor = super::verified_account_actor(&auth)?;
+    Ok(krausen_app::account_update::project(krausen_app::account_update::theme(&ctx.db, &actor, expected_settings_revision, &theme).await))
 }
 
 /// Accept a workspace invitation.
@@ -165,5 +155,9 @@ mod tests {
         assert_eq!(result, InvitationResponseOutcome::NotFound);
         let profile = read_shared_profile(&db, &auth).await.unwrap();
         assert!(matches!(profile, krausen_types::account_read::AccountProfileOutcome::Available { profile } if profile.email == "other@example.test"));
+        let result = update_shared_name(&db, &auth, 0, "Updated").await.unwrap();
+        assert!(matches!(result, krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision: 1 }));
+        let stale = update_shared_name(&db, &auth, 0, "Stale").await.unwrap();
+        assert!(matches!(stale, krausen_types::account_read::AccountUpdateOutcome::Conflict { expected: 0, current: 1 }));
     }
 }

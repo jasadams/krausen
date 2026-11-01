@@ -49,6 +49,15 @@ struct InvitationReply {
 struct AccountQuery {}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AccountNameSet { name: String, expected_settings_revision: i64 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountThemeSet { theme: String, expected_settings_revision: i64 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountWorkspacePreferenceSet { workspace_id: String, expected_settings_revision: i64 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AccountWorkspacesQuery {
     cursor: Option<String>,
     limit: Option<i64>,
@@ -71,6 +80,17 @@ fn account_actor(principal: &Principal) -> krausen_app::invitation::AccountActor
         credential_id: principal.credential_id.clone(),
         access_expires_at: principal.access_expires_at,
     }
+}
+
+async fn execute_account_name(db: &krausen_core::DbPool, principal: &Principal, input: AccountNameSet) -> krausen_types::account_read::AccountUpdateOutcome {
+    krausen_app::account_update::project(krausen_app::account_update::name(db, &account_actor(principal), input.expected_settings_revision, &input.name).await)
+}
+async fn execute_account_theme(db: &krausen_core::DbPool, principal: &Principal, input: AccountThemeSet) -> krausen_types::account_read::AccountUpdateOutcome {
+    krausen_app::account_update::project(krausen_app::account_update::theme(db, &account_actor(principal), input.expected_settings_revision, &input.theme).await)
+}
+async fn execute_workspace_preference(db: &krausen_core::DbPool, principal: &Principal, input: AccountWorkspacePreferenceSet) -> krausen_types::account_read::AccountUpdateOutcome {
+    let actor = krausen_app::ActorContext { actor_id: principal.user_id.clone(), credential_id: principal.credential_id.clone(), access_expires_at: principal.access_expires_at, workspace_id: input.workspace_id };
+    krausen_app::account_update::project(krausen_app::account_update::workspace(db, &actor, input.expected_settings_revision).await)
 }
 
 async fn execute_account_profile(
@@ -426,6 +446,9 @@ impl ServerHandler for McpHandler {
                 "Read the authenticated account profile and appearance preference",
                 schema(json!({"type":"object","properties":{},"additionalProperties":false})),
             ),
+            Tool::new(operations::ACCOUNT_NAME_SET.mcp_tool, "Update the authenticated account name using the observed settings revision", schema(json!({"type":"object","properties":{"name":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["name","expected_settings_revision"],"additionalProperties":false}))),
+            Tool::new(operations::ACCOUNT_THEME_SET.mcp_tool, "Update the authenticated account theme using the observed settings revision", schema(json!({"type":"object","properties":{"theme":{"type":"string","enum":["light","dark","system"]},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["theme","expected_settings_revision"],"additionalProperties":false}))),
+            Tool::new(operations::ACCOUNT_WORKSPACE_PREFERENCE_SET.mcp_tool, "Remember an authorized browser workspace preference; MCP calls still require an explicit workspace", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["workspace_id","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(
                 operations::ACCOUNT_WORKSPACES.mcp_tool,
                 "List a page of workspaces for the authenticated account",
@@ -512,6 +535,21 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "account.workspace-preference.v1" => {
+                let input: AccountWorkspacePreferenceSet = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid workspace preference input", None))?;
+                let outcome = execute_workspace_preference(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::account_read::AccountUpdateOutcome::Updated { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
+            "account.name.v1" => {
+                let input: AccountNameSet = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid account name input", None))?;
+                let outcome = execute_account_name(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::account_read::AccountUpdateOutcome::Updated { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
+            "account.theme.v1" => {
+                let input: AccountThemeSet = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid account theme input", None))?;
+                let outcome = execute_account_theme(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::account_read::AccountUpdateOutcome::Updated { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
             "team.members.v1" => {
                 let input: TeamMembersQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid team member query", None))?;
@@ -1324,5 +1362,15 @@ mod invitation_tests {
         let second = execute_team_members(&db, &principal, TeamMembersQuery { cursor: page.next_cursor, ..query() }).await;
         assert!(matches!(second, krausen_types::team_read::MemberListOutcome::Available { page } if page.items.len() == 1 && page.next_cursor.is_none()));
         assert!(serde_json::from_value::<TeamMembersQuery>(json!({"workspace_id":"w","actor_id":"owner"})).is_err());
+        let updated = execute_account_name(&db, &principal, AccountNameSet { name: "MCP user".into(), expected_settings_revision: 0 }).await;
+        assert!(matches!(updated, krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision: 1 }));
+        let stale = execute_account_theme(&db, &principal, AccountThemeSet { theme: "dark".into(), expected_settings_revision: 0 }).await;
+        assert!(matches!(stale, krausen_types::account_read::AccountUpdateOutcome::Conflict { expected: 0, current: 1 }));
+        assert!(serde_json::from_value::<AccountNameSet>(json!({"name":"spoof","expected_settings_revision":1,"actor_id":"owner"})).is_err());
+        let selected = execute_workspace_preference(&db, &principal, AccountWorkspacePreferenceSet { workspace_id: "w".into(), expected_settings_revision: 1 }).await;
+        assert!(matches!(selected, krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision: 2 }));
+        sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('foreign','owner')").execute(pool).await.unwrap();
+        let explicit_foreign = execute_team_members(&db, &principal, TeamMembersQuery { workspace_id: "foreign".into(), cursor: None, limit: None }).await;
+        assert!(matches!(explicit_foreign, krausen_types::team_read::MemberListOutcome::Forbidden));
     }
 }

@@ -16,7 +16,7 @@ pub const CONTEXT_CHANGED_KEY: &str = "krausen-context-changed";
 #[derive(Clone)]
 pub enum EditorDestination {
     Href(String),
-    Workspace(String),
+    Workspace(String, i64),
     Logout,
 }
 
@@ -149,19 +149,24 @@ impl EditorGuard {
             return;
         };
         self.destination.set(None);
-        self.dirty.set(false);
         leptos::task::spawn_local(async move {
             let failure = match destination {
                 EditorDestination::Href(href) => web_sys::window()
                     .is_none_or(|w| w.location().set_href(&href).is_err())
                     .then_some("Could not open that destination."),
-                EditorDestination::Workspace(id) => {
-                    if switch_workspace(id).await.is_err() {
-                        Some("Could not switch workspaces.")
-                    } else {
-                        web_sys::window()
-                            .is_none_or(|w| w.location().reload().is_err())
-                            .then_some("Workspace changed, but the page could not reload.")
+                EditorDestination::Workspace(id, revision) => {
+                    match switch_workspace(id.clone(), revision).await {
+                        Ok(krausen_types::account_read::AccountUpdateOutcome::Updated { .. }) => {
+                            #[cfg(target_arch = "wasm32")]
+                            let refreshed = crate::utils::auth_refresh::try_refresh().await;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let refreshed = false;
+                            if !refreshed { Some("Workspace preference saved, but the session could not refresh.") }
+                            else if !matches!(get_sidebar_user().await, Ok(user) if user.workspace_id.as_deref() == Some(id.as_str())) { Some("Workspace preference saved, but the session selected a different workspace. Choose again.") }
+                            else { web_sys::window().is_none_or(|w| w.location().reload().is_err()).then_some("Workspace changed, but the page could not reload.") }
+                        }
+                        Ok(krausen_types::account_read::AccountUpdateOutcome::Conflict { .. }) => Some("Settings changed elsewhere. Your draft remains open; save it before reloading and choosing again."),
+                        _ => Some("Could not switch workspaces."),
                     }
                 }
                 EditorDestination::Logout => {
@@ -177,6 +182,8 @@ impl EditorGuard {
             if let Some(message) = failure {
                 tracing::warn!("Unable to complete a requested navigation or account action");
                 self.navigation_error.set(message.into());
+            } else {
+                self.dirty.set(false);
             }
         });
     }
@@ -472,6 +479,7 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                 let ws_id = ws.workspace_id.clone();
                                 let name = ws.name.clone();
                                 let is_current = ws.is_current;
+                                let settings_revision = ws.settings_revision;
                                 view! {
                                     <button
                                         class="w-full text-left px-4 py-2 text-sm hover:bg-secondary transition-colors flex items-center gap-2"
@@ -479,7 +487,7 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                         on:click=move |_| {
                                             let ws_id = ws_id.clone();
                                             set_user_menu_open.set(false);
-                                            editor_guard.request(EditorDestination::Workspace(ws_id));
+                                            editor_guard.request(EditorDestination::Workspace(ws_id, settings_revision));
                                         }
                                     >
                                         {if is_current {

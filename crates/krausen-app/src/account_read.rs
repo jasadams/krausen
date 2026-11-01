@@ -23,6 +23,8 @@ pub async fn profile(pool: &DbPool, actor: &AccountActor) -> Result<AccountProfi
     )
     .map_err(db_error)?
     .ok_or(Error::Forbidden)?;
+    let settings_revision = scalar!(&mut tx, i64, "SELECT settings_revision FROM users WHERE user_id=$1", &actor.actor_id)
+        .map_err(db_error)?.ok_or(Error::Forbidden)?;
     recheck_credential(&mut tx, actor).await?;
     let theme = user
         .extra_metadata
@@ -36,6 +38,7 @@ pub async fn profile(pool: &DbPool, actor: &AccountActor) -> Result<AccountProfi
         email: user.email,
         name: user.name,
         theme,
+        settings_revision,
     };
     tx.commit().await.map_err(boundary_error)?;
     Ok(profile)

@@ -306,6 +306,13 @@ persisted server drafts, if introduced later, would be shared operations too.
 
 ### Transaction ownership
 
+Account display name, persisted theme and remembered workspace preference form
+one account-settings concurrency aggregate. `users.settings_revision` is the
+observed revision; a stale setter returns conflict without writing. Each accepted
+settings mutation increments it and inserts an account-scoped entry in
+`account_settings_changes` on the same transaction. This audit is not scoped to
+an arbitrary workspace and is not a public account history or restore API.
+
 The top-level `krausen-app` command owns one `DbTx` for begin/commit/rollback.
 `krausen-core` supplies an enum-backed PostgreSQL/SQLite transaction context;
 called auth/brewery/change/retry helpers accept `&mut DbTx`, not a pool. Helpers

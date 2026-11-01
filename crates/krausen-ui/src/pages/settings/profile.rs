@@ -79,9 +79,20 @@ pub fn ProfilePage() -> impl IntoView {
 #[component]
 fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
     let (name, set_name) = signal(data.name.clone().unwrap_or_default());
-    let save_action = Action::new(|name: &String| {
+    let revision = RwSignal::new(data.settings_revision);
+    let save_action = Action::new(move |name: &String| {
         let name = name.clone();
-        async move { update_profile_name(name).await }
+        let expected = revision.get_untracked();
+        async move {
+            match update_profile_name(name, expected).await? {
+                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); Ok(()) }
+                krausen_types::account_read::AccountUpdateOutcome::Conflict { .. } => {
+                    if let Ok(profile) = get_profile().await { revision.set(profile.settings_revision); }
+                    Err(ServerFnError::new("Settings changed elsewhere. Your name is preserved; review and save again."))
+                }
+                _ => Err(ServerFnError::new("Unable to update name")),
+            }
+        }
     });
 
     let on_blur = move |_| {
@@ -145,9 +156,20 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
     }
 
     let (current_theme, set_current_theme) = signal(data.theme.clone());
-    let save_action = Action::new(|theme: &String| {
+    let revision = RwSignal::new(data.settings_revision);
+    let save_action = Action::new(move |theme: &String| {
         let theme = theme.clone();
-        async move { update_theme(theme).await }
+        let expected = revision.get_untracked();
+        async move {
+            match update_theme(theme, expected).await? {
+                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); Ok(()) }
+                krausen_types::account_read::AccountUpdateOutcome::Conflict { .. } => {
+                    if let Ok(profile) = get_profile().await { revision.set(profile.settings_revision); }
+                    Err(ServerFnError::new("Settings changed elsewhere. Your choice is preserved; review and save again."))
+                }
+                _ => Err(ServerFnError::new("Unable to update theme")),
+            }
+        }
     });
 
     static THEME_OPTIONS: &[(&str, &str, phosphor_leptos::IconData)] = &[
@@ -161,6 +183,7 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
             <CardHeader>
                 <CardTitle>"Appearance"</CardTitle>
                 <CardDescription>"Choose how Krausen looks to you."</CardDescription>
+                <ActionStatus action=save_action/>
             </CardHeader>
             <CardContent>
                 <div class="flex flex-wrap gap-3">

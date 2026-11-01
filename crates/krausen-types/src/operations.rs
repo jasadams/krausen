@@ -37,6 +37,9 @@ pub const ACCOUNT_PROFILE: Operation = Operation {
     input_contract: "account-query.v1",
     output_contract: "AccountProfileOutcome",
 };
+pub const ACCOUNT_NAME_SET: Operation = Operation { id: "account.name.v1", mcp_tool: "account_name_set", input_contract: "account-name-set.v1", output_contract: "AccountUpdateOutcome" };
+pub const ACCOUNT_THEME_SET: Operation = Operation { id: "account.theme.v1", mcp_tool: "account_theme_set", input_contract: "account-theme-set.v1", output_contract: "AccountUpdateOutcome" };
+pub const ACCOUNT_WORKSPACE_PREFERENCE_SET: Operation = Operation { id: "account.workspace-preference.v1", mcp_tool: "account_workspace_preference_set", input_contract: "account-workspace-preference-set.v1", output_contract: "AccountUpdateOutcome" };
 pub const ACCOUNT_WORKSPACES: Operation = Operation {
     id: "account.workspaces.v1",
     mcp_tool: "account_workspaces",
@@ -246,6 +249,9 @@ pub const OPERATIONS: &[Operation] = &[
     PASSWORD_STATUS,
     TOTP_STATUS,
     ACCOUNT_PROFILE,
+    ACCOUNT_NAME_SET,
+    ACCOUNT_THEME_SET,
+    ACCOUNT_WORKSPACE_PREFERENCE_SET,
     ACCOUNT_WORKSPACES,
     TEAM_MEMBERS,
     WORKSPACE_RENAME,

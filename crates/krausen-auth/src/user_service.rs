@@ -58,13 +58,7 @@ pub async fn update_user_name(
     user_id: &str,
     name: &str,
 ) -> krausen_core::Result<bool> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let sql = format!(
-        "UPDATE users SET name = $1, updated_at = {now} WHERE user_id = $2"
-    );
-    let result = krausen_core::db_execute!(pool, &sql, name, user_id)?;
-    Ok(result.rows_affected() > 0)
+    update_verified_entry_setting(pool, user_id, user_id, name, false).await
 }
 
 
@@ -74,13 +68,22 @@ pub async fn update_last_workspace(
     user_id: &str,
     workspace_id: &str,
 ) -> krausen_core::Result<bool> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-    let sql = format!(
-        "UPDATE users SET last_workspace_id = $1, updated_at = {now} WHERE user_id = $2"
-    );
-    let result = krausen_core::db_execute!(pool, &sql, workspace_id, user_id)?;
-    Ok(result.rows_affected() > 0)
+    update_verified_entry_setting(pool, user_id, user_id, workspace_id, true).await
+}
+
+// Legacy verified account-entry provisioning also writes these settings. Keep
+// its existing semantics, but ensure an already-open settings editor observes
+// the write and the account audit is committed with it.
+async fn update_verified_entry_setting(pool: &DbPool, user_id: &str, actor_id: &str, value: &str, workspace: bool) -> krausen_core::Result<bool> {
+    let now = sql_compat::now(pool.is_postgres());
+    let (field, operation) = if workspace { ("last_workspace_id", "account.workspace-preference.entry.v1") } else if user_id == actor_id { ("name", "account.name.entry.v1") } else { ("name", "account.name.admin.v1") };
+    let sql = format!("UPDATE users SET {field}=$1,settings_revision=settings_revision+1,updated_at={now} WHERE user_id=$2 RETURNING settings_revision");
+    let mut tx = pool.begin_write().await?;
+    let row = krausen_core::dbtx_fetch_optional!(&mut tx, (i64,), &sql, value, user_id)?;
+    let Some((revision,)) = row else { tx.commit().await?; return Ok(false) };
+    krausen_core::dbtx_execute!(&mut tx, "INSERT INTO account_settings_changes (change_id,account_id,actor_id,operation,revision,recorded_at) VALUES ($1,$2,$3,$4,$5,$6)", uuid::Uuid::new_v4().to_string(), user_id, actor_id, operation, revision, chrono::Utc::now().timestamp())?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Mark a user as email-verified.
@@ -677,6 +680,9 @@ pub async fn update_extra_metadata(
     user_id: &str,
     metadata: &serde_json::Value,
 ) -> krausen_core::Result<bool> {
+    if !metadata.is_object() || metadata.get("theme").is_some() {
+        return Err(krausen_core::Error::BadRequest("Theme changes require the account settings command".into()));
+    }
     let is_pg = pool.is_postgres();
     let now = sql_compat::now(is_pg);
     let metadata_str = serde_json::to_string(metadata)
@@ -827,6 +833,7 @@ pub async fn admin_create_user(
 pub async fn admin_update_user(
     pool: &DbPool,
     user_id: &str,
+    actor_id: &str,
     name: Option<&str>,
     active: Option<bool>,
     roles: Option<&[String]>,
@@ -836,10 +843,7 @@ pub async fn admin_update_user(
 
     // Update name if provided
     if let Some(name) = name {
-        let sql = format!(
-            "UPDATE users SET name = $1, updated_at = {now} WHERE user_id = $2"
-        );
-        krausen_core::db_execute!(pool, &sql, name, user_id)?;
+        update_verified_entry_setting(pool, user_id, actor_id, name, false).await?;
     }
 
     // Update active status if provided
@@ -866,4 +870,3 @@ pub async fn delete_user(pool: &DbPool, user_id: &str) -> krausen_core::Result<b
     )?;
     Ok(result.rows_affected() > 0)
 }
-

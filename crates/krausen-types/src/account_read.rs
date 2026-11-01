@@ -7,6 +7,7 @@ pub struct AccountProfile {
     pub email: String,
     pub name: Option<String>,
     pub theme: String,
+    pub settings_revision: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,6 +15,17 @@ pub struct AccountProfile {
 pub enum AccountProfileOutcome {
     Available { profile: AccountProfile },
     Forbidden,
+    Retryable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AccountUpdateOutcome {
+    Updated { settings_revision: i64 },
+    Conflict { expected: i64, current: i64 },
+    Forbidden,
+    Invalid,
     Retryable,
     Unavailable,
 }
