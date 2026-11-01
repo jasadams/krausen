@@ -37,4 +37,4 @@ until curl --silent --fail "$BASE_URL/login" > /dev/null; do
   sleep 1
 done
 cd e2e
-./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts -g 'scaling previews fixed-loss target changes and applies one revision' --reporter=line

@@ -584,6 +584,27 @@ async fn context_conflict(
     }
 }
 
+fn target_diff(accepted: &Targets, fresh: &Targets) -> String {
+    let mut diff = Vec::new();
+    macro_rules! compare { ($($field:ident),*) => { $(if accepted.$field != fresh.$field { diff.push(format!("{}:{:?}->{:?}", stringify!($field), accepted.$field, fresh.$field)); })* }; }
+    compare!(
+        total_water_l,
+        pre_boil_l,
+        post_boil_l,
+        grain_absorption_l,
+        mash_water_l,
+        sparge_water_l,
+        kettle_water_l,
+        pre_boil_sg,
+        original_sg,
+        final_sg,
+        abv_percent,
+        colour_ebc,
+        ibu
+    );
+    diff.join(";")
+}
+
 fn context_mismatch(
     accepted: &AcceptedScaleContext,
     actor: &ActorContext,
@@ -789,6 +810,15 @@ async fn apply_inner(
         &targets,
     );
     if !(revision_matches && target_matches && policy_matches && digest_ok) || mismatch.is_some() {
+        let target_diff =
+            (mismatch == Some("targets")).then(|| target_diff(&accepted.targets, &targets));
+        let validation_state = format!("{:?}", validation.state);
+        let validation_codes = validation
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         tracing::warn!(
             revision_matches,
             target_matches,
@@ -799,6 +829,9 @@ async fn apply_inner(
             actual_revision = actual,
             accepted_target = accepted.target_batch_size_l,
             request_target = request.target_batch_size_l,
+            validation_state = %validation_state,
+            validation_codes = %validation_codes,
+            target_diff = %target_diff.unwrap_or_default(),
             "scaling apply rejected accepted context"
         );
         tx.rollback().await.map_err(boundary_error)?;
