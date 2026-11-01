@@ -58,6 +58,63 @@ fn refreshed_metrics(preview: &Preview) -> AnyView {
     target_metrics(&preview.targets)
 }
 
+fn may_prepare(pending: Option<&StartBrewRequest>) -> bool {
+    pending.is_none()
+}
+
+fn prepared_head_guard(selected: i64, prepared_current: Option<i64>) -> Option<i64> {
+    (prepared_current == Some(selected)).then_some(selected)
+}
+
+fn request_head_guard(
+    selected: i64,
+    prepared_current: Option<i64>,
+    _current: Option<i64>,
+) -> Option<i64> {
+    prepared_head_guard(selected, prepared_current)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_request_survives_selection_and_prepare() {
+        let request = StartBrewRequest {
+            intent: OperationIntent {
+                account_id: "account".into(),
+                workspace_id: "workspace".into(),
+            },
+            recipe_id: "recipe".into(),
+            selected_recipe_revision: 2,
+            expected_head_revision: Some(2),
+            expected_calculation_context: "context".into(),
+            request_id: "original-request".into(),
+        };
+        let pending = Some(request.clone());
+        assert!(!may_prepare(pending.as_ref()));
+        // Selection edits do not mutate the unresolved request. Retrying uses
+        // the whole original command, including its idempotency identity.
+        let retry = pending.unwrap();
+        assert_eq!(retry, request);
+    }
+
+    #[test]
+    fn prepared_current_selection_keeps_original_head_guard() {
+        let selected = 2;
+        let prepared_guard = prepared_head_guard(selected, Some(2));
+        assert_eq!(prepared_guard, Some(2));
+        // Saving revision 3 after preparation must never turn revision 2 into
+        // an unguarded historical request.
+        let current_after_save = Some(3);
+        assert_ne!(current_after_save, Some(selected));
+        assert_eq!(
+            request_head_guard(selected, Some(2), current_after_save),
+            Some(2)
+        );
+    }
+}
+
 #[component]
 pub fn StartBrewPanel(
     identity: RwSignal<OperationIntent>,
@@ -77,6 +134,14 @@ pub fn StartBrewPanel(
             revision_text.set(current.unwrap().to_string());
         }
     });
+    let prepared = RwSignal::new(None::<ProcessSummary>);
+    let prepared_digest = RwSignal::new(None::<String>);
+    let prepared_current = RwSignal::new(None::<i64>);
+    let pending = RwSignal::new(None::<StartBrewRequest>);
+    let started = RwSignal::new(None::<StartedView>);
+    let conflict = RwSignal::new(None::<StartBrewOutcome>);
+    let status = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
     let last_current_revision = RwSignal::new(revision.get_untracked());
     Effect::new(move |_| {
         let current = revision.get();
@@ -84,19 +149,22 @@ pub fn StartBrewPanel(
             if let Some(current) = current {
                 revision_text.set(current.to_string());
             }
+            prepared.set(None);
+            prepared_digest.set(None);
+            prepared_current.set(None);
             last_current_revision.set(current);
         }
     });
-    let prepared = RwSignal::new(None::<ProcessSummary>);
-    let prepared_digest = RwSignal::new(None::<String>);
-    let pending = RwSignal::new(None::<StartBrewRequest>);
-    let started = RwSignal::new(None::<StartedView>);
-    let conflict = RwSignal::new(None::<StartBrewOutcome>);
-    let status = RwSignal::new(String::new());
-    let busy = RwSignal::new(false);
 
     let prepare = Callback::new(move |()| {
         if busy.get_untracked() || !context_visible.get_untracked() {
+            return;
+        }
+        if !may_prepare(pending.get_untracked().as_ref()) {
+            status.set(
+                "Resolve the previous start by retrying the same request before preparing another."
+                    .into(),
+            );
             return;
         }
         let Some(recipe_id) = recipe_id.get_untracked() else {
@@ -112,6 +180,7 @@ pub fn StartBrewPanel(
             return;
         }
         let expected = identity.get_untracked();
+        let current_at_prepare = revision.get_untracked();
         busy.set(true);
         status.set("Preparing the accepted calculation context…".into());
         started.set(None);
@@ -163,10 +232,19 @@ pub fn StartBrewPanel(
             busy.set(false);
             match result {
                 Ok(ProcessSummaryOutcome::Summary(summary)) => {
+                    if revision.get_untracked() != current_at_prepare
+                        || revision_text.get_untracked().trim().parse::<i64>().ok()
+                            != Some(selected)
+                        || pending.get_untracked().is_some()
+                    {
+                        status
+                            .set("The selection changed. Prepare the saved revision again.".into());
+                        return;
+                    }
                     let digest = summary.context.digest.clone();
                     prepared.set(Some(summary));
                     prepared_digest.set(digest);
-                    pending.set(None);
+                    prepared_current.set(current_at_prepare);
                     status.set(
                         if prepared
                             .get_untracked()
@@ -234,7 +312,11 @@ pub fn StartBrewPanel(
                 status.set("Unable to create a secure start request.".into());
                 return;
             };
-            let expected_head = (revision.get_untracked() == Some(selected)).then_some(selected);
+            let expected_head = request_head_guard(
+                selected,
+                prepared_current.get_untracked(),
+                revision.get_untracked(),
+            );
             StartBrewRequest {
                 intent: identity.get_untracked(),
                 recipe_id,
@@ -384,7 +466,7 @@ pub fn StartBrewPanel(
                     status.set("The selected recipe revision is not available.".into())
                 }
                 Err(_) => status.set(
-                    "Start failed before a committed result. Retry; the same request will not create a second brew."
+                    "The start result is unknown. Retry; the same request will not create a second brew."
                         .into(),
                 ),
             }
@@ -402,7 +484,6 @@ pub fn StartBrewPanel(
         revision_text.set(value);
         prepared.set(None);
         prepared_digest.set(None);
-        pending.set(None);
         conflict.set(None);
         started.set(None);
         status.set(String::new());
@@ -423,10 +504,10 @@ pub fn StartBrewPanel(
             <div class="recipe-editor__actions">
                 <Button on:click=move |_| prepare.run(()) disabled=busy>"Prepare start"</Button>
                 <Button
-                    disabled=Signal::derive(move || busy.get() || !ready.get())
+                    disabled=Signal::derive(move || busy.get() || (pending.get().is_none() && !ready.get()))
                     on:click=move |_| start.run(())
                 >
-                    "Start brew"
+                    {move || if pending.get().is_some() { "Retry start" } else { "Start brew" }}
                 </Button>
             </div>
             <p role="status">{move || status.get()}</p>
