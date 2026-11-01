@@ -724,7 +724,7 @@ async fn sqlite_brew_start() {
         .run(&pool)
         .await
         .unwrap();
-    exercise(DbPool::Sqlite(pool)).await;
+    Box::pin(exercise(DbPool::Sqlite(pool))).await;
 }
 
 #[tokio::test]
@@ -736,7 +736,7 @@ async fn postgres_brew_start() {
         .run(&pool)
         .await
         .unwrap();
-    exercise(DbPool::Postgres(pool)).await;
+    Box::pin(exercise(DbPool::Postgres(pool))).await;
 }
 
 #[tokio::test]
