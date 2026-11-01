@@ -19,6 +19,11 @@ async function setupVirtualAuthenticator(page: Page): Promise<{
 }> {
   const client = await page.context().newCDPSession(page);
   await client.send('WebAuthn.enable');
+  const authenticatorId = await addVirtualAuthenticator(client);
+  return { client, authenticatorId };
+}
+
+async function addVirtualAuthenticator(client: CDPSession): Promise<string> {
   const { authenticatorId } = await client.send('WebAuthn.addVirtualAuthenticator', {
     options: {
       protocol: 'ctap2',
@@ -28,7 +33,7 @@ async function setupVirtualAuthenticator(page: Page): Promise<{
       isUserVerified: true,
     },
   });
-  return { client, authenticatorId };
+  return authenticatorId;
 }
 
 async function addPasskeyViaModal(page: Page, name: string): Promise<void> {
@@ -147,6 +152,7 @@ test.describe('TC-013: Security - Passkey Management', () => {
 
   test('should delete a passkey when more than one exists', async ({ page }) => {
     const { client, authenticatorId } = await setupVirtualAuthenticator(page);
+    let activeAuthenticator: string | undefined = authenticatorId;
 
     try {
       await navigateToSecurity(page);
@@ -156,7 +162,14 @@ test.describe('TC-013: Security - Passkey Management', () => {
 
       if (rowCount === 0) {
         await addPasskeyViaModal(page, 'Delete Test Passkey 1');
+        // The existing credential is excluded on the first device; register
+        // the second passkey with a distinct authenticator instead.
+        await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: activeAuthenticator });
+        activeAuthenticator = undefined;
+        activeAuthenticator = await addVirtualAuthenticator(client);
         await addPasskeyViaModal(page, 'Delete Test Passkey 2');
+        await expect(page.getByText('Delete Test Passkey 1', { exact: true })).toBeVisible();
+        await expect(page.getByText('Delete Test Passkey 2', { exact: true })).toBeVisible();
       } else if (rowCount === 1) {
         await addPasskeyViaModal(page, 'Delete Test Passkey Extra');
       }
@@ -170,7 +183,9 @@ test.describe('TC-013: Security - Passkey Management', () => {
 
       await expect(page.getByText('Passkey deleted successfully')).toBeVisible({ timeout: 10000 });
     } finally {
-      await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+      if (activeAuthenticator) {
+        await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: activeAuthenticator });
+      }
     }
   });
 
