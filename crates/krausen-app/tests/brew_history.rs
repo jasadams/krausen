@@ -7,9 +7,11 @@ use krausen_core::DbPool;
 use krausen_types::{
     brew::{
         ActualFormulationCommand, ActualFormulationOutcome, AmendActualFormulationRequest,
-        ArchiveBrewRequest, BrewArchiveOutcome, BrewEvidenceViewOutcome, BrewEvidenceViewRequest,
-        MeasurementCommand, MeasurementOutcome, RecordMeasurementRequest, StartBrewOutcome,
-        StartBrewRequest,
+        ArchiveBrewRequest, BrewArchiveOutcome, BrewEvidenceView, BrewEvidenceViewOutcome,
+        BrewEvidenceViewRequest, BrewLifecycleOutcome, BrewTransitionV1, CorrectMeasurementRequest,
+        MeasurementCommand, MeasurementListRequest, MeasurementOutcome, NoteCommand, NoteOutcome,
+        RecordMeasurementRequest, RecordNoteRequest, RetractMeasurementRequest, StartBrewOutcome,
+        StartBrewRequest, TransitionBrewRequest,
     },
     brew_history::{
         BrewChangeKind, BrewComparisonOutcome, BrewComparisonRequest, BrewFeedbackApplyOutcome,
@@ -17,8 +19,9 @@ use krausen_types::{
         BrewPrintOutcome, BrewPrintRequest, RecipeBrewHistoryOutcome, RecipeBrewHistoryQuery,
     },
     brewery::{
-        ActualFormulationV1, AdditionStage, BrewPlanV1, EquipmentProvenance, EquipmentSettingsV1,
-        FermentableAddition, FermentableSpecification, ProcessV1, RecipeDocumentV1, StyleReference,
+        ActualFormulationV1, AdditionStage, BrewPlanV1, BrewStatusV1, EquipmentProvenance,
+        EquipmentSettingsV1, FermentableAddition, FermentableSpecification, ProcessV1,
+        RecipeDocumentV1, StyleReference,
     },
     equipment::SaveEquipment,
     formulation::{PreviewOutcome, PreviewRequest},
@@ -226,6 +229,61 @@ fn actual(doc: &RecipeDocumentV1) -> ActualFormulationV1 {
         notes: Some("Actual brew notes".into()),
         extensions: Default::default(),
     }
+}
+
+fn correct_request(
+    actor: &ActorContext,
+    brew_id: &str,
+    entry_id: &str,
+    expected_selection_revision: Option<i64>,
+    value: f64,
+) -> CorrectMeasurementRequest {
+    CorrectMeasurementRequest {
+        intent: intent(actor),
+        brew_id: brew_id.into(),
+        entry_id: entry_id.into(),
+        expected_selection_revision,
+        value,
+        source: "manual".into(),
+        metadata: None,
+        request_id: Uuid::new_v4().to_string(),
+    }
+}
+
+fn retract_request(
+    actor: &ActorContext,
+    brew_id: &str,
+    entry_id: &str,
+    expected_selection_revision: Option<i64>,
+) -> RetractMeasurementRequest {
+    RetractMeasurementRequest {
+        intent: intent(actor),
+        brew_id: brew_id.into(),
+        entry_id: entry_id.into(),
+        expected_selection_revision,
+        request_id: Uuid::new_v4().to_string(),
+    }
+}
+
+async fn evidence_view(
+    db: &DbPool,
+    actor: &ActorContext,
+    brew_id: &str,
+) -> BrewEvidenceView {
+    let outcome = brew_evidence::view(
+        db,
+        actor,
+        BrewEvidenceViewRequest {
+            intent: intent(actor),
+            brew_id: brew_id.into(),
+            lifecycle_cursor: None,
+        },
+    )
+    .await;
+    let BrewEvidenceViewOutcome::View(view) = outcome else {
+        panic!("view not available: {outcome:?}");
+    };
+    view
 }
 
 async fn exercise(db: DbPool) {
@@ -989,6 +1047,396 @@ async fn exercise(db: DbPool) {
     ));
 }
 
+async fn integrated_acceptance(db: DbPool) {
+    let (actor, brew_id, plan, recipe) = fixture(&db).await;
+
+    let initial = evidence_view(&db, &actor, &brew_id).await;
+    let recipe_id = initial.recipe_id.clone();
+    assert_eq!(initial.status, BrewStatusV1::Started);
+    assert_eq!(initial.revision, 1);
+    assert_eq!(initial.metadata_revision, 1);
+    assert!(!initial.archived);
+    assert_eq!(initial.plan, plan);
+
+    // A reading is corrected and then retracted in the same brew before the
+    // actual formulation is compared with the frozen plan.
+    let recorded = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::Record(measurement(&actor, &brew_id, "gravity.original.v1", 1.050)),
+    )
+    .await;
+    let MeasurementOutcome::Recorded(recorded) = recorded else {
+        panic!("record reading: {recorded:?}")
+    };
+    let corrected = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::Correct(correct_request(
+            &actor,
+            &brew_id,
+            &recorded.entry_id,
+            Some(1),
+            1.052,
+        )),
+    )
+    .await;
+    let MeasurementOutcome::Corrected(corrected) = corrected else {
+        panic!("correct reading: {corrected:?}")
+    };
+    assert_eq!(corrected.root_observation_id, recorded.entry_id);
+    assert_eq!(
+        corrected.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    assert_eq!(corrected.observed_at, recorded.observed_at);
+
+    let after_correction = evidence_view(&db, &actor, &brew_id).await;
+    let corrected_slot = after_correction
+        .measurements
+        .iter()
+        .find(|slot| slot.quantity_id == "gravity.original.v1")
+        .unwrap();
+    assert_eq!(
+        corrected_slot.selected_root_observation_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    let selected = corrected_slot
+        .current
+        .as_ref()
+        .expect("corrected reading remains selected");
+    assert_eq!(selected.entry_id, corrected.entry_id);
+    assert_eq!(selected.value, Some(1.052));
+    assert_eq!(
+        selected.root_observation_id.as_str(),
+        recorded.entry_id.as_str()
+    );
+    assert_eq!(
+        selected.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    assert_eq!(selected.observed_at, recorded.observed_at);
+
+    let retracted = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::Retract(retract_request(
+            &actor,
+            &brew_id,
+            &corrected.entry_id,
+            Some(2),
+        )),
+    )
+    .await;
+    let MeasurementOutcome::Retracted(retracted) = retracted else {
+        panic!("retract reading: {retracted:?}")
+    };
+    assert!(retracted.is_retraction());
+
+    let lineage = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::List(MeasurementListRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            root_observation_id: Some(recorded.entry_id.clone()),
+            cursor: None,
+            limit: 50,
+        }),
+    )
+    .await;
+    let MeasurementOutcome::Page(lineage) = lineage else {
+        panic!("root lineage: {lineage:?}")
+    };
+    assert_eq!(lineage.items.len(), 3);
+    assert!(lineage.next_cursor.is_none());
+    assert!(lineage
+        .items
+        .iter()
+        .all(|entry| entry.root_observation_id.as_str() == recorded.entry_id.as_str()));
+    let original = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == recorded.entry_id)
+        .unwrap();
+    assert_eq!(original.value, Some(1.050));
+    assert_eq!(original.supersedes_entry_id, None);
+    let correction = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == corrected.entry_id)
+        .unwrap();
+    assert_eq!(correction.value, Some(1.052));
+    assert_eq!(
+        correction.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    let retraction = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == retracted.entry_id)
+        .unwrap();
+    assert_eq!(retraction.value, None);
+    assert!(retraction.is_retraction());
+    assert_eq!(
+        retraction.supersedes_entry_id.as_deref(),
+        Some(corrected.entry_id.as_str())
+    );
+    assert!(lineage
+        .items
+        .iter()
+        .all(|entry| entry.observed_at == recorded.observed_at));
+
+    let after_evidence = evidence_view(&db, &actor, &brew_id).await;
+    let slot = after_evidence
+        .measurements
+        .iter()
+        .find(|slot| slot.quantity_id == "gravity.original.v1")
+        .unwrap();
+    assert_eq!(slot.selected_root_observation_id, None);
+    assert!(slot.current.is_none());
+    assert_eq!(after_evidence.revision, 1);
+
+    let note = brew_evidence::notes(
+        &db,
+        &actor,
+        NoteCommand::Record(RecordNoteRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            text: "integrated acceptance note".into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await;
+    let NoteOutcome::Recorded(note) = note else {
+        panic!("record note: {note:?}")
+    };
+    assert_eq!(
+        note.document.text.as_deref(),
+        Some("integrated acceptance note")
+    );
+
+    let completed = brew_evidence::transition(
+        &db,
+        &actor,
+        TransitionBrewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_revision: 1,
+            transition: BrewTransitionV1::Complete,
+            reason: None,
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    assert_eq!(
+        completed,
+        BrewLifecycleOutcome::Transitioned {
+            brew_id: brew_id.clone(),
+            status: BrewStatusV1::Completed,
+            revision: 2
+        }
+    );
+    let reopened = brew_evidence::transition(
+        &db,
+        &actor,
+        TransitionBrewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_revision: 2,
+            transition: BrewTransitionV1::Reopen,
+            reason: Some("integrated acceptance".into()),
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    assert_eq!(
+        reopened,
+        BrewLifecycleOutcome::Transitioned {
+            brew_id: brew_id.clone(),
+            status: BrewStatusV1::Started,
+            revision: 3
+        }
+    );
+
+    let amended = brew_evidence::actual(
+        &db,
+        &actor,
+        ActualFormulationCommand::Amend(AmendActualFormulationRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: None,
+            document: actual(&recipe),
+            reason: Some("integrated acceptance".into()),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await;
+    let ActualFormulationOutcome::Amended(actual_revision) = amended else {
+        panic!("amend actual: {amended:?}")
+    };
+    assert_eq!(actual_revision.revision, 1);
+
+    let comparison = brew_history::comparison(
+        &db,
+        &actor,
+        BrewComparisonRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewComparisonOutcome::Comparison(comparison) = comparison else {
+        panic!("comparison")
+    };
+    assert_eq!(comparison.plan, plan);
+    let retracted_slot = comparison
+        .measurements
+        .iter()
+        .find(|row| row.quantity_id == "gravity.original.v1")
+        .unwrap();
+    assert!(retracted_slot.selected.is_none());
+    let change_ids: Vec<String> = comparison
+        .changes
+        .iter()
+        .filter(|change| {
+            change.kind == BrewChangeKind::Changed
+                && (change.id == "fermentables:grain-1" || change.id == "process:boil_minutes")
+        })
+        .map(|change| change.id.clone())
+        .collect();
+    assert_eq!(change_ids.len(), 2, "changes: {:?}", comparison.changes);
+
+    let preview = brew_history::feedback_preview(
+        &db,
+        &actor,
+        BrewFeedbackPreviewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(1),
+            change_ids: change_ids.clone(),
+        },
+    )
+    .await;
+    let BrewFeedbackPreviewOutcome::Preview(preview) = preview else {
+        panic!("feedback preview: {preview:?}")
+    };
+    let context = preview.preview.context_digest.clone().unwrap();
+    let applied = brew_history::feedback_apply(
+        &db,
+        &actor,
+        BrewFeedbackApplyRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(1),
+            change_ids,
+            expected_recipe_head: preview.base_recipe_head,
+            expected_calculation_context: context,
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    assert_eq!(
+        applied,
+        BrewFeedbackApplyOutcome::Applied {
+            brew_id: brew_id.clone(),
+            recipe_id: recipe_id.clone(),
+            source_actual_revision: 1,
+            recipe_revision: 2,
+        }
+    );
+    let RecipeReadOutcome::Found(updated) =
+        recipe_editor::read(&db, &actor, &intent(&actor), &recipe_id).await
+    else {
+        panic!("read updated recipe")
+    };
+    assert_eq!(updated.revision, 2);
+    assert_eq!(updated.document.fermentables[0].amount_kg, Some(4.5));
+    assert_eq!(updated.document.boil_minutes, Some(70.0));
+
+    let print = brew_history::historical_print(
+        &db,
+        &actor,
+        BrewPrintRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewPrintOutcome::Print(print) = print else {
+        panic!("historical print: {print:?}")
+    };
+    assert_eq!(print.selected_recipe_revision, 1);
+    assert_eq!(print.summary.title, "History brew");
+    assert_eq!(print.summary.boil_minutes, Some(60.0));
+    assert!(print.actual.is_some());
+    let after_feedback = evidence_view(&db, &actor, &brew_id).await;
+    assert_eq!(
+        after_feedback.plan, plan,
+        "feedback never changes the frozen plan"
+    );
+
+    let archived = brew_evidence::archive(
+        &db,
+        &actor,
+        ArchiveBrewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            archived: true,
+            expected_metadata_revision: 1,
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        archived,
+        BrewArchiveOutcome::Archived {
+            archived: true,
+            metadata_revision: 2,
+            ..
+        }
+    ));
+    let history = brew_history::history(
+        &db,
+        &actor,
+        RecipeBrewHistoryQuery {
+            intent: intent(&actor),
+            recipe_id: recipe_id.clone(),
+            include_archived: true,
+            cursor: None,
+            limit: 50,
+        },
+    )
+    .await;
+    let RecipeBrewHistoryOutcome::History(page) = history else {
+        panic!("archived history: {history:?}")
+    };
+    assert_eq!(page.items.len(), 1);
+    let item = &page.items[0];
+    assert_eq!(item.brew_id, brew_id);
+    assert_eq!(item.selected_recipe_revision, 1);
+    assert_eq!(item.status, BrewStatusV1::Started);
+    assert_eq!(item.revision, 3);
+    assert!(item.archived);
+    assert_eq!(item.actual_revision, Some(1));
+    let active = brew_history::history(
+        &db,
+        &actor,
+        RecipeBrewHistoryQuery {
+            intent: intent(&actor),
+            recipe_id,
+            include_archived: false,
+            cursor: None,
+            limit: 50,
+        },
+    )
+    .await;
+    let RecipeBrewHistoryOutcome::History(active) = active else {
+        panic!("active history: {active:?}")
+    };
+    assert!(active.items.is_empty());
+}
+
 #[tokio::test]
 async fn sqlite_brew_history() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1012,4 +1460,29 @@ async fn postgres_brew_history() {
         .await
         .unwrap();
     exercise(DbPool::Postgres(pool)).await;
+}
+
+#[tokio::test]
+async fn sqlite_integrated_acceptance() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../../apps/server/migrations-sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    integrated_acceptance(DbPool::Sqlite(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_integrated_acceptance() {
+    let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("PostgreSQL required");
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("../../apps/server/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    integrated_acceptance(DbPool::Postgres(pool)).await;
 }
