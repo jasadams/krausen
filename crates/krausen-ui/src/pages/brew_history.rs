@@ -67,19 +67,25 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
         message.set("Loading brew history…".into());
         leptos::task::spawn_local(async move {
             let outcome = brew_history_shared(RecipeBrewHistoryQuery {
-                intent,
+                intent: intent.clone(),
                 recipe_id: recipe.clone(),
                 include_archived: true,
                 cursor: cursor.clone(),
                 limit: 50,
             })
             .await;
+            let context_ok = current_context_matches(&intent).await;
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
             {
                 return;
             }
             busy.set(false);
+            if !context_ok {
+                clear_page();
+                message.set("Workspace changed; reload.".into());
+                return;
+            }
             match outcome {
                 Ok(RecipeBrewHistoryOutcome::History(page)) => {
                     if cursor.is_some() {
@@ -230,15 +236,17 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 generation.try_get_untracked() == Some(mine)
                     && current_brew.try_get_untracked().as_deref() == Some(brew.as_str())
             };
-            if !current_context_matches(&intent).await {
-                if owned() {
-                    comparison.set(None);
-                    preview.set(None);
-                    print.set(None);
-                    selected.set(BTreeSet::new());
-                    busy.set(false);
-                    message.set("Workspace changed; reload.".into());
-                }
+            let context_ok = current_context_matches(&intent).await;
+            if !owned() {
+                return;
+            }
+            if !context_ok {
+                comparison.set(None);
+                preview.set(None);
+                print.set(None);
+                selected.set(BTreeSet::new());
+                busy.set(false);
+                message.set("Workspace changed; reload.".into());
                 return;
             }
             let outcome = brew_comparison_shared(BrewComparisonRequest {
@@ -246,10 +254,11 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 brew_id: brew.clone(),
             })
             .await;
+            let context_ok = current_context_matches(&intent).await;
             if !owned() {
                 return;
             }
-            if !current_context_matches(&intent).await {
+            if !context_ok {
                 comparison.set(None);
                 preview.set(None);
                 print.set(None);
@@ -367,12 +376,14 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 generation.try_get_untracked() == Some(mine)
                     && current_brew.try_get_untracked() == Some(brew.clone())
             };
-            if !current_context_matches(&intent).await {
-                if owned() {
-                    preview.set(None);
-                    busy.set(false);
-                    message.set("Workspace changed; reload.".into());
-                }
+            let context_ok = current_context_matches(&intent).await;
+            if !owned() {
+                return;
+            }
+            if !context_ok {
+                hide_brew_content();
+                busy.set(false);
+                message.set("Workspace changed; reload.".into());
                 return;
             }
             let outcome = brew_feedback_preview_shared(BrewFeedbackPreviewRequest {
@@ -382,14 +393,12 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 change_ids,
             })
             .await;
+            let context_ok = current_context_matches(&intent).await;
             if !owned() {
                 return;
             }
-            if !current_context_matches(&intent).await {
-                comparison.set(None);
-                preview.set(None);
-                print.set(None);
-                selected.set(BTreeSet::new());
+            if !context_ok {
+                hide_brew_content();
                 busy.set(false);
                 message.set("Workspace changed; reload.".into());
                 return;
@@ -466,25 +475,41 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         retry.set(Some(request.clone()));
         leptos::task::spawn_local(async move {
             let outcome = brew_feedback_apply_shared(request.clone()).await;
+            // Resolve the retained command by identity even if the view moved
+            // away; only the owning view updates its content.
+            let definitive = match &outcome {
+                Ok(BrewFeedbackApplyOutcome::Retryable | BrewFeedbackApplyOutcome::Unavailable)
+                | Err(_) => false,
+                Ok(_) => true,
+            };
+            if definitive {
+                retry.update(|slot| {
+                    if slot
+                        .as_ref()
+                        .is_some_and(|retained| retained.request_id == request.request_id)
+                    {
+                        *slot = None;
+                    }
+                });
+            }
+            let context_ok = current_context_matches(&owner).await;
             if generation.try_get_untracked() != Some(mine)
                 || current_brew.try_get_untracked() != Some(brew.clone())
             {
                 return;
             }
-            if !current_context_matches(&owner).await {
+            busy.set(false);
+            if !context_ok {
                 hide_brew_content();
-                busy.set(false);
                 message.set(
                     "Workspace changed; the retained request can be retried from its brew.".into(),
                 );
                 return;
             }
-            busy.set(false);
             match outcome {
                 Ok(BrewFeedbackApplyOutcome::Applied {
                     recipe_revision, ..
                 }) => {
-                    retry.set(None);
                     preview.set(None);
                     selected.set(BTreeSet::new());
                     message.set(format!(
@@ -494,37 +519,31 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 Ok(BrewFeedbackApplyOutcome::Unchanged {
                     recipe_revision, ..
                 }) => {
-                    retry.set(None);
                     preview.set(None);
                     message.set(format!(
                         "The selected changes are already in recipe revision {recipe_revision}."
                     ));
                 }
                 Ok(BrewFeedbackApplyOutcome::HeadConflict { expected, actual }) => {
-                    retry.set(None);
                     message.set(format!(
                         "The recipe head advanced from {expected} to {actual}; reload the comparison."
                     ))
                 }
                 Ok(BrewFeedbackApplyOutcome::ContextConflict { .. }) => {
-                    retry.set(None);
                     message.set(
                         "The accepted calculation context changed; preview the current comparison again."
                             .into(),
                     )
                 }
                 Ok(BrewFeedbackApplyOutcome::ActualConflict { expected, actual }) => {
-                    retry.set(None);
                     message.set(format!(
                         "The actual revision changed from {expected:?} to {actual:?}; reload the comparison."
                     ))
                 }
                 Ok(BrewFeedbackApplyOutcome::NoActual) => {
-                    retry.set(None);
                     message.set("This brew has no actual formulation amendment.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::NoChanges { diagnostics }) => {
-                    retry.set(None);
                     message.set(if diagnostics.is_empty() {
                         "No recipe revision was needed.".into()
                     } else {
@@ -532,53 +551,43 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     })
                 }
                 Ok(BrewFeedbackApplyOutcome::NotFound) => {
-                    retry.set(None);
                     message.set("Brew not found.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::Forbidden) => {
-                    retry.set(None);
                     hide_brew_content();
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::ContextChanged) => {
-                    retry.set(None);
                     hide_brew_content();
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::InvalidRequest) => {
-                    retry.set(None);
                     message.set("The feedback request was invalid.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedProfile) => {
-                    retry.set(None);
                     message.set("The selected equipment profile is unavailable.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedStyle) => {
-                    retry.set(None);
                     message.set("The selected style is unavailable.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::Invalid(validation)) => {
-                    retry.set(None);
                     message.set(format!(
                         "The proposed recipe is invalid ({:?}).",
                         validation.state
                     ))
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedIngredientSource) => {
-                    retry.set(None);
                     message.set(
                         "A copied ingredient source is no longer valid on the current recipe."
                             .into(),
                     )
                 }
                 Ok(BrewFeedbackApplyOutcome::RequestIdentityConflict) => {
-                    retry.set(None);
                     message.set(
                         "This request identity was already used for different feedback.".into(),
                     )
                 }
                 Ok(BrewFeedbackApplyOutcome::ResultExpired { .. }) => {
-                    retry.set(None);
                     message.set("This feedback result expired; preview again.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::Retryable)
@@ -646,15 +655,14 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 generation.try_get_untracked() == Some(mine)
                     && current_brew.try_get_untracked() == Some(brew.clone())
             };
-            if !current_context_matches(&intent).await {
-                if owned() {
-                    comparison.set(None);
-                    preview.set(None);
-                    print.set(None);
-                    selected.set(BTreeSet::new());
-                    busy.set(false);
-                    message.set("Workspace changed; reload.".into());
-                }
+            let context_ok = current_context_matches(&intent).await;
+            if !owned() {
+                return;
+            }
+            if !context_ok {
+                hide_brew_content();
+                busy.set(false);
+                message.set("Workspace changed; reload.".into());
                 return;
             }
             let outcome = brew_print_shared(BrewPrintRequest {
@@ -662,14 +670,12 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 brew_id: brew.clone(),
             })
             .await;
+            let context_ok = current_context_matches(&intent).await;
             if !owned() {
                 return;
             }
-            if !current_context_matches(&intent).await {
-                comparison.set(None);
-                preview.set(None);
-                print.set(None);
-                selected.set(BTreeSet::new());
+            if !context_ok {
+                hide_brew_content();
                 busy.set(false);
                 message.set("Workspace changed; reload.".into());
                 return;

@@ -752,57 +752,111 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
 });
 
-test('held comparison after a same-route workspace change is not rendered', async ({
+test('held context check after navigation cannot install the previous brew', async ({
   page,
 }) => {
-  const brewId = await startBrewAndOpenEvidence(page, `Brew held comparison ${Date.now()}`);
-  const workspace = sqliteExec(
-    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
-  );
-  const otherWorkspace = seedWorkspace({
-    ownerId: getDefaultUserId(),
-    name: `Held comparison ${Date.now()}`,
+  const serverFnPaths = new Map<string, string>();
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    const match = path.match(/^\/leptos-api\/([a-z_]+)\d+$/);
+    if (match) {
+      serverFnPaths.set(match[1], path);
+    }
   });
-  const setWorkspace = (workspaceId: string) => {
-    sqliteExec(
-      `UPDATE users SET last_workspace_id = '${workspaceId.replaceAll("'", "''")}' WHERE user_id = '${getDefaultUserId().replaceAll("'", "''")}'`,
-    );
-    walCheckpoint();
-  };
-  setWorkspace(workspace);
 
-  let releaseComparison!: () => void;
-  const comparisonReleased = new Promise<void>((resolve) => {
-    releaseComparison = resolve;
+  const firstBrew = await startBrewAndOpenEvidence(page, `Brew held A ${Date.now()}`);
+  const secondBrew = await startBrewAndOpenEvidence(page, `Brew held B ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${firstBrew.replaceAll("'", "''")}';`,
+  );
+  const intent = { account_id: getDefaultUserId(), workspace_id: workspace };
+
+  await page.goto(`/brews/${firstBrew}/analysis`);
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  const comparisonPath = serverFnPaths.get('execute_brew_comparison');
+  expect(comparisonPath).toBeTruthy();
+  const firstComparison = outcomeOf(
+    (
+      await callServerFn(page, comparisonPath!, {
+        intent,
+        brew_id: firstBrew,
+      })
+    ).body,
+  ).Comparison;
+  const secondComparison = outcomeOf(
+    (
+      await callServerFn(page, comparisonPath!, {
+        intent,
+        brew_id: secondBrew,
+      })
+    ).body,
+  ).Comparison;
+  expect(firstComparison.plan.context_id).not.toBe(secondComparison.plan.context_id);
+
+  let holdNextContext = false;
+  let releaseContext!: () => void;
+  const contextReleased = new Promise<void>((resolve) => {
+    releaseContext = resolve;
   });
-  let comparisonEntered!: () => void;
-  const comparisonHeld = new Promise<void>((resolve) => {
-    comparisonEntered = resolve;
+  let contextEntered!: () => void;
+  const contextHeld = new Promise<void>((resolve) => {
+    contextEntered = resolve;
   });
-  await page.route('**/leptos-api/execute_brew_comparison*', async (route) => {
-    // Fetch a real workspace-A response, then hold its delivery until the
-    // authenticated context has moved to another workspace.
+  await page.route('**/leptos-api/get_user_context*', async (route) => {
+    if (!holdNextContext) {
+      await route.continue();
+      return;
+    }
+    holdNextContext = false;
+    // Resolve the real context while the view still owns the first brew, but
+    // deliver it only after the route has moved to the second brew.
     const response = await route.fetch();
-    comparisonEntered();
-    await comparisonReleased;
+    contextEntered();
+    await contextReleased;
     await route.fulfill({ response });
   });
 
-  await page.goto(`/brews/${brewId}/analysis`);
-  await comparisonHeld;
-  setWorkspace(otherWorkspace);
-  expect(
-    await page.evaluate(
-      async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
-    ),
-  ).toBe(200);
-  releaseComparison();
+  let releaseSecondComparison!: () => void;
+  const secondComparisonReleased = new Promise<void>((resolve) => {
+    releaseSecondComparison = resolve;
+  });
+  let secondComparisonEntered!: () => void;
+  const secondComparisonHeld = new Promise<void>((resolve) => {
+    secondComparisonEntered = resolve;
+  });
+  await page.route('**/leptos-api/execute_brew_comparison*', async (route) => {
+    const request = commandFrom(route.request());
+    if (request?.brew_id !== firstBrew) {
+      // Hold the destination brew's read so the stale continuation's write, if
+      // any, is observable before the correct data arrives.
+      const response = await route.fetch();
+      secondComparisonEntered();
+      await secondComparisonReleased;
+      await route.fulfill({ response });
+      return;
+    }
+    const response = await route.fetch();
+    holdNextContext = true;
+    await route.fulfill({ response });
+  });
 
-  await expect(page.getByText('Workspace changed; reload.')).toBeVisible();
-  await expect(page.getByText('Formulation changes')).toHaveCount(0);
-  await expect(page.getByText('Target versus selected actual')).toHaveCount(0);
-  setWorkspace(workspace);
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await contextHeld;
+  await page.evaluate((href) => {
+    history.pushState({}, '', href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, `/brews/${secondBrew}/analysis`);
+  await expect(page).toHaveURL(new RegExp(secondBrew));
+  await secondComparisonHeld;
+  releaseContext();
+  await page.waitForTimeout(300);
+  await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
+  await expect(page.getByText(secondComparison.plan.context_id)).toHaveCount(0);
+  releaseSecondComparison();
+  await expect(page.getByText(secondComparison.plan.context_id)).toBeVisible();
+  await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
 });
+
 
 test('feedback apply keeps one request through a lost response and ignores selection changes', async ({
   page,
