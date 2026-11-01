@@ -18,6 +18,23 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+async fn brew_ui_outcome(
+    base: &str,
+    token: &str,
+    path: &str,
+    request: &serde_json::Value,
+) -> serde_json::Value {
+    let response = reqwest::Client::new()
+        .post(format!("{base}{path}"))
+        .bearer_auth(token)
+        .form(&[("request_json", serde_json::to_string(request).unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "brew UI HTTP {}", response.status());
+    response.json().await.unwrap()
+}
+
 async fn exercise(db: DbPool) {
     let _ = krausen_core::constants::load_with_fallback();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1349,11 +1366,19 @@ async fn exercise(db: DbPool) {
     .unwrap()
     .clone();
     let evidence_view = modern
-        .call_tool(CallToolRequestParams::new("brew_evidence_view").with_arguments(view_args))
+        .call_tool(CallToolRequestParams::new("brew_evidence_view").with_arguments(view_args.clone()))
         .await
         .unwrap();
     assert_ne!(evidence_view.is_error, Some(true));
     let evidence_view = evidence_view.structured_content.unwrap();
+    let ui_view = brew_ui_outcome(
+        &base,
+        &browser.access_token,
+        <krausen_ui::server_fns::brew::BrewEvidenceView as ServerFn>::PATH,
+        &view_args["request"],
+    )
+    .await;
+    assert_eq!(ui_view, evidence_view["outcome"]);
     assert_eq!(evidence_view["outcome"]["View"]["brew_id"], brew_id);
     assert_eq!(
         evidence_view["outcome"]["View"]["measurements"]
@@ -1393,12 +1418,20 @@ async fn exercise(db: DbPool) {
         .to_string();
     assert_eq!(recorded["outcome"]["Recorded"]["value"], 1.050);
     let replayed = modern
-        .call_tool(CallToolRequestParams::new("brew_measurement").with_arguments(record_args))
+        .call_tool(CallToolRequestParams::new("brew_measurement").with_arguments(record_args.clone()))
         .await
         .unwrap();
     assert_ne!(replayed.is_error, Some(true));
     let replayed = replayed.structured_content.unwrap();
     assert_eq!(replayed["outcome"]["Recorded"]["entry_id"], entry_id);
+    let ui_replay = brew_ui_outcome(
+        &base,
+        &browser.access_token,
+        <krausen_ui::server_fns::brew::BrewMeasurement as ServerFn>::PATH,
+        &record_args["request"],
+    )
+    .await;
+    assert_eq!(ui_replay, replayed["outcome"]);
 
     let invalid_measurement = json!({
         "workspace_id": &ws,
@@ -1414,17 +1447,23 @@ async fn exercise(db: DbPool) {
     .as_object()
     .unwrap()
     .clone();
+    let ui_invalid = brew_ui_outcome(
+        &base,
+        &browser.access_token,
+        <krausen_ui::server_fns::brew::BrewMeasurement as ServerFn>::PATH,
+        &invalid_measurement["request"],
+    )
+    .await;
     let invalid_measurement = modern
         .call_tool(
-            CallToolRequestParams::new("brew_measurement").with_arguments(invalid_measurement),
+            CallToolRequestParams::new("brew_measurement").with_arguments(invalid_measurement.clone()),
         )
         .await
         .unwrap();
     assert_eq!(invalid_measurement.is_error, Some(true));
-    assert_eq!(
-        invalid_measurement.structured_content.unwrap()["outcome"],
-        "Invalid"
-    );
+    let invalid_result = invalid_measurement.structured_content.unwrap();
+    assert_eq!(invalid_result["outcome"], "Invalid");
+    assert_eq!(ui_invalid, invalid_result["outcome"]);
 
     let note_args = json!({
         "workspace_id": &ws,
@@ -1539,12 +1578,20 @@ async fn exercise(db: DbPool) {
     // A new request identity with the stale expected revision is a conflict.
     let mut stale_actual_args = actual_amend_args;
     stale_actual_args["request"]["request_id"] = json!(uuid::Uuid::new_v4().to_string());
+    let ui_stale_actual = brew_ui_outcome(
+        &base,
+        &browser.access_token,
+        <krausen_ui::server_fns::brew::BrewActual as ServerFn>::PATH,
+        &stale_actual_args["request"],
+    )
+    .await;
     let stale_actual = modern
         .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(stale_actual_args))
         .await
         .unwrap();
     assert_eq!(stale_actual.is_error, Some(true));
     let stale_actual = stale_actual.structured_content.unwrap();
+    assert_eq!(ui_stale_actual, stale_actual["outcome"]);
     assert_eq!(
         stale_actual["outcome"]["Conflict"]["expected"],
         serde_json::Value::Null
@@ -1585,16 +1632,21 @@ async fn exercise(db: DbPool) {
     .as_object()
     .unwrap()
     .clone();
+    let ui_invalid_transition = brew_ui_outcome(
+        &base,
+        &browser.access_token,
+        <krausen_ui::server_fns::brew::BrewLifecycle as ServerFn>::PATH,
+        &invalid_transition["request"],
+    )
+    .await;
     let invalid_transition = modern
         .call_tool(CallToolRequestParams::new("brew_lifecycle").with_arguments(invalid_transition))
         .await
         .unwrap();
     assert_eq!(invalid_transition.is_error, Some(true));
-    assert!(
-        invalid_transition.structured_content.unwrap()["outcome"]
-            .get("InvalidTransition")
-            .is_some()
-    );
+    let invalid_transition = invalid_transition.structured_content.unwrap();
+    assert!(invalid_transition["outcome"].get("InvalidTransition").is_some());
+    assert_eq!(ui_invalid_transition, invalid_transition["outcome"]);
 
     let archive_args = json!({
         "workspace_id": &ws,
