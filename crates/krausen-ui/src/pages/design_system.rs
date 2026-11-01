@@ -204,6 +204,7 @@ pub fn DesignSystemPage() -> impl IntoView {
     let notes = RwSignal::new("A clean, malt-forward lager.".to_owned());
     let active_tab = RwSignal::new("recipe".to_owned());
     let selected_item = RwSignal::new(false);
+    let search_query = RwSignal::new(String::new());
     view! {
         <div class="kit-showcase">
             <header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Krausen design system"</p><h1>"A more considered brew day."</h1><p>"The shared controls, typography and calculation states used across your workspace."</p></header>
@@ -234,7 +235,19 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div class="kit-showcase__row"><BrewerySaveStatus state=SaveState::Saved/><BrewerySaveStatus state=SaveState::Unsaved/><BrewerySaveStatus state=SaveState::Saving/><BrewerySaveStatus state=SaveState::Conflict/><BrewerySaveStatus state=SaveState::Error/></div>
                 </BreweryPanel>
                 <BreweryPanel title="Ingredient catalogue" description="A copied specification stays with the recipe.">
-                    <CatalogueItem name="Vienna malt" producer="Weyermann" details="7 EBC · 78% yield" source="Starter catalogue" selected=selected_item/>
+                    <div class="k-catalogue-list">
+                        <CatalogueItem name="Vienna malt" producer="Weyermann" details="7.0 EBC · 77.9% yield" source="Starter catalogue" selected=selected_item on_select=Callback::new(move |()| selected_item.update(|selected| *selected = !*selected))/>
+                        <CatalogueItem name="My local pale malt" producer="Your maltster" details="4.2 EBC · 81.0% yield" source="Your library" selected=Signal::derive(move || false)/>
+                    </div>
+                    <div class="k-catalogue-toolbar">
+                        <BreweryField id="show-catalogue-search" label="Search fermentables" value=search_query input_type="search"/>
+                        <Button variant=ButtonVariant::Secondary>"Create fermentable"</Button>
+                    </div>
+                    <div class="k-catalogue-filters">
+                        <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm aria_pressed="true">"All fermentables"</Button>
+                        <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_pressed="false">"Your library"</Button>
+                        <span class="note-caption" role="status">"2 shown"</span>
+                    </div>
                 </BreweryPanel>
                 <BreweryPanel title="Tabs" description="Use the arrow keys to move between sections.">
                     <BreweryTabs id="show-tabs" label="Recipe sections" active=active_tab items=vec![("recipe".into(), "Recipe".into()), ("history".into(), "History".into()), ("brews".into(), "Brews".into())]/>

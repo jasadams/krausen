@@ -67,6 +67,12 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('heading', { name: 'Recipe editor' })).toBeVisible();
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker).toBeVisible();
+  await expect(page.getByLabel('Search fermentables')).toBeVisible();
+  await picker.locator('.k-catalogue-item').first().click();
+  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await expect(picker).toBeHidden();
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
   await page.getByText('Addition details', { exact: true }).click();
   await expect(page.getByLabel('Type', { exact: true })).toBeVisible();

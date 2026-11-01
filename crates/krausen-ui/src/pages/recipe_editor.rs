@@ -977,7 +977,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         <div class="recipe-editor__layout"><div class="recipe-editor__sections">
             <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
             <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
-            <IngredientEditor draft=draft/>
+            <IngredientEditor draft=draft identity=identity context_visible=context_visible/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>
             <BreweryDisclosure title="Recipe process and notes"><div class="recipe-editor__fields">
@@ -1281,33 +1281,15 @@ impl IngredientKind {
     }
 }
 #[component]
-fn IngredientEditor(draft: RwSignal<RecipeDraft>) -> impl IntoView {
-    let add_grain = move |_| {
-        let Some(id) = crate::utils::request_id::new_request_id() else {
-            return;
-        };
-        draft.update(|d| {
-            d.edit(|doc| {
-                doc.fermentables
-                    .push(krausen_types::brewery::FermentableAddition {
-                        row_id: id,
-                        amount_kg: None,
-                        addition: krausen_types::brewery::AdditionStage {
-                            stage: String::new(),
-                            time_minutes: None,
-                        },
-                        specification: krausen_types::brewery::FermentableSpecification {
-                            name: None,
-                            producer: None,
-                            kind: None,
-                            yield_fraction: None,
-                            colour_ebc: None,
-                        },
-                        source: None,
-                    })
-            })
-        });
-    };
+fn IngredientEditor(
+    draft: RwSignal<RecipeDraft>,
+    identity: RwSignal<EditorIdentity>,
+    context_visible: RwSignal<bool>,
+) -> impl IntoView {
+    let picker_open = RwSignal::new(false);
+    let add_from_picker = Callback::new(move |row: krausen_types::brewery::FermentableAddition| {
+        draft.update(|d| d.edit(|doc| doc.fermentables.push(row)));
+    });
     let add_hop = move |_| {
         let Some(id) = crate::utils::request_id::new_request_id() else {
             return;
@@ -1333,12 +1315,13 @@ fn IngredientEditor(draft: RwSignal<RecipeDraft>) -> impl IntoView {
     view! {
         <BreweryPanel title="Fermentables" description="Specify the grain, extract or sugar copied into this recipe.">
             <For each=move || draft.with(|d| d.document().fermentables.iter().map(|r| r.row_id.clone()).collect::<Vec<_>>()) key=|id| id.clone() children=move |id| view! { <IngredientFields draft=draft id=id kind=IngredientKind::Fermentable/> } />
-            <Button variant=crate::components::ButtonVariant::Secondary on:click=add_grain>"Add fermentable"</Button>
+            <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| picker_open.set(true)>"Add fermentable"</Button>
         </BreweryPanel>
         <BreweryPanel title="Hops" description="Record each addition and its contact time.">
             <For each=move || draft.with(|d| d.document().hops.iter().map(|r| r.row_id.clone()).collect::<Vec<_>>()) key=|id| id.clone() children=move |id| view! { <IngredientFields draft=draft id=id kind=IngredientKind::Hop/> } />
             <Button variant=crate::components::ButtonVariant::Secondary on:click=add_hop>"Add hop"</Button>
         </BreweryPanel>
+        <crate::pages::catalogue_picker::CataloguePicker open=picker_open identity=identity context_visible=context_visible on_add=add_from_picker/>
     }
 }
 

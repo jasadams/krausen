@@ -145,6 +145,30 @@ pub const RECIPE_ARCHIVE: Operation = Operation {
     input_contract: "ArchiveRecipe",
     output_contract: "LibraryOutcome",
 };
+pub const INGREDIENT_SAVE: Operation = Operation {
+    id: "ingredient.save.v1",
+    mcp_tool: "ingredient_save",
+    input_contract: "SaveIngredientEntry",
+    output_contract: "IngredientOutcome",
+};
+pub const INGREDIENT_ARCHIVE: Operation = Operation {
+    id: "ingredient.archive.v1",
+    mcp_tool: "ingredient_archive",
+    input_contract: "ArchiveIngredientEntry",
+    output_contract: "IngredientOutcome",
+};
+pub const INGREDIENT_GET: Operation = Operation {
+    id: "ingredient.get.v1",
+    mcp_tool: "ingredient_get",
+    input_contract: "IngredientQuery",
+    output_contract: "IngredientOutcome",
+};
+pub const INGREDIENT_SEARCH: Operation = Operation {
+    id: "ingredient.search.v1",
+    mcp_tool: "ingredient_search",
+    input_contract: "SearchCatalogue",
+    output_contract: "IngredientOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
@@ -159,6 +183,10 @@ pub const OPERATIONS: &[Operation] = &[
     EQUIPMENT_GET,
     EQUIPMENT_LIST,
     EQUIPMENT_REVISION,
+    INGREDIENT_SAVE,
+    INGREDIENT_ARCHIVE,
+    INGREDIENT_GET,
+    INGREDIENT_SEARCH,
     WORKSPACE_GET,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,

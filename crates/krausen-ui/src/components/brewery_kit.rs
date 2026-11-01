@@ -151,6 +151,12 @@ pub fn BreweryDialog(
     #[prop(into)] title: String,
     #[prop(into)] description: String,
     open: RwSignal<bool>,
+    /// Wider content column for composed pickers and forms.
+    #[prop(default = false)]
+    wide: bool,
+    /// Custom action row; the default is a single Close button.
+    #[prop(optional)]
+    actions: Option<ChildrenFn>,
     children: Children,
 ) -> impl IntoView {
     let dialog = NodeRef::<leptos::html::Dialog>::new();
@@ -174,13 +180,20 @@ pub fn BreweryDialog(
             }
         }
     });
+    let action_row = match actions {
+        Some(actions) => actions(),
+        None => view! {
+            <crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| open.set(false)>"Close"</crate::components::Button>
+        }
+        .into_any(),
+    };
     view! {
-        <dialog id=id class="k-dialog" node_ref=dialog aria-labelledby=title_id.clone() aria-describedby=description_id.clone() on:close=move |_| {
+        <dialog id=id class=if wide { "k-dialog k-dialog--wide" } else { "k-dialog" } node_ref=dialog aria-labelledby=title_id.clone() aria-describedby=description_id.clone() on:close=move |_| {
             if programmatic_closes.get_untracked() > 0 { programmatic_closes.update(|count| *count -= 1); } else { open.set(false); }
         }>
             <header class="k-dialog__header"><div><h2 id=title_id.clone()>{title}</h2><p id=description_id.clone()>{description}</p></div></header>
             <div class="k-dialog__body">{children()}</div>
-            <div class="k-dialog__actions"><crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| open.set(false)>"Close"</crate::components::Button></div>
+            <div class="k-dialog__actions">{action_row}</div>
         </dialog>
     }
 }
@@ -348,15 +361,19 @@ pub fn BreweryTabs(
 }
 
 /// Search result with text and selection semantics independent of colour.
+///
+/// `on_select` (picker) runs instead of the default toggle so a caller can own
+/// single-selection state; the showcase keeps the toggle behaviour.
 #[component]
 pub fn CatalogueItem(
     #[prop(into)] name: String,
     #[prop(into)] producer: String,
     #[prop(into)] details: String,
     #[prop(into)] source: String,
-    selected: RwSignal<bool>,
+    #[prop(into)] selected: Signal<bool>,
+    #[prop(optional)] on_select: Option<Callback<()>>,
 ) -> impl IntoView {
-    view! { <button type="button" class="k-catalogue-item" class:k-catalogue-item--selected=move || selected.get() aria-pressed=move || selected.get().to_string() on:click=move |_| selected.update(|s| *s = !*s)>
+    view! { <button type="button" class="k-catalogue-item" class:k-catalogue-item--selected=move || selected.get() aria-pressed=move || selected.get().to_string() on:click=move |_| match on_select { Some(callback) => callback.run(()), None => {} }>
         <span class="k-catalogue-item__identity"><span class="k-catalogue-item__icon" aria-hidden="true">"✳"</span><span class="k-catalogue-item__text"><span class="k-catalogue-item__name">{name}</span><span class="k-catalogue-item__producer">{producer}</span></span></span>
         <span class="k-catalogue-item__meta"><span class="k-catalogue-item__specs">{details}</span><span class="k-badge">{source}</span></span>
         <span class="k-catalogue-item__selection" aria-hidden="true">{move || if selected.get() { "✓" } else { "" }}</span>

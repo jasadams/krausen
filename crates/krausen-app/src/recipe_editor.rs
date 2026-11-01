@@ -59,29 +59,9 @@ async fn read_inner(
     }))
 }
 
-// A stored copied specification may retain its existing provenance. Until the
-// catalogue resolver exists, callers cannot introduce or change source IDs.
-fn source_references_preserved(
-    draft: &RecipeDocumentV1,
-    previous: Option<&RecipeDocumentV1>,
-) -> bool {
-    macro_rules! preserved {
-        ($field:ident) => {
-            draft.$field.iter().all(|row| {
-                row.source.is_none()
-                    || previous.is_some_and(|old| {
-                        old.$field
-                            .iter()
-                            .any(|prior| prior.row_id == row.row_id && prior.source == row.source)
-                    })
-            })
-        };
-    }
-    preserved!(fermentables)
-        && preserved!(hops)
-        && preserved!(yeast)
-        && preserved!(other_ingredients)
-}
+// New or changed ingredient sources resolve against the catalogue inside the
+// save transaction; unchanged rows keep their historical copies even when the
+// source has since changed or been archived. This command owns the transaction.
 
 /// Create or save through one transaction. `recipe_id = None` creates revision 1;
 /// otherwise the observed head is required. Reusing a request id recovers its result.
@@ -181,9 +161,21 @@ async fn save_inner(
             if document.import_provenance_id.is_some() {
                 return Ok(RecipeSaveOutcome::InvalidProvenance);
             }
-            if !source_references_preserved(document, None) {
+            // Resolve new/changed sources in this transaction (starter is the
+            // explicit global-read exception; workspace sources stay scoped).
+            if !crate::catalogue::resolve_draft_sources(
+                &mut tx,
+                &actor.workspace_id,
+                document,
+                None,
+            )
+            .await?
+            {
                 return Ok(RecipeSaveOutcome::UnresolvedIngredientSource);
             }
+            // Resolving workspace sources took aggregate row locks that can
+            // wait past the verified credential's expiry.
+            authorize_workspace(&mut tx, actor).await?;
             let id = uuid::Uuid::new_v4().to_string();
             native_store::create(
                 &mut tx,
@@ -221,9 +213,18 @@ async fn save_inner(
             if document.import_provenance_id != prior.import_provenance_id {
                 return Ok(RecipeSaveOutcome::InvalidProvenance);
             }
-            if !source_references_preserved(document, Some(&prior)) {
+            if !crate::catalogue::resolve_draft_sources(
+                &mut tx,
+                &actor.workspace_id,
+                document,
+                Some(&prior),
+            )
+            .await?
+            {
                 return Ok(RecipeSaveOutcome::UnresolvedIngredientSource);
             }
+            // Source row locks can wait past the verified credential's expiry.
+            authorize_workspace(&mut tx, actor).await?;
             let saved = native_store::save(
                 &mut tx,
                 &actor.workspace_id,
