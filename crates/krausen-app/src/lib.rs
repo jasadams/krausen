@@ -38,6 +38,10 @@ pub enum Error {
     EquipmentArchived,
     #[error("ingredient entry is archived")]
     IngredientArchived,
+    #[error("brew is archived")]
+    BrewArchived,
+    #[error("measurement entry changed")]
+    MeasurementEntryConflict { expected: String, actual: String },
     #[error("duplicate ingredient entry")]
     DuplicateIngredient,
     #[error("style reference is unresolved")]
@@ -441,5 +445,6 @@ pub mod recipe_library;
 
 pub mod catalogue;
 
+pub mod brew_evidence;
 pub mod brew_start;
 pub mod scaling;
