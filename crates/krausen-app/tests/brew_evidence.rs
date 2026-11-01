@@ -1550,3 +1550,456 @@ async fn postgres_brew_evidence() {
         .unwrap();
     Box::pin(exercise(DbPool::Postgres(pool))).await;
 }
+
+async fn exercise_acceptance_cases(db: DbPool) {
+    macro_rules! count {
+        ($sql:expr $(, $a:expr)*) => { match &db {
+            DbPool::Postgres(p) => sqlx::query_scalar::<_, i64>($sql)$(.bind($a))*.fetch_one(p).await.unwrap(),
+            DbPool::Sqlite(p) => sqlx::query_scalar::<_, i64>($sql)$(.bind($a))*.fetch_one(p).await.unwrap(),
+        } };
+    }
+    macro_rules! run {
+        ($sql:expr $(, $a:expr)*) => { match &db {
+            DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+            DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+        } };
+    }
+
+    // Two corrections from the same predecessor serialize on the brew lock:
+    // one succeeds and the loser gets a typed conflict with no extra evidence.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let MeasurementOutcome::Recorded(first) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.050),
+        )
+        .await
+        else {
+            panic!("race fixture reading");
+        };
+        let before = count!(
+            "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND root_observation_id = $3",
+            &actor.workspace_id,
+            &brew_id,
+            &first.entry_id
+        );
+        let (left, right) = tokio::join!(
+            brew_evidence::measurements(
+                &db,
+                &actor,
+                MeasurementCommand::Correct(correct_request(
+                    &actor,
+                    &brew_id,
+                    &first.entry_id,
+                    Some(1),
+                    1.051,
+                )),
+            ),
+            brew_evidence::measurements(
+                &db,
+                &actor,
+                MeasurementCommand::Correct(correct_request(
+                    &actor,
+                    &brew_id,
+                    &first.entry_id,
+                    Some(1),
+                    1.052,
+                )),
+            ),
+        );
+        let successes = [&left, &right]
+            .into_iter()
+            .filter(|outcome| matches!(outcome, MeasurementOutcome::Corrected(_)))
+            .count();
+        assert_eq!(successes, 1, "exactly one correction must win");
+        let loser = if matches!(&left, MeasurementOutcome::Corrected(_)) {
+            &right
+        } else {
+            &left
+        };
+        assert!(matches!(
+            loser,
+            MeasurementOutcome::EntryConflict { .. } | MeasurementOutcome::Conflict { .. }
+        ));
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND root_observation_id = $3",
+                &actor.workspace_id,
+                &brew_id,
+                &first.entry_id
+            ),
+            before + 1,
+            "the losing correction must roll back its evidence row"
+        );
+        let selected = view(&db, &actor, &brew_id).await;
+        let slot = selected
+            .measurements
+            .iter()
+            .find(|slot| slot.quantity_id == "gravity.original.v1")
+            .unwrap();
+        let value = slot.current.as_ref().and_then(|entry| entry.value);
+        assert!(value == Some(1.051) || value == Some(1.052));
+    }
+
+    // Two explicit selections from the same slot revision serialize: one
+    // success, one typed conflict, one new selection event.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let MeasurementOutcome::Recorded(first) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.050),
+        )
+        .await
+        else {
+            panic!("selection race fixture");
+        };
+        let MeasurementOutcome::Recorded(second) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.052),
+        )
+        .await
+        else {
+            panic!("second selection race fixture");
+        };
+        let MeasurementOutcome::Recorded(third) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.054),
+        )
+        .await
+        else {
+            panic!("third selection race fixture");
+        };
+        assert_ne!(first.entry_id, second.entry_id);
+        assert_ne!(second.entry_id, third.entry_id);
+        let (left, right) = tokio::join!(
+            brew_evidence::measurements(
+                &db,
+                &actor,
+                MeasurementCommand::Select(select_request(
+                    &actor,
+                    &brew_id,
+                    Some(&second.entry_id),
+                    1,
+                )),
+            ),
+            brew_evidence::measurements(
+                &db,
+                &actor,
+                MeasurementCommand::Select(select_request(
+                    &actor,
+                    &brew_id,
+                    Some(&third.entry_id),
+                    1,
+                )),
+            ),
+        );
+        let successes = [&left, &right]
+            .into_iter()
+            .filter(|outcome| matches!(outcome, MeasurementOutcome::Selected(_)))
+            .count();
+        assert_eq!(successes, 1, "exactly one selection must win");
+        let loser = if matches!(&left, MeasurementOutcome::Selected(_)) {
+            &right
+        } else {
+            &left
+        };
+        assert!(matches!(
+            loser,
+            MeasurementOutcome::Conflict {
+                expected: 1,
+                actual: 2
+            }
+        ));
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_selection_events WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = 'gravity.original.v1' AND revision = 2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            1
+        );
+    }
+
+    // Two actual amendments from the same expected revision serialize: one
+    // immutable actual revision and one typed conflict.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let effective = brew_evidence::actual(
+            &db,
+            &actor,
+            ActualFormulationCommand::Get(ActualFormulationViewRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+            }),
+        )
+        .await;
+        let ActualFormulationOutcome::View(effective) = effective else {
+            panic!("actual race view");
+        };
+        let mut left_document = effective.document.clone();
+        left_document.boil_minutes = Some(70.0);
+        let mut right_document = effective.document.clone();
+        right_document.boil_minutes = Some(71.0);
+        let (left, right) = tokio::join!(
+            amend_document(&db, &actor, &brew_id, None, left_document),
+            amend_document(&db, &actor, &brew_id, None, right_document),
+        );
+        let successes = [&left, &right]
+            .into_iter()
+            .filter(|outcome| matches!(outcome, ActualFormulationOutcome::Amended(_)))
+            .count();
+        assert_eq!(successes, 1, "exactly one actual amendment must win");
+        let loser = if matches!(&left, ActualFormulationOutcome::Amended(_)) {
+            &right
+        } else {
+            &left
+        };
+        assert!(matches!(
+            loser,
+            ActualFormulationOutcome::Conflict {
+                expected: None,
+                actual: Some(1)
+            }
+        ));
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_formulations WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            1
+        );
+    }
+
+    // Expired and revoked credentials fail before recovery; a fresh credential
+    // can replay the same request and produce the original result.
+    {
+        let (mut actor, brew_id, _) = fixture(&db).await;
+        let request = record_request(&actor, &brew_id, "gravity.final.v1", 1.010);
+        let MeasurementOutcome::Recorded(original) = record(&db, &actor, request.clone()).await
+        else {
+            panic!("expiry fixture reading");
+        };
+        let entries = count!(
+            "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+            &actor.workspace_id,
+            &brew_id
+        );
+        let past = chrono::Utc::now().timestamp() - 1;
+        run!(
+            "UPDATE auth_credentials SET expires_at = $3 WHERE credential_id = $1 AND user_id = $2",
+            &actor.credential_id,
+            &actor.actor_id,
+            past
+        );
+        actor.access_expires_at = past;
+        assert_eq!(
+            record(&db, &actor, request.clone()).await,
+            MeasurementOutcome::Forbidden
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            entries
+        );
+        let future = chrono::Utc::now().timestamp() + 3600;
+        run!(
+            "UPDATE auth_credentials SET expires_at = $3, revoked_at = NULL WHERE credential_id = $1 AND user_id = $2",
+            &actor.credential_id,
+            &actor.actor_id,
+            future
+        );
+        actor.access_expires_at = future;
+        let MeasurementOutcome::Recorded(replayed) = record(&db, &actor, request.clone()).await
+        else {
+            panic!("expiry replay");
+        };
+        assert_eq!(replayed.entry_id, original.entry_id);
+        run!(
+            "UPDATE auth_credentials SET revoked_at = $3 WHERE credential_id = $1 AND user_id = $2",
+            &actor.credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        );
+        assert_eq!(
+            record(
+                &db,
+                &actor,
+                record_request(&actor, &brew_id, "gravity.final.v1", 1.011),
+            )
+            .await,
+            MeasurementOutcome::Forbidden
+        );
+    }
+
+    // A retained result that expired returns the resource tombstone rather than
+    // replaying a stale success or re-writing evidence.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let request = record_request(&actor, &brew_id, "gravity.final.v1", 1.010);
+        let MeasurementOutcome::Recorded(_) = record(&db, &actor, request.clone()).await else {
+            panic!("result expiry fixture");
+        };
+        run!(
+            "UPDATE app_requests SET result_expires_at = $4 WHERE workspace_id = $1 AND actor_id = $2 AND operation = 'brew.measurement.record.v1' AND request_id = $3",
+            &actor.workspace_id,
+            &actor.actor_id,
+            &request.request_id,
+            chrono::Utc::now().timestamp() - 1
+        );
+        assert_eq!(
+            record(&db, &actor, request).await,
+            MeasurementOutcome::ResultExpired {
+                resource_id: Some(brew_id)
+            }
+        );
+    }
+
+    // Evidence corrections and actual amendments remain available after a
+    // terminal status; the frozen plan is unchanged.
+    {
+        let (actor, brew_id, plan) = fixture(&db).await;
+        let MeasurementOutcome::Recorded(first) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.050),
+        )
+        .await
+        else {
+            panic!("terminal evidence fixture");
+        };
+        let completed = brew_evidence::transition(
+            &db,
+            &actor,
+            TransitionBrewRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                expected_revision: 1,
+                transition: BrewTransitionV1::Complete,
+                reason: None,
+                request_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await;
+        assert!(matches!(
+            completed,
+            BrewLifecycleOutcome::Transitioned {
+                status: BrewStatusV1::Completed,
+                revision: 2,
+                ..
+            }
+        ));
+        let MeasurementOutcome::Corrected(corrected) = brew_evidence::measurements(
+            &db,
+            &actor,
+            MeasurementCommand::Correct(correct_request(
+                &actor,
+                &brew_id,
+                &first.entry_id,
+                Some(1),
+                1.051,
+            )),
+        )
+        .await
+        else {
+            panic!("terminal correction");
+        };
+        assert_eq!(corrected.value, Some(1.051));
+        let actual = amend_document(
+            &db,
+            &actor,
+            &brew_id,
+            None,
+            krausen_types::brewery::ActualFormulationV1 {
+                boil_minutes: Some(75.0),
+                fermentables: plan.recipe.fermentables.clone(),
+                hops: plan.recipe.hops.clone(),
+                yeast: plan.recipe.yeast.clone(),
+                other_ingredients: plan.recipe.other_ingredients.clone(),
+                process: plan.recipe.process.clone(),
+                notes: plan.recipe.notes.clone(),
+                extensions: plan.recipe.extensions.clone(),
+                schema_version: 1,
+            },
+        )
+        .await;
+        assert!(matches!(actual, ActualFormulationOutcome::Amended(_)));
+        let note = brew_evidence::notes(
+            &db,
+            &actor,
+            NoteCommand::Record(RecordNoteRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                text: "terminal note".into(),
+                request_id: Uuid::new_v4().to_string(),
+            }),
+        )
+        .await;
+        assert!(matches!(note, NoteOutcome::Recorded(_)));
+        let after = view(&db, &actor, &brew_id).await;
+        assert_eq!(after.status, BrewStatusV1::Completed);
+        assert_eq!(after.plan, plan);
+        assert_eq!(after.actual.unwrap().document.boil_minutes, Some(75.0));
+    }
+
+    // A root from one quantity cannot be selected for another quantity.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let MeasurementOutcome::Recorded(root) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.050),
+        )
+        .await
+        else {
+            panic!("cross-quantity fixture");
+        };
+        let outcome = brew_evidence::measurements(
+            &db,
+            &actor,
+            MeasurementCommand::Select(SelectMeasurementRequest {
+                intent: intent(&actor),
+                brew_id,
+                quantity_id: "gravity.final.v1".into(),
+                root_observation_id: Some(root.entry_id),
+                expected_selection_revision: 0,
+                request_id: Uuid::new_v4().to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(outcome, MeasurementOutcome::Invalid);
+    }
+}
+
+#[tokio::test]
+async fn sqlite_brew_evidence_acceptance_cases() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../../apps/server/migrations-sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    Box::pin(exercise_acceptance_cases(DbPool::Sqlite(pool))).await;
+}
+
+#[tokio::test]
+async fn postgres_brew_evidence_acceptance_cases() {
+    let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
+        .expect("KRAUSEN_TEST_POSTGRES_URL is required for PostgreSQL tests");
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("../../apps/server/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    Box::pin(exercise_acceptance_cases(DbPool::Postgres(pool))).await;
+}
