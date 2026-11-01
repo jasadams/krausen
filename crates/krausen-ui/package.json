@@ -1,0 +1,10 @@
+{
+  "name": "krausen-ui-build",
+  "private": true,
+  "version": "0.0.0",
+  "devDependencies": {
+    "@tailwindcss/cli": "4.2.2",
+    "@tailwindcss/typography": "0.5.16",
+    "tailwindcss": "4.2.2"
+  }
+}

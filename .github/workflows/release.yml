@@ -1,0 +1,80 @@
+name: Build and release Krausen
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Validate release tag before building
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: '[[ "$VERSION" != *$''\n''* && "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]]'
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image, publishing only for version tags
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+          tags: ghcr.io/jasadams/krausen:${{ github.event_name == 'push' && github.ref_name || github.sha }}
+          cache-from: type=gha,scope=krausen-image
+          cache-to: type=gha,mode=max,scope=krausen-image
+      - name: Attest the published image and source
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-name: ghcr.io/jasadams/krausen
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+  deploy-notify:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch immutable image to private deployment repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KRAUSEN_CLOUD_DISPATCH_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          set -eu
+          test -n "$GH_TOKEN"
+          [[ "$VERSION" != *$'\n'* && "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]]
+          [[ "$SOURCE_SHA" != *$'\n'* && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$IMAGE_DIGEST" != *$'\n'* && "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api --method POST repos/jasadams/krausen-cloud/dispatches \
+            -f event_type=public-repo-updated \
+            -f "client_payload[version]=$VERSION" \
+            -f "client_payload[sha]=$SOURCE_SHA" \
+            -f "client_payload[digest]=$IMAGE_DIGEST"
