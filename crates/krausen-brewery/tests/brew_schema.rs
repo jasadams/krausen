@@ -29,7 +29,7 @@ async fn seed_sqlite(pool: &sqlx::SqlitePool) {
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO recipes (workspace_id,recipe_id,name,document) VALUES ('w','r','Recipe','{}')",
+        "INSERT INTO recipes (workspace_id,recipe_id,name,document,native_head_revision) VALUES ('w','r','Recipe','{}',1)",
     )
     .execute(pool)
     .await
@@ -38,6 +38,16 @@ async fn seed_sqlite(pool: &sqlx::SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
+    let head: i64 = sqlx::query_scalar(
+        "SELECT native_head_revision FROM recipes WHERE workspace_id='w' AND recipe_id='r'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        head, 1,
+        "fixture's native head must match its saved revision"
+    );
     sqlx::query(
         "INSERT INTO brews (workspace_id,brew_id,recipe_id,selected_recipe_revision,status,revision,started_at,started_by,plan_schema_version,plan_json,plan_content_digest) VALUES ('w','b','r',1,'started',1,1,'u',1,'{\"plan\":true}','plan-digest')",
     )
@@ -113,7 +123,7 @@ async fn postgres_brew_plan_is_immutable() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO recipes (workspace_id,recipe_id,name,document) VALUES ('brew-pg-w','r','Recipe','{}')")
+    sqlx::query("INSERT INTO recipes (workspace_id,recipe_id,name,document,native_head_revision) VALUES ('brew-pg-w','r','Recipe','{}',1)")
         .execute(&pool)
         .await
         .unwrap();
@@ -121,6 +131,16 @@ async fn postgres_brew_plan_is_immutable() {
         .execute(&pool)
         .await
         .unwrap();
+    let head: i64 = sqlx::query_scalar(
+        "SELECT native_head_revision FROM recipes WHERE workspace_id='brew-pg-w' AND recipe_id='r'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        head, 1,
+        "fixture's native head must match its saved revision"
+    );
     sqlx::query(
         "INSERT INTO brews (workspace_id,brew_id,recipe_id,selected_recipe_revision,status,revision,started_at,started_by,plan_schema_version,plan_json,plan_content_digest) VALUES ('brew-pg-w','b','r',1,'started',1,1,'brew-pg-u',1,'{\"plan\":true}','plan-digest')",
     )
