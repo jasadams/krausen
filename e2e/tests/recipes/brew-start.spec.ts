@@ -752,6 +752,58 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
 });
 
+test('held comparison after a same-route workspace change is not rendered', async ({
+  page,
+}) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew held comparison ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const otherWorkspace = seedWorkspace({
+    ownerId: getDefaultUserId(),
+    name: `Held comparison ${Date.now()}`,
+  });
+  const setWorkspace = (workspaceId: string) => {
+    sqliteExec(
+      `UPDATE users SET last_workspace_id = '${workspaceId.replaceAll("'", "''")}' WHERE user_id = '${getDefaultUserId().replaceAll("'", "''")}'`,
+    );
+    walCheckpoint();
+  };
+  setWorkspace(workspace);
+
+  let releaseComparison!: () => void;
+  const comparisonReleased = new Promise<void>((resolve) => {
+    releaseComparison = resolve;
+  });
+  let comparisonEntered!: () => void;
+  const comparisonHeld = new Promise<void>((resolve) => {
+    comparisonEntered = resolve;
+  });
+  await page.route('**/leptos-api/execute_brew_comparison*', async (route) => {
+    // Fetch a real workspace-A response, then hold its delivery until the
+    // authenticated context has moved to another workspace.
+    const response = await route.fetch();
+    comparisonEntered();
+    await comparisonReleased;
+    await route.fulfill({ response });
+  });
+
+  await page.goto(`/brews/${brewId}/analysis`);
+  await comparisonHeld;
+  setWorkspace(otherWorkspace);
+  expect(
+    await page.evaluate(
+      async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
+    ),
+  ).toBe(200);
+  releaseComparison();
+
+  await expect(page.getByText('Workspace changed; reload.')).toBeVisible();
+  await expect(page.getByText('Formulation changes')).toHaveCount(0);
+  await expect(page.getByText('Target versus selected actual')).toHaveCount(0);
+  setWorkspace(workspace);
+});
+
 test('feedback apply keeps one request through a lost response and ignores selection changes', async ({
   page,
 }) => {
