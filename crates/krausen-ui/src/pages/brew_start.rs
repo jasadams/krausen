@@ -553,7 +553,7 @@ pub fn StartBrewPanel(
             <HowToStart/>
             <BreweryDraftField
                 id="brew-start-revision"
-                label="Saved revision"
+                label="Brew start revision"
                 numeric=true
                 value=Signal::from(revision_text)
                 on_change=revision_change
