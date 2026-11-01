@@ -113,7 +113,7 @@ test('starts an explicitly selected historical revision without restoring it', a
 test('delayed evidence write keeps retry locked during focus refresh', async ({ page }) => {
   await startBrewAndOpenEvidence(page, `Brew delayed write ${Date.now()}`);
   await page.route('**/brew_measurement*', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     await route.continue();
   });
   await page.locator('#measurement-gravity-original-v1').fill('1.050');
