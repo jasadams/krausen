@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 async function importRecipe(page: import('@playwright/test').Page, title: string) {
   await page.goto('/beerxml');
   await page.getByLabel('Paste BeerXML').fill(
-    `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pilsner malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Hallertauer</NAME><AMOUNT>30</AMOUNT><USE>Boil</USE><TIME>60</TIME><ALPHA>5</ALPHA></HOP></HOPS></RECIPE></RECIPES>`,
+    `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pilsner malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Hallertauer</NAME><AMOUNT>0.03</AMOUNT><USE>Boil</USE><TIME>60</TIME><ALPHA>5</ALPHA></HOP></HOPS></RECIPE></RECIPES>`,
   );
   await page.getByLabel('Source colour').selectOption('srm');
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
@@ -25,6 +25,7 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.locator('#profile-mash-efficiency').fill('75');
   await page.locator('#profile-boil-off').fill('3');
   await page.locator('#profile-transfer-loss').fill('2');
+  await page.locator('#profile-deadspace').fill('0');
   await page.locator('#profile-absorption').fill('0.8');
   await page.locator('#profile-thickness').fill('2.5');
   await page.locator('#profile-capacity').fill('30');
@@ -35,6 +36,8 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
   await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
+  await page.getByText('Addition details', { exact: true }).first().click();
+  await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.locator('#recipe-attenuation').fill('78');
   await page.locator('#recipe-mash-method').selectOption('manual');
