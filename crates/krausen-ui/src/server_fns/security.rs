@@ -246,36 +246,22 @@ pub async fn get_sessions() -> Result<Vec<SessionEntry>, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let headers: axum::http::HeaderMap = leptos_axum::extract()
-        .await
-        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let actor = super::verified_account_actor(&auth)?;
+    list_shared_sessions(&ctx.db, &actor).await
+}
 
-    let refresh_token_name = &krausen_core::constants::get().cookies.refresh_token_name;
-    let raw_token = krausen_auth::cookies::get_cookie_value(&headers, refresh_token_name);
-
-    let (sessions, current_family_id) =
-        krausen_auth::security_service::get_sessions(&ctx.db, &auth.user_id, raw_token)
-            .await
-            .into_sfn()?;
-
-    let entries = sessions
-        .iter()
-        .map(|s| {
-            let is_current = current_family_id.as_deref() == Some(&s.family_id);
-            SessionEntry {
-                token_id: s.token_id.clone(),
-                created_at: s.created_at.to_rfc3339(),
-                last_used: s.last_used.map(|dt| dt.to_rfc3339()),
-                expires_at: s.expires_at.to_rfc3339(),
-                user_agent: s.user_agent.clone(),
-                ip_address: s.ip_address.clone(),
-                country_code: s.country_code.clone(),
-                oauth_client_name: s.oauth_client_name.clone(),
-                is_current,
-            }
-        })
-        .collect();
-
+#[cfg(feature = "ssr")]
+async fn list_shared_sessions(db: &krausen_core::DbPool, actor: &krausen_app::invitation::AccountActor) -> Result<Vec<SessionEntry>, ServerFnError> {
+    let mut cursor = None;
+    let mut entries = Vec::new();
+    loop {
+        let outcome = krausen_app::session_read::project(krausen_app::session_read::sessions(db, actor, cursor.as_deref(), 100).await);
+        let krausen_types::session_read::SessionListOutcome::Available { page } = outcome else { return Err(ServerFnError::new("Unable to load sessions")); };
+        entries.extend(page.items.into_iter().map(|s| SessionEntry { token_id: s.token_id, created_at: s.created_at, last_used: s.last_used, expires_at: s.expires_at, user_agent: s.user_agent, ip_address: s.ip_address, country_code: s.country_code, oauth_client_name: s.oauth_client_name, is_current: s.is_current }));
+        cursor = page.next_cursor;
+        if cursor.is_none() { break; }
+    }
+    entries.sort_by(|left, right| right.last_used.cmp(&left.last_used));
     Ok(entries)
 }
 
@@ -555,4 +541,28 @@ pub async fn rename_passkey(
     }
 
     Ok("Passkey renamed successfully".to_string())
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod session_inventory_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sessions_adapter_follows_pages_and_marks_current() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('u','u@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('family-000','u','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        for i in 0..101 {
+            sqlx::query("INSERT INTO refresh_tokens (token_id,user_id,token_hash,family_id,expires_at,is_active) VALUES ($1,'u',$2,$3,$4,TRUE)")
+                .bind(format!("token-{i:03}")).bind(format!("hash-{i:03}")).bind(format!("family-{i:03}"))
+                .bind(chrono::Utc::now() + chrono::Duration::days(1)).execute(&pool).await.unwrap();
+        }
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let actor = krausen_app::invitation::AccountActor { actor_id: "u".into(), credential_id: "family-000".into(), access_expires_at: 4102444800 };
+        let sessions = list_shared_sessions(&db, &actor).await.unwrap();
+        assert_eq!(sessions.len(), 101);
+        assert_eq!(sessions.iter().filter(|s| s.is_current).count(), 1);
+        assert!(sessions.iter().any(|s| s.token_id == "token-000" && s.is_current));
+    }
 }

@@ -13,6 +13,7 @@ pub mod invitation;
 pub mod security_status;
 pub mod account_read;
 pub mod team_read;
+pub mod session_read;
 
 pub mod validation;
 

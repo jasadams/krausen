@@ -92,6 +92,9 @@ async fn execute_workspace_preference(db: &krausen_core::DbPool, principal: &Pri
     let actor = krausen_app::ActorContext { actor_id: principal.user_id.clone(), credential_id: principal.credential_id.clone(), access_expires_at: principal.access_expires_at, workspace_id: input.workspace_id };
     krausen_app::account_update::project(krausen_app::account_update::workspace(db, &actor, input.expected_settings_revision).await)
 }
+async fn execute_sessions(db: &krausen_core::DbPool, principal: &Principal, input: AccountWorkspacesQuery) -> krausen_types::session_read::SessionListOutcome {
+    krausen_app::session_read::project(krausen_app::session_read::sessions(db, &account_actor(principal), input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
+}
 
 async fn execute_account_profile(
     db: &krausen_core::DbPool,
@@ -449,6 +452,7 @@ impl ServerHandler for McpHandler {
             Tool::new(operations::ACCOUNT_NAME_SET.mcp_tool, "Update the authenticated account name using the observed settings revision", schema(json!({"type":"object","properties":{"name":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["name","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(operations::ACCOUNT_THEME_SET.mcp_tool, "Update the authenticated account theme using the observed settings revision", schema(json!({"type":"object","properties":{"theme":{"type":"string","enum":["light","dark","system"]},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["theme","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(operations::ACCOUNT_WORKSPACE_PREFERENCE_SET.mcp_tool, "Remember an authorized browser workspace preference; MCP calls still require an explicit workspace", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["workspace_id","expected_settings_revision"],"additionalProperties":false}))),
+            Tool::new(operations::SECURITY_SESSIONS.mcp_tool, "List a page of the authenticated account's active browser sessions", schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}))),
             Tool::new(
                 operations::ACCOUNT_WORKSPACES.mcp_tool,
                 "List a page of workspaces for the authenticated account",
@@ -535,6 +539,11 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "security.sessions.v1" => {
+                let input: AccountWorkspacesQuery = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid session query", None))?;
+                let outcome = execute_sessions(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::session_read::SessionListOutcome::Available { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
             "account.workspace-preference.v1" => {
                 let input: AccountWorkspacePreferenceSet = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid workspace preference input", None))?;
                 let outcome = execute_workspace_preference(&self.db, principal, input).await;
@@ -1372,5 +1381,9 @@ mod invitation_tests {
         sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('foreign','owner')").execute(pool).await.unwrap();
         let explicit_foreign = execute_team_members(&db, &principal, TeamMembersQuery { workspace_id: "foreign".into(), cursor: None, limit: None }).await;
         assert!(matches!(explicit_foreign, krausen_types::team_read::MemberListOutcome::Forbidden));
+        sqlx::query("INSERT INTO refresh_tokens (token_id,user_id,token_hash,family_id,expires_at,is_active) VALUES ('session','other','secret-hash','c',$1,TRUE)").bind(chrono::Utc::now() + chrono::Duration::days(1)).execute(pool).await.unwrap();
+        let sessions = execute_sessions(&db, &principal, AccountWorkspacesQuery { cursor: None, limit: Some(1) }).await;
+        assert!(matches!(&sessions, krausen_types::session_read::SessionListOutcome::Available { page } if page.items.len() == 1 && !page.items[0].is_current));
+        assert!(!serde_json::to_string(&sessions).unwrap().contains("secret-hash"));
     }
 }

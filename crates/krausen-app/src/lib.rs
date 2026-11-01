@@ -115,6 +115,7 @@ pub mod invitation;
 pub mod security_status;
 pub mod account_read;
 pub mod account_update;
+pub mod session_read;
 pub mod team_read;
 fn db_error(e: sqlx::Error) -> Error {
     if let sqlx::Error::Database(ref d) = e {
