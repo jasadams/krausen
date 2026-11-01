@@ -3,6 +3,7 @@
 use crate::{
     components::{
         BreweryDisclosure, BreweryDraftField, BreweryMetric, BreweryNotice, BreweryPanel, Button,
+        ButtonLink,
     },
     pages::recipe_editor::current_context_matches,
     server_fns::{brew::start_brew_shared, process_summary::request_process_summary_shared},
@@ -595,6 +596,7 @@ pub fn StartBrewPanel(
                     )
                 />
                 {target_metrics(&started.targets)}
+                <ButtonLink href=format!("/brews/{}", started.brew_id)>"Open brew evidence"</ButtonLink>
             })}
             {move || conflict.get().map(|conflict| view! {
                 <BreweryNotice title="Start conflict — nothing was created" body="Review the current values and prepare an explicit start again." warning=true/>
