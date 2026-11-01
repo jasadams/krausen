@@ -29,10 +29,11 @@ until curl --silent --fail "$BASE_URL/login" > /dev/null; do
   sleep 1
 done
 cd e2e
-./node_modules/.bin/playwright test tests/recipes/brew-start.spec.ts --reporter=line
-./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'equipment profiles can be saved|an uncertain equipment save|profile pagination exposes' --reporter=line
+./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'equipment profiles can be saved|an uncertain equipment save' --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/beerxml.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/library.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/print.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/catalogue.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/recipes/brew-start.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'profile pagination exposes' --reporter=line
