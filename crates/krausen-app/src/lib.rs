@@ -446,5 +446,6 @@ pub mod recipe_library;
 pub mod catalogue;
 
 pub mod brew_evidence;
+pub mod brew_history;
 pub mod brew_start;
 pub mod scaling;

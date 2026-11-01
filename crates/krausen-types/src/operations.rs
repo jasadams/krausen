@@ -229,6 +229,36 @@ pub const BREW_ARCHIVE: Operation = Operation {
     input_contract: "ArchiveBrewRequest",
     output_contract: "BrewArchiveOutcome",
 };
+pub const BREW_RECIPE_HISTORY: Operation = Operation {
+    id: "brew.recipe-history.v1",
+    mcp_tool: "brew_recipe_history",
+    input_contract: "RecipeBrewHistoryQuery",
+    output_contract: "RecipeBrewHistoryOutcome",
+};
+pub const BREW_COMPARISON: Operation = Operation {
+    id: "brew.comparison.v1",
+    mcp_tool: "brew_comparison",
+    input_contract: "BrewComparisonRequest",
+    output_contract: "BrewComparisonOutcome",
+};
+pub const BREW_FEEDBACK_PREVIEW: Operation = Operation {
+    id: "brew.feedback-preview.v1",
+    mcp_tool: "brew_feedback_preview",
+    input_contract: "BrewFeedbackPreviewRequest",
+    output_contract: "BrewFeedbackPreviewOutcome",
+};
+pub const BREW_FEEDBACK_APPLY: Operation = Operation {
+    id: "brew.feedback-apply.v1",
+    mcp_tool: "brew_feedback_apply",
+    input_contract: "BrewFeedbackApplyRequest",
+    output_contract: "BrewFeedbackApplyOutcome",
+};
+pub const BREW_PRINT: Operation = Operation {
+    id: "brew.print.v1",
+    mcp_tool: "brew_print",
+    input_contract: "BrewPrintRequest",
+    output_contract: "BrewPrintOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
@@ -267,6 +297,11 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_SCALE_PREVIEW,
     RECIPE_SCALE_APPLY,
     RECIPE_DUPLICATE,
+    BREW_RECIPE_HISTORY,
+    BREW_COMPARISON,
+    BREW_FEEDBACK_PREVIEW,
+    BREW_FEEDBACK_APPLY,
+    BREW_PRINT,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

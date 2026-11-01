@@ -2128,6 +2128,155 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(first.structured_content, retry.structured_content);
     assert_eq!(first.structured_content.unwrap()["Saved"]["revision"], 1);
+
+    // KRA-22 history/comparison/feedback/print through the authenticated MCP
+    // adapter, using the immutable plan and KRA-21 actual evidence above.
+    {
+        let history_view = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_evidence_view").with_arguments(
+                    json!({"workspace_id": &ws, "request": {"intent": intent.clone(), "brew_id": &brew_id}})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        let history_recipe =
+            history_view.structured_content.unwrap()["outcome"]["View"]["recipe_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let history_args = json!({
+            "workspace_id": &ws,
+            "request": {
+                "intent": intent.clone(),
+                "recipe_id": &history_recipe,
+                "include_archived": true,
+                "cursor": null,
+                "limit": 10
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let history = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_recipe_history").with_arguments(history_args),
+            )
+            .await
+            .unwrap();
+        assert_ne!(history.is_error, Some(true));
+        let history = history.structured_content.unwrap();
+        assert_eq!(
+            history["outcome"]["History"]["items"][0]["brew_id"],
+            brew_id
+        );
+        let comparison_args = json!({
+            "workspace_id": &ws,
+            "request": {"intent": intent.clone(), "brew_id": &brew_id}
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let comparison = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_comparison").with_arguments(comparison_args),
+            )
+            .await
+            .unwrap();
+        assert_ne!(comparison.is_error, Some(true));
+        let comparison = comparison.structured_content.unwrap();
+        assert_eq!(
+            comparison["outcome"]["Comparison"]["selected_recipe_revision"],
+            1
+        );
+        let change = comparison["outcome"]["Comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["id"] == "process:boil_minutes")
+            .unwrap()
+            .clone();
+        let change_ids = json!([change["id"].as_str().unwrap()]);
+        let feedback_preview_args = json!({
+            "workspace_id": &ws,
+            "request": {
+                "intent": intent.clone(),
+                "brew_id": &brew_id,
+                "expected_actual_revision": 1,
+                "change_ids": change_ids
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let feedback_preview = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_feedback_preview")
+                    .with_arguments(feedback_preview_args),
+            )
+            .await
+            .unwrap();
+        assert_ne!(feedback_preview.is_error, Some(true));
+        let feedback_preview = feedback_preview.structured_content.unwrap();
+        assert_eq!(
+            feedback_preview["outcome"]["Preview"]["proposed_recipe"]["boil_minutes"],
+            75.0
+        );
+        let digest = feedback_preview["outcome"]["Preview"]["preview"]["context_digest"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let feedback_apply_args = json!({
+            "workspace_id": &ws,
+            "request": {
+                "intent": intent.clone(),
+                "brew_id": &brew_id,
+                "expected_actual_revision": 1,
+                "change_ids": change_ids,
+                "expected_recipe_head": 2,
+                "expected_calculation_context": digest,
+                "request_id": uuid::Uuid::new_v4().to_string()
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let feedback_apply = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_feedback_apply")
+                    .with_arguments(feedback_apply_args),
+            )
+            .await
+            .unwrap();
+        assert_ne!(feedback_apply.is_error, Some(true));
+        assert_eq!(
+            feedback_apply.structured_content.unwrap()["outcome"]["Applied"]["recipe_revision"],
+            3
+        );
+        let print_args = json!({
+            "workspace_id": &ws,
+            "request": {"intent": intent.clone(), "brew_id": &brew_id}
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let print = modern
+            .call_tool(CallToolRequestParams::new("brew_print").with_arguments(print_args))
+            .await
+            .unwrap();
+        assert_ne!(print.is_error, Some(true));
+        let print = print.structured_content.unwrap();
+        assert_eq!(
+            print["outcome"]["Print"]["summary"]["source"]["kind"],
+            "historical_brew"
+        );
+        assert_eq!(print["outcome"]["Print"]["summary"]["boil_minutes"], 60.0);
+        assert!(print["outcome"]["Print"]["actual"].is_object());
+    }
+
     krausen_core::db_execute!(&db, "UPDATE workspace_users SET role = 'workspace_user' WHERE workspace_id = $1 AND user_id = $2", &ws, &principal.user_id).unwrap();
     let actor = krausen_app::ActorContext {
         actor_id: principal.user_id.clone(),
@@ -2254,26 +2403,52 @@ async fn exercise(db: DbPool) {
     );
     server.abort();
 }
-#[tokio::test]
-async fn sqlite_sdk_clients() {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
+// The authenticated exercise covers every MCP tool and the server runs on the
+// driving thread. KRA-22 added five tools, so give this integration test its own
+// stack rather than relying on libtest's default.
+fn run_mcp_exercise(body: impl FnOnce(tokio::runtime::Runtime) + Send + 'static) {
+    std::thread::Builder::new()
+        .name("mcp-exercise".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            body(runtime);
+        })
+        .unwrap()
+        .join()
         .unwrap();
-    sqlx::migrate!("./migrations-sqlite")
-        .run(&pool)
-        .await
-        .unwrap();
-    exercise(DbPool::Sqlite(pool)).await;
 }
-#[tokio::test]
-async fn postgres_sdk_clients() {
-    let url =
-        std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
-    let pool = sqlx::PgPool::connect(&url).await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    exercise(DbPool::Postgres(pool)).await;
+#[test]
+fn sqlite_sdk_clients() {
+    run_mcp_exercise(|runtime| {
+        runtime.block_on(async {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::migrate!("./migrations-sqlite")
+                .run(&pool)
+                .await
+                .unwrap();
+            exercise(DbPool::Sqlite(pool)).await;
+        });
+    });
+}
+#[test]
+fn postgres_sdk_clients() {
+    run_mcp_exercise(|runtime| {
+        runtime.block_on(async {
+            let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
+                .expect("disposable PostgreSQL URL required");
+            let pool = sqlx::PgPool::connect(&url).await.unwrap();
+            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+            exercise(DbPool::Postgres(pool)).await;
+        });
+    });
 }
 
 fn brew_test_profile(

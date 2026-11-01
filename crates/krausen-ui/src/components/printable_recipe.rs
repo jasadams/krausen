@@ -45,6 +45,13 @@ fn percent(value: Option<f64>) -> String {
 fn source_label(source: &SummarySource) -> String {
     match source {
         SummarySource::Saved { revision, .. } => format!("Saved revision {revision}"),
+        SummarySource::HistoricalBrew {
+            brew_id,
+            selected_recipe_revision,
+            ..
+        } => {
+            format!("Historical brew {brew_id} · frozen recipe revision {selected_recipe_revision}")
+        }
         SummarySource::UnsavedDraft {
             base_revision: Some(revision),
             ..

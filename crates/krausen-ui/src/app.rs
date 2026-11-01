@@ -18,6 +18,7 @@ use crate::pages::auth::{
 };
 use crate::pages::beerxml::BeerXmlPage;
 use crate::pages::brew_evidence::BrewEvidencePage;
+use crate::pages::brew_history::{BrewAnalysisPage, RecipeBrewHistoryPage};
 use crate::pages::design_system::DesignSystemPage;
 use crate::pages::onboarding::OnboardingPage;
 use crate::pages::recipe_editor::RecipeEditorPage;
@@ -101,6 +102,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/recipes") view=RecipesPage/>
                     <Route path=path!("/recipe-editor/:id") view=RecipeEditorPage/>
                     <Route path=path!("/brews/:id") view=BrewEvidencePage/>
+                    <Route path=path!("/brews/:id/analysis") view=BrewAnalysisPage/>
+                    <Route path=path!("/recipes/:id/brews") view=RecipeBrewHistoryPage/>
                     <Route path=path!("/beerxml") view=BeerXmlPage/>
                     <Route path=path!("/design-system") view=DesignSystemPage/>
                     <Route path=path!("/accept-ownership/:transfer_id") view=AcceptOwnershipPage/>

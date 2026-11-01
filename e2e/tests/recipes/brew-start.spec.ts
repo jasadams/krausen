@@ -24,6 +24,33 @@ function commandFrom(request: import('@playwright/test').Request): any {
   return payload ? JSON.parse(payload) : null;
 }
 
+async function callServerFn(
+  page: import('@playwright/test').Page,
+  path: string,
+  payload: unknown,
+): Promise<{ status: number; body: any }> {
+  return page.evaluate(
+    async ({ path, payload }) => {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ request_json: JSON.stringify(payload) }).toString(),
+      });
+      const text = await response.text();
+      let body: unknown = text;
+      try {
+        body = JSON.parse(text);
+      } catch {}
+      return { status: response.status, body };
+    },
+    { path, payload },
+  );
+}
+
+function outcomeOf(body: any): any {
+  return body?.Ok ?? body;
+}
+
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
@@ -706,3 +733,269 @@ test('held overview response after same-document unmount is ignored', async ({ p
   await page.waitForTimeout(300);
   expect(pageErrors).toEqual([]);
 });
+
+test('recipe brew history and frozen historical print are reachable', async ({ page }) => {
+  const title = `Brew history ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  await page.goto(`/recipes/${recipeId}/brews`);
+  await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/)).toBeVisible();
+  await page.getByRole('link', { name: 'Compare and feedback' }).click();
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByText('Target versus selected actual')).toBeVisible();
+  await page.getByRole('button', { name: 'Print frozen plan' }).click();
+  await expect(page.getByText('Historical print preview')).toBeVisible();
+  await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
+  await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+});
+
+test('held context check after navigation cannot install the previous brew', async ({
+  page,
+}) => {
+  const firstBrew = await startBrewAndOpenEvidence(page, `Brew held A ${Date.now()}`);
+  const secondBrew = await startBrewAndOpenEvidence(page, `Brew held B ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${firstBrew.replaceAll("'", "''")}';`,
+  );
+  const intent = { account_id: getDefaultUserId(), workspace_id: workspace };
+
+  const initialComparison = page.waitForResponse((response) =>
+    response.url().includes('/leptos-api/execute_brew_comparison'),
+  );
+  await page.goto(`/brews/${firstBrew}/analysis`);
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  const comparisonPath = new URL((await initialComparison).request().url()).pathname;
+  const firstComparison = outcomeOf(
+    (
+      await callServerFn(page, comparisonPath!, {
+        intent,
+        brew_id: firstBrew,
+      })
+    ).body,
+  ).Comparison;
+  const secondComparison = outcomeOf(
+    (
+      await callServerFn(page, comparisonPath!, {
+        intent,
+        brew_id: secondBrew,
+      })
+    ).body,
+  ).Comparison;
+  expect(firstComparison.plan.context_id).not.toBe(secondComparison.plan.context_id);
+
+  let holdNextContext = false;
+  let releaseContext!: () => void;
+  const contextReleased = new Promise<void>((resolve) => {
+    releaseContext = resolve;
+  });
+  let contextEntered!: () => void;
+  const contextHeld = new Promise<void>((resolve) => {
+    contextEntered = resolve;
+  });
+  let contextDelivered!: () => void;
+  const contextDeliveredLatch = new Promise<void>((resolve) => {
+    contextDelivered = resolve;
+  });
+  await page.route('**/leptos-api/get_user_context*', async (route) => {
+    if (!holdNextContext) {
+      await route.continue();
+      return;
+    }
+    holdNextContext = false;
+    // Resolve the real context while the view still owns the first brew, but
+    // deliver it only after the route has moved to the second brew.
+    const response = await route.fetch();
+    const body = await response.json();
+    expect(body.user_id).toBe(intent.account_id);
+    expect(body.workspace_id).toBe(intent.workspace_id);
+    contextEntered();
+    await contextReleased;
+    await route.fulfill({ response });
+    contextDelivered();
+  });
+
+  let releaseSecondComparison!: () => void;
+  const secondComparisonReleased = new Promise<void>((resolve) => {
+    releaseSecondComparison = resolve;
+  });
+  let secondComparisonEntered!: () => void;
+  const secondComparisonHeld = new Promise<void>((resolve) => {
+    secondComparisonEntered = resolve;
+  });
+  await page.route('**/leptos-api/execute_brew_comparison*', async (route) => {
+    const request = commandFrom(route.request());
+    if (request?.brew_id !== firstBrew) {
+      // Hold the destination brew's read so the stale continuation's write, if
+      // any, is observable before the correct data arrives.
+      const response = await route.fetch();
+      secondComparisonEntered();
+      await secondComparisonReleased;
+      await route.fulfill({ response });
+      return;
+    }
+    const response = await route.fetch();
+    holdNextContext = true;
+    await route.fulfill({ response });
+  });
+
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await contextHeld;
+  await page.evaluate((href) => {
+    history.pushState({}, '', href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, `/brews/${secondBrew}/analysis`);
+  await expect(page).toHaveURL(new RegExp(secondBrew));
+  await secondComparisonHeld;
+  releaseContext();
+  // Wait for the matched workspace-A context response to complete and for the
+  // owning wasm task to get a frame, while the destination comparison is still
+  // held, instead of guessing with a fixed sleep.
+  await contextDeliveredLatch;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      }),
+  );
+  await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
+  await expect(page.getByText(secondComparison.plan.context_id)).toHaveCount(0);
+  releaseSecondComparison();
+  await expect(page.getByText(secondComparison.plan.context_id)).toBeVisible();
+  await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
+});
+
+
+test('feedback apply keeps one request through a lost response and ignores selection changes', async ({
+  page,
+}) => {
+  // Leptos appends a per-module hash to server-fn paths. Capture the evidence
+  // module hash from the page's own request and reuse it for brew_actual.
+  const serverFnPaths = new Map<string, string>();
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    const match = path.match(/^\/leptos-api\/([a-z_]+)\d+$/);
+    if (match) {
+      serverFnPaths.set(match[1], path);
+    }
+  });
+  const title = `Brew feedback ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const workspaceId = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const intent = { account_id: getDefaultUserId(), workspace_id: workspaceId };
+  const evidencePath = serverFnPaths.get('brew_evidence_view');
+  expect(evidencePath).toBeTruthy();
+
+  const comparisonResponse = page.waitForResponse((response) =>
+    response.url().includes('/leptos-api/execute_brew_comparison'),
+  );
+  await page.goto(`/brews/${brewId}/analysis`);
+  const comparison = await (await comparisonResponse).json();
+  const plan = outcomeOf(comparison).Comparison;
+  const document = structuredClone(plan.plan.recipe);
+  document.boil_minutes = 70;
+  document.notes = 'Browser proof actual';
+  const actualPath = evidencePath!.replace('brew_evidence_view', 'brew_actual');
+  const amended = await callServerFn(page, actualPath, {
+    action: 'amend',
+    intent,
+    brew_id: brewId,
+    expected_actual_revision: null,
+    document,
+    reason: 'browser proof',
+    request_id: crypto.randomUUID(),
+  });
+  expect(amended.status, JSON.stringify(amended.body)).toBe(200);
+  expect(outcomeOf(amended.body).Amended, JSON.stringify(amended.body)).toBeTruthy();
+  expect(outcomeOf(amended.body).Amended.revision).toBe(1);
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByText(/actual revision 1/)).toBeVisible();
+  await page
+    .locator('li', { hasText: 'process:boil_minutes' })
+    .getByRole('checkbox')
+    .click();
+  await page.getByRole('button', { name: 'Preview selected feedback' }).click();
+  await expect(page.getByText(/Proposed recipe head 2/)).toBeVisible();
+
+  const applyRequests: any[] = [];
+  let allowApply = false;
+  await page.route('**/leptos-api/execute_brew_feedback_apply*', async (route) => {
+    const request = commandFrom(route.request());
+    if (request) {
+      applyRequests.push(request);
+    }
+    if (!allowApply && request) {
+      // Deliver the real request so the server commits the typed result, then
+      // drop the response so the browser sees an uncertain outcome.
+      const response = await route.fetch();
+      const body = await response.json();
+      const applied = outcomeOf(body).Applied;
+      expect(applied.recipe_revision).toBe(3);
+      expect(
+        sqliteExec(
+          `SELECT COUNT(*) FROM app_requests WHERE request_id = '${request.request_id.replaceAll("'", "''")}' AND workspace_id = '${workspaceId.replaceAll("'", "''")}' AND operation = 'brew.feedback.apply.v1';`,
+        ),
+      ).toBe('1');
+      expect(
+        sqliteExec(
+          `SELECT MAX(revision) FROM recipe_revisions WHERE recipe_id = '${recipeId.replaceAll("'", "''")}';`,
+        ),
+      ).toBe('3');
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Apply as new recipe revision' }).click();
+  await expect(page.getByText(/The response was lost/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(applyRequests).toHaveLength(1);
+
+  // Changing another selection while the request is uncertain must not cancel
+  // or replace the retained command.
+  await page
+    .locator('li', { hasText: 'Notes · notes' })
+    .getByRole('checkbox')
+    .click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(applyRequests).toHaveLength(1);
+
+  allowApply = true;
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByText(/Feedback applied as recipe revision 3/)).toBeVisible();
+  expect(applyRequests).toHaveLength(2);
+  expect(applyRequests[1]).toEqual(applyRequests[0]);
+  expect(applyRequests[1].request_id).toBe(applyRequests[0].request_id);
+  expect(applyRequests[1].expected_recipe_head).toBe(2);
+  expect(applyRequests[1].expected_actual_revision).toBe(1);
+  expect(applyRequests[1].change_ids).toEqual(['process:boil_minutes']);
+  expect(applyRequests[1].expected_calculation_context).not.toBe('');
+  expect(applyRequests[1].intent).toEqual(intent);
+  expect(applyRequests[1].brew_id).toBe(brewId);
+  expect(
+    sqliteExec(
+      `SELECT COUNT(*) FROM app_requests WHERE request_id = '${applyRequests[0].request_id.replaceAll("'", "''")}' AND operation = 'brew.feedback.apply.v1';`,
+    ),
+  ).toBe('1');
+  expect(
+    sqliteExec(
+      `SELECT MAX(revision) FROM recipe_revisions WHERE recipe_id = '${recipeId.replaceAll("'", "''")}';`,
+    ),
+  ).toBe('3');
+
+  const after = await callServerFn(page, serverFnPaths.get('execute_brew_comparison')!, {
+    intent,
+    brew_id: brewId,
+  });
+  expect(outcomeOf(after.body).Comparison.plan.recipe.boil_minutes).toBe(60);
+});
+

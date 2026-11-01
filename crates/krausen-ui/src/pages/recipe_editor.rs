@@ -3,7 +3,7 @@
 use crate::{
     components::{
         BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
-        BreweryDraftSelect, BreweryNotice, BreweryPanel, Button, ButtonVariant,
+        BreweryDraftSelect, BreweryNotice, BreweryPanel, Button, ButtonLink, ButtonVariant,
         printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
@@ -998,7 +998,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { if retained.get() { "Unsaved changes · retained locally".to_owned() } else { "Unsaved changes".to_owned() } } else { message }
-        }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button><Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></header>
+        }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button>{move || recipe_id.get().map(|id| view! { <ButtonLink href=format!("/recipes/{id}/brews") variant=ButtonVariant::Secondary>"Brew history"</ButtonLink> })}<Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></header>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
         <div class="recipe-editor__summary">
