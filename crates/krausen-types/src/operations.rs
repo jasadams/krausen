@@ -41,6 +41,7 @@ pub const ACCOUNT_NAME_SET: Operation = Operation { id: "account.name.v1", mcp_t
 pub const ACCOUNT_THEME_SET: Operation = Operation { id: "account.theme.v1", mcp_tool: "account_theme_set", input_contract: "account-theme-set.v1", output_contract: "AccountUpdateOutcome" };
 pub const ACCOUNT_WORKSPACE_PREFERENCE_SET: Operation = Operation { id: "account.workspace-preference.v1", mcp_tool: "account_workspace_preference_set", input_contract: "account-workspace-preference-set.v1", output_contract: "AccountUpdateOutcome" };
 pub const SECURITY_SESSIONS: Operation = Operation { id: "security.sessions.v1", mcp_tool: "security_sessions", input_contract: "account-sessions-query.v1", output_contract: "SessionListOutcome" };
+pub const SECURITY_SESSION_REVOKE: Operation = Operation { id: "security.session-revoke.v1", mcp_tool: "security_session_revoke", input_contract: "session-revoke-command.v1", output_contract: "SessionRevokeOutcome" };
 pub const INVITATION_RECEIVED: Operation = Operation { id: "invitation.received.v1", mcp_tool: "invitation_received", input_contract: "recipient-invitations-query.v1", output_contract: "RecipientInvitationListOutcome" };
 pub const TEAM_INVITATIONS: Operation = Operation { id: "team.invitations.v1", mcp_tool: "team_invitations", input_contract: "team-invitations-query.v1", output_contract: "TeamInvitationListOutcome" };
 pub const ACCOUNT_WORKSPACES: Operation = Operation {
@@ -256,6 +257,7 @@ pub const OPERATIONS: &[Operation] = &[
     ACCOUNT_THEME_SET,
     ACCOUNT_WORKSPACE_PREFERENCE_SET,
     SECURITY_SESSIONS,
+    SECURITY_SESSION_REVOKE,
     INVITATION_RECEIVED,
     TEAM_INVITATIONS,
     ACCOUNT_WORKSPACES,

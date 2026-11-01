@@ -116,6 +116,7 @@ pub mod security_status;
 pub mod account_read;
 pub mod account_update;
 pub mod session_read;
+pub mod session_revoke;
 pub mod invitation_read;
 pub mod team_invitation_read;
 pub mod team_read;

@@ -270,21 +270,33 @@ async fn list_shared_sessions(db: &krausen_core::DbPool, actor: &krausen_app::in
 /// Mirrors `DELETE /auth/sessions/{token_id}` in `apps/server/src/routes/auth.rs`.
 /// Revokes the entire token family so rotated tokens in the same session are
 /// also invalidated.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionRevokeResponse {
+    pub outcome: krausen_types::session_revoke::SessionRevokeOutcome,
+    pub current_browser_revoked: bool,
+}
+
 #[server(prefix = "/leptos-api")]
-pub async fn revoke_session(token_id: String) -> Result<String, ServerFnError> {
+pub async fn revoke_session(token_id: String, request_id: String) -> Result<SessionRevokeResponse, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
-
-    let revoked =
-        krausen_auth::token_service::revoke_user_refresh_token(&ctx.db, &auth.user_id, &token_id)
-            .await
-            .into_sfn()?;
-
-    if !revoked {
-        return Err(ServerFnError::new("Session not found"));
+    let actor = super::verified_account_actor(&auth)?;
+    // Recovered results describe the original caller. Determine whether this
+    // browser is the target independently before using that result for cookies.
+    let current_browser_is_target = list_shared_sessions(&ctx.db, &actor).await?
+        .iter().any(|session| session.token_id == token_id && session.is_current);
+    let command = krausen_types::session_revoke::SessionRevokeCommand { expected_current_token_id: token_id, request_id };
+    let outcome = krausen_app::session_revoke::project(krausen_app::session_revoke::revoke(&ctx.db, &actor, &command).await);
+    let current_browser_revoked = current_browser_is_target && matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Revoked { .. });
+    if current_browser_revoked {
+        let response_options = leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
+        let mut headers = axum::http::HeaderMap::new();
+        krausen_auth::cookies::clear_token_cookies(&mut headers);
+        for (name, value) in headers.iter() {
+            if name == axum::http::header::SET_COOKIE { response_options.append_header(name.clone(), value.clone()); }
+        }
     }
-
-    Ok("Session revoked successfully".to_string())
+    Ok(SessionRevokeResponse { outcome, current_browser_revoked })
 }
 
 /// Log out the current session.

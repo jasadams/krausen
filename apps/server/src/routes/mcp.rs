@@ -95,6 +95,9 @@ async fn execute_workspace_preference(db: &krausen_core::DbPool, principal: &Pri
 async fn execute_sessions(db: &krausen_core::DbPool, principal: &Principal, input: AccountWorkspacesQuery) -> krausen_types::session_read::SessionListOutcome {
     krausen_app::session_read::project(krausen_app::session_read::sessions(db, &account_actor(principal), input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
 }
+async fn execute_session_revoke(db: &krausen_core::DbPool, principal: &Principal, input: krausen_types::session_revoke::SessionRevokeCommand) -> krausen_types::session_revoke::SessionRevokeOutcome {
+    krausen_app::session_revoke::project(krausen_app::session_revoke::revoke(db, &account_actor(principal), &input).await)
+}
 async fn execute_received_invitations(db: &krausen_core::DbPool, principal: &Principal, input: AccountWorkspacesQuery) -> krausen_types::invitation_read::RecipientInvitationListOutcome {
     krausen_app::invitation_read::project(krausen_app::invitation_read::recipient_invitations(db, &account_actor(principal), input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
 }
@@ -460,6 +463,7 @@ impl ServerHandler for McpHandler {
             Tool::new(operations::ACCOUNT_THEME_SET.mcp_tool, "Update the authenticated account theme using the observed settings revision", schema(json!({"type":"object","properties":{"theme":{"type":"string","enum":["light","dark","system"]},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["theme","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(operations::ACCOUNT_WORKSPACE_PREFERENCE_SET.mcp_tool, "Remember an authorized browser workspace preference; MCP calls still require an explicit workspace", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["workspace_id","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(operations::SECURITY_SESSIONS.mcp_tool, "List a page of the authenticated account's active browser sessions", schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}))),
+            Tool::new(operations::SECURITY_SESSION_REVOKE.mcp_tool, "Revoke one observed browser session belonging to this account", schema(json!({"type":"object","properties":{"expected_current_token_id":{"type":"string"},"request_id":{"type":"string","format":"uuid"}},"required":["expected_current_token_id","request_id"],"additionalProperties":false}))),
             Tool::new(operations::INVITATION_RECEIVED.mcp_tool, "List pending, unexpired invitations addressed to the authenticated account", schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}))),
             Tool::new(operations::TEAM_INVITATIONS.mcp_tool, "List pending workspace invitations as a workspace administrator", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["workspace_id"],"additionalProperties":false}))),
             Tool::new(
@@ -557,6 +561,11 @@ impl ServerHandler for McpHandler {
                 let input: AccountWorkspacesQuery = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid invitation query", None))?;
                 let outcome = execute_received_invitations(&self.db, principal, input).await;
                 if matches!(outcome, krausen_types::invitation_read::RecipientInvitationListOutcome::Available { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
+            "security.session-revoke.v1" => {
+                let input: krausen_types::session_revoke::SessionRevokeCommand = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid session revocation", None))?;
+                let outcome = execute_session_revoke(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Revoked { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
             }
             "security.sessions.v1" => {
                 let input: AccountWorkspacesQuery = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid session query", None))?;
@@ -1362,6 +1371,23 @@ async fn authenticate(
 mod invitation_tests {
     use super::*;
     use krausen_types::invitation::{InvitationAction, InvitationResponseOutcome};
+
+    #[tokio::test]
+    async fn mcp_session_revoke_uses_account_authority() {
+        use krausen_types::session_revoke::{SessionRevokeCommand, SessionRevokeOutcome};
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('u','u@example.test'),('v','v@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('m','u','mcp','test','test',4102444800),('f','u','browser','test','test',4102444800),('g','v','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO refresh_tokens (token_id,user_id,token_hash,family_id,expires_at,is_active) VALUES ('own','u','secret-own','f',$1,TRUE),('foreign','v','secret-foreign','g',$1,TRUE)").bind(chrono::Utc::now() + chrono::Duration::days(1)).execute(&pool).await.unwrap();
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let principal = Principal { user_id: "u".into(), credential_id: "m".into(), access_expires_at: 4102444800 };
+        let command = |token: &str| SessionRevokeCommand { expected_current_token_id: token.into(), request_id: uuid::Uuid::new_v4().to_string() };
+        assert!(matches!(execute_session_revoke(&db, &principal, command("foreign")).await, SessionRevokeOutcome::NotFound));
+        let result = execute_session_revoke(&db, &principal, command("own")).await;
+        assert!(matches!(result, SessionRevokeOutcome::Revoked { revoked_current: false, .. }));
+        assert!(!serde_json::to_string(&result).unwrap().contains("secret"));
+    }
 
     #[tokio::test]
     async fn mcp_invitation_rejects_wrong_recipient() {
