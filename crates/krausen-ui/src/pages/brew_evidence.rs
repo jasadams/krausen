@@ -308,7 +308,10 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let readings = RwSignal::new(Vec::new());
     let message = RwSignal::new(String::new());
     let warning = RwSignal::new(false);
-    let busy = RwSignal::new(false);
+    let read_busy = RwSignal::new(false);
+    let write_busy = RwSignal::new(false);
+    let write_attempt = RwSignal::new(0_u64);
+    let context_generation = RwSignal::new(0_u64);
     let context_valid = RwSignal::new(true);
     let pending = RwSignal::new(None::<PendingEvidence>);
     let generation = RwSignal::new(0_u64);
@@ -324,7 +327,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         let expected = intent.get_value();
         let expected_context = expected.clone();
         let id = brew_id.get_value();
-        busy.set(true);
+        read_busy.set(true);
         leptos::task::spawn_local(async move {
             let view_outcome = brew_evidence_view_shared(BrewEvidenceViewRequest {
                 intent: expected.clone(),
@@ -344,15 +347,26 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             if generation.try_get_untracked() != Some(sequence) {
                 return;
             }
+            let context_sequence = context_generation.get_untracked();
             if !current_context_matches(&expected_context).await {
+                if generation.try_get_untracked() != Some(sequence)
+                    || context_generation.try_get_untracked() != Some(context_sequence)
+                {
+                    return;
+                }
                 context_valid.set(false);
                 view.set(None);
                 readings.set(Vec::new());
-                busy.set(false);
+                read_busy.set(false);
+                return;
+            }
+            if generation.try_get_untracked() != Some(sequence)
+                || context_generation.try_get_untracked() != Some(context_sequence)
+            {
                 return;
             }
             context_valid.set(true);
-            busy.set(false);
+            read_busy.set(false);
             match view_outcome {
                 Ok(BrewEvidenceViewOutcome::View(data)) => {
                     lifecycle_extra.set(Vec::new());
@@ -406,9 +420,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         );
     });
     Effect::new(move |_| {
-        editor_guard
-            .pending
-            .set(busy.get() || pending.get().is_some());
+        editor_guard.pending.set(write_busy.get());
     });
     editor_guard.discard.set_value(Some(Callback::new(move |_| {
         inputs.set(BTreeMap::new());
@@ -436,6 +448,17 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     {
         use crate::components::layout::CONTEXT_CHANGED_KEY;
         use wasm_bindgen::{JsCast, closure::Closure};
+        let location = leptos_router::hooks::use_location();
+        let origin = web_sys::window()
+            .and_then(|w| w.location().origin().ok())
+            .unwrap_or_default();
+        editor_guard.current_url.set(format!(
+            "{}{}{}{}",
+            origin,
+            location.pathname.get_untracked(),
+            location.search.get_untracked(),
+            location.hash.get_untracked()
+        ));
         let window = web_sys::window().expect("browser window");
         let unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
             move |event: web_sys::BeforeUnloadEvent| {
@@ -469,9 +492,15 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
 
         let recheck = Callback::new(move |_| {
+            context_generation.update(|generation| *generation += 1);
+            let sequence = context_generation.get_untracked();
+            context_valid.set(false);
             let expected = intent.get_value();
             leptos::task::spawn_local(async move {
                 let valid = current_context_matches(&expected).await;
+                if context_generation.try_get_untracked() != Some(sequence) {
+                    return;
+                }
                 context_valid.set(valid);
                 if valid {
                     load.run(());
@@ -497,9 +526,11 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         let Some(cursor) = lifecycle_cursor.get_untracked() else {
             return;
         };
+        let sequence = generation.get_untracked();
         let expected = intent.get_value();
+        let expected_context = expected.clone();
         let id = brew_id.get_value();
-        busy.set(true);
+        read_busy.set(true);
         leptos::task::spawn_local(async move {
             let outcome = brew_evidence_view_shared(BrewEvidenceViewRequest {
                 intent: expected,
@@ -507,7 +538,28 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 lifecycle_cursor: Some(cursor),
             })
             .await;
-            busy.set(false);
+            if generation.try_get_untracked() != Some(sequence) {
+                return;
+            }
+            let context_sequence = context_generation.get_untracked();
+            if !current_context_matches(&expected_context).await {
+                if generation.try_get_untracked() != Some(sequence)
+                    || context_generation.try_get_untracked() != Some(context_sequence)
+                {
+                    return;
+                }
+                context_valid.set(false);
+                view.set(None);
+                readings.set(Vec::new());
+                read_busy.set(false);
+                return;
+            }
+            if generation.try_get_untracked() != Some(sequence)
+                || context_generation.try_get_untracked() != Some(context_sequence)
+            {
+                return;
+            }
+            read_busy.set(false);
             match outcome {
                 Ok(BrewEvidenceViewOutcome::View(data)) => {
                     lifecycle_extra.update(|events| events.extend(data.lifecycle));
@@ -517,6 +569,14 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     warning.set(true);
                     message.set("Lifecycle continuation expired; reload the brew.".into());
                 }
+                Ok(BrewEvidenceViewOutcome::Forbidden)
+                | Ok(BrewEvidenceViewOutcome::ContextChanged) => {
+                    context_valid.set(false);
+                    view.set(None);
+                    readings.set(Vec::new());
+                    warning.set(true);
+                    message.set("Account or workspace changed. Reopen the brew.".into());
+                }
                 _ => {
                     warning.set(true);
                     message.set("Older lifecycle events could not be loaded.".into());
@@ -525,22 +585,32 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
     });
 
-    let blocked = Signal::derive(move || busy.get() || pending.get().is_some());
+    let blocked = Signal::derive(move || write_busy.get() || pending.get().is_some());
 
     let dispatch = Callback::new(move |action: PendingEvidence| {
-        if busy.get_untracked() || pending.get_untracked().is_some() {
+        if write_busy.get_untracked() || pending.get_untracked().is_some() {
             return;
         }
         let expected = intent.get_value();
+        write_attempt.update(|attempt| *attempt += 1);
+        let attempt_id = write_attempt.get_untracked();
         pending.set(Some(action.clone()));
-        busy.set(true);
+        write_busy.set(true);
         leptos::task::spawn_local(async move {
+            macro_rules! finish_write {
+                () => {
+                    if write_attempt.try_get_untracked() != Some(attempt_id) {
+                        return;
+                    }
+                    write_busy.set(false);
+                };
+            }
             if !current_context_matches(&expected).await {
+                finish_write!();
                 pending.set(None);
                 context_valid.set(false);
                 view.set(None);
                 readings.set(Vec::new());
-                busy.set(false);
                 warning.set(true);
                 message.set("Account or workspace changed. Reopen the brew.".into());
                 return;
@@ -548,7 +618,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             match action {
                 PendingEvidence::Measurement(command) => {
                     let outcome = brew_measurement_shared(command).await;
-                    busy.set(false);
+                    finish_write!();
                     match outcome {
                         Ok(outcome) => {
                             let definitive = !measurement_is_uncertain(&outcome);
@@ -604,7 +674,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Note(command) => {
                     let outcome = brew_note_shared(command).await;
-                    busy.set(false);
+                    finish_write!();
                     match outcome {
                         Ok(outcome) => {
                             let definitive = !note_is_uncertain(&outcome);
@@ -658,7 +728,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Lifecycle(request) => {
                     let outcome = crate::server_fns::brew::brew_lifecycle_shared(request).await;
-                    busy.set(false);
+                    finish_write!();
                     match outcome {
                         Ok(outcome) => {
                             let definitive = !matches!(
@@ -715,7 +785,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Archive(request) => {
                     let outcome = brew_archive_shared(request).await;
-                    busy.set(false);
+                    finish_write!();
                     match outcome {
                         Ok(outcome) => {
                             let definitive = !archive_is_uncertain(&outcome);
@@ -824,12 +894,18 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         }));
     });
     let retry_pending = Callback::new(move |_| {
+        if write_busy.get_untracked() {
+            return;
+        }
         if let Some(action) = retry_action(pending.get_untracked().as_ref()) {
             pending.set(None);
             dispatch.run(action);
         }
     });
     let abandon_pending = Callback::new(move |_| {
+        if write_busy.get_untracked() {
+            return;
+        }
         pending.set(None);
         warning.set(true);
         message.set(
@@ -862,8 +938,8 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         warning=true
                     />
                     <div class="recipe-editor__actions">
-                        <Button disabled=busy on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
-                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| abandon_pending.run(())>"Abandon uncertain request"</Button>
+                        <Button disabled=write_busy on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
+                        <Button variant=ButtonVariant::Secondary disabled=write_busy on:click=move |_| abandon_pending.run(())>"Abandon uncertain request"</Button>
                     </div>
                 })}
                 {move || (!message.get().is_empty()).then(|| view! {
