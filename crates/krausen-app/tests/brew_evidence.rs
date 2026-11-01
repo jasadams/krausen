@@ -1815,6 +1815,22 @@ async fn exercise_acceptance_cases(db: DbPool) {
             &brew_id,
             selected_root_before.as_deref().unwrap()
         );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_selections WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = 'gravity.final.v1'",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_selection_events WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = 'gravity.final.v1'",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0
+        );
         let workspace = actor.workspace_id.as_str();
         if db.is_postgres() {
             run!("DROP TRIGGER IF EXISTS kra21_reject_change ON app_changes");
@@ -1835,7 +1851,7 @@ async fn exercise_acceptance_cases(db: DbPool) {
         let outcome = record(
             &db,
             &actor,
-            record_request(&actor, &brew_id, "gravity.original.v1", 1.052),
+            record_request(&actor, &brew_id, "gravity.final.v1", 1.010),
         )
         .await;
         if db.is_postgres() {
@@ -1869,6 +1885,24 @@ async fn exercise_acceptance_cases(db: DbPool) {
             ),
             changes,
             "change record must roll back"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_selections WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = 'gravity.final.v1'",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0,
+            "new selection slot must roll back"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_actual_selection_events WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = 'gravity.final.v1'",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0,
+            "new selection event must roll back"
         );
         let selection_after = view(&db, &actor, &brew_id).await;
         let selection_after = selection_after
