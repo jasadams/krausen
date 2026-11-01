@@ -3,8 +3,7 @@
 use crate::{
     components::{
         BreweryDraftArea, BreweryDraftField, BreweryMetric, BreweryNotice, BreweryPanel, Button,
-        ButtonVariant,
-        layout::{CONTEXT_CHANGED_KEY, EditorGuard},
+        ButtonVariant, layout::EditorGuard,
     },
     pages::recipe_editor::current_context_matches,
     server_fns::brew::{
@@ -351,14 +350,14 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             .pending
             .set(busy.get() || pending.get().is_some());
     });
-    editor_guard.discard.set(Some(Callback::new(move |_| {
+    editor_guard.discard.set_value(Some(Callback::new(move |_| {
         inputs.set(BTreeMap::new());
         note_text.set(String::new());
         reason.set(String::new());
         pending.set(None);
         true
     })));
-    editor_guard.save.set(Some(Callback::new(move |_| {
+    editor_guard.save.set_value(Some(Callback::new(move |_| {
         warning.set(true);
         message.set(
             "Evidence writes are explicit. Use the action buttons to save, or choose Discard and leave."
@@ -369,12 +368,13 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     on_cleanup(move || {
         editor_guard.dirty.set(false);
         editor_guard.pending.set(false);
-        editor_guard.discard.set(None);
-        editor_guard.save.set(None);
+        editor_guard.discard.set_value(None);
+        editor_guard.save.set_value(None);
     });
 
     #[cfg(target_arch = "wasm32")]
     {
+        use crate::components::layout::CONTEXT_CHANGED_KEY;
         use wasm_bindgen::{JsCast, closure::Closure};
         let window = web_sys::window().expect("browser window");
         let unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
