@@ -276,6 +276,26 @@ pub struct SessionRevokeResponse {
     pub current_browser_revoked: bool,
 }
 
+#[cfg(feature = "ssr")]
+fn browser_revoked(sessions: &[SessionEntry], token_id: &str, outcome: &krausen_types::session_revoke::SessionRevokeOutcome) -> bool {
+    sessions.iter().any(|session| session.token_id == token_id && session.is_current)
+        && matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Revoked { .. })
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod session_revoke_handoff_tests {
+    use super::*;
+
+    #[test]
+    fn recovered_self_result_does_not_logout_a_different_browser() {
+        let original = krausen_types::session_revoke::SessionRevokeOutcome::Revoked { token_id: "old".into(), revoked_current: true };
+        let other = SessionEntry { token_id: "new".into(), created_at: String::new(), last_used: None, expires_at: String::new(), user_agent: None, ip_address: None, country_code: None, oauth_client_name: None, is_current: true };
+        assert!(!browser_revoked(&[other], "old", &original));
+        let own = SessionEntry { token_id: "old".into(), created_at: String::new(), last_used: None, expires_at: String::new(), user_agent: None, ip_address: None, country_code: None, oauth_client_name: None, is_current: true };
+        assert!(browser_revoked(&[own], "old", &original));
+    }
+}
+
 #[server(prefix = "/leptos-api")]
 pub async fn revoke_session(token_id: String, request_id: String) -> Result<SessionRevokeResponse, ServerFnError> {
     let auth = extract_auth().await?;
@@ -283,11 +303,10 @@ pub async fn revoke_session(token_id: String, request_id: String) -> Result<Sess
     let actor = super::verified_account_actor(&auth)?;
     // Recovered results describe the original caller. Determine whether this
     // browser is the target independently before using that result for cookies.
-    let current_browser_is_target = list_shared_sessions(&ctx.db, &actor).await?
-        .iter().any(|session| session.token_id == token_id && session.is_current);
+    let sessions = list_shared_sessions(&ctx.db, &actor).await?;
     let command = krausen_types::session_revoke::SessionRevokeCommand { expected_current_token_id: token_id, request_id };
     let outcome = krausen_app::session_revoke::project(krausen_app::session_revoke::revoke(&ctx.db, &actor, &command).await);
-    let current_browser_revoked = current_browser_is_target && matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Revoked { .. });
+    let current_browser_revoked = browser_revoked(&sessions, &command.expected_current_token_id, &outcome);
     if current_browser_revoked {
         let response_options = leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
         let mut headers = axum::http::HeaderMap::new();
