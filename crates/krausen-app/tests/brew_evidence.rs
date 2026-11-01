@@ -912,7 +912,7 @@ async fn exercise(db: DbPool) {
     }
     note_ids.sort();
     note_ids.dedup();
-    assert_eq!(note_ids.len(), 4);
+    assert_eq!(note_ids.len(), 5);
 
     // Actual formulation starts as the frozen plan projection and later
     // amendments are complete revision-checked documents.
