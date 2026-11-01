@@ -45,6 +45,12 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
     let next_cursor = RwSignal::new(None::<String>);
     let message = RwSignal::new("Loading brew history…".to_owned());
     let busy = RwSignal::new(false);
+    let generation = RwSignal::new(0_u64);
+
+    let clear_page = move || {
+        records.set(Vec::new());
+        next_cursor.set(None);
+    };
 
     let load_page = Callback::new(move |cursor: Option<String>| {
         let recipe = recipe_id.get_untracked();
@@ -55,17 +61,24 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
             message.set("Recipe not found.".into());
             return;
         }
+        let mine = generation.get_untracked().wrapping_add(1);
+        generation.set(mine);
         busy.set(true);
         message.set("Loading brew history…".into());
         leptos::task::spawn_local(async move {
             let outcome = brew_history_shared(RecipeBrewHistoryQuery {
                 intent,
-                recipe_id: recipe,
+                recipe_id: recipe.clone(),
                 include_archived: true,
                 cursor: cursor.clone(),
                 limit: 50,
             })
             .await;
+            if generation.try_get_untracked() != Some(mine)
+                || recipe_id.try_get_untracked() != Some(recipe)
+            {
+                return;
+            }
             busy.set(false);
             match outcome {
                 Ok(RecipeBrewHistoryOutcome::History(page)) => {
@@ -81,38 +94,60 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
                         message.set(String::new());
                     }
                 }
-                Ok(RecipeBrewHistoryOutcome::NotFound) => message.set("Recipe not found.".into()),
+                Ok(RecipeBrewHistoryOutcome::NotFound) => {
+                    clear_page();
+                    message.set("Recipe not found.".into())
+                }
                 Ok(RecipeBrewHistoryOutcome::Forbidden) => {
+                    clear_page();
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(RecipeBrewHistoryOutcome::ContextChanged) => {
+                    clear_page();
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(RecipeBrewHistoryOutcome::InvalidRequest) => {
+                    clear_page();
                     message.set("The history request was invalid.".into())
                 }
                 Ok(RecipeBrewHistoryOutcome::Unavailable) => {
+                    clear_page();
                     message.set("Brew history is unavailable; try again.".into())
                 }
-                Err(_) => message.set("Brew history is unavailable; try again.".into()),
+                Err(_) => {
+                    clear_page();
+                    message.set("Brew history is unavailable; try again.".into())
+                }
             }
         });
     });
 
     Effect::new(move |_| {
         let recipe = recipe_id.get();
+        clear_page();
         if recipe.is_empty() {
+            busy.set(false);
             message.set("Recipe not found.".into());
             return;
         }
-        records.set(Vec::new());
-        next_cursor.set(None);
+        busy.set(true);
+        message.set("Loading brew history…".into());
+        let mine = generation.get_untracked().wrapping_add(1);
+        generation.set(mine);
         leptos::task::spawn_local(async move {
-            let Ok(ctx) = crate::server_fns::context::get_user_context().await else {
+            let context = crate::server_fns::context::get_user_context().await;
+            if generation.try_get_untracked() != Some(mine)
+                || recipe_id.try_get_untracked() != Some(recipe)
+            {
+                return;
+            }
+            let Ok(ctx) = context else {
+                busy.set(false);
                 message.set("Sign in to view brew history.".into());
                 return;
             };
             let Some(workspace_id) = ctx.workspace_id else {
+                busy.set(false);
                 message.set("Choose a workspace.".into());
                 return;
             };
@@ -141,8 +176,11 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
                         </li>
                     }
                 }).collect_view()}</ul>
-                <Show when=move || next_cursor.get().is_some() fallback=|| view! { <p class="note-caption">"End of retained brew history."</p> }>
+                <Show when=move || next_cursor.get().is_some()>
                     <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_page.run(next_cursor.get_untracked())>"Load more"</Button>
+                </Show>
+                <Show when=move || !busy.get() && next_cursor.get().is_none() && !records.with(|items| items.is_empty())>
+                    <p class="note-caption">"End of retained brew history."</p>
                 </Show>
             </BreweryPanel>
         </div>
@@ -164,6 +202,13 @@ pub fn BrewAnalysisPage() -> impl IntoView {
     let generation = RwSignal::new(0_u64);
     let current_brew = RwSignal::new(String::new());
 
+    let hide_brew_content = move || {
+        comparison.set(None);
+        preview.set(None);
+        print.set(None);
+        selected.set(BTreeSet::new());
+    };
+
     let load_comparison = Callback::new(move |()| {
         let brew = current_brew.get_untracked();
         let Some(intent) = identity.get_untracked() else {
@@ -181,8 +226,19 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         busy.set(true);
         message.set("Refreshing comparison…".into());
         leptos::task::spawn_local(async move {
+            let owned = || {
+                generation.try_get_untracked() == Some(mine)
+                    && current_brew.try_get_untracked().as_deref() == Some(brew.as_str())
+            };
             if !current_context_matches(&intent).await {
-                message.set("Workspace changed; reload.".into());
+                if owned() {
+                    comparison.set(None);
+                    preview.set(None);
+                    print.set(None);
+                    selected.set(BTreeSet::new());
+                    busy.set(false);
+                    message.set("Workspace changed; reload.".into());
+                }
                 return;
             }
             let outcome = brew_comparison_shared(BrewComparisonRequest {
@@ -190,9 +246,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 brew_id: brew.clone(),
             })
             .await;
-            if generation.try_get_untracked() != Some(mine)
-                || current_brew.try_get_untracked().as_deref() != Some(brew.as_str())
-            {
+            if !owned() {
                 return;
             }
             busy.set(false);
@@ -201,14 +255,32 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     comparison.set(Some(value));
                     message.set(String::new());
                 }
-                Ok(BrewComparisonOutcome::NotFound) => message.set("Brew not found.".into()),
+                Ok(BrewComparisonOutcome::NotFound) => {
+                    comparison.set(None);
+                    preview.set(None);
+                    print.set(None);
+                    selected.set(BTreeSet::new());
+                    message.set("Brew not found.".into());
+                }
                 Ok(BrewComparisonOutcome::Forbidden) => {
+                    comparison.set(None);
+                    preview.set(None);
+                    print.set(None);
+                    selected.set(BTreeSet::new());
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(BrewComparisonOutcome::ContextChanged) => {
+                    comparison.set(None);
+                    preview.set(None);
+                    print.set(None);
+                    selected.set(BTreeSet::new());
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(BrewComparisonOutcome::Unavailable) | Err(_) => {
+                    comparison.set(None);
+                    preview.set(None);
+                    print.set(None);
+                    selected.set(BTreeSet::new());
                     message.set("Comparison is unavailable; try again.".into())
                 }
             }
@@ -218,21 +290,29 @@ pub fn BrewAnalysisPage() -> impl IntoView {
     Effect::new(move |_| {
         let brew = brew_id.get();
         current_brew.set(brew.clone());
-        comparison.set(None);
-        preview.set(None);
-        print.set(None);
-        selected.set(BTreeSet::new());
-        retry.set(None);
+        hide_brew_content();
+        busy.set(false);
         if brew.is_empty() {
             message.set("Brew not found.".into());
             return;
         }
+        message.set("Loading comparison…".into());
+        let mine = generation.get_untracked().wrapping_add(1);
+        generation.set(mine);
         leptos::task::spawn_local(async move {
-            let Ok(ctx) = crate::server_fns::context::get_user_context().await else {
+            let context = crate::server_fns::context::get_user_context().await;
+            if generation.try_get_untracked() != Some(mine)
+                || current_brew.try_get_untracked().as_deref() != Some(brew.as_str())
+            {
+                return;
+            }
+            let Ok(ctx) = context else {
+                busy.set(false);
                 message.set("Sign in to view this brew.".into());
                 return;
             };
             let Some(workspace_id) = ctx.workspace_id else {
+                busy.set(false);
                 message.set("Choose a workspace.".into());
                 return;
             };
@@ -245,7 +325,11 @@ pub fn BrewAnalysisPage() -> impl IntoView {
     });
 
     let run_preview = Callback::new(move |()| {
-        if retry.get_untracked().is_some() {
+        let brew = current_brew.get_untracked();
+        let pending = retry
+            .get_untracked()
+            .is_some_and(|request| request.brew_id == brew);
+        if pending {
             message.set("Retry the previous request before starting another.".into());
             return;
         }
@@ -259,7 +343,6 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         let Some(intent) = identity.get_untracked() else {
             return;
         };
-        let brew = current_brew.get_untracked();
         if value.brew_id != brew {
             message.set("The comparison changed; refresh before previewing.".into());
             return;
@@ -270,8 +353,16 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         busy.set(true);
         message.set("Preparing feedback preview…".into());
         leptos::task::spawn_local(async move {
+            let owned = || {
+                generation.try_get_untracked() == Some(mine)
+                    && current_brew.try_get_untracked() == Some(brew.clone())
+            };
             if !current_context_matches(&intent).await {
-                message.set("Workspace changed; reload.".into());
+                if owned() {
+                    preview.set(None);
+                    busy.set(false);
+                    message.set("Workspace changed; reload.".into());
+                }
                 return;
             }
             let outcome = brew_feedback_preview_shared(BrewFeedbackPreviewRequest {
@@ -281,9 +372,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 change_ids,
             })
             .await;
-            if generation.try_get_untracked() != Some(mine)
-                || current_brew.try_get_untracked() != Some(brew.clone())
-            {
+            if !owned() {
                 return;
             }
             busy.set(false);
@@ -293,35 +382,49 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     message.set(String::new());
                 }
                 Ok(BrewFeedbackPreviewOutcome::NoActual) => {
+                    preview.set(None);
                     message.set("This brew has no actual formulation amendment.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::NoChanges { diagnostics }) => {
+                    preview.set(None);
                     message.set(if diagnostics.is_empty() {
                         "The selected changes would not alter the current recipe.".into()
                     } else {
                         format!("No recipe changes to apply: {}", diagnostics.join("; "))
                     })
                 }
-                Ok(BrewFeedbackPreviewOutcome::Conflict { expected, actual }) => message.set(format!(
-                    "Actual revision changed from {expected:?} to {actual:?}; reload the comparison."
-                )),
-                Ok(BrewFeedbackPreviewOutcome::NotFound) => message.set("Brew not found.".into()),
+                Ok(BrewFeedbackPreviewOutcome::Conflict { expected, actual }) => {
+                    preview.set(None);
+                    message.set(format!(
+                        "Actual revision changed from {expected:?} to {actual:?}; reload the comparison."
+                    ))
+                }
+                Ok(BrewFeedbackPreviewOutcome::NotFound) => {
+                    preview.set(None);
+                    message.set("Brew not found.".into())
+                }
                 Ok(BrewFeedbackPreviewOutcome::Forbidden) => {
+                    hide_brew_content();
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::ContextChanged) => {
+                    hide_brew_content();
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::InvalidRequest) => {
+                    preview.set(None);
                     message.set("The feedback selection is invalid.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::UnresolvedProfile) => {
+                    preview.set(None);
                     message.set("The selected equipment profile is unavailable.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::UnresolvedStyle) => {
+                    preview.set(None);
                     message.set("The selected style is unavailable.".into())
                 }
                 Ok(BrewFeedbackPreviewOutcome::Unavailable) | Err(_) => {
+                    preview.set(None);
                     message.set("Feedback preview is unavailable; try again.".into())
                 }
             }
@@ -338,7 +441,9 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         generation.set(mine);
         busy.set(true);
         message.set("Applying selected feedback…".into());
-        retry.set(None);
+        // Retain the immutable command until a definitive outcome. A stale
+        // view continuation must not drop a possibly committed request.
+        retry.set(Some(request.clone()));
         leptos::task::spawn_local(async move {
             let outcome = brew_feedback_apply_shared(request.clone()).await;
             if generation.try_get_untracked() != Some(mine)
@@ -351,6 +456,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 Ok(BrewFeedbackApplyOutcome::Applied {
                     recipe_revision, ..
                 }) => {
+                    retry.set(None);
                     preview.set(None);
                     selected.set(BTreeSet::new());
                     message.set(format!(
@@ -358,78 +464,113 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     ));
                 }
                 Ok(BrewFeedbackApplyOutcome::Unchanged { recipe_revision, .. }) => {
+                    retry.set(None);
                     preview.set(None);
                     message.set(format!(
                         "The selected changes are already in recipe revision {recipe_revision}."
                     ));
                 }
-                Ok(BrewFeedbackApplyOutcome::HeadConflict { expected, actual }) => message.set(format!(
-                    "The recipe head advanced from {expected} to {actual}; reload the comparison."
-                )),
-                Ok(BrewFeedbackApplyOutcome::ContextConflict { .. }) => message.set(
-                    "The accepted calculation context changed; preview the current comparison again."
-                        .into(),
-                ),
-                Ok(BrewFeedbackApplyOutcome::ActualConflict { expected, actual }) => message.set(format!(
-                    "The actual revision changed from {expected:?} to {actual:?}; reload the comparison."
-                )),
+                Ok(BrewFeedbackApplyOutcome::HeadConflict { expected, actual }) => {
+                    retry.set(None);
+                    message.set(format!(
+                        "The recipe head advanced from {expected} to {actual}; reload the comparison."
+                    ))
+                }
+                Ok(BrewFeedbackApplyOutcome::ContextConflict { .. }) => {
+                    retry.set(None);
+                    message.set(
+                        "The accepted calculation context changed; preview the current comparison again."
+                            .into(),
+                    )
+                }
+                Ok(BrewFeedbackApplyOutcome::ActualConflict { expected, actual }) => {
+                    retry.set(None);
+                    message.set(format!(
+                        "The actual revision changed from {expected:?} to {actual:?}; reload the comparison."
+                    ))
+                }
                 Ok(BrewFeedbackApplyOutcome::NoActual) => {
+                    retry.set(None);
                     message.set("This brew has no actual formulation amendment.".into())
                 }
-                Ok(BrewFeedbackApplyOutcome::NoChanges { diagnostics }) => message.set(
-                    if diagnostics.is_empty() {
+                Ok(BrewFeedbackApplyOutcome::NoChanges { diagnostics }) => {
+                    retry.set(None);
+                    message.set(if diagnostics.is_empty() {
                         "No recipe revision was needed.".into()
                     } else {
                         format!("No recipe changes to apply: {}", diagnostics.join("; "))
-                    },
-                ),
-                Ok(BrewFeedbackApplyOutcome::NotFound) => message.set("Brew not found.".into()),
+                    })
+                }
+                Ok(BrewFeedbackApplyOutcome::NotFound) => {
+                    retry.set(None);
+                    message.set("Brew not found.".into())
+                }
                 Ok(BrewFeedbackApplyOutcome::Forbidden) => {
+                    retry.set(None);
+                    hide_brew_content();
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::ContextChanged) => {
+                    retry.set(None);
+                    hide_brew_content();
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::InvalidRequest) => {
+                    retry.set(None);
                     message.set("The feedback request was invalid.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedProfile) => {
+                    retry.set(None);
                     message.set("The selected equipment profile is unavailable.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedStyle) => {
+                    retry.set(None);
                     message.set("The selected style is unavailable.".into())
                 }
-                Ok(BrewFeedbackApplyOutcome::Invalid(validation)) => message.set(format!(
-                    "The proposed recipe is invalid ({:?}).",
-                    validation.state
-                )),
-                Ok(BrewFeedbackApplyOutcome::UnresolvedIngredientSource) => message.set(
-                    "A copied ingredient source is no longer valid on the current recipe.".into(),
-                ),
-                Ok(BrewFeedbackApplyOutcome::RequestIdentityConflict) => message
-                    .set("This request identity was already used for different feedback.".into()),
+                Ok(BrewFeedbackApplyOutcome::Invalid(validation)) => {
+                    retry.set(None);
+                    message.set(format!(
+                        "The proposed recipe is invalid ({:?}).",
+                        validation.state
+                    ))
+                }
+                Ok(BrewFeedbackApplyOutcome::UnresolvedIngredientSource) => {
+                    retry.set(None);
+                    message.set(
+                        "A copied ingredient source is no longer valid on the current recipe.".into(),
+                    )
+                }
+                Ok(BrewFeedbackApplyOutcome::RequestIdentityConflict) => {
+                    retry.set(None);
+                    message
+                        .set("This request identity was already used for different feedback.".into())
+                }
                 Ok(BrewFeedbackApplyOutcome::ResultExpired { .. }) => {
+                    retry.set(None);
                     message.set("This feedback result expired; preview again.".into())
                 }
                 Ok(BrewFeedbackApplyOutcome::Retryable)
                 | Ok(BrewFeedbackApplyOutcome::Unavailable)
                 | Err(_) => {
                     message.set("The response was lost; the same request can be retried.".into());
-                    retry.set(Some(request.clone()));
                 }
             }
         });
     });
 
     let apply = Callback::new(move |()| {
-        if let Some(request) = retry.get_untracked() {
+        let brew = current_brew.get_untracked();
+        if let Some(request) = retry
+            .get_untracked()
+            .filter(|request| request.brew_id == brew)
+        {
             submit.run(request);
             return;
         }
         let Some(preview_value) = preview.get_untracked() else {
             return;
         };
-        if preview_value.brew_id != current_brew.get_untracked() {
+        if preview_value.brew_id != brew {
             message.set("The selected brew changed; preview again.".into());
             return;
         }
@@ -465,8 +606,16 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         busy.set(true);
         message.set("Preparing frozen historical print…".into());
         leptos::task::spawn_local(async move {
+            let owned = || {
+                generation.try_get_untracked() == Some(mine)
+                    && current_brew.try_get_untracked() == Some(brew.clone())
+            };
             if !current_context_matches(&intent).await {
-                message.set("Workspace changed; reload.".into());
+                if owned() {
+                    print.set(None);
+                    busy.set(false);
+                    message.set("Workspace changed; reload.".into());
+                }
                 return;
             }
             let outcome = brew_print_shared(BrewPrintRequest {
@@ -474,9 +623,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 brew_id: brew.clone(),
             })
             .await;
-            if generation.try_get_untracked() != Some(mine)
-                || current_brew.try_get_untracked() != Some(brew)
-            {
+            if !owned() {
                 return;
             }
             busy.set(false);
@@ -485,17 +632,24 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     print.set(Some(value));
                     message.set(String::new());
                 }
-                Ok(BrewPrintOutcome::NotFound) => message.set("Brew not found.".into()),
+                Ok(BrewPrintOutcome::NotFound) => {
+                    print.set(None);
+                    message.set("Brew not found.".into())
+                }
                 Ok(BrewPrintOutcome::Forbidden) => {
+                    print.set(None);
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(BrewPrintOutcome::ContextChanged) => {
+                    print.set(None);
                     message.set("Workspace changed; reload.".into())
                 }
                 Ok(BrewPrintOutcome::InvalidRequest) => {
+                    print.set(None);
                     message.set("The print request was invalid.".into())
                 }
                 Ok(BrewPrintOutcome::Unavailable) | Err(_) => {
+                    print.set(None);
                     message.set("Historical print is unavailable; try again.".into())
                 }
             }
@@ -519,12 +673,21 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     <h3>"Formulation changes"</h3>
                     {if has_changes {
                         view! { <ul>{changes.iter().map(|change| { let id = change.id.clone(); view! {
-                            <li><label><Checkbox checked=Signal::derive({ let id = id.clone(); move || selected.with(|set| set.contains(&id)) }) on_change=Callback::new({ let id = id.clone(); move |_| { let id = id.clone(); preview.set(None); generation.update(|value| *value = value.wrapping_add(1)); selected.update(|set| { if !set.remove(&id) { set.insert(id); } }); } })/> {format!("{:?} · {} · {:?} → {:?}", change.section, change.id, change.planned, change.actual)}</label></li>
+                            <li><label><Checkbox checked=Signal::derive({ let id = id.clone(); move || selected.with(|set| set.contains(&id)) }) on_change=Callback::new({ let id = id.clone(); move |_| {
+                                if busy.get_untracked() || retry.get_untracked().is_some_and(|request| request.brew_id == current_brew.get_untracked()) {
+                                    return;
+                                }
+                                let id = id.clone();
+                                preview.set(None);
+                                busy.set(false);
+                                generation.update(|value| *value = value.wrapping_add(1));
+                                selected.update(|set| { if !set.remove(&id) { set.insert(id); } });
+                            } })/> {format!("{:?} · {} · {:?} → {:?}", change.section, change.id, change.planned, change.actual)}</label></li>
                         } }).collect_view()}</ul> }.into_any()
                     } else {
                         view! { <p>"The plan is still the effective actual formulation; no amended rows to compare."</p> }.into_any()
                     }}
-                    <div class="recipe-editor__actions"><Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| run_preview.run(())>"Preview selected feedback"</Button></div>
+                    <div class="recipe-editor__actions"><Button disabled=Signal::derive(move || busy.get() || retry.get().is_some_and(|request| request.brew_id == current_brew.get())) on:click=move |_| run_preview.run(())>"Preview selected feedback"</Button></div>
                     {move || preview.get().map(|preview_value| view! {
                         <BreweryPanel title="Feedback preview">
                             <ul>{preview_value.applied_change_ids.iter().map(|id| view! { <li>{id.clone()}</li> }).collect_view()}</ul>
@@ -533,7 +696,9 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                             <div class="recipe-editor__actions"><Button disabled=busy on:click=move |_| apply.run(())>"Apply as new recipe revision"</Button></div>
                         </BreweryPanel>
                     })}
-                    <Show when=move || retry.get().is_some()><Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| { if let Some(request) = retry.get_untracked() { submit.run(request); } }>"Retry previous request"</Button></Show>
+                    <Show when=move || retry.get().is_some_and(|request| request.brew_id == current_brew.get())>
+                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| { if let Some(request) = retry.get_untracked() { submit.run(request); } }>"Retry previous request"</Button>
+                    </Show>
                 </BreweryPanel>
             }})}
             {move || print.get().map(|print| view! {

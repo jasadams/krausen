@@ -205,6 +205,7 @@ fn measurement(
         source: "manual".into(),
         metadata: krausen_types::brewery::MeasurementMetadataV1 {
             reference_temperature_c: Some(20.0),
+            sample_temperature_c: Some(20.0),
             ..Default::default()
         },
         request_id: Uuid::new_v4().to_string(),
@@ -343,6 +344,61 @@ async fn exercise(db: DbPool) {
     assert_eq!(hot_slot.delta, None);
     assert_eq!(
         hot_slot.warning.as_deref(),
+        Some("unlike_sample_temperature")
+    );
+    // A stated 20 C instrument reference does not prove a hot SG sample was
+    // corrected, so the reading stays raw without a like-for-like delta.
+    let hot_gravity = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::Record(RecordMeasurementRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            quantity_id: "gravity.final.v1".into(),
+            value: 1.010,
+            observed_at: None,
+            source: "manual".into(),
+            metadata: krausen_types::brewery::MeasurementMetadataV1 {
+                reference_temperature_c: Some(20.0),
+                sample_temperature_c: Some(95.0),
+                ..Default::default()
+            },
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await;
+    assert!(
+        matches!(hot_gravity, MeasurementOutcome::Recorded(_)),
+        "{hot_gravity:?}"
+    );
+    let comparison = brew_history::comparison(
+        &db,
+        &actor,
+        BrewComparisonRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewComparisonOutcome::Comparison(comparison) = comparison else {
+        panic!("hot gravity comparison")
+    };
+    let hot_gravity_slot = comparison
+        .measurements
+        .iter()
+        .find(|row| row.quantity_id == "gravity.final.v1")
+        .unwrap();
+    assert!(
+        hot_gravity_slot.target.is_some(),
+        "the hot SG case must exercise a planned target: {hot_gravity_slot:?}"
+    );
+    assert!(
+        !hot_gravity_slot.comparable,
+        "hot SG must not be a like-for-like delta: {hot_gravity_slot:?}"
+    );
+    assert_eq!(hot_gravity_slot.delta, None);
+    assert_eq!(
+        hot_gravity_slot.warning.as_deref(),
         Some("unlike_sample_temperature")
     );
 
@@ -496,14 +552,12 @@ async fn exercise(db: DbPool) {
         "plan is immutable after feedback"
     );
 
-    // Complete canonical deviations: an actual spec-only change and an
-    // extension-only change must be visible and explicitly unapplied.
+    // Spec-only deviation against the frozen plan: the amount is identical to
+    // the plan and only the canonical specification differs, so this isolates
+    // digest detection rather than a field-by-field comparison.
     let mut spec_actual = actual(&recipe);
-    spec_actual.fermentables[0].amount_kg = Some(4.5);
+    spec_actual.fermentables[0].amount_kg = recipe.fermentables[0].amount_kg;
     spec_actual.fermentables[0].specification.yield_fraction = Some(0.82);
-    spec_actual
-        .extensions
-        .insert("fixture".into(), serde_json::json!(true));
     let ActualFormulationOutcome::Amended(spec_revision) = brew_evidence::actual(
         &db,
         &actor,
@@ -512,7 +566,7 @@ async fn exercise(db: DbPool) {
             brew_id: brew_id.clone(),
             expected_actual_revision: Some(1),
             document: spec_actual,
-            reason: Some("spec and extension evidence".into()),
+            reason: Some("spec-only evidence".into()),
             request_id: Uuid::new_v4().to_string(),
         }),
     )
@@ -533,17 +587,17 @@ async fn exercise(db: DbPool) {
     let BrewComparisonOutcome::Comparison(comparison) = comparison else {
         panic!("spec comparison")
     };
-    assert!(
-        comparison
-            .changes
-            .iter()
-            .any(|change| change.id == "fermentables:grain-1")
-    );
-    assert!(
-        comparison
-            .changes
-            .iter()
-            .any(|change| change.id == "extensions")
+    let spec_change = comparison
+        .changes
+        .iter()
+        .find(|change| change.id == "fermentables:grain-1")
+        .expect("spec-only row change");
+    let planned = spec_change.planned.as_ref().unwrap();
+    let changed = spec_change.actual.as_ref().unwrap();
+    assert_eq!(planned.amount, changed.amount, "amount is unchanged");
+    assert_ne!(
+        planned.canonical_digest, changed.canonical_digest,
+        "spec-only deviation still has a distinct canonical digest"
     );
     let spec_preview = brew_history::feedback_preview(
         &db,
@@ -556,13 +610,136 @@ async fn exercise(db: DbPool) {
         },
     )
     .await;
-    let BrewFeedbackPreviewOutcome::NoChanges { diagnostics } = spec_preview else {
-        panic!("spec-only preview should be explicit no-change: {spec_preview:?}")
+    let BrewFeedbackPreviewOutcome::Preview(spec_preview) = spec_preview else {
+        panic!("spec-only preview should propose the amount change: {spec_preview:?}")
+    };
+    assert_eq!(
+        spec_preview.proposed_recipe.fermentables[0].amount_kg,
+        Some(4.2)
+    );
+    assert_eq!(
+        spec_preview.proposed_recipe.fermentables[0]
+            .specification
+            .yield_fraction,
+        Some(0.8),
+        "the recipe specification is preserved, not copied from the actual"
+    );
+    assert!(
+        spec_preview
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("specification preserved"))
+    );
+
+    // Source-only deviation on an existing row: detected through the canonical
+    // digest but retained as evidence, never copied onto the recipe.
+    let mut source_actual = actual(&recipe);
+    // Equal to the current recipe head except for source provenance, so the
+    // selected change must produce no recipe revision and an explicit diagnostic.
+    source_actual.fermentables[0].amount_kg = Some(4.5);
+    source_actual.fermentables[0].source = Some(krausen_types::brewery::IngredientSource {
+        scope: "catalogue".into(),
+        catalogue_id: Some("cat-1".into()),
+        entry_id: "entry-1".into(),
+        version: Some(1),
+    });
+    source_actual
+        .extensions
+        .insert("fixture".into(), serde_json::json!(true));
+    let ActualFormulationOutcome::Amended(source_revision) = brew_evidence::actual(
+        &db,
+        &actor,
+        ActualFormulationCommand::Amend(AmendActualFormulationRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(2),
+            document: source_actual,
+            reason: Some("source and extension evidence".into()),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await
+    else {
+        panic!("source amendment")
+    };
+    assert_eq!(source_revision.revision, 3);
+    let comparison = brew_history::comparison(
+        &db,
+        &actor,
+        BrewComparisonRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewComparisonOutcome::Comparison(comparison) = comparison else {
+        panic!("source comparison")
+    };
+    assert!(
+        comparison
+            .changes
+            .iter()
+            .any(|change| change.id == "fermentables:grain-1"),
+        "source-only row deviation is detected"
+    );
+    assert!(
+        comparison
+            .changes
+            .iter()
+            .any(|change| change.id == "extensions")
+    );
+    let source_preview = brew_history::feedback_preview(
+        &db,
+        &actor,
+        BrewFeedbackPreviewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(3),
+            change_ids: vec!["fermentables:grain-1".into()],
+        },
+    )
+    .await;
+    let BrewFeedbackPreviewOutcome::NoChanges { diagnostics } = source_preview else {
+        panic!("source-only preview should be explicit no-change: {source_preview:?}")
     };
     assert!(
         diagnostics
             .iter()
-            .any(|message| message.contains("specification preserved"))
+            .any(|message| message.contains("source provenance retained")),
+        "the source difference is reported as unapplied: {diagnostics:?}"
+    );
+    let source_apply = brew_history::feedback_apply(
+        &db,
+        &actor,
+        BrewFeedbackApplyRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(3),
+            change_ids: vec!["fermentables:grain-1".into()],
+            expected_recipe_head: 2,
+            // No-change selections return before the accepted-context check.
+            expected_calculation_context: "source-only".into(),
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await;
+    let BrewFeedbackApplyOutcome::NoChanges { diagnostics } = source_apply else {
+        panic!("source-only apply should be explicit no-change: {source_apply:?}")
+    };
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.contains("source provenance retained"))
+    );
+    let RecipeReadOutcome::Found(unchanged) =
+        recipe_editor::read(&db, &actor, &intent(&actor), &recipe_id).await
+    else {
+        panic!("read unchanged recipe")
+    };
+    assert_eq!(unchanged.revision, 2);
+    assert_eq!(
+        unchanged.document.fermentables[0].source, None,
+        "feedback never introduces actual source provenance"
     );
     let extension_preview = brew_history::feedback_preview(
         &db,
@@ -570,7 +747,7 @@ async fn exercise(db: DbPool) {
         BrewFeedbackPreviewRequest {
             intent: intent(&actor),
             brew_id: brew_id.clone(),
-            expected_actual_revision: Some(2),
+            expected_actual_revision: Some(3),
             change_ids: vec!["extensions".into()],
         },
     )

@@ -125,9 +125,20 @@ async fn recipe_head(
     let document =
         native_store::load_document(tx, &actor.workspace_id, recipe_id, row.native_head_revision)
             .await
-            .map_err(|error| {
-                tracing::error!(error = ?error, "recipe revision cannot be read");
-                Error::Invalid("unsupported recipe revision")
+            .map_err(|error| match error {
+                native_store::StoredReadError::Storage(error) => Error::Database(error),
+                native_store::StoredReadError::UnsupportedVersion(version) => {
+                    tracing::error!(version, "stored recipe revision has an unsupported version");
+                    Error::Database(krausen_core::Error::Internal(
+                        "unsupported recipe revision".into(),
+                    ))
+                }
+                native_store::StoredReadError::Document(error) => {
+                    tracing::error!(error = ?error, "stored recipe revision cannot be decoded");
+                    Error::Database(krausen_core::Error::Internal(
+                        "stored recipe revision cannot be decoded".into(),
+                    ))
+                }
             })?
             .ok_or(Error::Invalid("missing recipe revision"))?;
     Ok(Some((row.native_head_revision, document)))
@@ -172,8 +183,7 @@ async fn history_inner(
     );
     let (before_started, before_id) = match query.cursor.as_deref() {
         Some(value) => {
-            let cursor =
-                crate::recipe_library::decode(value, actor, "brew", &filter, "started")?;
+            let cursor = crate::recipe_library::decode(value, actor, "brew", &filter, "started")?;
             let started = cursor
                 .position
                 .parse::<i64>()
@@ -452,18 +462,29 @@ fn measurement_comparison(slot: MeasurementSlot, plan: &BrewPlanV1) -> BrewMeasu
             None => (false, Some("measurement_temperature_unknown".to_owned())),
         }
     } else if slot.basis == "specific_gravity" {
-        match selected
-            .as_ref()
-            .and_then(|entry| entry.metadata.reference_temperature_c)
-        {
-            Some(temperature) if (temperature - 20.0).abs() > 1e-9 => {
-                (false, Some("unlike_reference_temperature".to_owned()))
-            }
-            Some(_) => (true, None),
+        match selected.as_ref() {
             None => (
                 false,
                 Some("measurement_reference_temperature_unknown".to_owned()),
             ),
+            Some(entry) => {
+                let reference = entry.metadata.reference_temperature_c;
+                let sample = entry.metadata.sample_temperature_c;
+                match (reference, sample) {
+                    (Some(reference), _) if (reference - 20.0).abs() > 1e-9 => {
+                        (false, Some("unlike_reference_temperature".to_owned()))
+                    }
+                    (None, _) => (
+                        false,
+                        Some("measurement_reference_temperature_unknown".to_owned()),
+                    ),
+                    (Some(_), None) => (false, Some("measurement_temperature_unknown".to_owned())),
+                    (Some(_), Some(sample)) if (sample - 20.0).abs() > 1e-9 => {
+                        (false, Some("unlike_sample_temperature".to_owned()))
+                    }
+                    (Some(_), Some(_)) => (true, None),
+                }
+            }
         }
     } else {
         (true, None)
@@ -802,6 +823,12 @@ fn apply_changes(
                         row.row_id
                     ));
                 }
+                if current.source != row.source {
+                    diagnostics.push(format!(
+                        "fermentables:{}: source provenance retained as evidence and not applied",
+                        row.row_id
+                    ));
+                }
                 current.amount_kg = row.amount_kg;
                 current.addition = row.addition.clone();
             } else {
@@ -836,6 +863,12 @@ fn apply_changes(
                 if current.specification != row.specification {
                     diagnostics.push(format!(
                         "hops:{}: recipe specification preserved; actual specification not copied",
+                        row.row_id
+                    ));
+                }
+                if current.source != row.source {
+                    diagnostics.push(format!(
+                        "hops:{}: source provenance retained as evidence and not applied",
                         row.row_id
                     ));
                 }
@@ -878,6 +911,12 @@ fn apply_changes(
                         row.row_id
                     ));
                 }
+                if current.source != row.source {
+                    diagnostics.push(format!(
+                        "yeast:{}: source provenance retained as evidence and not applied",
+                        row.row_id
+                    ));
+                }
                 current.amount = row.amount;
                 current.unit = row.unit.clone();
             } else {
@@ -912,6 +951,12 @@ fn apply_changes(
                 if current.specification != row.specification {
                     diagnostics.push(format!(
                         "other_ingredients:{}: recipe specification preserved; actual specification not copied",
+                        row.row_id
+                    ));
+                }
+                if current.source != row.source {
+                    diagnostics.push(format!(
+                        "other_ingredients:{}: source provenance retained as evidence and not applied",
                         row.row_id
                     ));
                 }
