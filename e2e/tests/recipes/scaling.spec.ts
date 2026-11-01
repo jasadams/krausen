@@ -42,7 +42,7 @@ test('scaling previews fixed-loss target changes and applies one revision', asyn
   await page.getByLabel('Target fermenter volume (L)').fill('40');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
   await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
-  await expect(page.getByText(/Kettle capacity 30\.00 L is below the scaled post-boil/)).toBeVisible();
+  await expect(page.getByText(/Kettle capacity 30\.00 L does not fit the scaled/)).toBeVisible();
   await expect(page.getByText(/Fixed losses stay unchanged/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Apply scaling' }).click();
@@ -103,6 +103,7 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   await page.getByRole('button', { name: 'Scale…' }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel' }).click();
   const recipes = page.getByRole('link', { name: 'Recipes', exact: true }).first();
   await recipes.click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
