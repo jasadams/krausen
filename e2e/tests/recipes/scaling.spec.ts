@@ -109,6 +109,8 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Stay' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await page.unroute('**/execute_scale_apply*');
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
