@@ -1,0 +1,15 @@
+{
+  "total_water_l": 28.36,
+  "pre_boil_l": 25.0,
+  "post_boil_l": 22.0,
+  "grain_absorption_l": 3.3600000000000003,
+  "mash_water_l": 15.0,
+  "sparge_water_l": 13.36,
+  "kettle_water_l": 0.0,
+  "pre_boil_sg": 1.0388759896459647,
+  "original_sg": 1.0441772609613236,
+  "final_sg": 1.0097189974114913,
+  "abv_percent": 4.561754042279936,
+  "colour_ebc": 7.449005998326661,
+  "ibu": 0.0
+}
