@@ -1010,6 +1010,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         <div class="recipe-editor__layout"><div class="recipe-editor__sections">
             <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
             <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
+            <crate::pages::brew_start::StartBrewPanel identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision/>
             <IngredientEditor draft=draft identity=identity context_visible=context_visible/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>

@@ -35,3 +35,4 @@ cd e2e
 ./node_modules/.bin/playwright test tests/recipes/print.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/catalogue.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/recipes/brew-start.spec.ts --reporter=line

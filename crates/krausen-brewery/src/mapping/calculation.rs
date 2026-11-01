@@ -6,14 +6,46 @@ use krausen_calc::{
 };
 use krausen_types::{
     brewery::{ChillingV1, EquipmentSettingsV1, RecipeDocumentV1},
-    formulation::Targets,
+    formulation::{AppliedDefault, Targets},
     validation::{Diagnostic, Readiness, Target, Validation},
 };
 
 /// Compute available targets only. Validation and effective-settings resolution
 /// precede this projection; unavailable values never escape as current targets.
 pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation) -> Targets {
+    let mut defaults = Vec::new();
+    targets_with_defaults(d, e, v, &mut defaults)
+}
+
+fn record_default(defaults: &mut Vec<AppliedDefault>, path: String, value: f64, unit: &str) {
+    if !defaults.iter().any(|default| default.path == path) {
+        defaults.push(AppliedDefault {
+            path,
+            value,
+            unit: unit.into(),
+        });
+    }
+}
+
+fn merge_defaults(into: &mut Vec<AppliedDefault>, from: Vec<AppliedDefault>) {
+    for default in from {
+        if !into.iter().any(|existing| existing.path == default.path) {
+            into.push(default);
+        }
+    }
+}
+
+/// Same projection while recording every engine fallback value actually used.
+/// The caller freezes this list with the accepted calculation context.
+pub fn targets_with_defaults(
+    d: &RecipeDocumentV1,
+    e: &EquipmentSettingsV1,
+    v: &mut Validation,
+    applied_defaults: &mut Vec<AppliedDefault>,
+) -> Targets {
     let mut out = Targets::default();
+    let mut water_defaults = Vec::new();
+    let mut projection_defaults = Vec::new();
     if d.hops.is_empty()
         && !v.diagnostics.iter().any(|d| {
             matches!(
@@ -57,7 +89,18 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                         _ => None,
                     }
                 };
-                let top_up = d.process.kettle_top_up_l.unwrap_or(0.0);
+                let top_up = match d.process.kettle_top_up_l {
+                    Some(value) => value,
+                    None => {
+                        record_default(
+                            &mut water_defaults,
+                            "process.kettle_top_up_l".into(),
+                            0.0,
+                            "L",
+                        );
+                        0.0
+                    }
+                };
                 let sparge = mash.map(|m| {
                     if grain == 0.0 {
                         0.0
@@ -85,6 +128,7 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                     out.mash_water_l = mash;
                     out.sparge_water_l = sparge;
                     out.kettle_water_l = Some(kettle);
+                    merge_defaults(applied_defaults, water_defaults);
                 } else {
                     v.state = Readiness::Invalid;
                     v.diagnostics.push(Diagnostic {
@@ -143,7 +187,18 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                     kg: f.amount_kg?,
                     yield_fraction: f.specification.yield_fraction?,
                     colour_ebc: if v.target_available(Target::Colour) {
-                        f.specification.colour_ebc.unwrap_or(0.0)
+                        match f.specification.colour_ebc {
+                            Some(value) => value,
+                            None => {
+                                record_default(
+                                    &mut projection_defaults,
+                                    format!("fermentables[{}].specification.colour_ebc", f.row_id),
+                                    0.0,
+                                    "EBC",
+                                );
+                                0.0
+                            }
+                        }
                     } else {
                         0.0
                     },
@@ -163,14 +218,36 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                 .map(|h| {
                     Some(HopInput {
                         grams: h.amount_g?,
-                        alpha_fraction: h.specification.alpha_fraction.unwrap_or(0.0),
+                        alpha_fraction: match h.specification.alpha_fraction {
+                            Some(value) => value,
+                            None => {
+                                record_default(
+                                    &mut projection_defaults,
+                                    format!("hops[{}].specification.alpha_fraction", h.row_id),
+                                    0.0,
+                                    "fraction",
+                                );
+                                0.0
+                            }
+                        },
                         stage: match h.stage.as_str() {
                             "boil" => HopUse::Boil,
                             "whirlpool" => HopUse::Whirlpool,
                             "dry_hop" => HopUse::DryHop,
                             _ => return None,
                         },
-                        remaining_minutes: h.contact_minutes.unwrap_or(0.0),
+                        remaining_minutes: match h.contact_minutes {
+                            Some(value) => value,
+                            None => {
+                                record_default(
+                                    &mut projection_defaults,
+                                    format!("hops[{}].contact_minutes", h.row_id),
+                                    0.0,
+                                    "minutes",
+                                );
+                                0.0
+                            }
+                        },
                     })
                 })
                 .collect::<Option<Vec<_>>>()?
@@ -207,7 +284,18 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
             boil_minutes: d.boil_minutes?,
             mash_water_l: mash,
             kettle_top_up_l: if v.target_available(Target::Water) {
-                d.process.kettle_top_up_l.unwrap_or(0.0)
+                match d.process.kettle_top_up_l {
+                    Some(value) => value,
+                    None => {
+                        record_default(
+                            &mut projection_defaults,
+                            "process.kettle_top_up_l".into(),
+                            0.0,
+                            "L",
+                        );
+                        0.0
+                    }
+                }
             } else {
                 0.0
             },
@@ -219,7 +307,18 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
             fermentables,
             hops,
             whirlpool_minutes: if v.target_available(Target::Bitterness) {
-                d.process.whirlpool_minutes.unwrap_or(0.0)
+                match d.process.whirlpool_minutes {
+                    Some(value) => value,
+                    None => {
+                        record_default(
+                            &mut projection_defaults,
+                            "process.whirlpool_minutes".into(),
+                            0.0,
+                            "minutes",
+                        );
+                        0.0
+                    }
+                }
             } else {
                 0.0
             },
@@ -248,17 +347,50 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
                         .or(e.mash_efficiency_fraction)?
                 },
                 kettle_diameter_cm: if v.target_available(Target::Bitterness) {
-                    e.kettle_diameter_cm.unwrap_or(1.0)
+                    match e.kettle_diameter_cm {
+                        Some(value) => value,
+                        None => {
+                            record_default(
+                                &mut projection_defaults,
+                                "equipment.kettle_diameter_cm".into(),
+                                1.0,
+                                "cm",
+                            );
+                            1.0
+                        }
+                    }
                 } else {
                     1.0
                 },
                 kettle_opening_cm: if v.target_available(Target::Bitterness) {
-                    e.kettle_opening_cm.unwrap_or(1.0)
+                    match e.kettle_opening_cm {
+                        Some(value) => value,
+                        None => {
+                            record_default(
+                                &mut projection_defaults,
+                                "equipment.kettle_opening_cm".into(),
+                                1.0,
+                                "cm",
+                            );
+                            1.0
+                        }
+                    }
                 } else {
                     1.0
                 },
                 boil_temp_c: if v.target_available(Target::Bitterness) {
-                    e.boil_temperature_c.unwrap_or(100.0)
+                    match e.boil_temperature_c {
+                        Some(value) => value,
+                        None => {
+                            record_default(
+                                &mut projection_defaults,
+                                "equipment.boil_temperature_c".into(),
+                                100.0,
+                                "C",
+                            );
+                            100.0
+                        }
+                    }
                 } else {
                     100.0
                 },
@@ -269,6 +401,7 @@ pub fn targets(d: &RecipeDocumentV1, e: &EquipmentSettingsV1, v: &mut Validation
     if let Some(input) = projected {
         match formulation::calculate(&input) {
             Ok(r) => {
+                merge_defaults(applied_defaults, projection_defaults);
                 out.pre_boil_sg = Some(r.pre_boil_sg);
                 out.original_sg = Some(r.original_sg);
                 if v.target_available(Target::FinalGravity) {

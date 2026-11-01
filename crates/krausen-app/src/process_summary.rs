@@ -94,12 +94,9 @@ async fn read_inner(
             )
         }
     };
-    // Deliberately call the existing shared preview instead of extracting an
-    // in-transaction helper: formulation.rs is part of its own self-hashed
-    // policy source, so editing it would change every calculation-context
-    // digest for a no-op refactor. The selected revision is immutable and
-    // preview performs current authorization, intent checking and the
-    // post-profile-lock recheck.
+    // Use the shared pool-owning preview for this read-only summary. The same
+    // formulation kernel also runs on brew start's held DbTx, so preview and
+    // start have one context producer and one set of assumptions.
     let preview = crate::formulation::preview(
         pool,
         actor,

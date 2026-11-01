@@ -334,6 +334,41 @@ async fn exercise(db: DbPool) {
         }
     );
 
+    // A v1-shaped token has a valid self-consistent digest but is not a v2 acceptance.
+    let mut old_policy = accepted_at_head_two.clone();
+    old_policy.context.policy_version = "krausen-formulation-v1".into();
+    old_policy.context.policy_source_hash =
+        "c2195592083a8abe4b735d78aa22d7006adb773046d480b78b6462d2699d3bb9".into();
+    let mut old_context = serde_json::to_value(&old_policy.context).unwrap();
+    old_context
+        .as_object_mut()
+        .unwrap()
+        .remove("applied_defaults");
+    old_policy.calculation_context_digest = krausen_core::canonical_json::sha256(
+        &krausen_core::canonical_json::from_serializable(&old_context).unwrap(),
+    )
+    .unwrap();
+    old_policy.digest = krausen_core::canonical_json::sha256(
+        &krausen_core::canonical_json::from_serializable(&(
+            &recipe_id,
+            old_policy.source_revision,
+            old_policy.target_batch_size_l,
+            &old_policy.policy_version,
+            &old_policy.calculation_context_digest,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        scaling::apply(&db, &actor, ScaleApplyRequest {
+            intent: intent.clone(), recipe_id: recipe_id.clone(), expected_revision: 2,
+            target_batch_size_l: 40.0, accepted: old_policy,
+            request_id: uuid::Uuid::new_v4().to_string(),
+        }).await,
+        ScaleApplyOutcome::ContextConflict { fresh }
+            if fresh.accepted.context.policy_version == "krausen-formulation-v2"
+    ));
+
     // Same accepted digest, tampered component: head passes, context compare fails.
     let mut tampered = accepted_at_head_two;
     tampered.targets.original_sg = Some(1.123456);

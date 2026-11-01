@@ -71,6 +71,9 @@ pub fn register_server_functions() {
     use server_fns::process_summary::RequestProcessSummary;
     register_explicit::<RequestProcessSummary>();
 
+    use server_fns::brew::StartBrew;
+    register_explicit::<StartBrew>();
+
     // Profile
     use server_fns::profile::*;
     register_explicit::<GetProfile>();

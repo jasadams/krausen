@@ -12,8 +12,9 @@ pub mod welcome;
 pub mod recipe_draft;
 mod recipe_recovery;
 
-pub mod equipment_profiles;
-pub mod catalogue_picker;
-pub mod recipe_editor;
 pub mod beerxml;
+pub mod brew_start;
+pub mod catalogue_picker;
+pub mod equipment_profiles;
+pub mod recipe_editor;
 pub mod recipe_scaling;

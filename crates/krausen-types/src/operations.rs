@@ -187,6 +187,12 @@ pub const INGREDIENT_SEARCH: Operation = Operation {
     input_contract: "SearchCatalogue",
     output_contract: "IngredientOutcome",
 };
+pub const BREW_START: Operation = Operation {
+    id: "brew.start.v1",
+    mcp_tool: "brew_start",
+    input_contract: "StartBrewRequest",
+    output_contract: "StartBrewOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
@@ -215,6 +221,7 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_READ,
     RECIPE_SAVE,
     RECIPE_PROCESS_SUMMARY,
+    BREW_START,
     RECIPE_SCALE_PREVIEW,
     RECIPE_SCALE_APPLY,
     RECIPE_DUPLICATE,

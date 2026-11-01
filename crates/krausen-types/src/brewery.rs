@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+use crate::{
+    formulation::{AppliedDefault, CalculationContext, StyleComparison, StyleRanges, Targets},
+    validation::Diagnostic,
+};
+
 /// Stored revision envelope. Legacy backfills may lack an observed actor/time;
 /// migration time is recorded separately rather than invented as authorship.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -397,6 +402,67 @@ impl IngredientEntry {
             CatalogueScope::Workspace => "Your library",
         }
     }
+}
+
+/// Minimal shared lifecycle vocabulary. KRA-20 only writes `Started`; later
+/// tickets own transitions, evidence and events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BrewStatusV1 {
+    Started,
+    Completed,
+    Cancelled,
+}
+
+impl BrewStatusV1 {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "started" => Some(Self::Started),
+            "completed" => Some(Self::Completed),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
+/// Complete immutable plan for one started brew. It freezes the selected native
+/// recipe, resolved equipment/process values, original outputs, accepted
+/// calculation context and every version needed to interpret it. Later recipe,
+/// equipment or catalogue edits cannot rewrite this bundle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BrewPlanV1 {
+    pub schema_version: u32,
+    pub recipe: RecipeDocumentV1,
+    pub recipe_revision: i64,
+    pub equipment: EquipmentSettingsV1,
+    pub equipment_profile_id: Option<String>,
+    pub equipment_profile_revision: Option<i64>,
+    pub equipment_profile_metadata_revision: Option<i64>,
+    pub original_targets: Targets,
+    pub assumptions: Vec<String>,
+    #[serde(default)]
+    pub applied_defaults: Vec<AppliedDefault>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub style: Option<StyleReference>,
+    pub style_reference: Option<StyleRanges>,
+    pub style_comparison: Option<StyleComparison>,
+    pub engine_version: String,
+    pub engine_build: String,
+    pub engine_source_hash: String,
+    pub policy_version: String,
+    pub policy_source_hash: String,
+    pub native_schema_version: u32,
+    pub result_schema_version: u32,
+    pub context_id: String,
+    pub calculation_context: CalculationContext,
 }
 
 #[cfg(test)]

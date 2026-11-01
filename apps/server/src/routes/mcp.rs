@@ -94,6 +94,12 @@ struct ProcessSummaryQuery {
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct BrewStart {
+    workspace_id: String,
+    request: krausen_types::brew::StartBrewRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecipeScalePreview {
     workspace_id: String,
     intent: krausen_types::request_context::OperationIntent,
@@ -400,6 +406,11 @@ impl ServerHandler for McpHandler {
                 operations::RECIPE_DUPLICATE.mcp_tool,
                 "Duplicate the current saved recipe under a new independent identity",
                 typed_schema::<RecipeDuplicate>(),
+            ),
+            Tool::new(
+                operations::BREW_START.mcp_tool,
+                "Atomically start a brew from one immutable saved recipe revision and accepted calculation context",
+                typed_schema::<BrewStart>(),
             ),
         ]))
     }
@@ -1024,6 +1035,27 @@ impl ServerHandler for McpHandler {
                 let success = matches!(
                     outcome,
                     krausen_types::scaling::DuplicateOutcome::Duplicated { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.start.v1" => {
+                let input: BrewStart = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew start", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome = krausen_app::brew_start::start(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::StartBrewOutcome::Started { .. }
                 );
                 let value = json!({"outcome": outcome});
                 if success {

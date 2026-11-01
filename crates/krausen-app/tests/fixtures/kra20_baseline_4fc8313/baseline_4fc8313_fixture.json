@@ -1,0 +1,108 @@
+{
+  "document": {
+    "batch_size_l": 20.0,
+    "boil_minutes": 60.0,
+    "description": null,
+    "equipment_overrides": {
+      "boil_off_l_per_hour": null,
+      "boil_temperature_c": null,
+      "chilling": null,
+      "efficiency_override_fraction": null,
+      "extensions": {},
+      "grain_absorption_l_per_kg": null,
+      "kettle_capacity_l": null,
+      "kettle_diameter_cm": null,
+      "kettle_opening_cm": null,
+      "mash_efficiency_fraction": null,
+      "mash_thickness_l_per_kg": null,
+      "pre_boil_deadspace_l": null,
+      "schema_version": 1,
+      "transfer_loss_l": null
+    },
+    "equipment_profile_id": "4fc83130-0000-4000-8000-000000000003",
+    "extensions": {},
+    "fermentables": [
+      {
+        "addition": {
+          "stage": "mash",
+          "time_minutes": null
+        },
+        "amount_kg": 4.2,
+        "row_id": "grain-1",
+        "source": null,
+        "specification": {
+          "colour_ebc": 5.0,
+          "name": "Pilsner malt",
+          "producer": "Weyermann",
+          "type": "grain",
+          "yield_fraction": 0.8
+        }
+      }
+    ],
+    "hops": [],
+    "import_provenance_id": null,
+    "notes": null,
+    "other_ingredients": [],
+    "process": {
+      "apparent_attenuation_fraction": 0.78,
+      "fermentation_steps": [],
+      "kettle_top_up_l": null,
+      "mash_steps": [],
+      "mash_water_l": 15.0,
+      "mash_water_method": "manual",
+      "unsupported": {},
+      "whirlpool_minutes": null,
+      "whirlpool_temperature_c": null
+    },
+    "schema_version": 1,
+    "style": {
+      "edition": "BJCP 2021",
+      "name": "Munich Helles",
+      "style_id": "4A"
+    },
+    "title": "KRA-20 baseline golden",
+    "yeast": []
+  },
+  "draft_generation": "kra20-baseline-golden",
+  "engine_build": "rustc 1.98.0 (88d9e12ae 2026-08-18)|x86_64-unknown-linux-gnu|debug",
+  "engine_source_hash": "8e749d5cf6d66f96a93c2e2e13a8223eb499172d51325836b12785564060bb1c",
+  "engine_version": "0.1.0",
+  "profile": {
+    "archived": false,
+    "created_at": 1793494036,
+    "metadata_revision": 1,
+    "name": "KRA-20 baseline kettle",
+    "profile_id": "4fc83130-0000-4000-8000-000000000003",
+    "provenance": {
+      "assumptions": [
+        "brewhouse_loss_calibrated"
+      ],
+      "source": "KRA-20 baseline golden fixture"
+    },
+    "revision": 1,
+    "saved_at": 1793494036,
+    "saved_by": "kra20-baseline-user",
+    "settings": {
+      "boil_off_l_per_hour": 3.0,
+      "boil_temperature_c": 100.0,
+      "chilling": {
+        "method": "natural"
+      },
+      "efficiency_override_fraction": null,
+      "extensions": {},
+      "grain_absorption_l_per_kg": 0.8,
+      "kettle_capacity_l": 30.0,
+      "kettle_diameter_cm": 35.0,
+      "kettle_opening_cm": 30.0,
+      "mash_efficiency_fraction": 0.75,
+      "mash_thickness_l_per_kg": 2.5,
+      "pre_boil_deadspace_l": 0.0,
+      "schema_version": 1,
+      "transfer_loss_l": 2.0
+    },
+    "workspace_id": "kra20-baseline-workspace"
+  },
+  "profile_id": "4fc83130-0000-4000-8000-000000000003",
+  "recipe_id": "45f836ed-48de-46c9-acdf-8123aa98aafe",
+  "revision": 1
+}

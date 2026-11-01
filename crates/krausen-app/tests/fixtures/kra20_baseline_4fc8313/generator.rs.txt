@@ -1,0 +1,256 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! KRA-20 baseline golden generator (TEST-ONLY, never committed to the baseline branch).
+//!
+//! Copy to `<baseline-worktree>/crates/krausen-app/tests/zz_baseline_golden.rs` at
+//! 4fc8313, set KRAUSEN_GOLDEN_OUT, and run:
+//!   KRAUSEN_GOLDEN_OUT=/home/jason/.cache/krausen/tmp-kra20/golden \
+//!   cargo test -p krausen-app --test zz_baseline_golden -- --nocapture
+//!
+//! It seeds fixed identities, saves a fixed equipment profile and recipe through the
+//! public application operations, then records the baseline v1 CalculationContext,
+//! its digest, targets, validation and style comparison. The KRA-20 branch commits the
+//! generated files as fixtures; it must not synthesize them.
+use krausen_app::{ActorContext, equipment, formulation, recipe_editor};
+use krausen_core::{DbPool, canonical_json};
+use krausen_types::{
+    brewery::{
+        AdditionStage, ChillingV1, EquipmentProvenance, EquipmentSettingsV1, FermentableAddition,
+        FermentableSpecification, ProcessV1, RecipeDocumentV1, StyleReference,
+    },
+    equipment::SaveEquipment,
+    formulation::{PreviewOutcome, PreviewRequest},
+    recipe_editor::RecipeSaveOutcome,
+    request_context::OperationIntent,
+    validation::Readiness,
+};
+
+const USER: &str = "kra20-baseline-user";
+const WORKSPACE: &str = "kra20-baseline-workspace";
+const CREDENTIAL: &str = "kra20-baseline-credential";
+const PROFILE: &str = "4fc83130-0000-4000-8000-000000000003";
+const EXPIRES_AT: i64 = 4_102_444_800;
+
+fn intent(actor: &ActorContext) -> OperationIntent {
+    OperationIntent {
+        account_id: actor.actor_id.clone(),
+        workspace_id: actor.workspace_id.clone(),
+    }
+}
+
+fn equipment_settings() -> EquipmentSettingsV1 {
+    EquipmentSettingsV1 {
+        mash_efficiency_fraction: Some(0.75),
+        boil_off_l_per_hour: Some(3.0),
+        transfer_loss_l: Some(2.0),
+        pre_boil_deadspace_l: Some(0.0),
+        grain_absorption_l_per_kg: Some(0.8),
+        mash_thickness_l_per_kg: Some(2.5),
+        kettle_capacity_l: Some(30.0),
+        kettle_diameter_cm: Some(35.0),
+        kettle_opening_cm: Some(30.0),
+        boil_temperature_c: Some(100.0),
+        chilling: Some(ChillingV1::Natural),
+        ..Default::default()
+    }
+}
+
+fn recipe(profile_id: &str) -> RecipeDocumentV1 {
+    RecipeDocumentV1 {
+        schema_version: 1,
+        title: "KRA-20 baseline golden".into(),
+        style: Some(StyleReference {
+            name: "Munich Helles".into(),
+            edition: Some("BJCP 2021".into()),
+            style_id: Some("4A".into()),
+        }),
+        batch_size_l: Some(20.0),
+        boil_minutes: Some(60.0),
+        equipment_profile_id: Some(profile_id.into()),
+        fermentables: vec![FermentableAddition {
+            row_id: "grain-1".into(),
+            amount_kg: Some(4.2),
+            addition: AdditionStage {
+                stage: "mash".into(),
+                time_minutes: None,
+            },
+            specification: FermentableSpecification {
+                name: Some("Pilsner malt".into()),
+                producer: Some("Weyermann".into()),
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        }],
+        // Deliberately omit the two engine defaults so V2 must record the actually
+        // applied fallbacks while producing the same numeric targets as V1.
+        process: ProcessV1 {
+            apparent_attenuation_fraction: Some(0.78),
+            mash_water_l: Some(15.0),
+            mash_water_method: Some("manual".into()),
+            whirlpool_minutes: None,
+            kettle_top_up_l: None,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn generate_baseline_golden() {
+    let out_dir = std::env::var("KRAUSEN_GOLDEN_OUT")
+        .expect("KRAUSEN_GOLDEN_OUT must point at the golden output directory");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../../apps/server/migrations-sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users (user_id,email) VALUES ($1,$2)")
+        .bind(USER)
+        .bind(format!("{USER}@example.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ($1,$2)")
+        .bind(WORKSPACE)
+        .bind(USER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,'workspace_member')",
+    )
+    .bind(WORKSPACE)
+    .bind(USER)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
+    )
+    .bind(CREDENTIAL)
+    .bind(USER)
+    .bind(EXPIRES_AT)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let db = DbPool::Sqlite(pool);
+    let actor = ActorContext {
+        actor_id: USER.into(),
+        workspace_id: WORKSPACE.into(),
+        credential_id: CREDENTIAL.into(),
+        access_expires_at: EXPIRES_AT,
+    };
+
+    let saved = equipment::save(
+        &db,
+        &actor,
+        SaveEquipment {
+            intent: intent(&actor),
+            profile_id: PROFILE.into(),
+            name: "KRA-20 baseline kettle".into(),
+            settings: equipment_settings(),
+            provenance: EquipmentProvenance {
+                source: "KRA-20 baseline golden fixture".into(),
+                assumptions: vec!["brewhouse_loss_calibrated".into()],
+            },
+            expected_revision: 0,
+            expected_metadata_revision: 0,
+            request_id: "4fc83130-0000-4000-8000-000000000001".into(),
+        },
+    )
+    .await
+    .expect("baseline equipment profile");
+
+    let document = recipe(&saved.profile_id);
+    let RecipeSaveOutcome::Saved {
+        recipe_id,
+        revision,
+    } = recipe_editor::save(
+        &db,
+        &actor,
+        &intent(&actor),
+        None,
+        None,
+        &document,
+        uuid::Uuid::parse_str("4fc83130-0000-4000-8000-000000000002").unwrap(),
+    )
+    .await
+    else {
+        panic!("baseline recipe save");
+    };
+    assert_eq!(revision, 1);
+
+    let PreviewOutcome::Preview(preview) = formulation::preview(
+        &db,
+        &actor,
+        PreviewRequest {
+            draft_generation: "kra20-baseline-golden".into(),
+            intent: intent(&actor),
+            draft: document.clone(),
+            equipment_draft: Default::default(),
+        },
+    )
+    .await
+    .expect("baseline preview")
+    else {
+        panic!("baseline preview unavailable");
+    };
+    assert_eq!(preview.validation.state, Readiness::Ready);
+    let context = preview.context.clone().expect("baseline context");
+    let canonical = canonical_json::from_serializable(&context).expect("canonical context");
+    let digest = canonical_json::sha256(&canonical).expect("baseline digest");
+    assert_eq!(preview.context_digest.as_deref(), Some(digest.as_str()));
+    assert_eq!(context.policy_version, "krausen-formulation-v1");
+    assert_eq!(
+        context.policy_source_hash,
+        "c2195592083a8abe4b735d78aa22d7006adb773046d480b78b6462d2699d3bb9"
+    );
+
+    let write = |name: &str, body: Vec<u8>| {
+        std::fs::write(format!("{out_dir}/{name}"), body).expect("write golden file");
+    };
+    // The committed baseline envelope is the v1 raw canonical Value. It has no
+    // `applied_defaults` key; do not round-trip it through the current
+    // CalculationContext before hashing, because V2 serde would add `[]`.
+    write(
+        "baseline_4fc8313_context.pretty.json",
+        serde_json::to_vec_pretty(&canonical).unwrap(),
+    );
+    write("baseline_4fc8313_digest.txt", format!("{digest}\n").into_bytes());
+    write(
+        "baseline_4fc8313_targets.json",
+        serde_json::to_vec_pretty(&preview.targets).unwrap(),
+    );
+    write(
+        "baseline_4fc8313_validation.json",
+        serde_json::to_vec_pretty(&preview.validation).unwrap(),
+    );
+    write(
+        "baseline_4fc8313_style_comparison.json",
+        serde_json::to_vec_pretty(&preview.style_comparison).unwrap(),
+    );
+    write(
+        "baseline_4fc8313_fixture.json",
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "profile_id": PROFILE,
+            "profile": saved,
+            "recipe_id": recipe_id,
+            "revision": revision,
+            "document": document,
+            "draft_generation": "kra20-baseline-golden",
+            "engine_version": context.engine_version,
+            "engine_build": context.engine_build,
+            "engine_source_hash": context.engine_source_hash,
+        }))
+        .unwrap(),
+    );
+    eprintln!("baseline golden written to {out_dir}; digest={digest}");
+}
