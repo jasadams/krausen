@@ -14,9 +14,9 @@ use krausen_types::{
         TransitionBrewRequest,
     },
     brewery::{
-        AdditionStage, BrewPlanV1, BrewStatusV1, ChillingV1, EquipmentProvenance,
-        EquipmentSettingsV1, FermentableAddition, FermentableSpecification, ProcessV1, QUANTITIES,
-        RecipeDocumentV1, StyleReference,
+        AdditionStage, BrewLifecycleEvent, BrewPlanV1, BrewStatusV1, ChillingV1,
+        EquipmentProvenance, EquipmentSettingsV1, FermentableAddition, FermentableSpecification,
+        HopAddition, HopSpecification, ProcessV1, QUANTITIES, RecipeDocumentV1, StyleReference,
     },
     equipment::SaveEquipment,
     formulation::{Preview, PreviewOutcome, PreviewRequest},
@@ -311,8 +311,36 @@ async fn record(
     brew_evidence::measurements(db, actor, MeasurementCommand::Record(request)).await
 }
 
+async fn amend_document(
+    db: &DbPool,
+    actor: &ActorContext,
+    brew_id: &str,
+    expected: Option<i64>,
+    document: krausen_types::brewery::ActualFormulationV1,
+) -> ActualFormulationOutcome {
+    brew_evidence::actual(
+        db,
+        actor,
+        ActualFormulationCommand::Amend(AmendActualFormulationRequest {
+            intent: intent(actor),
+            brew_id: brew_id.into(),
+            expected_actual_revision: expected,
+            document,
+            reason: Some("focused validation".into()),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await
+}
+
 async fn exercise(db: DbPool) {
     let (actor, brew_id, plan) = fixture(&db).await;
+    macro_rules! count {
+        ($sql:expr $(, $a:expr)*) => { match &db {
+            DbPool::Postgres(p) => sqlx::query_scalar::<_, i64>($sql)$(.bind($a))*.fetch_one(p).await.unwrap(),
+            DbPool::Sqlite(p) => sqlx::query_scalar::<_, i64>($sql)$(.bind($a))*.fetch_one(p).await.unwrap(),
+        } };
+    }
     let original = view(&db, &actor, &brew_id).await;
     assert_eq!(original.measurements.len(), QUANTITIES.len());
     assert!(original.actual.is_none());
@@ -473,7 +501,7 @@ async fn exercise(db: DbPool) {
         )),
     )
     .await;
-    let MeasurementOutcome::Corrected(first_corrected) = non_selected else {
+    let MeasurementOutcome::Corrected(_) = non_selected else {
         panic!("correct first: {non_selected:?}");
     };
     let after_non_selected = view(&db, &actor, &brew_id).await;
@@ -527,6 +555,7 @@ async fn exercise(db: DbPool) {
     };
     assert_eq!(page.items.len(), 1);
     assert!(page.next_cursor.is_some());
+    let foreign_lineage_cursor = page.next_cursor.clone();
     let mut lineage_ids = page
         .items
         .iter()
@@ -555,6 +584,55 @@ async fn exercise(db: DbPool) {
     lineage_ids.sort();
     lineage_ids.dedup();
     assert_eq!(lineage_ids.len(), 3);
+    // A continuation is bound to workspace, brew, operation, order and filter;
+    // reusing it for another root is invalid rather than silently skipping.
+    assert_eq!(
+        brew_evidence::measurements(
+            &db,
+            &actor,
+            MeasurementCommand::List(MeasurementListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                root_observation_id: Some(first.entry_id.clone()),
+                cursor: foreign_lineage_cursor.clone(),
+                limit: 1,
+            }),
+        )
+        .await,
+        MeasurementOutcome::Invalid
+    );
+    // Public pages are 1..=100; the default is 50 and over-bound values are
+    // rejected instead of silently clamped.
+    assert_eq!(
+        brew_evidence::measurements(
+            &db,
+            &actor,
+            MeasurementCommand::List(MeasurementListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                root_observation_id: None,
+                cursor: None,
+                limit: 101,
+            }),
+        )
+        .await,
+        MeasurementOutcome::Invalid
+    );
+    assert_eq!(
+        brew_evidence::measurements(
+            &db,
+            &actor,
+            MeasurementCommand::List(MeasurementListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                root_observation_id: None,
+                cursor: None,
+                limit: 0,
+            }),
+        )
+        .await,
+        MeasurementOutcome::Invalid
+    );
     assert_eq!(
         brew_evidence::measurements(
             &db,
@@ -714,6 +792,84 @@ async fn exercise(db: DbPool) {
     );
     assert!(history.items[2].document.text.is_none());
 
+    // Note history continuations are note-bound; a continuation from another
+    // note or another operation family is invalid.
+    let first_note_history = brew_evidence::notes(
+        &db,
+        &actor,
+        NoteCommand::List(NoteListRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            note_id: Some(note.note_id.clone()),
+            cursor: None,
+            limit: 1,
+        }),
+    )
+    .await;
+    let NoteOutcome::History(first_note_history) = first_note_history else {
+        panic!("first note history: {first_note_history:?}");
+    };
+    let foreign_note_cursor = first_note_history.next_cursor.clone().unwrap();
+    let other_note = brew_evidence::notes(
+        &db,
+        &actor,
+        NoteCommand::Record(RecordNoteRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            text: "other note".into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await;
+    let NoteOutcome::Recorded(other_note) = other_note else {
+        panic!("other note: {other_note:?}");
+    };
+    assert_eq!(
+        brew_evidence::notes(
+            &db,
+            &actor,
+            NoteCommand::List(NoteListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                note_id: Some(other_note.note_id.clone()),
+                cursor: Some(foreign_note_cursor),
+                limit: 1,
+            }),
+        )
+        .await,
+        NoteOutcome::Invalid
+    );
+    assert_eq!(
+        brew_evidence::notes(
+            &db,
+            &actor,
+            NoteCommand::List(NoteListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                note_id: None,
+                cursor: Some(foreign_lineage_cursor.clone()),
+                limit: 1,
+            }),
+        )
+        .await,
+        NoteOutcome::Invalid
+    );
+    assert_eq!(
+        brew_evidence::notes(
+            &db,
+            &actor,
+            NoteCommand::List(NoteListRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                note_id: None,
+                cursor: None,
+                limit: 101,
+            }),
+        )
+        .await,
+        NoteOutcome::Invalid
+    );
+
     // Bounded note pagination follows an opaque cursor without duplicates.
     for index in 0..3 {
         let outcome = brew_evidence::notes(
@@ -775,6 +931,90 @@ async fn exercise(db: DbPool) {
     assert_eq!(effective.revision, None);
     assert_eq!(effective.document.boil_minutes, Some(60.0));
     assert_eq!(effective.document.fermentables, plan.recipe.fermentables);
+
+    // Physically invalid native values and duplicate row identities are
+    // rejected before the transaction, so no actual/request/change writes
+    // survive a rejected amendment.
+    let actuals_before = count!(
+        "SELECT COUNT(*) FROM brew_actual_formulations WHERE workspace_id = $1 AND brew_id = $2",
+        &actor.workspace_id,
+        &brew_id
+    );
+    let requests_before = count!(
+        "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.actual.amend.v1'",
+        &actor.workspace_id
+    );
+    let changes_before = count!(
+        "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.actual.amend.v1'",
+        &actor.workspace_id
+    );
+    let mut negative_yield = effective.document.clone();
+    negative_yield.fermentables[0].specification.yield_fraction = Some(-0.1);
+    assert_eq!(
+        amend_document(&db, &actor, &brew_id, None, negative_yield).await,
+        ActualFormulationOutcome::Invalid
+    );
+    let mut negative_colour = effective.document.clone();
+    negative_colour.fermentables[0].specification.colour_ebc = Some(-5.0);
+    assert_eq!(
+        amend_document(&db, &actor, &brew_id, None, negative_colour).await,
+        ActualFormulationOutcome::Invalid
+    );
+    let mut invalid_alpha = effective.document.clone();
+    invalid_alpha.hops.push(HopAddition {
+        row_id: "hop-1".into(),
+        amount_g: Some(10.0),
+        stage: "boil".into(),
+        contact_minutes: Some(60.0),
+        temperature_c: None,
+        specification: HopSpecification {
+            name: Some("Test hop".into()),
+            producer: None,
+            alpha_fraction: Some(2.0),
+        },
+        source: None,
+    });
+    assert_eq!(
+        amend_document(&db, &actor, &brew_id, None, invalid_alpha).await,
+        ActualFormulationOutcome::Invalid
+    );
+    let mut invalid_attenuation = effective.document.clone();
+    invalid_attenuation.process.apparent_attenuation_fraction = Some(1.2);
+    assert_eq!(
+        amend_document(&db, &actor, &brew_id, None, invalid_attenuation).await,
+        ActualFormulationOutcome::Invalid
+    );
+    let mut duplicate_rows = effective.document.clone();
+    let mut duplicate = duplicate_rows.fermentables[0].clone();
+    duplicate.row_id = duplicate_rows.fermentables[0].row_id.clone();
+    duplicate_rows.fermentables.push(duplicate);
+    assert_eq!(
+        amend_document(&db, &actor, &brew_id, None, duplicate_rows).await,
+        ActualFormulationOutcome::Invalid
+    );
+    assert_eq!(
+        count!(
+            "SELECT COUNT(*) FROM brew_actual_formulations WHERE workspace_id = $1 AND brew_id = $2",
+            &actor.workspace_id,
+            &brew_id
+        ),
+        actuals_before
+    );
+    assert_eq!(
+        count!(
+            "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.actual.amend.v1'",
+            &actor.workspace_id
+        ),
+        requests_before
+    );
+    assert_eq!(
+        count!(
+            "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.actual.amend.v1'",
+            &actor.workspace_id
+        ),
+        changes_before
+    );
+
     let mut changed = effective.document.clone();
     changed.boil_minutes = Some(75.0);
     let amended = brew_evidence::actual(
@@ -1111,6 +1351,36 @@ async fn exercise(db: DbPool) {
         .await,
         MeasurementOutcome::Recorded(_)
     ));
+
+    // The lifecycle overview is bounded; a long reopen/correction history must
+    // not be fetched in full by every view.
+    {
+        let mut tx = db.begin_write().await.unwrap();
+        for revision in 100..=150 {
+            krausen_brewery::brew_evidence_store::insert_lifecycle_event(
+                &mut tx,
+                &BrewLifecycleEvent {
+                    workspace_id: actor.workspace_id.clone(),
+                    brew_id: brew_id.clone(),
+                    brew_revision: revision,
+                    from_status: BrewStatusV1::Started,
+                    to_status: BrewStatusV1::Completed,
+                    reason: Some("synthetic bounded history".into()),
+                    actor_id: actor.actor_id.clone(),
+                    recorded_at: chrono::Utc::now().timestamp(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+    let bounded_lifecycle = view(&db, &actor, &brew_id).await;
+    assert!(
+        bounded_lifecycle.lifecycle.len() <= 50,
+        "lifecycle overview returned {} events",
+        bounded_lifecycle.lifecycle.len()
+    );
 
     // Request identity replay returns the original entry; reuse with a changed
     // payload is a typed conflict and writes nothing.

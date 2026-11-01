@@ -2167,3 +2167,33 @@ pub async fn load_brew(
         .await
         .map_err(boundary_error)
 }
+
+#[cfg(test)]
+mod retryable_mapper_tests {
+    use super::*;
+
+    #[test]
+    fn retryable_is_not_reported_as_service_unavailable() {
+        assert_ne!(
+            map_measurement_error(Error::Retryable),
+            MeasurementOutcome::Unavailable
+        );
+        assert_ne!(map_note_error(Error::Retryable), NoteOutcome::Unavailable);
+        assert_ne!(
+            map_actual_error(Error::Retryable),
+            ActualFormulationOutcome::Unavailable
+        );
+        assert_ne!(
+            map_lifecycle_error(Error::Retryable),
+            BrewLifecycleOutcome::Unavailable
+        );
+        assert_ne!(
+            map_archive_error(Error::Retryable),
+            BrewArchiveOutcome::Unavailable
+        );
+        assert_ne!(
+            map_view_error(Error::Retryable),
+            BrewEvidenceViewOutcome::Unavailable
+        );
+    }
+}
