@@ -126,7 +126,7 @@ async fn recipe_head(
         native_store::load_document(tx, &actor.workspace_id, recipe_id, row.native_head_revision)
             .await
             .map_err(|error| match error {
-                native_store::StoredReadError::Storage(error) => Error::Database(error),
+                native_store::StoredReadError::Storage(error) => boundary_error(error),
                 native_store::StoredReadError::UnsupportedVersion(version) => {
                     tracing::error!(version, "stored recipe revision has an unsupported version");
                     Error::Database(krausen_core::Error::Internal(
