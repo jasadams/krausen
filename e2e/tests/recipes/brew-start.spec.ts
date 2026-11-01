@@ -301,6 +301,9 @@ test('hidden uncertain request can be discarded after another tab changes contex
   await page.locator('#brew-note').fill('hidden draft');
   const otherName = `Evidence context ${Date.now()}`;
   seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  sqliteExec(
+    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
+  );
   walCheckpoint();
   const switcher = await context.newPage();
   await switcher.goto(page.url());
@@ -393,6 +396,9 @@ test('retained uncertain request recovers after a real workspace round trip', as
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   const otherName = `Evidence recovery ${Date.now()}`;
   seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  sqliteExec(
+    `UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${getDefaultUserId()}'`,
+  );
   walCheckpoint();
   const switcher = await context.newPage();
   await switcher.goto(page.url());
@@ -462,6 +468,9 @@ test('failed retry context preflight retains the same uncertain request', async 
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   const otherName = `Retry preflight ${Date.now()}`;
   seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  sqliteExec(
+    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
+  );
   walCheckpoint();
   const switcher = await context.newPage();
   await switcher.goto(page.url());
@@ -522,9 +531,15 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   page,
   context,
 }) => {
-  await startBrewAndOpenEvidence(page, `Brew out of order ${Date.now()}`);
+  const brewId = await startBrewAndOpenEvidence(page, `Brew out of order ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
   const otherName = `Out of order ${Date.now()}`;
   seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  sqliteExec(
+    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
+  );
   walCheckpoint();
   let releaseOlder!: () => void;
   const olderReleased = new Promise<void>((resolve) => {
