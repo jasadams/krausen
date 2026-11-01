@@ -584,7 +584,7 @@ async fn context_conflict(
     }
 }
 
-fn context_matches(
+fn context_mismatch(
     accepted: &AcceptedScaleContext,
     actor: &ActorContext,
     document: &RecipeDocumentV1,
@@ -593,29 +593,62 @@ fn context_matches(
     effective_equipment: &EquipmentSettingsV1,
     style: Option<&krausen_types::formulation::StyleRanges>,
     targets: &Targets,
-) -> bool {
+) -> Option<&'static str> {
     let context = &accepted.context;
     let provenance = if profile.is_some() {
         "saved_profile"
     } else {
         "caller_supplied_equipment_draft"
     };
-    context.workspace_id == actor.workspace_id
-        && context.draft == *document
-        && context.equipment_draft == *equipment_base
-        && context.effective_equipment == *effective_equipment
-        && context.equipment_provenance == provenance
-        && context.equipment_profile.as_ref() == profile
-        && context.assumptions == assumptions(document, profile)
-        && context.engine_version == ENGINE_VERSION
-        && context.engine_build == ENGINE_BUILD
-        && context.engine_source_hash == engine_source_hash()
-        && context.policy_source_hash == policy_source_hash()
-        && context.policy_version == POLICY_VERSION
-        && context.native_schema_version == 1
-        && context.result_schema_version == 1
-        && context.style.as_ref() == style
-        && accepted.targets == *targets
+    if context.workspace_id != actor.workspace_id {
+        return Some("workspace_id");
+    }
+    if context.draft != *document {
+        return Some("draft");
+    }
+    if context.equipment_draft != *equipment_base {
+        return Some("equipment_draft");
+    }
+    if context.effective_equipment != *effective_equipment {
+        return Some("effective_equipment");
+    }
+    if context.equipment_provenance != provenance {
+        return Some("equipment_provenance");
+    }
+    if context.equipment_profile.as_ref() != profile {
+        return Some("equipment_profile");
+    }
+    if context.assumptions != assumptions(document, profile) {
+        return Some("assumptions");
+    }
+    if context.engine_version != ENGINE_VERSION {
+        return Some("engine_version");
+    }
+    if context.engine_build != ENGINE_BUILD {
+        return Some("engine_build");
+    }
+    if context.engine_source_hash != engine_source_hash() {
+        return Some("engine_source_hash");
+    }
+    if context.policy_source_hash != policy_source_hash() {
+        return Some("policy_source_hash");
+    }
+    if context.policy_version != POLICY_VERSION {
+        return Some("policy_version");
+    }
+    if context.native_schema_version != 1 {
+        return Some("native_schema_version");
+    }
+    if context.result_schema_version != 1 {
+        return Some("result_schema_version");
+    }
+    if context.style.as_ref() != style {
+        return Some("style");
+    }
+    if accepted.targets != *targets {
+        return Some("targets");
+    }
+    None
 }
 
 async fn apply_inner(
@@ -734,29 +767,40 @@ async fn apply_inner(
     let targets = calculation::targets(&scaled.document, &effective_equipment, &mut validation);
 
     let accepted = &request.accepted;
-    let digest_matches = accepted.source_revision == actual
-        && accepted.target_batch_size_l == request.target_batch_size_l
-        && accepted.policy_version == SCALE_POLICY_LINEAR_INGREDIENTS_V1
-        && accepted_digest(
-            &request.recipe_id,
-            accepted.source_revision,
-            accepted.target_batch_size_l,
-            &accepted.policy_version,
-            &accepted.calculation_context_digest,
-        )?
-        .eq(&accepted.digest);
-    let components_match = digest_matches
-        && context_matches(
-            accepted,
-            actor,
-            &scaled.document,
-            profile.as_ref(),
-            &base,
-            &effective_equipment,
-            style.as_ref(),
-            &targets,
+    let revision_matches = accepted.source_revision == actual;
+    let target_matches = accepted.target_batch_size_l == request.target_batch_size_l;
+    let policy_matches = accepted.policy_version == SCALE_POLICY_LINEAR_INGREDIENTS_V1;
+    let digest_ok = accepted_digest(
+        &request.recipe_id,
+        accepted.source_revision,
+        accepted.target_batch_size_l,
+        &accepted.policy_version,
+        &accepted.calculation_context_digest,
+    )?
+    .eq(&accepted.digest);
+    let mismatch = context_mismatch(
+        accepted,
+        actor,
+        &scaled.document,
+        profile.as_ref(),
+        &base,
+        &effective_equipment,
+        style.as_ref(),
+        &targets,
+    );
+    if !(revision_matches && target_matches && policy_matches && digest_ok) || mismatch.is_some() {
+        tracing::warn!(
+            revision_matches,
+            target_matches,
+            policy_matches,
+            digest_ok,
+            component = mismatch.unwrap_or("none"),
+            accepted_revision = accepted.source_revision,
+            actual_revision = actual,
+            accepted_target = accepted.target_batch_size_l,
+            request_target = request.target_batch_size_l,
+            "scaling apply rejected accepted context"
         );
-    if !components_match {
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(context_conflict(pool, actor, &request).await);
     }

@@ -1,0 +1,29 @@
+name: KRA-18 targeted scaling browser
+permissions:
+  contents: read
+on:
+  workflow_dispatch:
+concurrency:
+  group: kra18-targeted-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  scaling-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix e2e
+      - run: npx --prefix e2e playwright install --with-deps chromium
+      - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
+      - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: cargo install trunk --version 0.21.14 --locked
+      - run: cargo build -p krausen-server
+      - run: cd crates/krausen-ui && trunk build
+      - run: e2e/scripts/scaling-browser.sh
