@@ -136,8 +136,8 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
     let email = format!("{suffix}@example.test");
     macro_rules! run {
         ($sql:expr $(, $a:expr)*) => { match db {
-            DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap(),
-            DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap(),
+            DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+            DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
         } };
     }
     run!(
@@ -1136,8 +1136,8 @@ async fn exercise(db: DbPool) {
     let second_credential = format!("c2-{}", Uuid::new_v4());
     macro_rules! run {
         ($sql:expr $(, $a:expr)*) => { match &db {
-            DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap(),
-            DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap(),
+            DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+            DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
         } };
     }
     run!(
