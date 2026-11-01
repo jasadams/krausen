@@ -19,6 +19,11 @@ function sqliteExec(sql: string): string {
   }).trim();
 }
 
+function commandFrom(request: import('@playwright/test').Request): any {
+  const payload = new URLSearchParams(request.postData() ?? '').get('request_json');
+  return payload ? JSON.parse(payload) : null;
+}
+
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
@@ -116,17 +121,56 @@ test('starts an explicitly selected historical revision without restoring it', a
   await expect(page.getByText('from revision 2')).toBeVisible();
 });
 
-test('delayed evidence write keeps retry locked during focus refresh', async ({ page }) => {
+test('held Record stays locked while a real focus overview completes', async ({ page }) => {
   await startBrewAndOpenEvidence(page, `Brew delayed write ${Date.now()}`);
-  await page.route('**/brew_measurement*', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  await page.waitForTimeout(500);
+  let releaseRecord!: () => void;
+  const recordReleased = new Promise<void>((resolve) => {
+    releaseRecord = resolve;
+  });
+  let recordEntered!: () => void;
+  const recordHeld = new Promise<void>((resolve) => {
+    recordEntered = resolve;
+  });
+  let overviewCompleted!: () => void;
+  const overviewDone = new Promise<void>((resolve) => {
+    overviewCompleted = resolve;
+  });
+  const recordCommands: any[] = [];
+  await page.route('**/leptos-api/brew_measurement*', async (route) => {
+    const command = commandFrom(route.request());
+    if (command?.action === 'record') {
+      recordCommands.push(command);
+      recordEntered();
+      await recordReleased;
+      await route.continue();
+      return;
+    }
     await route.continue();
+  });
+  let awaitingOverview = false;
+  page.on('response', (response) => {
+    if (
+      awaitingOverview &&
+      response.url().includes('/brew_evidence_view') &&
+      response.ok()
+    ) {
+      overviewCompleted();
+    }
   });
   await page.locator('#measurement-gravity-original-v1').fill('1.050');
   await page.getByRole('button', { name: 'Record reading' }).first().click();
-  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await recordHeld;
+  awaitingOverview = true;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await overviewDone;
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry same request' })).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Abandon uncertain request' }),
+  ).toBeDisabled();
+  expect(recordCommands).toHaveLength(1);
+  releaseRecord();
   await expect(page.getByText('Measurement recorded.')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
 });
@@ -141,26 +185,47 @@ test('dirty evidence Back is guarded and retains the draft', async ({ page }) =>
   await expect(page.locator('#brew-note')).toHaveValue('draft note');
 });
 
-test('lost evidence response retries the same request without duplicates', async ({ page }) => {
+test('lost Record response is proven committed and retries the same identity', async ({
+  page,
+}) => {
   const brewId = await startBrewAndOpenEvidence(page, `Brew lost response ${Date.now()}`);
-  let lost = false;
-  await page.route('**/brew_measurement*', async (route) => {
-    if (!lost) {
-      lost = true;
-      await route.fetch();
-      await route.abort();
-    } else {
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
+  const recordCommands: any[] = [];
+  let firstRecord = true;
+  await page.route('**/leptos-api/brew_measurement*', async (route) => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') {
       await route.continue();
+      return;
     }
+    recordCommands.push(command);
+    if (firstRecord) {
+      firstRecord = false;
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      await expect
+        .poll(() =>
+          sqliteExec(
+            `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
+          ),
+        )
+        .toBe('1');
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
   });
   await page.locator('#measurement-gravity-original-v1').fill('1.050');
   await page.getByRole('button', { name: 'Record reading' }).first().click();
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await expect.poll(() => recordCommands.length).toBe(1);
   await page.getByRole('button', { name: 'Retry same request' }).click();
   await expect(page.getByText('Measurement recorded.')).toBeVisible();
-  const workspace = sqliteExec(
-    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
-  );
+  await expect.poll(() => recordCommands.length).toBe(2);
+  expect(recordCommands[1].request_id).toBe(recordCommands[0].request_id);
+  expect(recordCommands[1]).toEqual(recordCommands[0]);
   expect(
     sqliteExec(
       `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
@@ -217,18 +282,121 @@ test('uncertain evidence request is discarded on workspace change', async ({ pag
   await expect(page.getByText('Brew not found in this workspace.')).toBeVisible();
 });
 
-test('delayed overview response after unmount does not error', async ({ page }) => {
+test('conflict refreshes current evidence and keeps the draft for reapply', async ({
+  page,
+  context,
+}) => {
+  await startBrewAndOpenEvidence(page, `Brew conflict ${Date.now()}`);
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Measurement recorded.')).toBeVisible();
+  const other = await context.newPage();
+  await other.goto(page.url());
+  await expect(other.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await other.locator('#measurement-gravity-original-v1').fill('1.052');
+  await other.getByRole('button', { name: 'Correct selected' }).first().click();
+  await expect(other.getByText('Measurement corrected.')).toBeVisible();
+  await page.locator('#measurement-gravity-original-v1').fill('1.053');
+  await page.getByRole('button', { name: 'Correct selected' }).first().click();
+  await expect(
+    page.getByText('Changed elsewhere; current evidence refreshed. Review and reapply.'),
+  ).toBeVisible();
+  await expect(page.locator('#measurement-gravity-original-v1')).toHaveValue('1.053');
+  await expect(page.getByText(/selected 1\.052/)).toBeVisible();
+  await page.getByRole('button', { name: 'Correct selected' }).first().click();
+  await expect(page.getByText('Measurement corrected.')).toBeVisible();
+  await other.close();
+});
+
+test('retained uncertain request recovers after a real workspace round trip', async ({
+  page,
+  context,
+}) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew context recovery ${Date.now()}`);
+  const originalWorkspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
+  const originalName = sqliteExec(
+    `SELECT name FROM workspaces WHERE workspace_id = '${originalWorkspace}'`,
+  );
+  const recordCommands: any[] = [];
+  let firstRecord = true;
+  await page.route('**/leptos-api/brew_measurement*', async (route) => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') {
+      await route.continue();
+      return;
+    }
+    recordCommands.push(command);
+    if (firstRecord) {
+      firstRecord = false;
+      await route.fetch();
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  const otherName = `Evidence recovery ${Date.now()}`;
+  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  walCheckpoint();
+  const switcher = await context.newPage();
+  await switcher.goto(page.url());
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await switcher
+    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .click();
+  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('Account or workspace changed')).toBeVisible();
+  await switcher
+    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .click();
+  await switcher.getByRole('button', { name: originalName, exact: true }).click();
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry same request' }).click();
+  await expect(page.getByText('Measurement recorded.')).toBeVisible();
+  await expect.poll(() => recordCommands.length).toBe(2);
+  expect(recordCommands[1].request_id).toBe(recordCommands[0].request_id);
+  expect(
+    sqliteExec(
+      `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${originalWorkspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
+    ),
+  ).toBe('1');
+  await switcher.close();
+});
+
+test('held overview response after same-document unmount is ignored', async ({ page }) => {
   await startBrewAndOpenEvidence(page, `Brew unmount ${Date.now()}`);
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  await page.route('**/brew_evidence_view*', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+  let releaseOverview!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseOverview = resolve;
+  });
+  let overviewEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    overviewEntered = resolve;
+  });
+  await page.route('**/leptos-api/brew_evidence_view*', async (route) => {
+    overviewEntered();
+    await held;
     await route.continue();
   });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await page.waitForTimeout(200);
+  await entered;
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes('/brew_evidence_view') && response.ok(),
+  );
   await page.getByRole('link', { name: 'Recipes' }).first().click();
   await expect(page).toHaveURL(/\/recipes/);
-  await page.waitForTimeout(2000);
+  releaseOverview();
+  await responsePromise;
+  await page.waitForTimeout(300);
   expect(pageErrors).toEqual([]);
 });
