@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate image or verify deployment-app connectivity
+        type: choice
+        options: [image, connectivity]
+        default: image
 
 permissions:
   contents: read
@@ -13,6 +19,7 @@ permissions:
 
 jobs:
   image:
+    if: github.event_name == 'push' || inputs.mode != 'connectivity'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
@@ -87,3 +94,22 @@ jobs:
             -f "client_payload[version]=$VERSION" \
             -f "client_payload[sha]=$SOURCE_SHA" \
             -f "client_payload[digest]=$IMAGE_DIGEST"
+
+  verify-deployment-app:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'connectivity'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create deployment app token
+        id: deployment-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.KRAUSEN_DEPLOY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KRAUSEN_DEPLOY_APP_PRIVATE_KEY }}
+          owner: jasadams
+          repositories: krausen-cloud
+          permission-contents: write
+      - name: Send a non-deploying connectivity event
+        env:
+          GH_TOKEN: ${{ steps.deployment-token.outputs.token }}
+        run: gh api --method POST repos/jasadams/krausen-cloud/dispatches -f event_type=connectivity-test
