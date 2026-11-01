@@ -80,15 +80,20 @@ pub fn ProfilePage() -> impl IntoView {
 fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
     let (name, set_name) = signal(data.name.clone().unwrap_or_default());
     let revision = RwSignal::new(data.settings_revision);
-    let save_action = Action::new(move |name: &String| {
-        let name = name.clone();
-        let expected = revision.get_untracked();
+    let conflicted = RwSignal::new(false);
+    let server_name = RwSignal::new(None::<(String, i64)>);
+    let save_action = Action::new(move |input: &(String, i64)| {
+        let (name, expected) = input.clone();
         async move {
             match update_profile_name(name, expected).await? {
-                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); Ok(()) }
+                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); conflicted.set(false); server_name.set(None); Ok(()) }
                 krausen_types::account_read::AccountUpdateOutcome::Conflict { .. } => {
-                    if let Ok(profile) = get_profile().await { revision.set(profile.settings_revision); }
-                    Err(ServerFnError::new("Settings changed elsewhere. Your name is preserved; review and save again."))
+                    conflicted.set(true);
+                    server_name.set(None);
+                    if let Ok(profile) = get_profile().await {
+                        server_name.set(Some((profile.name.unwrap_or_default(), profile.settings_revision)));
+                    }
+                    Err(ServerFnError::new("Settings changed elsewhere. Your name is preserved; review the server value before reapplying."))
                 }
                 _ => Err(ServerFnError::new("Unable to update name")),
             }
@@ -97,8 +102,8 @@ fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
 
     let on_blur = move |_| {
         let current = name.get();
-        if !current.trim().is_empty() {
-            save_action.dispatch(current);
+        if !current.trim().is_empty() && !conflicted.get_untracked() && !save_action.pending().get_untracked() {
+            save_action.dispatch((current, revision.get_untracked()));
         }
     };
 
@@ -124,6 +129,24 @@ fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
                             on:input=move |ev| set_name.set(event_target_value(&ev))
                             on:blur=on_blur
                         />
+                        <Show when=move || conflicted.get()>
+                            <div class="text-sm text-muted-foreground" role="status">
+                                {move || match server_name.get() {
+                                    Some((current, revision)) => format!("Current server name: {} (revision {})", if current.is_empty() { "(empty)" } else { &current }, revision),
+                                    None => "Unable to load the current server name; reload before reapplying.".to_string(),
+                                }}
+                            </div>
+                            <button
+                                type="button"
+                                disabled=move || server_name.get().is_none() || save_action.pending().get()
+                                on:click=move |_| {
+                                    if let Some((_, observed_revision)) = server_name.get_untracked() {
+                                        let draft = name.get_untracked();
+                                        if !draft.trim().is_empty() { save_action.dispatch((draft, observed_revision)); }
+                                    }
+                                }
+                            >"Reapply name"</button>
+                        </Show>
                     </div>
                     <div class="space-y-2">
                         <Label>"Email"</Label>
@@ -157,14 +180,19 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
 
     let (current_theme, set_current_theme) = signal(data.theme.clone());
     let revision = RwSignal::new(data.settings_revision);
+    let server_theme = RwSignal::new(None::<(String, i64)>);
     let save_action = Action::new(move |theme: &String| {
         let theme = theme.clone();
         let expected = revision.get_untracked();
         async move {
             match update_theme(theme, expected).await? {
-                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); Ok(()) }
+                krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision } => { revision.set(settings_revision); server_theme.set(None); Ok(()) }
                 krausen_types::account_read::AccountUpdateOutcome::Conflict { .. } => {
-                    if let Ok(profile) = get_profile().await { revision.set(profile.settings_revision); }
+                    server_theme.set(None);
+                    if let Ok(profile) = get_profile().await {
+                        revision.set(profile.settings_revision);
+                        server_theme.set(Some((profile.theme, profile.settings_revision)));
+                    }
                     Err(ServerFnError::new("Settings changed elsewhere. Your choice is preserved; review and save again."))
                 }
                 _ => Err(ServerFnError::new("Unable to update theme")),
@@ -184,6 +212,9 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
                 <CardTitle>"Appearance"</CardTitle>
                 <CardDescription>"Choose how Krausen looks to you."</CardDescription>
                 <ActionStatus action=save_action/>
+                {move || server_theme.get().map(|(theme, revision)| view! {
+                    <p class="text-sm text-muted-foreground" role="status">{format!("Current server theme: {theme} (revision {revision})")}</p>
+                })}
             </CardHeader>
             <CardContent>
                 <div class="flex flex-wrap gap-3">

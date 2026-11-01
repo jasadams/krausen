@@ -1,0 +1,36 @@
+import { test, expect } from '@playwright/test';
+import { gotoAuthenticated, isPersonalMode } from '../../helpers/test-helpers';
+
+test('a stale name survives conflict without another blur overwriting the server', async ({ page }) => {
+  test.skip(isPersonalMode(), 'profile name editing is not shown in personal mode');
+  const second = await page.context().newPage();
+  await gotoAuthenticated(page, '/settings/profile');
+  await gotoAuthenticated(second, '/settings/profile');
+  const firstName = page.getByPlaceholder('Your name');
+  const secondName = second.getByPlaceholder('Your name');
+  await expect(firstName).toBeVisible();
+  await expect(secondName).toBeVisible();
+  const alice = `Alice-${Date.now()}`;
+  const bob = `Bob-${Date.now()}`;
+  await secondName.fill(bob);
+  await secondName.blur();
+  await expect(second.getByText('Saved', { exact: true })).toBeVisible();
+  let writes = 0;
+  page.on('request', request => { if (request.url().includes('update_profile_name')) writes++; });
+  await firstName.fill(alice);
+  await firstName.blur();
+  await expect(page.getByText(/Settings changed elsewhere/)).toBeVisible();
+  await expect(firstName).toHaveValue(alice);
+  const writesAfterConflict = writes;
+  expect(writesAfterConflict).toBeGreaterThan(0);
+  await firstName.focus();
+  await firstName.blur();
+  await page.waitForTimeout(300);
+  expect(writes).toBe(writesAfterConflict);
+  await expect(page.getByText(`Current server name: ${bob}`)).toBeVisible();
+  await page.getByRole('button', { name: 'Reapply name' }).click();
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await second.reload();
+  await expect(secondName).toHaveValue(alice);
+  await second.close();
+});
