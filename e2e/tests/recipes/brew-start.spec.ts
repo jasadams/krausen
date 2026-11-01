@@ -997,5 +997,41 @@ test('feedback apply keeps one request through a lost response and ignores selec
     brew_id: brewId,
   });
   expect(outcomeOf(after.body).Comparison.plan.recipe.boil_minutes).toBe(60);
+
+  // The applied feedback advances the recipe head, but the brew keeps its
+  // frozen revision and historical print at the revision it was started from.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/recipes/${recipeId}/brews`);
+  await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/).first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+
+  const compare = page.getByRole('link', { name: 'Compare and feedback' });
+  await compare.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/).first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+
+  const print = page.getByRole('button', { name: 'Print frozen plan' });
+  await print.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Historical print preview')).toBeVisible();
+  await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
+  await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+  await expect(
+    page.getByRole('article', { name: 'Printable recipe and process summary' }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+  await page.emulateMedia({ media: 'print' });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
 });
 
