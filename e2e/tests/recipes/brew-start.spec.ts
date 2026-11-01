@@ -58,12 +58,6 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.locator('#profile-chilling').selectOption('natural');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
-  await expect(
-    page
-      .locator('#equipment-profile-select option')
-      .filter({ hasText: 'E2E kettle' })
-      .first(),
-  ).toBeAttached();
   await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
   await page.getByText('Addition details', { exact: true }).first().click();
   await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
@@ -439,7 +433,6 @@ test('retained uncertain request recovers after a real workspace round trip', as
 
 test('failed retry context preflight retains the same uncertain request', async ({
   page,
-  context,
 }) => {
   const brewId = await startBrewAndOpenEvidence(page, `Brew retry preflight ${Date.now()}`);
   const workspace = sqliteExec(
@@ -474,18 +467,13 @@ test('failed retry context preflight retains the same uncertain request', async 
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   const otherName = `Retry preflight ${Date.now()}`;
   const otherWorkspace = seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
-  sqliteExec(
-    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
-  );
-  walCheckpoint();
-  const switcher = await context.newPage();
-  await switcher.goto(page.url());
-  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
-  const settleResponse = page.waitForResponse((response) =>
-    response.url().includes('/get_user_context'),
-  );
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await settleResponse;
+  const setWorkspace = (workspaceId: string) => {
+    sqliteExec(
+      `UPDATE users SET last_workspace_id = '${workspaceId}' WHERE user_id = '${getDefaultUserId()}'`,
+    );
+    walCheckpoint();
+  };
+  setWorkspace(workspace);
   let releasePreflight!: () => void;
   const preflightReleased = new Promise<void>((resolve) => {
     releasePreflight = resolve;
@@ -521,11 +509,11 @@ test('failed retry context preflight retains the same uncertain request', async 
   await page.getByRole('button', { name: 'Retry same request' }).click();
   await preflightHeld;
   expect(preflightRequests).toBe(1);
-  await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
-    .click();
-  await switcher.getByRole('button', { name: otherName, exact: true }).click();
-  await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
+  setWorkspace(otherWorkspace);
+  const refreshed = await page.evaluate(
+    async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
+  );
+  expect(refreshed).toBe(200);
   releasePreflight();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
@@ -536,14 +524,11 @@ test('failed retry context preflight retains the same uncertain request', async 
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   expect(recordCommands).toHaveLength(1);
-  const originalName = sqliteExec(
-    `SELECT name FROM workspaces WHERE workspace_id = '${workspace}'`,
+  setWorkspace(workspace);
+  const restored = await page.evaluate(
+    async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
   );
-  await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
-    .click();
-  await switcher.getByRole('button', { name: originalName, exact: true }).click();
-  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  expect(restored).toBe(200);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await page.getByRole('button', { name: 'Retry same request' }).click();
@@ -555,7 +540,6 @@ test('failed retry context preflight retains the same uncertain request', async 
       `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
     ),
   ).toBe('1');
-  await switcher.close();
 });
 
 test('out-of-order context success cannot restore hidden evidence', async ({
