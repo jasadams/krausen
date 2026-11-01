@@ -74,26 +74,53 @@ async fn get_current_workspace(
 #[server(prefix = "/leptos-api")]
 pub async fn list_workspace_members() -> Result<Vec<TeamMember>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
+    let actor = super::verified_actor(&ac.auth)?;
+    list_shared_members(ac.db(), &actor).await
+}
 
-    let workspace = get_current_workspace(ac.db(), &ac.ws_id).await?;
-    let members =
-        krausen_auth::workspace_service::get_workspace_members_with_users(ac.db(), &ac.ws_id)
-            .await
-            .into_sfn()?;
+#[cfg(feature = "ssr")]
+async fn list_shared_members(db: &krausen_core::DbPool, actor: &krausen_app::ActorContext) -> Result<Vec<TeamMember>, ServerFnError> {
+    let mut cursor = None;
+    let mut members = Vec::new();
+    loop {
+        let outcome = krausen_app::team_read::project_members(
+            krausen_app::team_read::members(db, actor, cursor.as_deref(), 100).await,
+        );
+        let krausen_types::team_read::MemberListOutcome::Available { page } = outcome else {
+            return Err(ServerFnError::new("Unable to load workspace members"));
+        };
+        members.extend(page.items.into_iter().map(|m| TeamMember {
+            user_id: m.user_id, email: m.email, name: m.name, role: m.role,
+            is_owner: m.is_owner, joined_at: m.joined_at,
+        }));
+        cursor = page.next_cursor;
+        if cursor.is_none() { break; }
+    }
+    Ok(members)
+}
 
-    let result = members
-        .iter()
-        .map(|m| TeamMember {
-            user_id: m.user_id.clone(),
-            email: m.email.clone(),
-            name: m.name.clone(),
-            role: m.role.clone(),
-            is_owner: m.user_id == workspace.owner_user_id,
-            joined_at: m.wu_created_at.to_rfc3339(),
-        })
-        .collect();
+#[cfg(all(test, feature = "ssr"))]
+mod member_inventory_tests {
+    use super::*;
 
-    Ok(result)
+    #[tokio::test]
+    async fn team_list_follows_pages_and_denies_foreign_workspace() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('owner','owner@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('w','owner'),('foreign','owner')").execute(&pool).await.unwrap();
+        for i in 0..101 {
+            let id = format!("u-{i:03}");
+            sqlx::query("INSERT INTO users (user_id,email) VALUES ($1,$2)").bind(&id).bind(format!("{id}@example.test")).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ('w',$1,'workspace_user',TRUE)").bind(&id).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','u-000','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let actor = krausen_app::ActorContext { actor_id: "u-000".into(), credential_id: "c".into(), access_expires_at: 4102444800, workspace_id: "w".into() };
+        assert_eq!(list_shared_members(&db, &actor).await.unwrap().len(), 101);
+        let foreign = krausen_app::ActorContext { workspace_id: "foreign".into(), ..actor };
+        assert!(list_shared_members(&db, &foreign).await.is_err());
+    }
 }
 
 /// Update a member's role. Requires admin.

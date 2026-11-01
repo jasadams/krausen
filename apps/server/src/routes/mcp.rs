@@ -53,6 +53,18 @@ struct AccountWorkspacesQuery {
     cursor: Option<String>,
     limit: Option<i64>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TeamMembersQuery {
+    workspace_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn execute_team_members(db: &krausen_core::DbPool, principal: &Principal, input: TeamMembersQuery) -> krausen_types::team_read::MemberListOutcome {
+    let actor = krausen_app::ActorContext { actor_id: principal.user_id.clone(), credential_id: principal.credential_id.clone(), access_expires_at: principal.access_expires_at, workspace_id: input.workspace_id };
+    krausen_app::team_read::project_members(krausen_app::team_read::members(db, &actor, input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
+}
 fn account_actor(principal: &Principal) -> krausen_app::invitation::AccountActor {
     krausen_app::invitation::AccountActor {
         actor_id: principal.user_id.clone(),
@@ -420,6 +432,11 @@ impl ServerHandler for McpHandler {
                 schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false})),
             ),
             Tool::new(
+                operations::TEAM_MEMBERS.mcp_tool,
+                "List a page of active members in an authorized workspace",
+                schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["workspace_id"],"additionalProperties":false})),
+            ),
+            Tool::new(
                 operations::WORKSPACE_RENAME.mcp_tool,
                 "Rename a workspace using its observed revision and a stable request UUID",
                 schema(
@@ -495,6 +512,16 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "team.members.v1" => {
+                let input: TeamMembersQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid team member query", None))?;
+                let outcome = execute_team_members(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::team_read::MemberListOutcome::Available { .. }) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
             "account.workspaces.v1" => {
                 let input: AccountWorkspacesQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid account workspace query", None))?;
@@ -1287,5 +1314,15 @@ mod invitation_tests {
         let workspaces = execute_account_workspaces(&db, &principal, AccountWorkspacesQuery { cursor: None, limit: None }).await;
         assert!(matches!(workspaces, krausen_types::account_read::AccountWorkspaceListOutcome::Available { page } if page.items.is_empty()));
         assert!(serde_json::from_value::<AccountWorkspacesQuery>(json!({"actor_id":"recipient"})).is_err());
+        let query = || TeamMembersQuery { workspace_id: "w".into(), cursor: None, limit: Some(1) };
+        assert!(matches!(execute_team_members(&db, &principal, query()).await, krausen_types::team_read::MemberListOutcome::Forbidden));
+        let krausen_core::DbPool::Sqlite(pool) = &db else { unreachable!() };
+        sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ('w','other','workspace_user',TRUE),('w','owner','workspace_admin',TRUE)").execute(pool).await.unwrap();
+        let first = execute_team_members(&db, &principal, query()).await;
+        let krausen_types::team_read::MemberListOutcome::Available { page } = first else { panic!("ordinary member should be allowed") };
+        assert_eq!(page.items.len(), 1);
+        let second = execute_team_members(&db, &principal, TeamMembersQuery { cursor: page.next_cursor, ..query() }).await;
+        assert!(matches!(second, krausen_types::team_read::MemberListOutcome::Available { page } if page.items.len() == 1 && page.next_cursor.is_none()));
+        assert!(serde_json::from_value::<TeamMembersQuery>(json!({"workspace_id":"w","actor_id":"owner"})).is_err());
     }
 }

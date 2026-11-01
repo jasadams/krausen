@@ -43,6 +43,12 @@ pub const ACCOUNT_WORKSPACES: Operation = Operation {
     input_contract: "account-workspaces-query.v1",
     output_contract: "AccountWorkspaceListOutcome",
 };
+pub const TEAM_MEMBERS: Operation = Operation {
+    id: "team.members.v1",
+    mcp_tool: "team_members",
+    input_contract: "team-members-query.v1",
+    output_contract: "MemberListOutcome",
+};
 pub const WORKSPACE_RENAME: Operation = Operation {
     id: "workspace.rename.v1",
     mcp_tool: "workspace_rename",
@@ -241,6 +247,7 @@ pub const OPERATIONS: &[Operation] = &[
     TOTP_STATUS,
     ACCOUNT_PROFILE,
     ACCOUNT_WORKSPACES,
+    TEAM_MEMBERS,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,
     RECIPE_CREATE,
