@@ -9,9 +9,9 @@ use krausen_types::{
         ActualFormulationCommand, ActualFormulationOutcome, AmendActualFormulationRequest,
         ArchiveBrewRequest, BrewArchiveOutcome, BrewEvidenceView, BrewEvidenceViewOutcome,
         BrewEvidenceViewRequest, BrewLifecycleOutcome, BrewTransitionV1, CorrectMeasurementRequest,
-        MeasurementCommand, MeasurementOutcome, NoteCommand, NoteOutcome, RecordMeasurementRequest,
-        RecordNoteRequest, RetractMeasurementRequest, StartBrewOutcome, StartBrewRequest,
-        TransitionBrewRequest,
+        MeasurementCommand, MeasurementListRequest, MeasurementOutcome, NoteCommand, NoteOutcome,
+        RecordMeasurementRequest, RecordNoteRequest, RetractMeasurementRequest, StartBrewOutcome,
+        StartBrewRequest, TransitionBrewRequest,
     },
     brew_history::{
         BrewChangeKind, BrewComparisonOutcome, BrewComparisonRequest, BrewFeedbackApplyOutcome,
@@ -1085,6 +1085,38 @@ async fn integrated_acceptance(db: DbPool) {
         panic!("correct reading: {corrected:?}")
     };
     assert_eq!(corrected.root_observation_id, recorded.entry_id);
+    assert_eq!(
+        corrected.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    assert_eq!(corrected.observed_at, recorded.observed_at);
+
+    let after_correction = evidence_view(&db, &actor, &brew_id).await;
+    let corrected_slot = after_correction
+        .measurements
+        .iter()
+        .find(|slot| slot.quantity_id == "gravity.original.v1")
+        .unwrap();
+    assert_eq!(
+        corrected_slot.selected_root_observation_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    let selected = corrected_slot
+        .current
+        .as_ref()
+        .expect("corrected reading remains selected");
+    assert_eq!(selected.entry_id, corrected.entry_id);
+    assert_eq!(selected.value, Some(1.052));
+    assert_eq!(
+        selected.root_observation_id.as_str(),
+        recorded.entry_id.as_str()
+    );
+    assert_eq!(
+        selected.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    assert_eq!(selected.observed_at, recorded.observed_at);
+
     let retracted = brew_evidence::measurements(
         &db,
         &actor,
@@ -1100,6 +1132,60 @@ async fn integrated_acceptance(db: DbPool) {
         panic!("retract reading: {retracted:?}")
     };
     assert!(retracted.is_retraction());
+
+    let lineage = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::List(MeasurementListRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            root_observation_id: Some(recorded.entry_id.clone()),
+            cursor: None,
+            limit: 50,
+        }),
+    )
+    .await;
+    let MeasurementOutcome::Page(lineage) = lineage else {
+        panic!("root lineage: {lineage:?}")
+    };
+    assert_eq!(lineage.items.len(), 3);
+    assert!(lineage.next_cursor.is_none());
+    assert!(lineage
+        .items
+        .iter()
+        .all(|entry| entry.root_observation_id.as_str() == recorded.entry_id.as_str()));
+    let original = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == recorded.entry_id)
+        .unwrap();
+    assert_eq!(original.value, Some(1.050));
+    assert_eq!(original.supersedes_entry_id, None);
+    let correction = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == corrected.entry_id)
+        .unwrap();
+    assert_eq!(correction.value, Some(1.052));
+    assert_eq!(
+        correction.supersedes_entry_id.as_deref(),
+        Some(recorded.entry_id.as_str())
+    );
+    let retraction = lineage
+        .items
+        .iter()
+        .find(|entry| entry.entry_id == retracted.entry_id)
+        .unwrap();
+    assert_eq!(retraction.value, None);
+    assert!(retraction.is_retraction());
+    assert_eq!(
+        retraction.supersedes_entry_id.as_deref(),
+        Some(corrected.entry_id.as_str())
+    );
+    assert!(lineage
+        .items
+        .iter()
+        .all(|entry| entry.observed_at == recorded.observed_at));
 
     let after_evidence = evidence_view(&db, &actor, &brew_id).await;
     let slot = after_evidence

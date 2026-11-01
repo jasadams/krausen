@@ -1023,13 +1023,19 @@ test('feedback apply keeps one request through a lost response and ignores selec
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
   await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
-  await expect(
-    page.getByRole('article', { name: 'Printable recipe and process summary' }),
-  ).toBeVisible();
+  const printable = page.getByRole('article', {
+    name: 'Printable recipe and process summary',
+  });
+  await expect(printable).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
     true,
   );
   await page.emulateMedia({ media: 'print' });
+  await expect(printable).toBeVisible();
+  await expect(printable).toContainText(title);
+  await expect(printable).toContainText('60 min boil');
+  await expect(printable).toContainText(/Historical brew .* frozen recipe revision 2/);
+  await expect(printable).not.toContainText('70 min boil');
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
