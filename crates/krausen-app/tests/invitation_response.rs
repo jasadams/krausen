@@ -3,6 +3,22 @@ use krausen_app::invitation::{AccountActor, respond};
 use krausen_core::DbPool;
 use krausen_types::invitation::{InvitationAction as Action, InvitationResponseOutcome as Outcome};
 
+#[test]
+fn recovery_projection_preserves_distinct_outcomes() {
+    use krausen_app::{Error, invitation::project};
+    assert_eq!(
+        serde_json::to_value(project(Err(Error::RequestIdentityConflict))).unwrap(),
+        serde_json::json!({"status":"request_identity_conflict"})
+    );
+    assert_eq!(
+        serde_json::to_value(project(Err(Error::ResultExpired {
+            resource_id: Some("invite-1".into())
+        })))
+        .unwrap(),
+        serde_json::json!({"status":"result_expired", "resource_id":"invite-1"})
+    );
+}
+
 async fn exercise(db: DbPool) {
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let owner = format!("o-{suffix}");
@@ -84,6 +100,21 @@ async fn exercise(db: DbPool) {
             .await
             .unwrap(),
         Outcome::Accepted
+    );
+    assert_eq!(
+        krausen_app::invitation::project(respond(&db, &actor, &invite, Action::Decline, key).await),
+        Outcome::RequestIdentityConflict
+    );
+    run!(
+        "UPDATE app_requests SET result_expires_at=0 WHERE workspace_id=$1 AND request_id=$2",
+        &workspace,
+        key.to_string()
+    );
+    assert_eq!(
+        krausen_app::invitation::project(respond(&db, &actor, &invite, Action::Accept, key).await),
+        Outcome::ResultExpired {
+            resource_id: Some(invite.clone())
+        }
     );
     assert_eq!(
         respond(&db, &actor, &invite, Action::Decline, uuid::Uuid::new_v4())
@@ -290,4 +321,88 @@ async fn postgres_invitation_response() {
         .await
         .unwrap();
     exercise(DbPool::Postgres(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_invitation_expiring_while_locked() {
+    let url =
+        std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("../../apps/server/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let owner = format!("o-{suffix}");
+    let user = format!("u-{suffix}");
+    let workspace = format!("w-{suffix}");
+    let credential = format!("c-{suffix}");
+    let invite = format!("i-{suffix}");
+    let email = format!("{suffix}@example.test");
+    sqlx::query("INSERT INTO users (user_id,email) VALUES ($1,$2),($3,$4)")
+        .bind(&owner)
+        .bind(format!("owner-{email}"))
+        .bind(&user)
+        .bind(&email)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces (workspace_id,owner_user_id,status) VALUES ($1,$2,'active')",
+    )
+    .bind(&workspace)
+    .bind(&owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'mcp','test','test',$3)").bind(&credential).bind(&user).bind(chrono::Utc::now().timestamp()+3600).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO workspace_invitations (invitation_id,workspace_id,email,role,invited_by_user_id,expires_at) VALUES ($1,$2,$3,'workspace_user',$4,clock_timestamp()+interval '4 seconds')").bind(&invite).bind(&workspace).bind(&email).bind(&owner).execute(&pool).await.unwrap();
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("SELECT workspace_id FROM workspaces WHERE workspace_id=$1 FOR UPDATE")
+        .bind(&workspace)
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    let db = DbPool::Postgres(pool.clone());
+    let actor = AccountActor {
+        actor_id: user.clone(),
+        credential_id: credential,
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
+    };
+    let invitation_id = invite.clone();
+    let response = tokio::spawn(async move {
+        respond(
+            &db,
+            &actor,
+            &invitation_id,
+            Action::Accept,
+            uuid::Uuid::new_v4(),
+        )
+        .await
+    });
+    // Check for the actual invitation locking SELECT, not merely task scheduling.
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT i.workspace_id,i.role,i.status FROM workspace_invitations%')").fetch_one(&pool).await.unwrap();
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }).await.expect("response did not wait for the workspace lock before expiry");
+    let expired: bool = sqlx::query_scalar(
+        "SELECT expires_at<=clock_timestamp() FROM workspace_invitations WHERE invitation_id=$1",
+    )
+    .bind(&invite)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!expired, "lock wait must be observed before expiry");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let expired: bool = sqlx::query_scalar("SELECT expires_at<=clock_timestamp() FROM workspace_invitations WHERE invitation_id=$1").bind(&invite).fetch_one(&pool).await.unwrap();
+            if expired { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }).await.expect("invitation did not expire while the lock was held");
+    blocker.commit().await.unwrap();
+    assert_eq!(response.await.unwrap().unwrap(), Outcome::Conflict);
 }

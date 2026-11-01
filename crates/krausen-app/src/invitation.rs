@@ -17,9 +17,9 @@ pub fn project(result: Result<Outcome, Error>) -> Outcome {
         Ok(outcome) => outcome,
         Err(Error::Forbidden) => Outcome::Forbidden,
         Err(Error::Invalid(_)) => Outcome::Invalid,
-        Err(
-            Error::RequestIdentityConflict | Error::ResultExpired { .. } | Error::Conflict { .. },
-        ) => Outcome::Conflict,
+        Err(Error::RequestIdentityConflict) => Outcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { resource_id }) => Outcome::ResultExpired { resource_id },
+        Err(Error::Conflict { .. }) => Outcome::Conflict,
         Err(Error::Retryable) => Outcome::Retryable,
         Err(error) => {
             tracing::error!(%error, "invitation response failed");
@@ -123,7 +123,7 @@ pub async fn respond(
         return Ok(Outcome::Conflict);
     }
     let valid_sql = if pg {
-        "SELECT invitation_id FROM workspace_invitations WHERE invitation_id=$1 AND status='pending' AND expires_at>CURRENT_TIMESTAMP"
+        "SELECT invitation_id FROM workspace_invitations WHERE invitation_id=$1 AND status='pending' AND expires_at>clock_timestamp()"
     } else {
         "SELECT invitation_id FROM workspace_invitations WHERE invitation_id=$1 AND status='pending' AND julianday(expires_at)>julianday('now')"
     };
@@ -174,7 +174,7 @@ pub async fn respond(
         InvitationAction::Decline => ("declined", Outcome::Declined),
     };
     let update_sql = if pg {
-        "UPDATE workspace_invitations SET status=$1,accepted_by_user_id=CASE WHEN $1='accepted' THEN $2 ELSE NULL END,accepted_at=CASE WHEN $1='accepted' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE invitation_id=$3 AND status='pending' AND expires_at>CURRENT_TIMESTAMP"
+        "UPDATE workspace_invitations SET status=$1,accepted_by_user_id=CASE WHEN $1='accepted' THEN $2 ELSE NULL END,accepted_at=CASE WHEN $1='accepted' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE invitation_id=$3 AND status='pending' AND expires_at>clock_timestamp()"
     } else {
         "UPDATE workspace_invitations SET status=$1,accepted_by_user_id=CASE WHEN $1='accepted' THEN $2 ELSE NULL END,accepted_at=CASE WHEN $1='accepted' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE invitation_id=$3 AND status='pending' AND julianday(expires_at)>julianday('now')"
     };

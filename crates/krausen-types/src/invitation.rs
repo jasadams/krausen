@@ -16,6 +16,8 @@ pub enum InvitationResponseOutcome {
     Declined,
     NotFound,
     Conflict,
+    RequestIdentityConflict,
+    ResultExpired { resource_id: Option<String> },
     Forbidden,
     Invalid,
     Retryable,
