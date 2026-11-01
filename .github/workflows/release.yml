@@ -60,10 +60,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Create repository-scoped deployment app token
+        id: deployment-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.KRAUSEN_DEPLOY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KRAUSEN_DEPLOY_APP_PRIVATE_KEY }}
+          owner: jasadams
+          repositories: krausen-cloud
+          permission-contents: write
       - name: Dispatch immutable image to private deployment repository
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.KRAUSEN_CLOUD_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.deployment-token.outputs.token }}
           VERSION: ${{ github.ref_name }}
           SOURCE_SHA: ${{ github.sha }}
           IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
