@@ -15,6 +15,7 @@ pub mod account_read;
 pub mod team_read;
 pub mod session_read;
 pub mod invitation_read;
+pub mod team_invitation_read;
 
 pub mod validation;
 

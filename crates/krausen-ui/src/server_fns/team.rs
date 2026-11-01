@@ -121,6 +121,25 @@ mod member_inventory_tests {
         let foreign = krausen_app::ActorContext { workspace_id: "foreign".into(), ..actor };
         assert!(list_shared_members(&db, &foreign).await.is_err());
     }
+
+    #[tokio::test]
+    async fn team_invitations_follow_pages_and_reject_ordinary_members() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('owner','owner@example.test'),('user','user@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('w','owner')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role,active) VALUES ('w','owner','workspace_admin',TRUE),('w','user','workspace_user',TRUE)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('a','owner','browser','test','test',4102444800),('b','user','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        for i in 0..101 {
+            sqlx::query("INSERT INTO workspace_invitations (invitation_id,workspace_id,email,role,invited_by_user_id,status,expires_at) VALUES ($1,'w',$2,'workspace_user','owner','pending',$3)")
+                .bind(format!("inv-{i:03}")).bind(format!("invite-{i:03}@example.test")).bind(chrono::Utc::now() + chrono::Duration::days(1)).execute(&pool).await.unwrap();
+        }
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let admin = krausen_app::ActorContext { actor_id: "owner".into(), credential_id: "a".into(), workspace_id: "w".into(), access_expires_at: 4102444800 };
+        let ordinary = krausen_app::ActorContext { actor_id: "user".into(), credential_id: "b".into(), ..admin.clone() };
+        assert_eq!(list_shared_invitations(&db, &admin).await.unwrap().len(), 101);
+        assert!(list_shared_invitations(&db, &ordinary).await.is_err());
+    }
 }
 
 /// Update a member's role. Requires admin.
@@ -201,26 +220,22 @@ pub async fn remove_member(user_id: String) -> Result<(), ServerFnError> {
 #[server(prefix = "/leptos-api")]
 pub async fn list_workspace_invitations() -> Result<Vec<TeamInvitation>, ServerFnError> {
     let ac = AuthenticatedContext::extract().await?;
-    require_workspace_admin(&ac.auth)?;
+    let actor = super::verified_actor(&ac.auth)?;
+    list_shared_invitations(ac.db(), &actor).await
+}
 
-    let invitations =
-        krausen_auth::workspace_service::get_pending_invitations_for_workspace(ac.db(), &ac.ws_id)
-            .await
-            .into_sfn()?;
-
-    let result = invitations
-        .iter()
-        .map(|inv| TeamInvitation {
-            invitation_id: inv.invitation_id.clone(),
-            email: inv.email.clone(),
-            role: inv.role.to_string(),
-            status: inv.status.to_string(),
-            created_at: inv.created_at.to_rfc3339(),
-            expires_at: inv.expires_at.to_rfc3339(),
-        })
-        .collect();
-
-    Ok(result)
+#[cfg(feature = "ssr")]
+async fn list_shared_invitations(db: &krausen_core::DbPool, actor: &krausen_app::ActorContext) -> Result<Vec<TeamInvitation>, ServerFnError> {
+    let mut cursor = None;
+    let mut invitations = Vec::new();
+    loop {
+        let outcome = krausen_app::team_invitation_read::project(krausen_app::team_invitation_read::invitations(db, actor, cursor.as_deref(), 100).await);
+        let krausen_types::team_invitation_read::TeamInvitationListOutcome::Available { page } = outcome else { return Err(ServerFnError::new("Unable to load workspace invitations")); };
+        invitations.extend(page.items.into_iter().map(|i| TeamInvitation { invitation_id: i.invitation_id, email: i.email, role: i.role, status: i.status, created_at: i.created_at, expires_at: i.expires_at }));
+        cursor = page.next_cursor;
+        if cursor.is_none() { break; }
+    }
+    Ok(invitations)
 }
 
 /// Create a new invitation. Requires admin.

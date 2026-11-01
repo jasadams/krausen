@@ -98,6 +98,10 @@ async fn execute_sessions(db: &krausen_core::DbPool, principal: &Principal, inpu
 async fn execute_received_invitations(db: &krausen_core::DbPool, principal: &Principal, input: AccountWorkspacesQuery) -> krausen_types::invitation_read::RecipientInvitationListOutcome {
     krausen_app::invitation_read::project(krausen_app::invitation_read::recipient_invitations(db, &account_actor(principal), input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
 }
+async fn execute_team_invitations(db: &krausen_core::DbPool, principal: &Principal, input: TeamMembersQuery) -> krausen_types::team_invitation_read::TeamInvitationListOutcome {
+    let actor = krausen_app::ActorContext { actor_id: principal.user_id.clone(), credential_id: principal.credential_id.clone(), access_expires_at: principal.access_expires_at, workspace_id: input.workspace_id };
+    krausen_app::team_invitation_read::project(krausen_app::team_invitation_read::invitations(db, &actor, input.cursor.as_deref(), input.limit.unwrap_or(50)).await)
+}
 
 async fn execute_account_profile(
     db: &krausen_core::DbPool,
@@ -457,6 +461,7 @@ impl ServerHandler for McpHandler {
             Tool::new(operations::ACCOUNT_WORKSPACE_PREFERENCE_SET.mcp_tool, "Remember an authorized browser workspace preference; MCP calls still require an explicit workspace", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"expected_settings_revision":{"type":"integer","minimum":0}},"required":["workspace_id","expected_settings_revision"],"additionalProperties":false}))),
             Tool::new(operations::SECURITY_SESSIONS.mcp_tool, "List a page of the authenticated account's active browser sessions", schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}))),
             Tool::new(operations::INVITATION_RECEIVED.mcp_tool, "List pending, unexpired invitations addressed to the authenticated account", schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}))),
+            Tool::new(operations::TEAM_INVITATIONS.mcp_tool, "List pending workspace invitations as a workspace administrator", schema(json!({"type":"object","properties":{"workspace_id":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["workspace_id"],"additionalProperties":false}))),
             Tool::new(
                 operations::ACCOUNT_WORKSPACES.mcp_tool,
                 "List a page of workspaces for the authenticated account",
@@ -543,6 +548,11 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "team.invitations.v1" => {
+                let input: TeamMembersQuery = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid team invitation query", None))?;
+                let outcome = execute_team_invitations(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::team_invitation_read::TeamInvitationListOutcome::Available { .. }) { CallToolResult::structured(json!({"outcome":outcome})) } else { CallToolResult::structured_error(json!({"outcome":outcome})) }
+            }
             "invitation.received.v1" => {
                 let input: AccountWorkspacesQuery = serde_json::from_value(input).map_err(|_| ErrorData::invalid_params("Invalid invitation query", None))?;
                 let outcome = execute_received_invitations(&self.db, principal, input).await;
@@ -1399,5 +1409,13 @@ mod invitation_tests {
         sqlx::query("INSERT INTO workspace_invitations (invitation_id,workspace_id,email,role,invited_by_user_id,expires_at) VALUES ('other-i','w','other@example.test','workspace_user','owner','2099-01-01T00:00:00Z')").execute(pool).await.unwrap();
         let received = execute_received_invitations(&db, &principal, AccountWorkspacesQuery { cursor: None, limit: None }).await;
         assert!(matches!(received, krausen_types::invitation_read::RecipientInvitationListOutcome::Available { page } if page.items.len() == 1 && page.items[0].invitation_id == "other-i"));
+        let query = || TeamMembersQuery { workspace_id: "w".into(), cursor: None, limit: Some(1) };
+        assert!(matches!(execute_team_invitations(&db, &principal, query()).await, krausen_types::team_invitation_read::TeamInvitationListOutcome::Forbidden));
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('admin-c','owner','mcp','test','test',4102444800)").execute(pool).await.unwrap();
+        let admin = Principal { user_id: "owner".into(), credential_id: "admin-c".into(), access_expires_at: 4102444800 };
+        let first = execute_team_invitations(&db, &admin, query()).await;
+        let krausen_types::team_invitation_read::TeamInvitationListOutcome::Available { page } = first else { panic!("admin should be allowed") };
+        assert_eq!(page.items.len(), 1);
+        assert!(matches!(execute_team_invitations(&db, &admin, TeamMembersQuery { cursor: page.next_cursor, ..query() }).await, krausen_types::team_invitation_read::TeamInvitationListOutcome::Available { page } if page.items.len() == 1 && page.next_cursor.is_none()));
     }
 }
