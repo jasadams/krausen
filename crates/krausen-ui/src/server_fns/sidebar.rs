@@ -60,21 +60,62 @@ pub struct UserWorkspace {
 pub async fn list_user_workspaces() -> Result<Vec<UserWorkspace>, ServerFnError> {
     let ctx = super::extract_context()?;
     let auth = super::extract_auth().await?;
+    list_shared_workspaces(&ctx.db, &auth).await
+}
 
-    let workspaces = krausen_auth::workspace_service::get_user_workspaces(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-
+#[cfg(feature = "ssr")]
+async fn list_shared_workspaces(
+    db: &krausen_core::DbPool,
+    auth: &krausen_auth::middleware::AuthUser,
+) -> Result<Vec<UserWorkspace>, ServerFnError> {
+    let actor = super::verified_account_actor(&auth)?;
     let current_ws_id = auth.workspace.workspace_id.as_deref().unwrap_or("");
-
-    Ok(workspaces
-        .into_iter()
-        .map(|(ws, _membership)| UserWorkspace {
+    let mut cursor = None;
+    let mut results = Vec::new();
+    loop {
+        let outcome = krausen_app::account_read::project_workspaces(
+            krausen_app::account_read::workspaces(db, &actor, cursor.as_deref(), 100).await,
+        );
+        let krausen_types::account_read::AccountWorkspaceListOutcome::Available { page } = outcome else {
+            return Err(ServerFnError::new("Unable to load workspaces"));
+        };
+        results.extend(page.items.into_iter().map(|ws| UserWorkspace {
             is_current: ws.workspace_id == current_ws_id,
             name: ws.name.unwrap_or_else(|| "Unnamed Workspace".to_string()),
             workspace_id: ws.workspace_id,
-        })
-        .collect())
+        }));
+        cursor = page.next_cursor;
+        if cursor.is_none() { break; }
+    }
+    Ok(results)
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn workspace_sidebar_follows_all_pages() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('u','u@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','u','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        for i in 0..101 {
+            let id = format!("w-{i:03}");
+            sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ($1,'u')").bind(&id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,'u','workspace_admin')").bind(&id).execute(&pool).await.unwrap();
+        }
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let auth = krausen_auth::middleware::AuthUser {
+            user_id: "u".into(), credential_id: "c".into(), email: "u@example.test".into(),
+            name: None, roles: vec![], active: true, verified: true,
+            workspace: krausen_auth::middleware::WorkspaceContext { workspace_id: Some("w-100".into()), ..Default::default() },
+            token_exp: Some(4102444800), token_jti: None,
+        };
+        let list = list_shared_workspaces(&db, &auth).await.unwrap();
+        assert_eq!(list.len(), 101);
+        assert_eq!(list.iter().filter(|item| item.is_current).count(), 1);
+        assert!(list.iter().any(|item| item.workspace_id == "w-100" && item.is_current));
+    }
 }
 
 /// Switch the user's active workspace.

@@ -17,3 +17,26 @@ pub enum AccountProfileOutcome {
     Retryable,
     Unavailable,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountWorkspace {
+    pub workspace_id: String,
+    pub name: Option<String>,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountWorkspacePage {
+    pub items: Vec<AccountWorkspace>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AccountWorkspaceListOutcome {
+    Available { page: AccountWorkspacePage },
+    Forbidden,
+    Invalid,
+    Retryable,
+    Unavailable,
+}

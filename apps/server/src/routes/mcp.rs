@@ -47,6 +47,12 @@ struct InvitationReply {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AccountQuery {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountWorkspacesQuery {
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
 fn account_actor(principal: &Principal) -> krausen_app::invitation::AccountActor {
     krausen_app::invitation::AccountActor {
         actor_id: principal.user_id.clone(),
@@ -60,6 +66,15 @@ async fn execute_account_profile(
     principal: &Principal,
 ) -> krausen_types::account_read::AccountProfileOutcome {
     krausen_app::account_read::project_profile(krausen_app::account_read::profile(db, &account_actor(principal)).await)
+}
+async fn execute_account_workspaces(
+    db: &krausen_core::DbPool,
+    principal: &Principal,
+    input: AccountWorkspacesQuery,
+) -> krausen_types::account_read::AccountWorkspaceListOutcome {
+    krausen_app::account_read::project_workspaces(
+        krausen_app::account_read::workspaces(db, &account_actor(principal), input.cursor.as_deref(), input.limit.unwrap_or(50)).await,
+    )
 }
 async fn execute_invitation_reply(
     db: &krausen_core::DbPool,
@@ -400,6 +415,11 @@ impl ServerHandler for McpHandler {
                 schema(json!({"type":"object","properties":{},"additionalProperties":false})),
             ),
             Tool::new(
+                operations::ACCOUNT_WORKSPACES.mcp_tool,
+                "List a page of workspaces for the authenticated account",
+                schema(json!({"type":"object","properties":{"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false})),
+            ),
+            Tool::new(
                 operations::WORKSPACE_RENAME.mcp_tool,
                 "Rename a workspace using its observed revision and a stable request UUID",
                 schema(
@@ -475,6 +495,16 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "account.workspaces.v1" => {
+                let input: AccountWorkspacesQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid account workspace query", None))?;
+                let outcome = execute_account_workspaces(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::account_read::AccountWorkspaceListOutcome::Available { .. }) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
             "account.profile.v1" => {
                 let _: AccountQuery = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid account query", None))?;
@@ -1254,5 +1284,8 @@ mod invitation_tests {
         assert_eq!(execute_invitation_reply(&db, &principal, input).await, InvitationResponseOutcome::NotFound);
         let profile = execute_account_profile(&db, &principal).await;
         assert!(matches!(profile, krausen_types::account_read::AccountProfileOutcome::Available { profile } if profile.email == "other@example.test"));
+        let workspaces = execute_account_workspaces(&db, &principal, AccountWorkspacesQuery { cursor: None, limit: None }).await;
+        assert!(matches!(workspaces, krausen_types::account_read::AccountWorkspaceListOutcome::Available { page } if page.items.is_empty()));
+        assert!(serde_json::from_value::<AccountWorkspacesQuery>(json!({"actor_id":"recipient"})).is_err());
     }
 }
