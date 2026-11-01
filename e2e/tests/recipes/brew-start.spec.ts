@@ -588,6 +588,14 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   const newerHeld = new Promise<void>((resolve) => {
     newerEntered = resolve;
   });
+  let olderFulfilled!: () => void;
+  const olderDone = new Promise<void>((resolve) => {
+    olderFulfilled = resolve;
+  });
+  let newerFulfilled!: () => void;
+  const newerDone = new Promise<void>((resolve) => {
+    newerFulfilled = resolve;
+  });
   let contextChecks = 0;
   await page.route('**/leptos-api/get_user_context*', async (route) => {
     contextChecks += 1;
@@ -598,6 +606,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
       olderEntered();
       await olderReleased;
       await route.fulfill({ response });
+      olderFulfilled();
       return;
     }
     if (contextChecks === 2) {
@@ -607,6 +616,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
       const body = await response.json();
       expect(JSON.stringify(body)).toContain(otherWorkspace);
       await route.fulfill({ response });
+      newerFulfilled();
       return;
     }
     await route.continue();
@@ -627,6 +637,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
     )
     .toBe(otherWorkspace);
   releaseNewer();
+  await newerDone;
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await page.evaluate(() => {
     (window as any).__oldEvidenceSeen = false;
@@ -638,11 +649,8 @@ test('out-of-order context success cannot restore hidden evidence', async ({
     observer.observe(document.body, { childList: true, subtree: true });
     (window as any).__oldEvidenceObserver = observer;
   });
-  const olderResponse = page.waitForResponse((response) =>
-    response.url().includes('/get_user_context'),
-  );
   releaseOlder();
-  await olderResponse;
+  await olderDone;
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {
@@ -659,8 +667,18 @@ test('out-of-order context success cannot restore hidden evidence', async ({
       }),
   );
   const oldEvidenceSeen = await page.evaluate(() => {
-    (window as any).__oldEvidenceObserver?.disconnect();
-    return (window as any).__oldEvidenceSeen as boolean;
+    const observer = (window as any).__oldEvidenceObserver as MutationObserver | undefined;
+    const records = observer?.takeRecords() ?? [];
+    const seenInRecords = records.some((record) =>
+      Array.from(record.addedNodes).some(
+        (node) =>
+          node instanceof Element &&
+          (node.matches('#measurement-gravity-original-v1') ||
+            node.querySelector('#measurement-gravity-original-v1') !== null),
+      ),
+    );
+    observer?.disconnect();
+    return Boolean((window as any).__oldEvidenceSeen) || seenInRecords;
   });
   expect(oldEvidenceSeen).toBe(false);
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
