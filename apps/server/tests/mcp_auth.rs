@@ -1332,6 +1332,333 @@ async fn exercise(db: DbPool) {
         serde_json::to_value(browser_brew_start).unwrap()["Started"],
         brew_start["outcome"]["Started"]
     );
+
+    // KRA-21 evidence families through the authenticated MCP adapter. The same
+    // shared application operations are exercised by the browser/app tests;
+    // this block proves the MCP envelope, principal/workspace selection, typed
+    // retry, revision conflicts, invalid input and authorization outcomes.
+    let brew_id = brew_start["outcome"]["Started"]["brew_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let view_args = json!({
+        "workspace_id": &ws,
+        "request": {"intent": intent.clone(), "brew_id": &brew_id},
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let evidence_view = modern
+        .call_tool(CallToolRequestParams::new("brew_evidence_view").with_arguments(view_args))
+        .await
+        .unwrap();
+    assert_ne!(evidence_view.is_error, Some(true));
+    let evidence_view = evidence_view.structured_content.unwrap();
+    assert_eq!(evidence_view["outcome"]["View"]["brew_id"], brew_id);
+    assert_eq!(
+        evidence_view["outcome"]["View"]["measurements"]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+
+    let record_request_id = uuid::Uuid::new_v4().to_string();
+    let record_args = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "record",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "quantity_id": "gravity.original.v1",
+            "value": 1.050,
+            "source": "manual",
+            "request_id": &record_request_id,
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let recorded = modern
+        .call_tool(
+            CallToolRequestParams::new("brew_measurement").with_arguments(record_args.clone()),
+        )
+        .await
+        .unwrap();
+    assert_ne!(recorded.is_error, Some(true));
+    let recorded = recorded.structured_content.unwrap();
+    let entry_id = recorded["outcome"]["Recorded"]["entry_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(recorded["outcome"]["Recorded"]["value"], 1.050);
+    let replayed = modern
+        .call_tool(CallToolRequestParams::new("brew_measurement").with_arguments(record_args))
+        .await
+        .unwrap();
+    assert_ne!(replayed.is_error, Some(true));
+    let replayed = replayed.structured_content.unwrap();
+    assert_eq!(replayed["outcome"]["Recorded"]["entry_id"], entry_id);
+
+    let invalid_measurement = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "record",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "quantity_id": "not.a.quantity",
+            "value": 1.0,
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let invalid_measurement = modern
+        .call_tool(
+            CallToolRequestParams::new("brew_measurement").with_arguments(invalid_measurement),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_measurement.is_error, Some(true));
+    assert_eq!(
+        invalid_measurement.structured_content.unwrap()["outcome"],
+        "Invalid"
+    );
+
+    let note_args = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "record",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "text": "MCP evidence note",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let note = modern
+        .call_tool(CallToolRequestParams::new("brew_note").with_arguments(note_args))
+        .await
+        .unwrap();
+    assert_ne!(note.is_error, Some(true));
+    let note = note.structured_content.unwrap();
+    let note_id = note["outcome"]["Recorded"]["note_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let stale_note = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "correct",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "note_id": &note_id,
+            "expected_revision": 99,
+            "text": "stale note correction",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let stale_note = modern
+        .call_tool(CallToolRequestParams::new("brew_note").with_arguments(stale_note))
+        .await
+        .unwrap();
+    assert_eq!(stale_note.is_error, Some(true));
+    assert_eq!(
+        stale_note.structured_content.unwrap()["outcome"]["Conflict"]["expected"],
+        99
+    );
+
+    let actual_get = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "get",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let actual_get = modern
+        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(actual_get))
+        .await
+        .unwrap();
+    assert_ne!(actual_get.is_error, Some(true));
+    let actual_get = actual_get.structured_content.unwrap();
+    assert_eq!(actual_get["outcome"]["View"]["source"], "plan");
+    let mut actual_document = actual_get["outcome"]["View"]["document"].clone();
+    actual_document["boil_minutes"] = json!(75.0);
+    let actual_amend = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "amend",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "expected_actual_revision": null,
+            "document": actual_document,
+            "reason": "MCP boil deviation",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let actual_amend = modern
+        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(actual_amend.clone()))
+        .await
+        .unwrap();
+    assert_ne!(actual_amend.is_error, Some(true));
+    assert_eq!(
+        actual_amend.structured_content.unwrap()["outcome"]["Amended"]["revision"],
+        1
+    );
+    let stale_actual = modern
+        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(actual_amend))
+        .await
+        .unwrap();
+    assert_eq!(stale_actual.is_error, Some(true));
+    let stale_actual = stale_actual.structured_content.unwrap();
+    assert_eq!(
+        stale_actual["outcome"]["Conflict"]["expected"],
+        serde_json::Value::Null
+    );
+    assert_eq!(stale_actual["outcome"]["Conflict"]["actual"], 1);
+
+    let lifecycle_args = json!({
+        "workspace_id": &ws,
+        "request": {
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "expected_revision": 1,
+            "transition": "complete",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let lifecycle = modern
+        .call_tool(CallToolRequestParams::new("brew_lifecycle").with_arguments(lifecycle_args))
+        .await
+        .unwrap();
+    assert_ne!(lifecycle.is_error, Some(true));
+    let lifecycle = lifecycle.structured_content.unwrap();
+    assert_eq!(lifecycle["outcome"]["Transitioned"]["status"], "completed");
+    assert_eq!(lifecycle["outcome"]["Transitioned"]["revision"], 2);
+    let invalid_transition = json!({
+        "workspace_id": &ws,
+        "request": {
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "expected_revision": 2,
+            "transition": "complete",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let invalid_transition = modern
+        .call_tool(CallToolRequestParams::new("brew_lifecycle").with_arguments(invalid_transition))
+        .await
+        .unwrap();
+    assert_eq!(invalid_transition.is_error, Some(true));
+    assert!(
+        invalid_transition.structured_content.unwrap()["outcome"]
+            .get("InvalidTransition")
+            .is_some()
+    );
+
+    let archive_args = json!({
+        "workspace_id": &ws,
+        "request": {
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "archived": true,
+            "expected_metadata_revision": 1,
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let archived = modern
+        .call_tool(CallToolRequestParams::new("brew_archive").with_arguments(archive_args))
+        .await
+        .unwrap();
+    assert_ne!(archived.is_error, Some(true));
+    assert_eq!(
+        archived.structured_content.unwrap()["outcome"]["Archived"]["archived"],
+        true
+    );
+    let archived_record = json!({
+        "workspace_id": &ws,
+        "request": {
+            "action": "record",
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "quantity_id": "gravity.final.v1",
+            "value": 1.010,
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let archived_record = modern
+        .call_tool(CallToolRequestParams::new("brew_measurement").with_arguments(archived_record))
+        .await
+        .unwrap();
+    assert_eq!(archived_record.is_error, Some(true));
+    assert_eq!(
+        archived_record.structured_content.unwrap()["outcome"],
+        "Archived"
+    );
+    let unarchive_args = json!({
+        "workspace_id": &ws,
+        "request": {
+            "intent": intent.clone(),
+            "brew_id": &brew_id,
+            "archived": false,
+            "expected_metadata_revision": 2,
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        },
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let unarchived = modern
+        .call_tool(CallToolRequestParams::new("brew_archive").with_arguments(unarchive_args))
+        .await
+        .unwrap();
+    assert_ne!(unarchived.is_error, Some(true));
+    assert_eq!(
+        unarchived.structured_content.unwrap()["outcome"]["Archived"]["archived"],
+        false
+    );
+
+    let forbidden_view = json!({
+        "workspace_id": "not-a-member",
+        "request": {"intent": intent.clone(), "brew_id": &brew_id},
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let forbidden_view = modern
+        .call_tool(CallToolRequestParams::new("brew_evidence_view").with_arguments(forbidden_view))
+        .await
+        .unwrap();
+    assert_eq!(forbidden_view.is_error, Some(true));
+    assert_eq!(
+        forbidden_view.structured_content.unwrap()["outcome"],
+        "Forbidden"
+    );
     let mut brew_edit = brew_doc.clone();
     brew_edit.title = "Brew edit".into();
     assert_eq!(
