@@ -1,0 +1,1182 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Transaction-participating brew evidence, selection and lifecycle storage.
+//! The caller owns `DbTx` and commit/rollback.
+
+use krausen_core::{DbTx, Error, Result};
+use krausen_types::brewery::{
+    ActualFormulationRevision, ActualFormulationV1, ActualSelection, ActualSelectionEvent,
+    BrewArchiveEvent, BrewLifecycleEvent, BrewPlanV1, BrewStatusV1, MeasurementEntry,
+    MeasurementMetadataV1, ObservationNote, ObservationNoteV1, ObservationRevision,
+    RecipeDocumentV1,
+};
+use std::collections::BTreeMap;
+
+macro_rules! execute {
+    ($tx:expr, $sql:expr $(, $arg:expr)* $(,)?) => {{
+        match &mut *$tx {
+            DbTx::Postgres(inner) => sqlx::query($sql)$(.bind($arg))*.execute(&mut **inner).await?.rows_affected(),
+            DbTx::Sqlite(inner) => sqlx::query($sql)$(.bind($arg))*.execute(&mut **inner).await?.rows_affected(),
+        }
+    }};
+}
+
+macro_rules! scalar {
+    ($tx:expr, $ty:ty, $sql:expr $(, $arg:expr)* $(,)?) => {{
+        match &mut *$tx {
+            DbTx::Postgres(inner) => sqlx::query_scalar::<_, $ty>($sql)$(.bind($arg))*.fetch_optional(&mut **inner).await,
+            DbTx::Sqlite(inner) => sqlx::query_scalar::<_, $ty>($sql)$(.bind($arg))*.fetch_optional(&mut **inner).await,
+        }
+    }};
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrewEvidenceState {
+    pub status: BrewStatusV1,
+    pub revision: i64,
+    pub metadata_revision: i64,
+    pub archived: bool,
+    pub actual_revision: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct BrewStateRow {
+    status: String,
+    revision: i64,
+    metadata_revision: i64,
+    archived: i64,
+    actual_revision: Option<i64>,
+}
+
+fn state_from_row(row: BrewStateRow) -> Result<BrewEvidenceState> {
+    let status = BrewStatusV1::parse(&row.status)
+        .ok_or_else(|| Error::Internal("stored brew status is not supported".into()))?;
+    Ok(BrewEvidenceState {
+        status,
+        revision: row.revision,
+        metadata_revision: row.metadata_revision,
+        archived: row.archived != 0,
+        actual_revision: row.actual_revision,
+    })
+}
+
+const STATE_SELECT: &str = "SELECT status, revision, metadata_revision, CAST(CASE WHEN archived THEN 1 ELSE 0 END AS BIGINT) AS archived, actual_revision FROM brews WHERE workspace_id = $1 AND brew_id = $2";
+
+/// Lock the brew aggregate and return its lifecycle/archive/actual pointers.
+pub async fn lock(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+) -> Result<Option<BrewEvidenceState>> {
+    let sql = if matches!(&*tx, DbTx::Postgres(_)) {
+        format!("{STATE_SELECT} FOR UPDATE")
+    } else {
+        STATE_SELECT.to_owned()
+    };
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, BrewStateRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, BrewStateRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(state_from_row).transpose()
+}
+
+/// Read the brew aggregate without taking a row lock.
+pub async fn load_state(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+) -> Result<Option<BrewEvidenceState>> {
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, BrewStateRow>(STATE_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, BrewStateRow>(STATE_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(state_from_row).transpose()
+}
+
+#[derive(sqlx::FromRow)]
+struct ActualRow {
+    workspace_id: String,
+    brew_id: String,
+    revision: i64,
+    predecessor_revision: Option<i64>,
+    schema_version: i32,
+    document_json: String,
+    content_digest: String,
+    actor_id: String,
+    recorded_at: i64,
+    reason: Option<String>,
+}
+
+impl ActualRow {
+    fn into_revision(self) -> Result<ActualFormulationRevision> {
+        if self.schema_version != 1 {
+            return Err(Error::Internal(
+                "unsupported actual formulation schema".into(),
+            ));
+        }
+        let document = serde_json::from_str::<ActualFormulationV1>(&self.document_json)?;
+        if document.schema_version as i32 != self.schema_version {
+            return Err(Error::Internal(
+                "stored actual schema version does not match its envelope".into(),
+            ));
+        }
+        Ok(ActualFormulationRevision {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            revision: self.revision,
+            predecessor_revision: self.predecessor_revision,
+            document,
+            content_digest: self.content_digest,
+            actor_id: self.actor_id,
+            recorded_at: self.recorded_at,
+            reason: self.reason,
+        })
+    }
+}
+
+const ACTUAL_BASE_SELECT: &str = "SELECT workspace_id, brew_id, revision, predecessor_revision, schema_version, document_json, content_digest, actor_id, recorded_at, reason FROM brew_actual_formulations WHERE workspace_id = $1 AND brew_id = $2";
+const ACTUAL_SELECT: &str = "SELECT workspace_id, brew_id, revision, predecessor_revision, schema_version, document_json, content_digest, actor_id, recorded_at, reason FROM brew_actual_formulations WHERE workspace_id = $1 AND brew_id = $2 AND revision = $3";
+
+pub async fn insert_actual_formulation(
+    tx: &mut DbTx<'_>,
+    revision: &ActualFormulationRevision,
+) -> Result<()> {
+    let document_json = serde_json::to_string(&revision.document)?;
+    execute!(
+        tx,
+        "INSERT INTO brew_actual_formulations (workspace_id, brew_id, revision, predecessor_revision, schema_version, document_json, content_digest, actor_id, recorded_at, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        &revision.workspace_id,
+        &revision.brew_id,
+        revision.revision,
+        revision.predecessor_revision,
+        revision.document.schema_version as i32,
+        &document_json,
+        &revision.content_digest,
+        &revision.actor_id,
+        revision.recorded_at,
+        &revision.reason
+    );
+    Ok(())
+}
+
+pub async fn load_actual_formulation(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    revision: i64,
+) -> Result<Option<ActualFormulationRevision>> {
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, ActualRow>(ACTUAL_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(revision)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, ActualRow>(ACTUAL_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(revision)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(ActualRow::into_revision).transpose()
+}
+
+pub async fn load_current_actual(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+) -> Result<Option<ActualFormulationRevision>> {
+    let revision = scalar!(
+        tx,
+        Option<i64>,
+        "SELECT actual_revision FROM brews WHERE workspace_id = $1 AND brew_id = $2",
+        workspace_id,
+        brew_id
+    )?
+    .flatten();
+    match revision {
+        Some(revision) => load_actual_formulation(tx, workspace_id, brew_id, revision).await,
+        None => Ok(None),
+    }
+}
+
+/// Bounded actual-amendment history ordered by revision.
+pub async fn list_actual_revisions(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    after_revision: Option<i64>,
+    limit: i64,
+) -> Result<Vec<ActualFormulationRevision>> {
+    let (sql, cursor) = match after_revision {
+        Some(revision) => (
+            format!("{ACTUAL_BASE_SELECT} AND revision > $3 ORDER BY revision LIMIT $4"),
+            Some(revision),
+        ),
+        None => (
+            format!("{ACTUAL_BASE_SELECT} ORDER BY revision LIMIT $3"),
+            None,
+        ),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, ActualRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, ActualRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter().map(ActualRow::into_revision).collect()
+}
+
+pub async fn set_actual_revision(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    revision: i64,
+) -> Result<()> {
+    execute!(
+        tx,
+        "UPDATE brews SET actual_revision = $3 WHERE workspace_id = $1 AND brew_id = $2",
+        workspace_id,
+        brew_id,
+        revision
+    );
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct MeasurementRow {
+    workspace_id: String,
+    brew_id: String,
+    entry_id: String,
+    quantity_id: String,
+    unit: String,
+    basis: String,
+    stage: String,
+    value: Option<f64>,
+    observed_at: i64,
+    time_source: String,
+    recorded_at: i64,
+    actor_id: String,
+    source: String,
+    root_observation_id: String,
+    supersedes_entry_id: Option<String>,
+    schema_version: i32,
+    metadata_json: String,
+    extensions_json: String,
+}
+
+impl MeasurementRow {
+    fn into_entry(self) -> Result<MeasurementEntry> {
+        if self.schema_version != 1 {
+            return Err(Error::Internal("unsupported measurement schema".into()));
+        }
+        let mut metadata: MeasurementMetadataV1 = serde_json::from_str(&self.metadata_json)?;
+        metadata.extensions =
+            serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&self.extensions_json)?;
+        Ok(MeasurementEntry {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            entry_id: self.entry_id,
+            quantity_id: self.quantity_id,
+            unit: self.unit,
+            basis: self.basis,
+            stage: self.stage,
+            value: self.value,
+            observed_at: self.observed_at,
+            time_source: self.time_source,
+            recorded_at: self.recorded_at,
+            actor_id: self.actor_id,
+            source: self.source,
+            root_observation_id: self.root_observation_id,
+            supersedes_entry_id: self.supersedes_entry_id,
+            schema_version: self.schema_version as u32,
+            metadata,
+        })
+    }
+}
+
+const MEASUREMENT_SELECT: &str = "SELECT workspace_id, brew_id, entry_id, quantity_id, unit, basis, stage, value, observed_at, time_source, recorded_at, actor_id, source, root_observation_id, supersedes_entry_id, schema_version, metadata_json, extensions_json FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2";
+
+pub async fn insert_measurement(tx: &mut DbTx<'_>, entry: &MeasurementEntry) -> Result<()> {
+    let extensions_json = serde_json::to_string(&entry.metadata.extensions)?;
+    let mut metadata = entry.metadata.clone();
+    metadata.extensions.clear();
+    let metadata_json = serde_json::to_string(&metadata)?;
+    execute!(
+        tx,
+        "INSERT INTO brew_measurement_entries (workspace_id, brew_id, entry_id, quantity_id, unit, basis, stage, value, observed_at, time_source, recorded_at, actor_id, source, root_observation_id, supersedes_entry_id, schema_version, metadata_json, extensions_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+        &entry.workspace_id,
+        &entry.brew_id,
+        &entry.entry_id,
+        &entry.quantity_id,
+        &entry.unit,
+        &entry.basis,
+        &entry.stage,
+        entry.value,
+        entry.observed_at,
+        &entry.time_source,
+        entry.recorded_at,
+        &entry.actor_id,
+        &entry.source,
+        &entry.root_observation_id,
+        &entry.supersedes_entry_id,
+        entry.schema_version as i32,
+        &metadata_json,
+        &extensions_json
+    );
+    Ok(())
+}
+
+pub async fn load_measurement(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    entry_id: &str,
+) -> Result<Option<MeasurementEntry>> {
+    let sql = format!("{MEASUREMENT_SELECT} AND entry_id = $3");
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(entry_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(entry_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(MeasurementRow::into_entry).transpose()
+}
+
+/// Bounded current entries across quantities. `after` is the last returned
+/// `(recorded_at, entry_id)` from the same query shape.
+pub async fn list_current_entries(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    after: Option<(&i64, &str)>,
+    limit: i64,
+) -> Result<Vec<MeasurementEntry>> {
+    let not_superseded = "entry_id NOT IN (SELECT supersedes_entry_id FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND supersedes_entry_id IS NOT NULL)";
+    let (sql, cursor_ts, cursor_id) = match after {
+        Some((ts, id)) => (
+            format!(
+                "{MEASUREMENT_SELECT} AND {not_superseded} AND (recorded_at > $3 OR (recorded_at = $3 AND entry_id > $4)) ORDER BY recorded_at, entry_id LIMIT $5"
+            ),
+            Some(*ts),
+            Some(id),
+        ),
+        None => (
+            format!(
+                "{MEASUREMENT_SELECT} AND {not_superseded} ORDER BY recorded_at, entry_id LIMIT $3"
+            ),
+            None,
+            None,
+        ),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter().map(MeasurementRow::into_entry).collect()
+}
+
+/// Bounded immutable lineage for one observation root.
+pub async fn list_root_lineage(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    root_observation_id: &str,
+    after: Option<(&i64, &str)>,
+    limit: i64,
+) -> Result<Vec<MeasurementEntry>> {
+    let (sql, cursor_ts, cursor_id) = match after {
+        Some((ts, id)) => (
+            format!(
+                "{MEASUREMENT_SELECT} AND root_observation_id = $3 AND (recorded_at > $4 OR (recorded_at = $4 AND entry_id > $5)) ORDER BY recorded_at, entry_id LIMIT $6"
+            ),
+            Some(*ts),
+            Some(id),
+        ),
+        None => (
+            format!(
+                "{MEASUREMENT_SELECT} AND root_observation_id = $3 ORDER BY recorded_at, entry_id LIMIT $4"
+            ),
+            None,
+            None,
+        ),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(root_observation_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(root_observation_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter().map(MeasurementRow::into_entry).collect()
+}
+
+/// Resolve the current unsuperseded entry for one observation root.
+pub async fn load_current_entry(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    root_observation_id: &str,
+) -> Result<Option<MeasurementEntry>> {
+    let sql = format!(
+        "{MEASUREMENT_SELECT} AND root_observation_id = $3 AND entry_id NOT IN (SELECT supersedes_entry_id FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND supersedes_entry_id IS NOT NULL)"
+    );
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(root_observation_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, MeasurementRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(root_observation_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(MeasurementRow::into_entry).transpose()
+}
+
+#[derive(sqlx::FromRow)]
+struct SelectionRow {
+    workspace_id: String,
+    brew_id: String,
+    quantity_id: String,
+    revision: i64,
+    selected_root_observation_id: Option<String>,
+    updated_at: i64,
+    updated_by: String,
+}
+
+impl SelectionRow {
+    fn into_selection(self) -> ActualSelection {
+        ActualSelection {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            quantity_id: self.quantity_id,
+            revision: self.revision,
+            selected_root_observation_id: self.selected_root_observation_id,
+            updated_at: self.updated_at,
+            updated_by: self.updated_by,
+        }
+    }
+}
+
+const SELECTION_SELECT: &str = "SELECT workspace_id, brew_id, quantity_id, revision, selected_root_observation_id, updated_at, updated_by FROM brew_actual_selections WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = $3";
+
+pub async fn load_selection(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    quantity_id: &str,
+) -> Result<Option<ActualSelection>> {
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, SelectionRow>(SELECTION_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(quantity_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, SelectionRow>(SELECTION_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(quantity_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    Ok(row.map(SelectionRow::into_selection))
+}
+
+pub async fn insert_selection(tx: &mut DbTx<'_>, selection: &ActualSelection) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO brew_actual_selections (workspace_id, brew_id, quantity_id, revision, selected_root_observation_id, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        &selection.workspace_id,
+        &selection.brew_id,
+        &selection.quantity_id,
+        selection.revision,
+        &selection.selected_root_observation_id,
+        selection.updated_at,
+        &selection.updated_by
+    );
+    Ok(())
+}
+
+pub async fn update_selection(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    quantity_id: &str,
+    expected_revision: i64,
+    next: &ActualSelection,
+) -> Result<bool> {
+    let changed = execute!(
+        tx,
+        "UPDATE brew_actual_selections SET revision = $5, selected_root_observation_id = $6, updated_at = $7, updated_by = $8 WHERE workspace_id = $1 AND brew_id = $2 AND quantity_id = $3 AND revision = $4",
+        workspace_id,
+        brew_id,
+        quantity_id,
+        expected_revision,
+        next.revision,
+        &next.selected_root_observation_id,
+        next.updated_at,
+        &next.updated_by
+    );
+    Ok(changed == 1)
+}
+
+pub async fn insert_selection_event(tx: &mut DbTx<'_>, event: &ActualSelectionEvent) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO brew_actual_selection_events (workspace_id, brew_id, quantity_id, revision, selected_root_observation_id, actor_id, recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        &event.workspace_id,
+        &event.brew_id,
+        &event.quantity_id,
+        event.revision,
+        &event.selected_root_observation_id,
+        &event.actor_id,
+        event.recorded_at
+    );
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct NoteRow {
+    workspace_id: String,
+    brew_id: String,
+    note_id: String,
+    current_revision: i64,
+    created_at: i64,
+    created_by: String,
+}
+
+impl NoteRow {
+    fn into_note(self) -> ObservationNote {
+        ObservationNote {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            note_id: self.note_id,
+            current_revision: self.current_revision,
+            created_at: self.created_at,
+            created_by: self.created_by,
+        }
+    }
+}
+
+const NOTE_SELECT: &str = "SELECT workspace_id, brew_id, note_id, current_revision, created_at, created_by FROM brew_notes WHERE workspace_id = $1 AND brew_id = $2 AND note_id = $3";
+
+pub async fn insert_note(tx: &mut DbTx<'_>, note: &ObservationNote) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO brew_notes (workspace_id, brew_id, note_id, current_revision, created_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)",
+        &note.workspace_id,
+        &note.brew_id,
+        &note.note_id,
+        note.current_revision,
+        note.created_at,
+        &note.created_by
+    );
+    Ok(())
+}
+
+pub async fn load_note(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    note_id: &str,
+) -> Result<Option<ObservationNote>> {
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, NoteRow>(NOTE_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, NoteRow>(NOTE_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    Ok(row.map(NoteRow::into_note))
+}
+
+pub async fn update_note_revision(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    note_id: &str,
+    expected_revision: i64,
+    next_revision: i64,
+) -> Result<bool> {
+    let changed = execute!(
+        tx,
+        "UPDATE brew_notes SET current_revision = $5 WHERE workspace_id = $1 AND brew_id = $2 AND note_id = $3 AND current_revision = $4",
+        workspace_id,
+        brew_id,
+        note_id,
+        expected_revision,
+        next_revision
+    );
+    Ok(changed == 1)
+}
+
+#[derive(sqlx::FromRow)]
+struct NoteRevisionRow {
+    workspace_id: String,
+    brew_id: String,
+    note_id: String,
+    revision: i64,
+    schema_version: i32,
+    document_json: String,
+    content_digest: String,
+    supersedes_revision: Option<i64>,
+    actor_id: String,
+    recorded_at: i64,
+    reason: Option<String>,
+}
+
+impl NoteRevisionRow {
+    fn into_revision(self) -> Result<ObservationRevision> {
+        if self.schema_version != 1 {
+            return Err(Error::Internal("unsupported note schema".into()));
+        }
+        let document = serde_json::from_str::<ObservationNoteV1>(&self.document_json)?;
+        if document.schema_version as i32 != self.schema_version {
+            return Err(Error::Internal(
+                "stored note schema version does not match its envelope".into(),
+            ));
+        }
+        Ok(ObservationRevision {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            note_id: self.note_id,
+            revision: self.revision,
+            document,
+            content_digest: self.content_digest,
+            supersedes_revision: self.supersedes_revision,
+            actor_id: self.actor_id,
+            recorded_at: self.recorded_at,
+            reason: self.reason,
+        })
+    }
+}
+
+const NOTE_REVISION_BASE_SELECT: &str = "SELECT workspace_id, brew_id, note_id, revision, schema_version, document_json, content_digest, supersedes_revision, actor_id, recorded_at, reason FROM brew_note_revisions WHERE workspace_id = $1 AND brew_id = $2 AND note_id = $3";
+const NOTE_REVISION_SELECT: &str = "SELECT workspace_id, brew_id, note_id, revision, schema_version, document_json, content_digest, supersedes_revision, actor_id, recorded_at, reason FROM brew_note_revisions WHERE workspace_id = $1 AND brew_id = $2 AND note_id = $3 AND revision = $4";
+
+pub async fn insert_note_revision(tx: &mut DbTx<'_>, revision: &ObservationRevision) -> Result<()> {
+    let document_json = serde_json::to_string(&revision.document)?;
+    execute!(
+        tx,
+        "INSERT INTO brew_note_revisions (workspace_id, brew_id, note_id, revision, schema_version, document_json, content_digest, supersedes_revision, actor_id, recorded_at, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        &revision.workspace_id,
+        &revision.brew_id,
+        &revision.note_id,
+        revision.revision,
+        revision.document.schema_version as i32,
+        &document_json,
+        &revision.content_digest,
+        revision.supersedes_revision,
+        &revision.actor_id,
+        revision.recorded_at,
+        &revision.reason
+    );
+    Ok(())
+}
+
+pub async fn load_note_revision(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    note_id: &str,
+    revision: i64,
+) -> Result<Option<ObservationRevision>> {
+    let row = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            sqlx::query_as::<_, NoteRevisionRow>(NOTE_REVISION_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id)
+                .bind(revision)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+        DbTx::Sqlite(inner) => {
+            sqlx::query_as::<_, NoteRevisionRow>(NOTE_REVISION_SELECT)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id)
+                .bind(revision)
+                .fetch_optional(&mut **inner)
+                .await?
+        }
+    };
+    row.map(NoteRevisionRow::into_revision).transpose()
+}
+
+#[derive(sqlx::FromRow)]
+pub struct NoteViewRow {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub note_id: String,
+    pub current_revision: i64,
+    pub created_at: i64,
+    pub created_by: String,
+    pub schema_version: i32,
+    pub document_json: String,
+    pub content_digest: String,
+    pub supersedes_revision: Option<i64>,
+    pub revision_actor_id: String,
+    pub revision_recorded_at: i64,
+    pub reason: Option<String>,
+}
+
+impl NoteViewRow {
+    pub fn into_note_view(self) -> Result<(ObservationNote, ObservationRevision)> {
+        if self.schema_version != 1 {
+            return Err(Error::Internal("unsupported note schema".into()));
+        }
+        let document = serde_json::from_str::<ObservationNoteV1>(&self.document_json)?;
+        if document.schema_version as i32 != self.schema_version {
+            return Err(Error::Internal(
+                "stored note schema version does not match its envelope".into(),
+            ));
+        }
+        Ok((
+            ObservationNote {
+                workspace_id: self.workspace_id.clone(),
+                brew_id: self.brew_id.clone(),
+                note_id: self.note_id.clone(),
+                current_revision: self.current_revision,
+                created_at: self.created_at,
+                created_by: self.created_by,
+            },
+            ObservationRevision {
+                workspace_id: self.workspace_id,
+                brew_id: self.brew_id,
+                note_id: self.note_id,
+                revision: self.current_revision,
+                document,
+                content_digest: self.content_digest,
+                supersedes_revision: self.supersedes_revision,
+                actor_id: self.revision_actor_id,
+                recorded_at: self.revision_recorded_at,
+                reason: self.reason,
+            },
+        ))
+    }
+}
+
+const NOTE_VIEW_SELECT: &str = "SELECT n.workspace_id, n.brew_id, n.note_id, n.current_revision, n.created_at, n.created_by, r.schema_version, r.document_json, r.content_digest, r.supersedes_revision, r.actor_id AS revision_actor_id, r.recorded_at AS revision_recorded_at, r.reason FROM brew_notes n JOIN brew_note_revisions r ON r.workspace_id = n.workspace_id AND r.brew_id = n.brew_id AND r.note_id = n.note_id AND r.revision = n.current_revision WHERE n.workspace_id = $1 AND n.brew_id = $2";
+
+/// Bounded current note heads with their current revision.
+pub async fn list_current_notes(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    after: Option<(&i64, &str)>,
+    limit: i64,
+) -> Result<Vec<(ObservationNote, ObservationRevision)>> {
+    let (sql, cursor_ts, cursor_id) = match after {
+        Some((ts, id)) => (
+            format!(
+                "{NOTE_VIEW_SELECT} AND (n.created_at > $3 OR (n.created_at = $3 AND n.note_id > $4)) ORDER BY n.created_at, n.note_id LIMIT $5"
+            ),
+            Some(*ts),
+            Some(id),
+        ),
+        None => (
+            format!("{NOTE_VIEW_SELECT} ORDER BY n.created_at, n.note_id LIMIT $3"),
+            None,
+            None,
+        ),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, NoteViewRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, NoteViewRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                query = query.bind(ts).bind(id);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter().map(NoteViewRow::into_note_view).collect()
+}
+
+/// Bounded immutable revision history for one note.
+pub async fn list_note_revisions(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    note_id: &str,
+    after_revision: Option<i64>,
+    limit: i64,
+) -> Result<Vec<ObservationRevision>> {
+    let (sql, cursor) = match after_revision {
+        Some(revision) => (
+            format!("{NOTE_REVISION_BASE_SELECT} AND revision > $4 ORDER BY revision LIMIT $5"),
+            Some(revision),
+        ),
+        None => (
+            format!("{NOTE_REVISION_BASE_SELECT} ORDER BY revision LIMIT $4"),
+            None,
+        ),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, NoteRevisionRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, NoteRevisionRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id)
+                .bind(note_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter()
+        .map(NoteRevisionRow::into_revision)
+        .collect()
+}
+
+pub async fn insert_lifecycle_event(tx: &mut DbTx<'_>, event: &BrewLifecycleEvent) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO brew_lifecycle_events (workspace_id, brew_id, brew_revision, from_status, to_status, reason, actor_id, recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        &event.workspace_id,
+        &event.brew_id,
+        event.brew_revision,
+        event.from_status.as_str(),
+        event.to_status.as_str(),
+        &event.reason,
+        &event.actor_id,
+        event.recorded_at
+    );
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct LifecycleRow {
+    workspace_id: String,
+    brew_id: String,
+    brew_revision: i64,
+    from_status: String,
+    to_status: String,
+    reason: Option<String>,
+    actor_id: String,
+    recorded_at: i64,
+}
+
+impl LifecycleRow {
+    fn into_event(self) -> Result<BrewLifecycleEvent> {
+        let from_status = BrewStatusV1::parse(&self.from_status)
+            .ok_or_else(|| Error::Internal("stored lifecycle status is not supported".into()))?;
+        let to_status = BrewStatusV1::parse(&self.to_status)
+            .ok_or_else(|| Error::Internal("stored lifecycle status is not supported".into()))?;
+        Ok(BrewLifecycleEvent {
+            workspace_id: self.workspace_id,
+            brew_id: self.brew_id,
+            brew_revision: self.brew_revision,
+            from_status,
+            to_status,
+            reason: self.reason,
+            actor_id: self.actor_id,
+            recorded_at: self.recorded_at,
+        })
+    }
+}
+
+pub async fn list_lifecycle_events(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    after_revision: Option<i64>,
+    limit: i64,
+) -> Result<Vec<BrewLifecycleEvent>> {
+    let base = "SELECT workspace_id, brew_id, brew_revision, from_status, to_status, reason, actor_id, recorded_at FROM brew_lifecycle_events WHERE workspace_id = $1 AND brew_id = $2";
+    let (sql, cursor) = match after_revision {
+        Some(revision) => (
+            format!("{base} AND brew_revision > $3 ORDER BY brew_revision LIMIT $4"),
+            Some(revision),
+        ),
+        None => (format!("{base} ORDER BY brew_revision LIMIT $3"), None),
+    };
+    let rows = match &mut *tx {
+        DbTx::Postgres(inner) => {
+            let mut query = sqlx::query_as::<_, LifecycleRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+        DbTx::Sqlite(inner) => {
+            let mut query = sqlx::query_as::<_, LifecycleRow>(&sql)
+                .bind(workspace_id)
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
+        }
+    };
+    rows.into_iter().map(LifecycleRow::into_event).collect()
+}
+
+pub async fn update_status(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    expected_revision: i64,
+    expected_status: BrewStatusV1,
+    next_revision: i64,
+    next_status: BrewStatusV1,
+) -> Result<bool> {
+    let changed = execute!(
+        tx,
+        "UPDATE brews SET status = $5, revision = $6 WHERE workspace_id = $1 AND brew_id = $2 AND revision = $3 AND status = $4",
+        workspace_id,
+        brew_id,
+        expected_revision,
+        expected_status.as_str(),
+        next_status.as_str(),
+        next_revision
+    );
+    Ok(changed == 1)
+}
+
+pub async fn insert_archive_event(tx: &mut DbTx<'_>, event: &BrewArchiveEvent) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO brew_archive_events (workspace_id, brew_id, metadata_revision, archived, actor_id, recorded_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        &event.workspace_id,
+        &event.brew_id,
+        event.metadata_revision,
+        event.archived,
+        &event.actor_id,
+        event.recorded_at
+    );
+    Ok(())
+}
+
+pub async fn update_archive(
+    tx: &mut DbTx<'_>,
+    workspace_id: &str,
+    brew_id: &str,
+    expected_metadata_revision: i64,
+    next_metadata_revision: i64,
+    archived: bool,
+) -> Result<bool> {
+    let changed = execute!(
+        tx,
+        "UPDATE brews SET archived = $4, metadata_revision = $5 WHERE workspace_id = $1 AND brew_id = $2 AND metadata_revision = $3",
+        workspace_id,
+        brew_id,
+        expected_metadata_revision,
+        archived,
+        next_metadata_revision
+    );
+    Ok(changed == 1)
+}
+
+/// Project the frozen planned recipe into a complete actual formulation.
+/// Identity, targets and equipment are intentionally not copied; the plan
+/// remains the immutable source of those values.
+pub fn actual_from_recipe(recipe: &RecipeDocumentV1) -> ActualFormulationV1 {
+    ActualFormulationV1 {
+        schema_version: 1,
+        boil_minutes: recipe.boil_minutes,
+        fermentables: recipe.fermentables.clone(),
+        hops: recipe.hops.clone(),
+        yeast: recipe.yeast.clone(),
+        other_ingredients: recipe.other_ingredients.clone(),
+        process: recipe.process.clone(),
+        notes: recipe.notes.clone(),
+        extensions: recipe.extensions.clone(),
+    }
+}
+
+/// Project a started brew's frozen plan into the initial effective actual.
+pub fn actual_from_plan(plan: &BrewPlanV1) -> ActualFormulationV1 {
+    actual_from_recipe(&plan.recipe)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use krausen_types::brewery::{AdditionStage, FermentableAddition, FermentableSpecification};
+
+    fn planned_recipe() -> RecipeDocumentV1 {
+        let mut recipe = RecipeDocumentV1::default();
+        recipe.title = "Planned beer".into();
+        recipe.batch_size_l = Some(20.0);
+        recipe.boil_minutes = Some(60.0);
+        recipe.notes = Some("planned note".into());
+        recipe.fermentables.push(FermentableAddition {
+            row_id: "grain-1".into(),
+            amount_kg: Some(4.0),
+            addition: AdditionStage {
+                stage: "mash".into(),
+                time_minutes: None,
+            },
+            specification: FermentableSpecification {
+                name: Some("Pale malt".into()),
+                producer: None,
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        });
+        recipe.process.whirlpool_minutes = Some(10.0);
+        recipe
+    }
+
+    #[test]
+    fn actual_projection_retains_boil_duration_and_does_not_mutate_plan() {
+        let recipe = planned_recipe();
+        let before = recipe.clone();
+        let actual = actual_from_recipe(&recipe);
+        assert_eq!(actual.boil_minutes, Some(60.0));
+        assert_eq!(actual.fermentables, recipe.fermentables);
+        assert_eq!(actual.process, recipe.process);
+        assert_eq!(actual.notes, recipe.notes);
+        assert_eq!(recipe, before, "projection must not mutate the plan recipe");
+
+        let mut only_boil_changed = actual;
+        only_boil_changed.boil_minutes = Some(75.0);
+        assert_eq!(only_boil_changed.fermentables, recipe.fermentables);
+        assert_eq!(only_boil_changed.process, recipe.process);
+        assert_eq!(recipe.boil_minutes, Some(60.0));
+    }
+
+    #[test]
+    fn actual_document_absence_round_trips_as_none() {
+        let mut value = serde_json::to_value(ActualFormulationV1::default()).unwrap();
+        value.as_object_mut().unwrap().remove("boil_minutes");
+        let restored: ActualFormulationV1 = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.boil_minutes, None);
+    }
+}

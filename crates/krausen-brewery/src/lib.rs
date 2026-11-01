@@ -17,5 +17,6 @@ pub mod validation;
 pub mod mapping;
 
 pub mod brew_store;
+pub mod brew_evidence_store;
 pub mod catalogue_store;
 pub mod equipment_store;

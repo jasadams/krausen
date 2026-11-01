@@ -262,6 +262,14 @@ test('an uncertain equipment save retries the identical request', async ({ page 
 test('profile pagination exposes later active and archived profiles', async ({ page }) => {
   const workspace = getDefaultWorkspaceId();
   const user = getDefaultUserId();
+  db.exec(
+    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${user}'`,
+  );
+  walCheckpoint();
+  const refreshed = await page.evaluate(
+    async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
+  );
+  expect(refreshed).toBe(200);
   const inserts: string[] = ['BEGIN'];
   for (let i = 0; i < 102; i++) {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;

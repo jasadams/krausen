@@ -100,6 +100,42 @@ struct BrewStart {
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct BrewEvidenceViewInput {
+    workspace_id: String,
+    request: krausen_types::brew::BrewEvidenceViewRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BrewMeasurementInput {
+    workspace_id: String,
+    request: krausen_types::brew::MeasurementCommand,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BrewNoteInput {
+    workspace_id: String,
+    request: krausen_types::brew::NoteCommand,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BrewActualInput {
+    workspace_id: String,
+    request: krausen_types::brew::ActualFormulationCommand,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BrewLifecycleInput {
+    workspace_id: String,
+    request: krausen_types::brew::TransitionBrewRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BrewArchiveInput {
+    workspace_id: String,
+    request: krausen_types::brew::ArchiveBrewRequest,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecipeScalePreview {
     workspace_id: String,
     intent: krausen_types::request_context::OperationIntent,
@@ -411,6 +447,36 @@ impl ServerHandler for McpHandler {
                 operations::BREW_START.mcp_tool,
                 "Atomically start a brew from one immutable saved recipe revision and accepted calculation context",
                 typed_schema::<BrewStart>(),
+            ),
+            Tool::new(
+                operations::BREW_EVIDENCE_VIEW.mcp_tool,
+                "Read a started brew's frozen plan, effective actual formulation, selected readings, notes and lifecycle evidence",
+                typed_schema::<BrewEvidenceViewInput>(),
+            ),
+            Tool::new(
+                operations::BREW_MEASUREMENT.mcp_tool,
+                "Record, correct, retract, select or list traceable brew measurements with revision guards",
+                typed_schema::<BrewMeasurementInput>(),
+            ),
+            Tool::new(
+                operations::BREW_NOTE.mcp_tool,
+                "Record, correct, retract or list append-only brew notes",
+                typed_schema::<BrewNoteInput>(),
+            ),
+            Tool::new(
+                operations::BREW_ACTUAL.mcp_tool,
+                "Read, amend or list complete actual formulation revisions derived from the frozen plan",
+                typed_schema::<BrewActualInput>(),
+            ),
+            Tool::new(
+                operations::BREW_LIFECYCLE.mcp_tool,
+                "Complete, cancel or reasonedly reopen a brew with its expected aggregate revision",
+                typed_schema::<BrewLifecycleInput>(),
+            ),
+            Tool::new(
+                operations::BREW_ARCHIVE.mcp_tool,
+                "Archive or unarchive a brew with its expected metadata revision without pruning evidence",
+                typed_schema::<BrewArchiveInput>(),
             ),
         ]))
     }
@@ -1064,6 +1130,148 @@ impl ServerHandler for McpHandler {
                     CallToolResult::structured_error(value)
                 }
             }
+            "brew.evidence-view.v1" => {
+                let input: BrewEvidenceViewInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew evidence view", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::view(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::BrewEvidenceViewOutcome::View(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.measurement.v1" => {
+                let input: BrewMeasurementInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew measurement", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::measurements(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::MeasurementOutcome::Recorded(_)
+                        | krausen_types::brew::MeasurementOutcome::Corrected(_)
+                        | krausen_types::brew::MeasurementOutcome::Retracted(_)
+                        | krausen_types::brew::MeasurementOutcome::Selected(_)
+                        | krausen_types::brew::MeasurementOutcome::Page(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.note.v1" => {
+                let input: BrewNoteInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew note", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::notes(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::NoteOutcome::Recorded(_)
+                        | krausen_types::brew::NoteOutcome::Corrected(_)
+                        | krausen_types::brew::NoteOutcome::Retracted(_)
+                        | krausen_types::brew::NoteOutcome::Page(_)
+                        | krausen_types::brew::NoteOutcome::History(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.actual.v1" => {
+                let input: BrewActualInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew actual", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::actual(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::ActualFormulationOutcome::Amended(_)
+                        | krausen_types::brew::ActualFormulationOutcome::View(_)
+                        | krausen_types::brew::ActualFormulationOutcome::History(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.lifecycle.v1" => {
+                let input: BrewLifecycleInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew lifecycle", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::transition(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::BrewLifecycleOutcome::Transitioned { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "brew.archive.v1" => {
+                let input: BrewArchiveInput = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid brew archive", None))?;
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    credential_id: principal.credential_id.clone(),
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id: input.workspace_id,
+                };
+                let outcome =
+                    krausen_app::brew_evidence::archive(&self.db, &actor, input.request).await;
+                let success = matches!(
+                    outcome,
+                    krausen_types::brew::BrewArchiveOutcome::Archived { .. }
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
             _ => return Err(ErrorData::invalid_params("Unknown tool", None)),
         };
         Ok(result.into())
@@ -1161,4 +1369,131 @@ async fn authenticate(
     };
     request.extensions_mut().insert(principal);
     next.run(request).await
+}
+
+#[cfg(test)]
+mod brew_evidence_adapter_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn intent() -> krausen_types::request_context::OperationIntent {
+        krausen_types::request_context::OperationIntent {
+            account_id: "account".into(),
+            workspace_id: "workspace".into(),
+        }
+    }
+
+    #[test]
+    fn brew_measurement_accepts_each_tagged_action() {
+        for action in ["record", "correct", "retract", "select", "list"] {
+            let mut request = json!({
+                "workspace_id": "workspace",
+                "request": {
+                    "action": action,
+                    "intent": intent(),
+                    "brew_id": "brew"
+                }
+            });
+            let object = request.as_object_mut().unwrap();
+            let inner = object.get_mut("request").unwrap().as_object_mut().unwrap();
+            match action {
+                "record" => {
+                    inner.insert("quantity_id".into(), json!("gravity.original.v1"));
+                    inner.insert("value".into(), json!(1.050));
+                    inner.insert("request_id".into(), json!(uuid::Uuid::new_v4().to_string()));
+                }
+                "correct" => {
+                    inner.insert("entry_id".into(), json!("entry"));
+                    inner.insert("value".into(), json!(1.052));
+                    inner.insert("request_id".into(), json!(uuid::Uuid::new_v4().to_string()));
+                }
+                "retract" => {
+                    inner.insert("entry_id".into(), json!("entry"));
+                    inner.insert("request_id".into(), json!(uuid::Uuid::new_v4().to_string()));
+                }
+                "select" => {
+                    inner.insert("quantity_id".into(), json!("gravity.original.v1"));
+                    inner.insert("root_observation_id".into(), json!("entry"));
+                    inner.insert("expected_selection_revision".into(), json!(1));
+                    inner.insert("request_id".into(), json!(uuid::Uuid::new_v4().to_string()));
+                }
+                "list" => {}
+                _ => unreachable!(),
+            }
+            let parsed: BrewMeasurementInput = serde_json::from_value(request)
+                .unwrap_or_else(|error| panic!("{action} command did not parse: {error}"));
+            assert_eq!(parsed.workspace_id, "workspace");
+        }
+    }
+
+    #[test]
+    fn brew_family_inputs_parse_and_are_registered() {
+        let note: BrewNoteInput = serde_json::from_value(json!({
+            "workspace_id": "workspace",
+            "request": {
+                "action": "record",
+                "intent": intent(),
+                "brew_id": "brew",
+                "text": "note",
+                "request_id": uuid::Uuid::new_v4().to_string()
+            }
+        }))
+        .unwrap();
+        assert_eq!(note.workspace_id, "workspace");
+
+        let actual: BrewActualInput = serde_json::from_value(json!({
+            "workspace_id": "workspace",
+            "request": {
+                "action": "get",
+                "intent": intent(),
+                "brew_id": "brew"
+            }
+        }))
+        .unwrap();
+        assert_eq!(actual.workspace_id, "workspace");
+
+        let lifecycle: BrewLifecycleInput = serde_json::from_value(json!({
+            "workspace_id": "workspace",
+            "request": {
+                "intent": intent(),
+                "brew_id": "brew",
+                "expected_revision": 1,
+                "transition": "complete",
+                "request_id": uuid::Uuid::new_v4().to_string()
+            }
+        }))
+        .unwrap();
+        assert_eq!(lifecycle.workspace_id, "workspace");
+
+        let archive: BrewArchiveInput = serde_json::from_value(json!({
+            "workspace_id": "workspace",
+            "request": {
+                "intent": intent(),
+                "brew_id": "brew",
+                "archived": true,
+                "expected_metadata_revision": 1,
+                "request_id": uuid::Uuid::new_v4().to_string()
+            }
+        }))
+        .unwrap();
+        assert_eq!(archive.workspace_id, "workspace");
+
+        let view: BrewEvidenceViewInput = serde_json::from_value(json!({
+            "workspace_id": "workspace",
+            "request": {"intent": intent(), "brew_id": "brew"}
+        }))
+        .unwrap();
+        assert_eq!(view.workspace_id, "workspace");
+
+        for tool in [
+            "brew_evidence_view",
+            "brew_measurement",
+            "brew_note",
+            "brew_actual",
+            "brew_lifecycle",
+            "brew_archive",
+        ] {
+            assert!(krausen_types::operations::by_tool(tool).is_some());
+        }
+    }
 }

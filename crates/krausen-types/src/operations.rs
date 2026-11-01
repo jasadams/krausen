@@ -193,6 +193,42 @@ pub const BREW_START: Operation = Operation {
     input_contract: "StartBrewRequest",
     output_contract: "StartBrewOutcome",
 };
+pub const BREW_EVIDENCE_VIEW: Operation = Operation {
+    id: "brew.evidence-view.v1",
+    mcp_tool: "brew_evidence_view",
+    input_contract: "BrewEvidenceViewRequest",
+    output_contract: "BrewEvidenceViewOutcome",
+};
+pub const BREW_MEASUREMENT: Operation = Operation {
+    id: "brew.measurement.v1",
+    mcp_tool: "brew_measurement",
+    input_contract: "MeasurementCommand",
+    output_contract: "MeasurementOutcome",
+};
+pub const BREW_NOTE: Operation = Operation {
+    id: "brew.note.v1",
+    mcp_tool: "brew_note",
+    input_contract: "NoteCommand",
+    output_contract: "NoteOutcome",
+};
+pub const BREW_ACTUAL: Operation = Operation {
+    id: "brew.actual.v1",
+    mcp_tool: "brew_actual",
+    input_contract: "ActualFormulationCommand",
+    output_contract: "ActualFormulationOutcome",
+};
+pub const BREW_LIFECYCLE: Operation = Operation {
+    id: "brew.lifecycle.v1",
+    mcp_tool: "brew_lifecycle",
+    input_contract: "TransitionBrewRequest",
+    output_contract: "BrewLifecycleOutcome",
+};
+pub const BREW_ARCHIVE: Operation = Operation {
+    id: "brew.archive.v1",
+    mcp_tool: "brew_archive",
+    input_contract: "ArchiveBrewRequest",
+    output_contract: "BrewArchiveOutcome",
+};
 pub const OPERATIONS: &[Operation] = &[
     BEERXML_PREVIEW,
     BEERXML_IMPORT,
@@ -222,6 +258,12 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_SAVE,
     RECIPE_PROCESS_SUMMARY,
     BREW_START,
+    BREW_EVIDENCE_VIEW,
+    BREW_MEASUREMENT,
+    BREW_NOTE,
+    BREW_ACTUAL,
+    BREW_LIFECYCLE,
+    BREW_ARCHIVE,
     RECIPE_SCALE_PREVIEW,
     RECIPE_SCALE_APPLY,
     RECIPE_DUPLICATE,

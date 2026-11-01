@@ -268,7 +268,7 @@ async fn start_inner(
     Ok(outcome)
 }
 
-async fn lock_workspace(tx: &mut DbTx<'_>, workspace_id: &str) -> Result<(), Error> {
+pub(crate) async fn lock_workspace(tx: &mut DbTx<'_>, workspace_id: &str) -> Result<(), Error> {
     let sql = if matches!(&tx, DbTx::Postgres(_)) {
         "SELECT revision FROM workspaces WHERE workspace_id = $1 AND status = 'active' FOR UPDATE"
     } else {
