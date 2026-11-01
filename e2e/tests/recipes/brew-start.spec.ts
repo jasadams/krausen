@@ -1,5 +1,17 @@
 import { test, expect } from '@playwright/test';
+import { execFileSync } from 'child_process';
+import * as path from 'path';
 import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+
+const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
+  ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
+  : path.resolve(__dirname, '../../../data/krausen.db');
+
+function sqliteExec(sql: string): string {
+  return execFileSync('sqlite3', [DB_PATH, '.timeout 5000', sql], {
+    encoding: 'utf-8',
+  }).trim();
+}
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -58,6 +70,25 @@ async function prepareAndStart(page: import('@playwright/test').Page, revision: 
   await expect(page.getByText('Brew started', { exact: true })).toBeVisible();
 }
 
+
+async function startBrewAndOpenEvidence(
+  page: import('@playwright/test').Page,
+  title: string,
+): Promise<string> {
+  await importRecipe(page, title);
+  await makeSavedRevisionReady(page);
+  await prepareAndStart(page, '2');
+  await page.getByRole('link', { name: 'Open brew evidence' }).click();
+  await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  return page.url().split('/').pop() ?? '';
+}
+
+function lifecycleItems(page: import('@playwright/test').Page) {
+  return page
+    .locator('h3', { hasText: 'Lifecycle evidence' })
+    .locator('xpath=following-sibling::ul[1]/li');
+}
+
 test('starts the prepared saved revision with frozen targets', async ({ page }) => {
   const title = `Brew start ${Date.now()}`;
   await importRecipe(page, title);
@@ -77,4 +108,104 @@ test('starts an explicitly selected historical revision without restoring it', a
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
   await prepareAndStart(page, '2');
   await expect(page.getByText('from revision 2')).toBeVisible();
+});
+
+test('delayed evidence write keeps retry locked during focus refresh', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Brew delayed write ${Date.now()}`);
+  await page.route('**/brew_measurement*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Retry same request' })).toBeDisabled();
+  await expect(page.getByText('Measurement recorded.')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+});
+
+test('dirty evidence Back is guarded and retains the draft', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew dirty back ${Date.now()}`);
+  await page.locator('#brew-note').fill('draft note');
+  await page.evaluate(() => history.back());
+  await expect(page.locator('#workspace-draft-warning')).toBeVisible();
+  await page.getByRole('button', { name: 'Stay' }).click();
+  await expect(page).toHaveURL(new RegExp(`/brews/${brewId}`));
+  await expect(page.locator('#brew-note')).toHaveValue('draft note');
+});
+
+test('lost evidence response retries the same request without duplicates', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew lost response ${Date.now()}`);
+  let lost = false;
+  await page.route('**/brew_measurement*', async (route) => {
+    if (!lost) {
+      lost = true;
+      await route.fetch();
+      await route.abort();
+    } else {
+      await route.continue();
+    }
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry same request' }).click();
+  await expect(page.getByText('Measurement recorded.')).toBeVisible();
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
+  expect(
+    sqliteExec(
+      `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
+    ),
+  ).toBe('1');
+});
+
+test('delayed lifecycle continuation ignores a second click', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew continuation ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
+  const actor = sqliteExec(`SELECT started_by FROM brews WHERE brew_id = '${brewId}'`);
+  for (let revision = 100; revision <= 150; revision += 1) {
+    sqliteExec(
+      `INSERT INTO brew_lifecycle_events (workspace_id, brew_id, brew_revision, from_status, to_status, reason, actor_id, recorded_at) VALUES ('${workspace}', '${brewId}', ${revision}, 'started', 'completed', 'synthetic', '${actor}', 1)`,
+    );
+  }
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await expect(lifecycleItems(page)).toHaveCount(50);
+  let continuationRequests = 0;
+  page.on('request', (request) => {
+    if (request.url().includes('brew_evidence_view')) {
+      continuationRequests += 1;
+    }
+  });
+  await page.route('**/brew_evidence_view*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  const loadOlder = page.getByRole('button', { name: 'Load older lifecycle' });
+  await loadOlder.click();
+  await expect(loadOlder).toBeDisabled();
+  await loadOlder.evaluate((element) => (element as HTMLButtonElement).click());
+  await expect(lifecycleItems(page)).toHaveCount(51);
+  expect(continuationRequests).toBe(1);
+});
+
+test('delayed overview response after unmount does not error', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Brew unmount ${Date.now()}`);
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.route('**/brew_evidence_view*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.waitForTimeout(200);
+  await page.getByRole('link', { name: 'Recipes' }).first().click();
+  await expect(page).toHaveURL(/\/recipes/);
+  await page.waitForTimeout(2000);
+  expect(pageErrors).toEqual([]);
 });
