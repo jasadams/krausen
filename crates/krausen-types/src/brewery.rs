@@ -598,6 +598,9 @@ impl MeasurementEntry {
 pub struct ActualFormulationV1 {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
+    /// Actual boil duration; `None` preserves absence instead of inventing zero.
+    #[serde(default)]
+    pub boil_minutes: Option<f64>,
     pub fermentables: Vec<FermentableAddition>,
     pub hops: Vec<HopAddition>,
     pub yeast: Vec<IngredientAddition>,
@@ -611,6 +614,7 @@ impl Default for ActualFormulationV1 {
     fn default() -> Self {
         Self {
             schema_version: 1,
+            boil_minutes: None,
             fermentables: Vec::new(),
             hops: Vec::new(),
             yeast: Vec::new(),

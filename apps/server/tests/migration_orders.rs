@@ -16,7 +16,9 @@ fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
             all.iter()
                 .filter(|m| {
                     Some(m.version) != skip
-                        && !(skip == Some(NATIVE) && matches!(m.version, RECIPE_ARCHIVE | BREWS))
+                        && !(skip == Some(NATIVE)
+                            && matches!(m.version, RECIPE_ARCHIVE | BREWS | BREW_EVIDENCE))
+                        && !(skip == Some(BREWS) && m.version == BREW_EVIDENCE)
                 })
                 .cloned()
                 .collect(),

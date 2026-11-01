@@ -5,8 +5,9 @@
 use krausen_core::{DbTx, Error, Result};
 use krausen_types::brewery::{
     ActualFormulationRevision, ActualFormulationV1, ActualSelection, ActualSelectionEvent,
-    BrewArchiveEvent, BrewLifecycleEvent, BrewStatusV1, MeasurementEntry, MeasurementMetadataV1,
-    ObservationNote, ObservationNoteV1, ObservationRevision,
+    BrewArchiveEvent, BrewLifecycleEvent, BrewPlanV1, BrewStatusV1, MeasurementEntry,
+    MeasurementMetadataV1, ObservationNote, ObservationNoteV1, ObservationRevision,
+    RecipeDocumentV1,
 };
 use std::collections::BTreeMap;
 
@@ -759,4 +760,86 @@ pub async fn update_archive(
         next_metadata_revision
     );
     Ok(changed == 1)
+}
+
+/// Project the frozen planned recipe into a complete actual formulation.
+/// Identity, targets and equipment are intentionally not copied; the plan
+/// remains the immutable source of those values.
+pub fn actual_from_recipe(recipe: &RecipeDocumentV1) -> ActualFormulationV1 {
+    ActualFormulationV1 {
+        schema_version: 1,
+        boil_minutes: recipe.boil_minutes,
+        fermentables: recipe.fermentables.clone(),
+        hops: recipe.hops.clone(),
+        yeast: recipe.yeast.clone(),
+        other_ingredients: recipe.other_ingredients.clone(),
+        process: recipe.process.clone(),
+        notes: recipe.notes.clone(),
+        extensions: recipe.extensions.clone(),
+    }
+}
+
+/// Project a started brew's frozen plan into the initial effective actual.
+pub fn actual_from_plan(plan: &BrewPlanV1) -> ActualFormulationV1 {
+    actual_from_recipe(&plan.recipe)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use krausen_types::brewery::{
+        AdditionStage, FermentableAddition, FermentableSpecification,
+    };
+
+    fn planned_recipe() -> RecipeDocumentV1 {
+        let mut recipe = RecipeDocumentV1::default();
+        recipe.title = "Planned beer".into();
+        recipe.batch_size_l = Some(20.0);
+        recipe.boil_minutes = Some(60.0);
+        recipe.notes = Some("planned note".into());
+        recipe.fermentables.push(FermentableAddition {
+            row_id: "grain-1".into(),
+            amount_kg: Some(4.0),
+            addition: AdditionStage {
+                stage: "mash".into(),
+                time_minutes: None,
+            },
+            specification: FermentableSpecification {
+                name: Some("Pale malt".into()),
+                producer: None,
+                kind: Some("grain".into()),
+                yield_fraction: Some(0.8),
+                colour_ebc: Some(5.0),
+            },
+            source: None,
+        });
+        recipe.process.whirlpool_minutes = Some(10.0);
+        recipe
+    }
+
+    #[test]
+    fn actual_projection_retains_boil_duration_and_does_not_mutate_plan() {
+        let recipe = planned_recipe();
+        let before = recipe.clone();
+        let actual = actual_from_recipe(&recipe);
+        assert_eq!(actual.boil_minutes, Some(60.0));
+        assert_eq!(actual.fermentables, recipe.fermentables);
+        assert_eq!(actual.process, recipe.process);
+        assert_eq!(actual.notes, recipe.notes);
+        assert_eq!(recipe, before, "projection must not mutate the plan recipe");
+
+        let mut only_boil_changed = actual;
+        only_boil_changed.boil_minutes = Some(75.0);
+        assert_eq!(only_boil_changed.fermentables, recipe.fermentables);
+        assert_eq!(only_boil_changed.process, recipe.process);
+        assert_eq!(recipe.boil_minutes, Some(60.0));
+    }
+
+    #[test]
+    fn actual_document_absence_round_trips_as_none() {
+        let mut value = serde_json::to_value(ActualFormulationV1::default()).unwrap();
+        value.as_object_mut().unwrap().remove("boil_minutes");
+        let restored: ActualFormulationV1 = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.boil_minutes, None);
+    }
 }
