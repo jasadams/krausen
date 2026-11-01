@@ -15,7 +15,7 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Search fermentables').fill('Joe White Signature');
   await page.getByRole('button', { name: /Joe White Signature Lager/ }).click();
   await page.getByLabel('Amount in recipe (kg)').fill('4');
-  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add ingredient' }).click();
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^4(\.0+)?$/);
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.locator('#recipe-attenuation').fill('80');

@@ -337,7 +337,6 @@ pub fn ScaleDialog(
             } else {
                 retry.set(None);
                 uncertain.set(false);
-                retry_document.set(None);
             }
             match outcome {
                 Ok(ScaleApplyOutcome::Applied {
@@ -425,6 +424,11 @@ pub fn ScaleDialog(
                 Err(_) => {
                     message.set("The response was lost; the same request can be retried.".into());
                 }
+            }
+            if !uncertain_outcome {
+                retry.set(None);
+                uncertain.set(false);
+                retry_document.set(None);
             }
         });
     });
