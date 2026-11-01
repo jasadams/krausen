@@ -89,6 +89,22 @@ fn evidence_dirty(
         || pending
 }
 
+fn pending_after_preflight_failure(
+    action: PendingEvidence,
+    retained: bool,
+) -> Option<PendingEvidence> {
+    retained.then_some(action)
+}
+
+fn continuation_owned(
+    attempt: Option<u64>,
+    expected: u64,
+    cursor: Option<&str>,
+    requested: &str,
+) -> bool {
+    attempt == Some(expected) && cursor == Some(requested)
+}
+
 fn retry_action(pending: Option<&PendingEvidence>) -> Option<PendingEvidence> {
     pending.cloned()
 }
@@ -320,6 +336,8 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let reason = RwSignal::new(String::new());
     let lifecycle_extra = RwSignal::new(Vec::new());
     let lifecycle_cursor = RwSignal::new(None::<String>);
+    let continuation_busy = RwSignal::new(false);
+    let continuation_attempt = RwSignal::new(0_u64);
 
     let load = Callback::new(move |_| {
         let sequence = generation.get_untracked() + 1;
@@ -523,15 +541,29 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     }
 
     let load_lifecycle_more = Callback::new(move |_| {
+        if continuation_busy.get_untracked() {
+            return;
+        }
         let Some(cursor) = lifecycle_cursor.get_untracked() else {
             return;
         };
+        continuation_attempt.update(|attempt| *attempt += 1);
+        let attempt_id = continuation_attempt.get_untracked();
+        let requested_cursor = cursor.clone();
+        continuation_busy.set(true);
         let sequence = generation.get_untracked();
         let expected = intent.get_value();
         let expected_context = expected.clone();
         let id = brew_id.get_value();
-        read_busy.set(true);
         leptos::task::spawn_local(async move {
+            macro_rules! finish_continuation {
+                () => {
+                    if continuation_attempt.try_get_untracked() != Some(attempt_id) {
+                        return;
+                    }
+                    continuation_busy.set(false);
+                };
+            }
             let outcome = brew_evidence_view_shared(BrewEvidenceViewRequest {
                 intent: expected,
                 brew_id: id,
@@ -539,10 +571,12 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             })
             .await;
             if generation.try_get_untracked() != Some(sequence) {
+                finish_continuation!();
                 return;
             }
             let context_sequence = context_generation.get_untracked();
             if !current_context_matches(&expected_context).await {
+                finish_continuation!();
                 if generation.try_get_untracked() != Some(sequence)
                     || context_generation.try_get_untracked() != Some(context_sequence)
                 {
@@ -551,15 +585,24 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 context_valid.set(false);
                 view.set(None);
                 readings.set(Vec::new());
-                read_busy.set(false);
                 return;
             }
             if generation.try_get_untracked() != Some(sequence)
                 || context_generation.try_get_untracked() != Some(context_sequence)
             {
+                finish_continuation!();
                 return;
             }
-            read_busy.set(false);
+            if !continuation_owned(
+                continuation_attempt.try_get_untracked(),
+                attempt_id,
+                lifecycle_cursor.get_untracked().as_deref(),
+                &requested_cursor,
+            ) {
+                finish_continuation!();
+                return;
+            }
+            finish_continuation!();
             match outcome {
                 Ok(BrewEvidenceViewOutcome::View(data)) => {
                     lifecycle_extra.update(|events| events.extend(data.lifecycle));
@@ -586,8 +629,9 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     });
 
     let blocked = Signal::derive(move || write_busy.get() || pending.get().is_some());
+    let continuation_blocked = Signal::derive(move || blocked.get() || continuation_busy.get());
 
-    let dispatch = Callback::new(move |action: PendingEvidence| {
+    let dispatch = Callback::new(move |(action, retained): (PendingEvidence, bool)| {
         if write_busy.get_untracked() || pending.get_untracked().is_some() {
             return;
         }
@@ -607,12 +651,17 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             }
             if !current_context_matches(&expected).await {
                 finish_write!();
-                pending.set(None);
+                // A retained command may already have committed. Keep its
+                // exact identity for recovery in the original context.
+                pending.set(pending_after_preflight_failure(action, retained));
                 context_valid.set(false);
                 view.set(None);
                 readings.set(Vec::new());
                 warning.set(true);
-                message.set("Account or workspace changed. Reopen the brew.".into());
+                message.set(
+                    "Account or workspace changed. Return to the original context before retrying."
+                        .into(),
+                );
                 return;
             }
             match action {
@@ -841,10 +890,10 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     });
 
     let run_measurement = Callback::new(move |command: MeasurementCommand| {
-        dispatch.run(PendingEvidence::Measurement(command));
+        dispatch.run((PendingEvidence::Measurement(command), false));
     });
     let run_note = Callback::new(move |command: NoteCommand| {
-        dispatch.run(PendingEvidence::Note(command));
+        dispatch.run((PendingEvidence::Note(command), false));
     });
     let run_transition = Callback::new(move |transition: BrewTransitionV1| {
         let Some(data) = view.get_untracked() else {
@@ -867,14 +916,17 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             message.set("Unable to create a secure request identity.".into());
             return;
         };
-        dispatch.run(PendingEvidence::Lifecycle(TransitionBrewRequest {
-            intent: intent.get_value(),
-            brew_id: brew_id.get_value(),
-            expected_revision: data.revision,
-            transition,
-            reason: (!reason_text.is_empty()).then_some(reason_text),
-            request_id,
-        }));
+        dispatch.run((
+            PendingEvidence::Lifecycle(TransitionBrewRequest {
+                intent: intent.get_value(),
+                brew_id: brew_id.get_value(),
+                expected_revision: data.revision,
+                transition,
+                reason: (!reason_text.is_empty()).then_some(reason_text),
+                request_id,
+            }),
+            false,
+        ));
     });
     let run_archive = Callback::new(move |archived: bool| {
         let Some(data) = view.get_untracked() else {
@@ -885,13 +937,16 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             message.set("Unable to create a secure request identity.".into());
             return;
         };
-        dispatch.run(PendingEvidence::Archive(ArchiveBrewRequest {
-            intent: intent.get_value(),
-            brew_id: brew_id.get_value(),
-            archived,
-            expected_metadata_revision: data.metadata_revision,
-            request_id,
-        }));
+        dispatch.run((
+            PendingEvidence::Archive(ArchiveBrewRequest {
+                intent: intent.get_value(),
+                brew_id: brew_id.get_value(),
+                archived,
+                expected_metadata_revision: data.metadata_revision,
+                request_id,
+            }),
+            false,
+        ));
     });
     let retry_pending = Callback::new(move |_| {
         if write_busy.get_untracked() {
@@ -899,7 +954,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         }
         if let Some(action) = retry_action(pending.get_untracked().as_ref()) {
             pending.set(None);
-            dispatch.run(action);
+            dispatch.run((action, true));
         }
     });
     let abandon_pending = Callback::new(move |_| {
@@ -1278,7 +1333,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         {lifecycle_cursor.get().map(|_| view! {
                             <Button
                                 variant=ButtonVariant::Secondary
-                                disabled=blocked
+                                disabled=continuation_blocked
                                 on:click=move |_| load_lifecycle_more.run(())
                             >"Load older lifecycle"</Button>
                         })}
@@ -1368,6 +1423,53 @@ mod evidence_ui_state_tests {
             _ => panic!("retry changed the command family"),
         }
         assert!(retry_action(None).is_none());
+    }
+
+    #[test]
+    fn retained_preflight_failure_keeps_exact_command_identity() {
+        let request_id = "00000000-0000-4000-8000-000000000002".to_owned();
+        let pending =
+            PendingEvidence::Measurement(MeasurementCommand::Record(RecordMeasurementRequest {
+                intent: OperationIntent {
+                    account_id: "account".into(),
+                    workspace_id: "workspace".into(),
+                },
+                brew_id: "brew".into(),
+                quantity_id: "gravity.final.v1".into(),
+                value: 1.010,
+                observed_at: None,
+                source: "manual".into(),
+                metadata: Default::default(),
+                request_id: request_id.clone(),
+            }));
+        let retained =
+            pending_after_preflight_failure(pending.clone(), true).expect("retained command");
+        match retained {
+            PendingEvidence::Measurement(MeasurementCommand::Record(request)) => {
+                assert_eq!(request.request_id, request_id);
+                assert_eq!(request.value, 1.010);
+            }
+            _ => panic!("retained command changed family"),
+        }
+        assert!(pending_after_preflight_failure(pending, false).is_none());
+    }
+
+    #[test]
+    fn continuation_ownership_rejects_stale_attempt_or_cursor() {
+        assert!(continuation_owned(Some(2), 2, Some("cursor-a"), "cursor-a"));
+        assert!(!continuation_owned(
+            Some(1),
+            2,
+            Some("cursor-a"),
+            "cursor-a"
+        ));
+        assert!(!continuation_owned(
+            Some(2),
+            2,
+            Some("cursor-b"),
+            "cursor-a"
+        ));
+        assert!(!continuation_owned(None, 2, Some("cursor-a"), "cursor-a"));
     }
 
     #[test]
