@@ -804,7 +804,23 @@ test('feedback apply keeps one request through a lost response and ignores selec
     if (request) {
       applyRequests.push(request);
     }
-    if (!allowApply) {
+    if (!allowApply && request) {
+      // Deliver the real request so the server commits the typed result, then
+      // drop the response so the browser sees an uncertain outcome.
+      const response = await route.fetch();
+      const body = await response.json();
+      const applied = outcomeOf(body).Applied;
+      expect(applied.recipe_revision).toBe(3);
+      expect(
+        sqliteExec(
+          `SELECT COUNT(*) FROM app_requests WHERE request_id = '${request.request_id.replaceAll("'", "''")}' AND workspace_id = '${workspaceId.replaceAll("'", "''")}' AND operation = 'brew.feedback.apply.v1';`,
+        ),
+      ).toBe('1');
+      expect(
+        sqliteExec(
+          `SELECT MAX(revision) FROM recipe_revisions WHERE recipe_id = '${recipeId.replaceAll("'", "''")}';`,
+        ),
+      ).toBe('3');
       await route.abort();
       return;
     }
@@ -828,7 +844,19 @@ test('feedback apply keeps one request through a lost response and ignores selec
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page.getByText(/Feedback applied as recipe revision 3/)).toBeVisible();
   expect(applyRequests).toHaveLength(2);
+  expect(applyRequests[1]).toEqual(applyRequests[0]);
   expect(applyRequests[1].request_id).toBe(applyRequests[0].request_id);
+  expect(applyRequests[1].expected_recipe_head).toBe(2);
+  expect(applyRequests[1].expected_actual_revision).toBe(1);
+  expect(applyRequests[1].change_ids).toEqual(['process:boil_minutes']);
+  expect(applyRequests[1].expected_calculation_context).not.toBe('');
+  expect(applyRequests[1].intent).toEqual(intent);
+  expect(applyRequests[1].brew_id).toBe(brewId);
+  expect(
+    sqliteExec(
+      `SELECT COUNT(*) FROM app_requests WHERE request_id = '${applyRequests[0].request_id.replaceAll("'", "''")}' AND operation = 'brew.feedback.apply.v1';`,
+    ),
+  ).toBe('1');
   expect(
     sqliteExec(
       `SELECT MAX(revision) FROM recipe_revisions WHERE recipe_id = '${recipeId.replaceAll("'", "''")}';`,
