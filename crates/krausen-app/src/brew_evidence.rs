@@ -10,6 +10,7 @@ use crate::{
     ActorContext, Error, RequestIdentity, authorize_workspace, boundary_error, check_intent,
     record_change, record_request, recover_request,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use krausen_brewery::{
     brew_evidence_store as store,
     brew_store::{self, StoredBrew},
@@ -37,12 +38,14 @@ use krausen_types::{
     request_context::OperationIntent,
 };
 use serde::Serialize;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Current notes shown on the overview; the paginated list operation exposes
 /// the rest.
 const VIEW_NOTE_LIMIT: i64 = 50;
-const MAX_LIMIT: i64 = 200;
+const VIEW_LIFECYCLE_LIMIT: i64 = 50;
+const MAX_LIMIT: i64 = 100;
 const MAX_SOURCE_LEN: usize = 200;
 const MAX_NOTE_LEN: usize = 20_000;
 const MAX_REASON_LEN: usize = 2_000;
@@ -168,8 +171,12 @@ fn validate_observed_at(value: Option<i64>) -> Result<(), Error> {
     Ok(())
 }
 
-fn validate_limit(limit: i64) -> i64 {
-    limit.clamp(1, MAX_LIMIT)
+fn validate_limit(limit: i64) -> Result<i64, Error> {
+    if (1..=MAX_LIMIT).contains(&limit) {
+        Ok(limit)
+    } else {
+        Err(Error::Invalid("limit"))
+    }
 }
 
 fn digest_of<T: Serialize>(value: &T) -> Result<String, Error> {
@@ -187,35 +194,68 @@ fn canonical_document<T: Serialize>(value: &T) -> Result<(String, String), Error
     Ok((json, digest))
 }
 
-fn parse_pair_cursor(cursor: Option<&str>) -> Result<Option<(i64, String)>, Error> {
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-    let (timestamp, id) = cursor.split_once(':').ok_or(Error::Invalid("cursor"))?;
-    let timestamp = timestamp
-        .parse::<i64>()
-        .map_err(|_| Error::Invalid("cursor"))?;
-    if timestamp < 0 || id.is_empty() || id.len() > 64 {
-        return Err(Error::Invalid("cursor"));
-    }
-    Ok(Some((timestamp, id.to_owned())))
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceCursor {
+    version: u8,
+    workspace_id: String,
+    brew_id: String,
+    kind: String,
+    filter: String,
+    order: String,
+    position: i64,
+    id: String,
 }
 
-fn pair_cursor(timestamp: i64, id: &str) -> String {
-    format!("{timestamp}:{id}")
-}
-
-fn parse_revision_cursor(cursor: Option<&str>) -> Result<Option<i64>, Error> {
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-    let revision = cursor
-        .parse::<i64>()
-        .map_err(|_| Error::Invalid("cursor"))?;
-    if revision <= 0 {
+fn decode_cursor(
+    value: &str,
+    actor: &ActorContext,
+    brew_id: &str,
+    kind: &str,
+    filter: &str,
+    order: &str,
+) -> Result<(i64, String), Error> {
+    if value.len() > 2048 {
         return Err(Error::Invalid("cursor"));
     }
-    Ok(Some(revision))
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| Error::Invalid("cursor"))?;
+    let cursor: EvidenceCursor =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Invalid("cursor"))?;
+    if cursor.version != 1
+        || cursor.workspace_id != actor.workspace_id
+        || cursor.brew_id != brew_id
+        || cursor.kind != kind
+        || cursor.filter != filter
+        || cursor.order != order
+        || cursor.position < 0
+        || cursor.id.len() > 128
+    {
+        return Err(Error::Invalid("cursor"));
+    }
+    Ok((cursor.position, cursor.id))
+}
+
+fn encode_cursor(
+    actor: &ActorContext,
+    brew_id: &str,
+    kind: &str,
+    filter: &str,
+    order: &str,
+    position: i64,
+    id: &str,
+) -> Result<String, Error> {
+    Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&EvidenceCursor {
+        version: 1,
+        workspace_id: actor.workspace_id.clone(),
+        brew_id: brew_id.to_owned(),
+        kind: kind.to_owned(),
+        filter: filter.to_owned(),
+        order: order.to_owned(),
+        position,
+        id: id.to_owned(),
+    })?))
 }
 
 /// Acquire the shared write boundary and recheck authority after the workspace
@@ -255,6 +295,75 @@ fn target_for(plan: &BrewPlanV1, quantity_id: &str) -> Option<f64> {
     }
 }
 
+fn validate_fraction(
+    value: Option<f64>,
+    field: &'static str,
+    allow_zero: bool,
+) -> Result<(), Error> {
+    match value {
+        Some(value) => {
+            finite(value, field)?;
+            let valid = if allow_zero {
+                (0.0..=1.0).contains(&value)
+            } else {
+                value > 0.0 && value <= 1.0
+            };
+            if valid {
+                Ok(())
+            } else {
+                Err(Error::Invalid(field))
+            }
+        }
+        None => Ok(()),
+    }
+}
+
+fn unique_actual_row_ids(document: &ActualFormulationV1) -> Result<(), Error> {
+    let mut seen = HashSet::new();
+    let rows = document
+        .fermentables
+        .iter()
+        .map(|row| ("fermentables", row.row_id.as_str()))
+        .chain(
+            document
+                .hops
+                .iter()
+                .map(|row| ("hops", row.row_id.as_str())),
+        )
+        .chain(
+            document
+                .yeast
+                .iter()
+                .map(|row| ("yeast", row.row_id.as_str())),
+        )
+        .chain(
+            document
+                .other_ingredients
+                .iter()
+                .map(|row| ("other_ingredients", row.row_id.as_str())),
+        )
+        .chain(
+            document
+                .process
+                .mash_steps
+                .iter()
+                .map(|row| ("process.mash_steps", row.row_id.as_str())),
+        )
+        .chain(
+            document
+                .process
+                .fermentation_steps
+                .iter()
+                .map(|row| ("process.fermentation_steps", row.row_id.as_str())),
+        );
+    for (group, id) in rows {
+        if id.is_empty() || !seen.insert((group, id)) {
+            return Err(Error::Invalid("actual row identity"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_actual(document: &ActualFormulationV1) -> Result<(), Error> {
     if document.schema_version != 1 {
         return Err(Error::Invalid("actual formulation schema"));
@@ -264,25 +373,27 @@ fn validate_actual(document: &ActualFormulationV1) -> Result<(), Error> {
         validate_identifier(&row.row_id, "fermentable row")?;
         optional_non_negative(row.amount_kg, "fermentable amount")?;
         optional_non_negative(row.addition.time_minutes, "fermentable time")?;
-        optional_finite(row.specification.yield_fraction, "fermentable yield")?;
-        optional_finite(row.specification.colour_ebc, "fermentable colour")?;
+        validate_fraction(row.specification.yield_fraction, "fermentable yield", false)?;
+        optional_non_negative(row.specification.colour_ebc, "fermentable colour")?;
     }
     for row in &document.hops {
         validate_identifier(&row.row_id, "hop row")?;
         optional_non_negative(row.amount_g, "hop amount")?;
         optional_non_negative(row.contact_minutes, "hop contact time")?;
         optional_finite(row.temperature_c, "hop temperature")?;
-        optional_finite(row.specification.alpha_fraction, "hop alpha")?;
+        validate_fraction(row.specification.alpha_fraction, "hop alpha", true)?;
     }
     for row in document.yeast.iter().chain(&document.other_ingredients) {
         validate_identifier(&row.row_id, "ingredient row")?;
         optional_non_negative(row.amount, "ingredient amount")?;
-        optional_finite(
+        validate_fraction(
             row.specification.attenuation_fraction,
             "ingredient attenuation",
+            true,
         )?;
     }
     validate_process(&document.process)?;
+    unique_actual_row_ids(document)?;
     if let Some(notes) = &document.notes {
         if notes.len() > MAX_NOTE_LEN {
             return Err(Error::Invalid("actual notes"));
@@ -301,6 +412,11 @@ fn validate_actual(document: &ActualFormulationV1) -> Result<(), Error> {
 }
 
 fn validate_process(process: &ProcessV1) -> Result<(), Error> {
+    validate_fraction(
+        process.apparent_attenuation_fraction,
+        "process attenuation",
+        true,
+    )?;
     optional_non_negative(process.whirlpool_minutes, "whirlpool duration")?;
     optional_finite(process.whirlpool_temperature_c, "whirlpool temperature")?;
     optional_non_negative(process.mash_water_l, "mash water")?;
@@ -325,6 +441,7 @@ fn map_measurement_error(error: Error) -> MeasurementOutcome {
         Error::Conflict { expected, actual } => MeasurementOutcome::Conflict { expected, actual },
         Error::RequestIdentityConflict => MeasurementOutcome::RequestIdentityConflict,
         Error::ResultExpired { resource_id } => MeasurementOutcome::ResultExpired { resource_id },
+        Error::Retryable => MeasurementOutcome::Retryable,
         Error::Invalid(_) => MeasurementOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew measurement operation unavailable");
@@ -341,6 +458,7 @@ fn map_note_error(error: Error) -> NoteOutcome {
         Error::Conflict { expected, actual } => NoteOutcome::Conflict { expected, actual },
         Error::RequestIdentityConflict => NoteOutcome::RequestIdentityConflict,
         Error::ResultExpired { resource_id } => NoteOutcome::ResultExpired { resource_id },
+        Error::Retryable => NoteOutcome::Retryable,
         Error::Invalid(_) => NoteOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew note operation unavailable");
@@ -362,6 +480,7 @@ fn map_actual_error(error: Error) -> ActualFormulationOutcome {
         Error::ResultExpired { resource_id } => {
             ActualFormulationOutcome::ResultExpired { resource_id }
         }
+        Error::Retryable => ActualFormulationOutcome::Retryable,
         Error::Invalid(_) => ActualFormulationOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew actual operation unavailable");
@@ -378,6 +497,7 @@ fn map_lifecycle_error(error: Error) -> BrewLifecycleOutcome {
         Error::Conflict { expected, actual } => BrewLifecycleOutcome::Conflict { expected, actual },
         Error::RequestIdentityConflict => BrewLifecycleOutcome::RequestIdentityConflict,
         Error::ResultExpired { resource_id } => BrewLifecycleOutcome::ResultExpired { resource_id },
+        Error::Retryable => BrewLifecycleOutcome::Retryable,
         Error::Invalid(_) => BrewLifecycleOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew lifecycle operation unavailable");
@@ -393,6 +513,7 @@ fn map_archive_error(error: Error) -> BrewArchiveOutcome {
         Error::Conflict { expected, actual } => BrewArchiveOutcome::Conflict { expected, actual },
         Error::RequestIdentityConflict => BrewArchiveOutcome::RequestIdentityConflict,
         Error::ResultExpired { resource_id } => BrewArchiveOutcome::ResultExpired { resource_id },
+        Error::Retryable => BrewArchiveOutcome::Retryable,
         Error::Invalid(_) => BrewArchiveOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew archive operation unavailable");
@@ -405,6 +526,7 @@ fn map_view_error(error: Error) -> BrewEvidenceViewOutcome {
     match error {
         Error::Forbidden => BrewEvidenceViewOutcome::Forbidden,
         Error::ContextChanged => BrewEvidenceViewOutcome::ContextChanged,
+        Error::Retryable => BrewEvidenceViewOutcome::Retryable,
         Error::Invalid(_) => BrewEvidenceViewOutcome::Invalid,
         other => {
             tracing::warn!(error = %other, "brew evidence view unavailable");
@@ -520,9 +642,48 @@ async fn view_inner(
         .map(|(note, current)| NoteView { note, current })
         .collect();
 
-    let lifecycle = store::list_lifecycle_events(&mut tx, &workspace_id, &request.brew_id)
-        .await
-        .map_err(boundary_error)?;
+    let lifecycle_after = match request.lifecycle_cursor.as_deref() {
+        Some(cursor) => Some(
+            decode_cursor(
+                cursor,
+                actor,
+                &request.brew_id,
+                "lifecycle",
+                "all",
+                "brew_revision",
+            )?
+            .0,
+        ),
+        None => None,
+    };
+    let mut lifecycle = store::list_lifecycle_events(
+        &mut tx,
+        &workspace_id,
+        &request.brew_id,
+        lifecycle_after,
+        VIEW_LIFECYCLE_LIMIT + 1,
+    )
+    .await
+    .map_err(boundary_error)?;
+    let lifecycle_next_cursor = if lifecycle.len() as i64 > VIEW_LIFECYCLE_LIMIT {
+        lifecycle.truncate(VIEW_LIFECYCLE_LIMIT as usize);
+        lifecycle
+            .last()
+            .map(|event| {
+                encode_cursor(
+                    actor,
+                    &request.brew_id,
+                    "lifecycle",
+                    "all",
+                    "brew_revision",
+                    event.brew_revision,
+                    "",
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let actual = store::load_current_actual(&mut tx, &workspace_id, &request.brew_id)
         .await
         .map_err(boundary_error)?;
@@ -544,6 +705,7 @@ async fn view_inner(
         notes,
         notes_truncated,
         lifecycle,
+        lifecycle_next_cursor,
     }))
 }
 
@@ -1250,11 +1412,25 @@ async fn list_measurements(
     request: MeasurementListRequest,
 ) -> Result<MeasurementOutcome, Error> {
     validate_identifier(&request.brew_id, "brew")?;
-    let limit = validate_limit(request.limit);
-    let after = parse_pair_cursor(request.cursor.as_deref())?;
+    let limit = validate_limit(request.limit)?;
     if let Some(root) = &request.root_observation_id {
         validate_identifier(root, "observation root")?;
     }
+    let (kind, filter, order) = match &request.root_observation_id {
+        Some(root) => ("measurement.lineage", root.as_str(), "recorded_at,entry_id"),
+        None => ("measurement.current", "current", "recorded_at,entry_id"),
+    };
+    let after = match request.cursor.as_deref() {
+        Some(cursor) => Some(decode_cursor(
+            cursor,
+            actor,
+            &request.brew_id,
+            kind,
+            filter,
+            order,
+        )?),
+        None => None,
+    };
 
     let mut tx = begin(pool, actor, &request.intent).await?;
     let workspace_id = actor.workspace_id.clone();
@@ -1308,7 +1484,18 @@ async fn list_measurements(
         items.truncate(limit as usize);
         items
             .last()
-            .map(|entry| pair_cursor(entry.recorded_at, &entry.entry_id))
+            .map(|entry| {
+                encode_cursor(
+                    actor,
+                    &request.brew_id,
+                    kind,
+                    filter,
+                    order,
+                    entry.recorded_at,
+                    &entry.entry_id,
+                )
+            })
+            .transpose()?
     } else {
         None
     };
@@ -1645,10 +1832,25 @@ async fn list_notes(
     request: NoteListRequest,
 ) -> Result<NoteOutcome, Error> {
     validate_identifier(&request.brew_id, "brew")?;
-    let limit = validate_limit(request.limit);
+    let limit = validate_limit(request.limit)?;
     if let Some(note_id) = &request.note_id {
         validate_identifier(note_id, "note")?;
     }
+    let (kind, filter, order) = match &request.note_id {
+        Some(note_id) => ("note.history", note_id.as_str(), "revision"),
+        None => ("note.current", "current", "created_at,note_id"),
+    };
+    let decoded = match request.cursor.as_deref() {
+        Some(cursor) => Some(decode_cursor(
+            cursor,
+            actor,
+            &request.brew_id,
+            kind,
+            filter,
+            order,
+        )?),
+        None => None,
+    };
 
     let mut tx = begin(pool, actor, &request.intent).await?;
     let workspace_id = actor.workspace_id.clone();
@@ -1668,7 +1870,15 @@ async fn list_notes(
             {
                 return Ok(NoteOutcome::NotFound);
             }
-            let after = parse_revision_cursor(request.cursor.as_deref())?;
+            let after = match &decoded {
+                Some((position, id)) => {
+                    if *position <= 0 || !id.is_empty() {
+                        return Err(Error::Invalid("cursor"));
+                    }
+                    Some(*position)
+                }
+                None => None,
+            };
             let mut items = store::list_note_revisions(
                 &mut tx,
                 &workspace_id,
@@ -1681,14 +1891,35 @@ async fn list_notes(
             .map_err(boundary_error)?;
             let next_cursor = if items.len() as i64 > limit {
                 items.truncate(limit as usize);
-                items.last().map(|revision| revision.revision.to_string())
+                items
+                    .last()
+                    .map(|revision| {
+                        encode_cursor(
+                            actor,
+                            &request.brew_id,
+                            kind,
+                            filter,
+                            order,
+                            revision.revision,
+                            "",
+                        )
+                    })
+                    .transpose()?
             } else {
                 None
             };
             NoteOutcome::History(NoteHistoryPage { items, next_cursor })
         }
         None => {
-            let after = parse_pair_cursor(request.cursor.as_deref())?;
+            let after = match &decoded {
+                Some((position, id)) => {
+                    if id.is_empty() || id.len() > 128 {
+                        return Err(Error::Invalid("cursor"));
+                    }
+                    Some((*position, id.clone()))
+                }
+                None => None,
+            };
             let after_ref = after
                 .as_ref()
                 .map(|(timestamp, id)| (timestamp, id.as_str()));
@@ -1704,7 +1935,18 @@ async fn list_notes(
             let next_cursor = if rows.len() as i64 > limit {
                 rows.truncate(limit as usize);
                 rows.last()
-                    .map(|(note, _)| pair_cursor(note.created_at, &note.note_id))
+                    .map(|(note, _)| {
+                        encode_cursor(
+                            actor,
+                            &request.brew_id,
+                            kind,
+                            filter,
+                            order,
+                            note.created_at,
+                            &note.note_id,
+                        )
+                    })
+                    .transpose()?
             } else {
                 None
             };
@@ -1867,8 +2109,24 @@ async fn history_actual(
     request: ActualFormulationHistoryRequest,
 ) -> Result<ActualFormulationOutcome, Error> {
     validate_identifier(&request.brew_id, "brew")?;
-    let limit = validate_limit(request.limit);
-    let after = parse_revision_cursor(request.cursor.as_deref())?;
+    let limit = validate_limit(request.limit)?;
+    let after = match request.cursor.as_deref() {
+        Some(cursor) => {
+            let (position, id) = decode_cursor(
+                cursor,
+                actor,
+                &request.brew_id,
+                "actual.history",
+                "all",
+                "revision",
+            )?;
+            if position <= 0 || !id.is_empty() {
+                return Err(Error::Invalid("cursor"));
+            }
+            Some(position)
+        }
+        None => None,
+    };
     let mut tx = begin(pool, actor, &request.intent).await?;
     let workspace_id = actor.workspace_id.clone();
     if store::load_state(&mut tx, &workspace_id, &request.brew_id)
@@ -1884,7 +2142,20 @@ async fn history_actual(
             .map_err(boundary_error)?;
     let next_cursor = if items.len() as i64 > limit {
         items.truncate(limit as usize);
-        items.last().map(|revision| revision.revision.to_string())
+        items
+            .last()
+            .map(|revision| {
+                encode_cursor(
+                    actor,
+                    &request.brew_id,
+                    "actual.history",
+                    "all",
+                    "revision",
+                    revision.revision,
+                    "",
+                )
+            })
+            .transpose()?
     } else {
         None
     };
@@ -2173,27 +2444,27 @@ mod retryable_mapper_tests {
     use super::*;
 
     #[test]
-    fn retryable_is_not_reported_as_service_unavailable() {
-        assert_ne!(
+    fn retryable_is_preserved_across_new_families() {
+        assert_eq!(
             map_measurement_error(Error::Retryable),
-            MeasurementOutcome::Unavailable
+            MeasurementOutcome::Retryable
         );
-        assert_ne!(map_note_error(Error::Retryable), NoteOutcome::Unavailable);
-        assert_ne!(
+        assert_eq!(map_note_error(Error::Retryable), NoteOutcome::Retryable);
+        assert_eq!(
             map_actual_error(Error::Retryable),
-            ActualFormulationOutcome::Unavailable
+            ActualFormulationOutcome::Retryable
         );
-        assert_ne!(
+        assert_eq!(
             map_lifecycle_error(Error::Retryable),
-            BrewLifecycleOutcome::Unavailable
+            BrewLifecycleOutcome::Retryable
         );
-        assert_ne!(
+        assert_eq!(
             map_archive_error(Error::Retryable),
-            BrewArchiveOutcome::Unavailable
+            BrewArchiveOutcome::Retryable
         );
-        assert_ne!(
+        assert_eq!(
             map_view_error(Error::Retryable),
-            BrewEvidenceViewOutcome::Unavailable
+            BrewEvidenceViewOutcome::Retryable
         );
     }
 }

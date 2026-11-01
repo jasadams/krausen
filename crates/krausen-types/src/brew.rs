@@ -81,6 +81,9 @@ fn default_limit() -> i64 {
 pub struct BrewEvidenceViewRequest {
     pub intent: OperationIntent,
     pub brew_id: String,
+    /// Continuation for the bounded lifecycle overview.
+    #[serde(default)]
+    pub lifecycle_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -121,6 +124,8 @@ pub struct BrewEvidenceView {
     /// True when more current notes exist than the bounded view returned.
     pub notes_truncated: bool,
     pub lifecycle: Vec<BrewLifecycleEvent>,
+    /// Continuation for older lifecycle events when the bounded page is full.
+    pub lifecycle_next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,6 +135,7 @@ pub enum BrewEvidenceViewOutcome {
     Forbidden,
     ContextChanged,
     Invalid,
+    Retryable,
     Unavailable,
 }
 
@@ -227,6 +233,7 @@ pub enum MeasurementOutcome {
     ContextChanged,
     Forbidden,
     Invalid,
+    Retryable,
     Unavailable,
 }
 
@@ -316,6 +323,7 @@ pub enum NoteOutcome {
     ContextChanged,
     Forbidden,
     Invalid,
+    Retryable,
     Unavailable,
 }
 
@@ -394,6 +402,7 @@ pub enum ActualFormulationOutcome {
     ContextChanged,
     Forbidden,
     Invalid,
+    Retryable,
     Unavailable,
 }
 
@@ -451,6 +460,7 @@ pub enum BrewLifecycleOutcome {
     ContextChanged,
     Forbidden,
     Invalid,
+    Retryable,
     Unavailable,
 }
 
@@ -483,6 +493,7 @@ pub enum BrewArchiveOutcome {
     ContextChanged,
     Forbidden,
     Invalid,
+    Retryable,
     Unavailable,
 }
 

@@ -294,6 +294,7 @@ async fn view(
         BrewEvidenceViewRequest {
             intent: intent(actor),
             brew_id: brew_id.into(),
+            lifecycle_cursor: None,
         },
     )
     .await;
@@ -1376,10 +1377,29 @@ async fn exercise(db: DbPool) {
         tx.commit().await.unwrap();
     }
     let bounded_lifecycle = view(&db, &actor, &brew_id).await;
+    assert_eq!(bounded_lifecycle.lifecycle.len(), 50);
+    let lifecycle_cursor = bounded_lifecycle
+        .lifecycle_next_cursor
+        .clone()
+        .expect("bounded lifecycle continuation");
+    let continuation = brew_evidence::view(
+        &db,
+        &actor,
+        BrewEvidenceViewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            lifecycle_cursor: Some(lifecycle_cursor),
+        },
+    )
+    .await;
+    let BrewEvidenceViewOutcome::View(continuation) = continuation else {
+        panic!("lifecycle continuation: {continuation:?}");
+    };
+    assert_eq!(continuation.lifecycle.len(), 5);
+    assert!(continuation.lifecycle_next_cursor.is_none());
     assert!(
-        bounded_lifecycle.lifecycle.len() <= 50,
-        "lifecycle overview returned {} events",
-        bounded_lifecycle.lifecycle.len()
+        bounded_lifecycle.lifecycle.last().unwrap().brew_revision
+            < continuation.lifecycle.first().unwrap().brew_revision
     );
 
     // Request identity replay returns the original entry; reuse with a changed
@@ -1439,6 +1459,7 @@ async fn exercise(db: DbPool) {
             BrewEvidenceViewRequest {
                 intent: intent(&other_workspace_actor),
                 brew_id: brew_id.clone(),
+                lifecycle_cursor: None,
             },
         )
         .await,
@@ -1480,6 +1501,7 @@ async fn exercise(db: DbPool) {
             BrewEvidenceViewRequest {
                 intent: intent(&outsider_actor),
                 brew_id: brew_id.clone(),
+                lifecycle_cursor: None,
             },
         )
         .await,
@@ -1493,6 +1515,7 @@ async fn exercise(db: DbPool) {
         BrewEvidenceCommand::View(BrewEvidenceViewRequest {
             intent: intent(&actor),
             brew_id: brew_id.clone(),
+            lifecycle_cursor: None,
         }),
     )
     .await;

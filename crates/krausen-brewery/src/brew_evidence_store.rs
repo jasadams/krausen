@@ -1011,22 +1011,35 @@ pub async fn list_lifecycle_events(
     tx: &mut DbTx<'_>,
     workspace_id: &str,
     brew_id: &str,
+    after_revision: Option<i64>,
+    limit: i64,
 ) -> Result<Vec<BrewLifecycleEvent>> {
-    let sql = "SELECT workspace_id, brew_id, brew_revision, from_status, to_status, reason, actor_id, recorded_at FROM brew_lifecycle_events WHERE workspace_id = $1 AND brew_id = $2 ORDER BY brew_revision";
+    let base = "SELECT workspace_id, brew_id, brew_revision, from_status, to_status, reason, actor_id, recorded_at FROM brew_lifecycle_events WHERE workspace_id = $1 AND brew_id = $2";
+    let (sql, cursor) = match after_revision {
+        Some(revision) => (
+            format!("{base} AND brew_revision > $3 ORDER BY brew_revision LIMIT $4"),
+            Some(revision),
+        ),
+        None => (format!("{base} ORDER BY brew_revision LIMIT $3"), None),
+    };
     let rows = match &mut *tx {
         DbTx::Postgres(inner) => {
-            sqlx::query_as::<_, LifecycleRow>(sql)
+            let mut query = sqlx::query_as::<_, LifecycleRow>(&sql)
                 .bind(workspace_id)
-                .bind(brew_id)
-                .fetch_all(&mut **inner)
-                .await?
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
         }
         DbTx::Sqlite(inner) => {
-            sqlx::query_as::<_, LifecycleRow>(sql)
+            let mut query = sqlx::query_as::<_, LifecycleRow>(&sql)
                 .bind(workspace_id)
-                .bind(brew_id)
-                .fetch_all(&mut **inner)
-                .await?
+                .bind(brew_id);
+            if let Some(revision) = cursor {
+                query = query.bind(revision);
+            }
+            query.bind(limit).fetch_all(&mut **inner).await?
         }
     };
     rows.into_iter().map(LifecycleRow::into_event).collect()
