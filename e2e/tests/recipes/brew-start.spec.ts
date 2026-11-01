@@ -467,7 +467,7 @@ test('failed retry context preflight retains the same uncertain request', async 
   await page.getByRole('button', { name: 'Record reading' }).first().click();
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   const otherName = `Retry preflight ${Date.now()}`;
-  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  const otherWorkspace = seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
   sqliteExec(
     `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
   );
@@ -483,20 +483,27 @@ test('failed retry context preflight retains the same uncertain request', async 
   const preflightHeld = new Promise<void>((resolve) => {
     preflightEntered = resolve;
   });
+  let retryPreflight = false;
   let firstPreflight = true;
+  let preflightRequests = 0;
   await page.route('**/leptos-api/get_user_context*', async (route) => {
-    if (!firstPreflight) {
+    if (!retryPreflight || !firstPreflight) {
       await route.continue();
       return;
     }
     firstPreflight = false;
+    preflightRequests += 1;
     preflightEntered();
     await preflightReleased;
     const response = await route.fetch();
+    const body = await response.json();
+    expect(JSON.stringify(body)).toContain(otherWorkspace);
     await route.fulfill({ response });
   });
+  retryPreflight = true;
   await page.getByRole('button', { name: 'Retry same request' }).click();
   await preflightHeld;
+  expect(preflightRequests).toBe(1);
   await switcher
     .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
     .click();
@@ -505,6 +512,7 @@ test('failed retry context preflight retains the same uncertain request', async 
   releasePreflight();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+  expect(recordCommands).toHaveLength(1);
   const originalName = sqliteExec(
     `SELECT name FROM workspaces WHERE workspace_id = '${workspace}'`,
   );
@@ -532,15 +540,21 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   context,
 }) => {
   const brewId = await startBrewAndOpenEvidence(page, `Brew out of order ${Date.now()}`);
-  const workspace = sqliteExec(
+  const originalWorkspace = sqliteExec(
     `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
   );
   const otherName = `Out of order ${Date.now()}`;
-  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  const otherWorkspace = seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
   sqliteExec(
-    `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
+    `UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${getDefaultUserId()}'`,
   );
   walCheckpoint();
+  const switcher = await context.newPage();
+  await switcher.goto(page.url());
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await expect(page.locator('#measurement-gravity-original-v1')).toBeVisible();
   let releaseOlder!: () => void;
   const olderReleased = new Promise<void>((resolve) => {
     releaseOlder = resolve;
@@ -562,6 +576,8 @@ test('out-of-order context success cannot restore hidden evidence', async ({
     contextChecks += 1;
     if (contextChecks === 1) {
       const response = await route.fetch();
+      const body = await response.json();
+      expect(JSON.stringify(body)).toContain(originalWorkspace);
       olderEntered();
       await olderReleased;
       await route.fulfill({ response });
@@ -571,6 +587,8 @@ test('out-of-order context success cannot restore hidden evidence', async ({
       newerEntered();
       await newerReleased;
       const response = await route.fetch();
+      const body = await response.json();
+      expect(JSON.stringify(body)).toContain(otherWorkspace);
       await route.fulfill({ response });
       return;
     }
@@ -580,9 +598,6 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   await olderHeld;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await newerHeld;
-  const switcher = await context.newPage();
-  await switcher.goto(page.url());
-  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   await switcher
     .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
     .click();
@@ -595,6 +610,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   );
   releaseOlder();
   await olderResponse;
+  await page.waitForTimeout(250);
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   await expect(page.getByText('Brew evidence')).toHaveCount(0);
