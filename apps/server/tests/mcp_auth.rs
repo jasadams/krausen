@@ -1494,7 +1494,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(actual_get["outcome"]["View"]["source"], "plan");
     let mut actual_document = actual_get["outcome"]["View"]["document"].clone();
     actual_document["boil_minutes"] = json!(75.0);
-    let actual_amend = json!({
+    let actual_amend_args = json!({
         "workspace_id": &ws,
         "request": {
             "action": "amend",
@@ -1509,17 +1509,38 @@ async fn exercise(db: DbPool) {
     .as_object()
     .unwrap()
     .clone();
-    let actual_amend = modern
-        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(actual_amend.clone()))
+    let actual_amend_response = modern
+        .call_tool(
+            CallToolRequestParams::new("brew_actual").with_arguments(actual_amend_args.clone()),
+        )
         .await
         .unwrap();
-    assert_ne!(actual_amend.is_error, Some(true));
+    assert_ne!(actual_amend_response.is_error, Some(true));
+    let actual_amend = actual_amend_response.structured_content.unwrap();
+    assert_eq!(actual_amend["outcome"]["Amended"]["revision"], 1);
     assert_eq!(
-        actual_amend.structured_content.unwrap()["outcome"]["Amended"]["revision"],
-        1
+        actual_amend["outcome"]["Amended"]["document"]["boil_minutes"],
+        75.0
     );
+    // Identical same-request replay recovers the committed amendment before
+    // the current-revision guard.
+    let actual_replay = modern
+        .call_tool(
+            CallToolRequestParams::new("brew_actual").with_arguments(actual_amend_args.clone()),
+        )
+        .await
+        .unwrap();
+    assert_ne!(actual_replay.is_error, Some(true));
+    let actual_replay = actual_replay.structured_content.unwrap();
+    assert_eq!(
+        actual_replay["outcome"]["Amended"],
+        actual_amend["outcome"]["Amended"]
+    );
+    // A new request identity with the stale expected revision is a conflict.
+    let mut stale_actual_args = actual_amend_args;
+    stale_actual_args["request"]["request_id"] = json!(uuid::Uuid::new_v4().to_string());
     let stale_actual = modern
-        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(actual_amend))
+        .call_tool(CallToolRequestParams::new("brew_actual").with_arguments(stale_actual_args))
         .await
         .unwrap();
     assert_eq!(stale_actual.is_error, Some(true));
