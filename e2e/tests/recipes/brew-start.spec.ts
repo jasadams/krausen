@@ -1,7 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'child_process';
 import * as path from 'path';
-import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import {
+  DEFAULT_TEST_USER,
+  getDefaultUserId,
+  loginUser,
+  seedWorkspace,
+  walCheckpoint,
+} from '../../helpers/test-helpers';
 
 const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
   ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
@@ -192,6 +198,23 @@ test('delayed lifecycle continuation ignores a second click', async ({ page }) =
   await loadOlder.evaluate((element) => (element as HTMLButtonElement).click());
   await expect(lifecycleItems(page)).toHaveCount(51);
   expect(continuationRequests).toBe(1);
+});
+
+test('uncertain evidence request is discarded on workspace change', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Brew context loss ${Date.now()}`);
+  await page.route('**/brew_measurement*', (route) => route.abort('failed'));
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  const workspaceName = `Evidence context ${Date.now()}`;
+  seedWorkspace({ ownerId: getDefaultUserId(), name: workspaceName });
+  walCheckpoint();
+  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name: workspaceName, exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeEnabled();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page.getByText('Brew not found in this workspace.')).toBeVisible();
 });
 
 test('delayed overview response after unmount does not error', async ({ page }) => {
