@@ -19,6 +19,24 @@ pub const INVITATION_RESPOND: Operation = Operation {
     input_contract: "invitation-response.v1",
     output_contract: "InvitationResponseOutcome",
 };
+pub const PASSWORD_STATUS: Operation = Operation {
+    id: "security.password-status.v1",
+    mcp_tool: "security_password_status",
+    input_contract: "account-query.v1",
+    output_contract: "PasswordStatusOutcome",
+};
+pub const TOTP_STATUS: Operation = Operation {
+    id: "security.totp-status.v1",
+    mcp_tool: "security_totp_status",
+    input_contract: "account-query.v1",
+    output_contract: "TotpStatusOutcome",
+};
+pub const ACCOUNT_PROFILE: Operation = Operation {
+    id: "account.profile.v1",
+    mcp_tool: "account_profile",
+    input_contract: "account-query.v1",
+    output_contract: "AccountProfileOutcome",
+};
 pub const WORKSPACE_RENAME: Operation = Operation {
     id: "workspace.rename.v1",
     mcp_tool: "workspace_rename",
@@ -213,6 +231,9 @@ pub const OPERATIONS: &[Operation] = &[
     INGREDIENT_SEARCH,
     WORKSPACE_GET,
     INVITATION_RESPOND,
+    PASSWORD_STATUS,
+    TOTP_STATUS,
+    ACCOUNT_PROFILE,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,
     RECIPE_CREATE,

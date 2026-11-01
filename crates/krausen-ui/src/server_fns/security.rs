@@ -47,9 +47,13 @@ pub async fn has_password() -> Result<bool, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    krausen_auth::user_service::has_password(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()
+    let actor = super::verified_account_actor(&auth)?;
+    match krausen_app::security_status::project_password_status(
+        krausen_app::security_status::password_status(&ctx.db, &actor).await,
+    ) {
+        krausen_types::security_status::PasswordStatusOutcome::Available { has_password } => Ok(has_password),
+        _ => Err(ServerFnError::new("Unable to load password status")),
+    }
 }
 
 /// Set a password for a user who does not yet have one (e.g. OAuth-only users).
@@ -133,9 +137,11 @@ pub async fn get_totp_status() -> Result<TotpStatus, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let enabled = krausen_auth::user_service::has_totp_enabled(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
+    let actor = super::verified_account_actor(&auth)?;
+    let enabled = match krausen_app::security_status::project_totp_status(krausen_app::security_status::totp_status(&ctx.db, &actor).await) {
+        krausen_types::security_status::TotpStatusOutcome::Available { enabled } => enabled,
+        _ => return Err(ServerFnError::new("Unable to load 2FA status")),
+    };
 
     Ok(TotpStatus { enabled })
 }
@@ -550,4 +556,3 @@ pub async fn rename_passkey(
 
     Ok("Passkey renamed successfully".to_string())
 }
-

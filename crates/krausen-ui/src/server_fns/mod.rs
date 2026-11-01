@@ -104,6 +104,18 @@ pub(crate) fn verified_actor(
     })
 }
 
+/// Account-scoped identity without requiring membership in a selected workspace.
+#[cfg(feature = "ssr")]
+pub(crate) fn verified_account_actor(
+    auth: &krausen_auth::middleware::AuthUser,
+) -> Result<krausen_app::invitation::AccountActor, leptos::prelude::ServerFnError> {
+    Ok(krausen_app::invitation::AccountActor {
+        actor_id: auth.user_id.clone(),
+        credential_id: auth.credential_id.clone(),
+        access_expires_at: auth.token_exp.ok_or_else(|| leptos::prelude::ServerFnError::new("Authentication required"))?,
+    })
+}
+
 /// Bundles the three values every authenticated server function needs.
 #[cfg(feature = "ssr")]
 pub(crate) struct AuthenticatedContext {

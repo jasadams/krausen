@@ -29,19 +29,11 @@ pub async fn get_sidebar_user() -> Result<SidebarUser, ServerFnError> {
     let auth = super::extract_auth().await?;
     let ctx = super::extract_context()?;
 
-    // Read theme preference from user's extra_metadata (same source as profile.rs)
-    let user = krausen_auth::user_service::get_user_by_id(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?
-        .ok_or_else(|| ServerFnError::new("User not found"))?;
-
-    let theme_preference = user
-        .extra_metadata
-        .as_ref()
-        .and_then(|v| v.get("theme"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("system")
-        .to_string();
+    let actor = super::verified_account_actor(&auth)?;
+    let profile = match krausen_app::account_read::project_profile(krausen_app::account_read::profile(&ctx.db, &actor).await) {
+        krausen_types::account_read::AccountProfileOutcome::Available { profile } => profile,
+        _ => return Err(ServerFnError::new("Unable to load sidebar user")),
+    };
 
     Ok(SidebarUser {
         user_id: auth.user_id.clone(),
@@ -51,7 +43,7 @@ pub async fn get_sidebar_user() -> Result<SidebarUser, ServerFnError> {
         workspace_name: auth.workspace.workspace_name.clone(),
         is_personal_mode: ctx.config.is_personal(),
         is_self_hosted: ctx.config.self_hosted,
-        theme_preference,
+        theme_preference: profile.theme,
     })
 }
 

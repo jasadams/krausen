@@ -10,6 +10,8 @@ pub mod operations;
 pub mod sync;
 pub mod workspace;
 pub mod invitation;
+pub mod security_status;
+pub mod account_read;
 
 pub mod validation;
 

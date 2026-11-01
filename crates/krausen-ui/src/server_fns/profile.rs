@@ -21,27 +21,28 @@ pub async fn get_profile() -> Result<ProfileData, ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let user = krausen_auth::user_service::get_user_by_id(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?
-        .ok_or_else(|| ServerFnError::new("User not found"))?;
-
-    let metadata = user.extra_metadata.as_ref().and_then(|v| v.as_object());
-
-    let theme = metadata
-        .and_then(|m| m.get("theme"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("system")
-        .to_string();
+    let profile = match read_shared_profile(&ctx.db, &auth).await? {
+        krausen_types::account_read::AccountProfileOutcome::Available { profile } => profile,
+        _ => return Err(ServerFnError::new("Unable to load profile")),
+    };
 
     Ok(ProfileData {
-        user_id: user.user_id,
-        email: user.email,
-        name: user.name,
-        theme,
+        user_id: profile.user_id,
+        email: profile.email,
+        name: profile.name,
+        theme: profile.theme,
         is_personal_mode: ctx.config.is_personal(),
         is_self_hosted: ctx.config.self_hosted,
     })
+}
+
+#[cfg(feature = "ssr")]
+async fn read_shared_profile(
+    db: &krausen_core::DbPool,
+    auth: &krausen_auth::middleware::AuthUser,
+) -> Result<krausen_types::account_read::AccountProfileOutcome, ServerFnError> {
+    let actor = super::verified_account_actor(auth)?;
+    Ok(krausen_app::account_read::project_profile(krausen_app::account_read::profile(db, &actor).await))
 }
 
 /// Load pending workspace invitations for the current user.
@@ -132,13 +133,8 @@ async fn respond_to_invitation(
     request_id: &str,
     action: krausen_types::invitation::InvitationAction,
 ) -> Result<krausen_types::invitation::InvitationResponseOutcome, ServerFnError> {
-    let Some(expiry) = auth.token_exp else { return Err(ServerFnError::new("Authentication required")) };
     let Ok(request_id) = uuid::Uuid::parse_str(request_id) else { return Ok(krausen_types::invitation::InvitationResponseOutcome::Invalid) };
-    let actor = krausen_app::invitation::AccountActor {
-        actor_id: auth.user_id.clone(),
-        credential_id: auth.credential_id.clone(),
-        access_expires_at: expiry,
-    };
+    let actor = super::verified_account_actor(auth)?;
     Ok(krausen_app::invitation::project(krausen_app::invitation::respond(db, &actor, invitation_id, action, request_id).await))
 }
 
@@ -167,5 +163,7 @@ mod tests {
         };
         let result = respond_to_invitation(&db, &auth, "i", &uuid::Uuid::new_v4().to_string(), InvitationAction::Decline).await.unwrap();
         assert_eq!(result, InvitationResponseOutcome::NotFound);
+        let profile = read_shared_profile(&db, &auth).await.unwrap();
+        assert!(matches!(profile, krausen_types::account_read::AccountProfileOutcome::Available { profile } if profile.email == "other@example.test"));
     }
 }

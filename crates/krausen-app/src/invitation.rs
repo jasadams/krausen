@@ -11,6 +11,50 @@ pub struct AccountActor {
     pub access_expires_at: i64,
 }
 
+/// Lock and recheck account and credential authority without requiring a workspace.
+pub(crate) async fn authorize_account(
+    tx: &mut DbTx<'_>,
+    actor: &AccountActor,
+) -> Result<String, Error> {
+    let pg = matches!(tx, DbTx::Postgres(_));
+    let account_sql = if pg {
+        "SELECT email FROM users WHERE user_id=$1 AND active=TRUE FOR SHARE"
+    } else {
+        "SELECT email FROM users WHERE user_id=$1 AND active=TRUE"
+    };
+    let email = scalar!(tx, String, account_sql, &actor.actor_id)
+        .map_err(db_error)?
+        .ok_or(Error::Forbidden)?;
+    recheck_credential(tx, actor).await?;
+    Ok(email)
+}
+
+pub(crate) async fn recheck_credential(
+    tx: &mut DbTx<'_>,
+    actor: &AccountActor,
+) -> Result<(), Error> {
+    let sql = if matches!(tx, DbTx::Postgres(_)) {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3 FOR SHARE"
+    } else {
+        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3"
+    };
+    if actor.access_expires_at <= chrono::Utc::now().timestamp()
+        || scalar!(
+            tx,
+            String,
+            sql,
+            &actor.credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        )
+        .map_err(db_error)?
+        .is_none()
+    {
+        return Err(Error::Forbidden);
+    }
+    Ok(())
+}
+
 /// Map internal failures to the same non-sensitive result for both adapters.
 pub fn project(result: Result<Outcome, Error>) -> Outcome {
     match result {
@@ -45,33 +89,7 @@ pub async fn respond(
 ) -> Result<Outcome, Error> {
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     let pg = matches!(tx, DbTx::Postgres(_));
-    let account_sql = if pg {
-        "SELECT email FROM users WHERE user_id=$1 AND active=TRUE FOR SHARE"
-    } else {
-        "SELECT email FROM users WHERE user_id=$1 AND active=TRUE"
-    };
-    let email = scalar!(&mut tx, String, account_sql, &actor.actor_id)
-        .map_err(db_error)?
-        .ok_or(Error::Forbidden)?;
-    let credential_sql = if pg {
-        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3 FOR SHARE"
-    } else {
-        "SELECT credential_id FROM auth_credentials WHERE credential_id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>$3"
-    };
-    if scalar!(
-        &mut tx,
-        String,
-        credential_sql,
-        &actor.credential_id,
-        &actor.actor_id,
-        chrono::Utc::now().timestamp()
-    )
-    .map_err(db_error)?
-    .is_none()
-        || actor.access_expires_at <= chrono::Utc::now().timestamp()
-    {
-        return Err(Error::Forbidden);
-    }
+    let email = authorize_account(&mut tx, actor).await?;
     let sql = if pg {
         "SELECT i.workspace_id,i.role,i.status FROM workspace_invitations i JOIN workspaces w ON w.workspace_id=i.workspace_id WHERE i.invitation_id=$1 AND lower(i.email)=lower($2) AND w.status='active' FOR UPDATE OF i,w"
     } else {
@@ -83,20 +101,7 @@ pub async fn respond(
     let Some(invitation) = invitation else {
         return Ok(Outcome::NotFound);
     };
-    if actor.access_expires_at <= chrono::Utc::now().timestamp()
-        || scalar!(
-            &mut tx,
-            String,
-            credential_sql,
-            &actor.credential_id,
-            &actor.actor_id,
-            chrono::Utc::now().timestamp()
-        )
-        .map_err(db_error)?
-        .is_none()
-    {
-        return Err(Error::Forbidden);
-    }
+    recheck_credential(&mut tx, actor).await?;
     let scoped = ActorContext {
         actor_id: actor.actor_id.clone(),
         workspace_id: invitation.workspace_id.clone(),

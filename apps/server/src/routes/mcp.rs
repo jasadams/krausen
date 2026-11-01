@@ -44,6 +44,23 @@ struct InvitationReply {
     action: krausen_types::invitation::InvitationAction,
     request_id: uuid::Uuid,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountQuery {}
+fn account_actor(principal: &Principal) -> krausen_app::invitation::AccountActor {
+    krausen_app::invitation::AccountActor {
+        actor_id: principal.user_id.clone(),
+        credential_id: principal.credential_id.clone(),
+        access_expires_at: principal.access_expires_at,
+    }
+}
+
+async fn execute_account_profile(
+    db: &krausen_core::DbPool,
+    principal: &Principal,
+) -> krausen_types::account_read::AccountProfileOutcome {
+    krausen_app::account_read::project_profile(krausen_app::account_read::profile(db, &account_actor(principal)).await)
+}
 async fn execute_invitation_reply(
     db: &krausen_core::DbPool,
     principal: &Principal,
@@ -368,6 +385,21 @@ impl ServerHandler for McpHandler {
                 schema(json!({"type":"object","properties":{"invitation_id":{"type":"string"},"action":{"type":"string","enum":["accept","decline"]},"request_id":{"type":"string","format":"uuid"}},"required":["invitation_id","action","request_id"],"additionalProperties":false})),
             ),
             Tool::new(
+                operations::PASSWORD_STATUS.mcp_tool,
+                "Read whether the authenticated account has a password",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::TOTP_STATUS.mcp_tool,
+                "Read whether the authenticated account has TOTP enabled",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
+                operations::ACCOUNT_PROFILE.mcp_tool,
+                "Read the authenticated account profile and appearance preference",
+                schema(json!({"type":"object","properties":{},"additionalProperties":false})),
+            ),
+            Tool::new(
                 operations::WORKSPACE_RENAME.mcp_tool,
                 "Rename a workspace using its observed revision and a stable request UUID",
                 schema(
@@ -443,6 +475,42 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "account.profile.v1" => {
+                let _: AccountQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid account query", None))?;
+                let outcome = execute_account_profile(&self.db, principal).await;
+                if matches!(outcome, krausen_types::account_read::AccountProfileOutcome::Available { .. }) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "security.totp-status.v1" => {
+                let _: AccountQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid account query", None))?;
+                let actor = account_actor(principal);
+                let outcome = krausen_app::security_status::project_totp_status(
+                    krausen_app::security_status::totp_status(&self.db, &actor).await,
+                );
+                if matches!(outcome, krausen_types::security_status::TotpStatusOutcome::Available { .. }) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
+            "security.password-status.v1" => {
+                let _: AccountQuery = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid account query", None))?;
+                let actor = account_actor(principal);
+                let outcome = krausen_app::security_status::project_password_status(
+                    krausen_app::security_status::password_status(&self.db, &actor).await,
+                );
+                if matches!(outcome, krausen_types::security_status::PasswordStatusOutcome::Available { .. }) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
             "invitation.respond.v1" => {
                 let input: InvitationReply = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid invitation response", None))?;
@@ -1184,5 +1252,7 @@ mod invitation_tests {
         let principal = Principal { user_id: "other".into(), credential_id: "c".into(), access_expires_at: 4102444800 };
         let input = InvitationReply { invitation_id: "i".into(), action: InvitationAction::Decline, request_id: uuid::Uuid::new_v4() };
         assert_eq!(execute_invitation_reply(&db, &principal, input).await, InvitationResponseOutcome::NotFound);
+        let profile = execute_account_profile(&db, &principal).await;
+        assert!(matches!(profile, krausen_types::account_read::AccountProfileOutcome::Available { profile } if profile.email == "other@example.test"));
     }
 }
