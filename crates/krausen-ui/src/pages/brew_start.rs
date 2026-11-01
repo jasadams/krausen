@@ -62,6 +62,40 @@ fn may_prepare(pending: Option<&StartBrewRequest>) -> bool {
     pending.is_none()
 }
 
+fn invalidate_selection<T: Send + Sync + 'static>(
+    prepared: RwSignal<Option<T>>,
+    digest: RwSignal<Option<String>>,
+    prepared_current: RwSignal<Option<i64>>,
+    _pending: RwSignal<Option<StartBrewRequest>>,
+) {
+    prepared.set(None);
+    digest.set(None);
+    prepared_current.set(None);
+}
+
+fn retry_request(pending: RwSignal<Option<StartBrewRequest>>) -> Option<StartBrewRequest> {
+    pending.get_untracked()
+}
+
+fn build_start_request(
+    intent: OperationIntent,
+    recipe_id: String,
+    selected: i64,
+    digest: Option<String>,
+    prepared_current: Option<i64>,
+    current: Option<i64>,
+    request_id: String,
+) -> Option<StartBrewRequest> {
+    Some(StartBrewRequest {
+        intent,
+        recipe_id,
+        selected_recipe_revision: selected,
+        expected_head_revision: request_head_guard(selected, prepared_current, current),
+        expected_calculation_context: digest?,
+        request_id,
+    })
+}
+
 fn prepared_head_guard(selected: i64, prepared_current: Option<i64>) -> Option<i64> {
     (prepared_current == Some(selected)).then_some(selected)
 }
@@ -80,38 +114,67 @@ mod regression_tests {
 
     #[test]
     fn unresolved_request_survives_selection_and_prepare() {
-        let request = StartBrewRequest {
-            intent: OperationIntent {
-                account_id: "account".into(),
-                workspace_id: "workspace".into(),
-            },
-            recipe_id: "recipe".into(),
-            selected_recipe_revision: 2,
-            expected_head_revision: Some(2),
-            expected_calculation_context: "context".into(),
-            request_id: "original-request".into(),
-        };
-        let pending = Some(request.clone());
-        assert!(!may_prepare(pending.as_ref()));
-        // Selection edits do not mutate the unresolved request. Retrying uses
-        // the whole original command, including its idempotency identity.
-        let retry = pending.unwrap();
-        assert_eq!(retry, request);
+        let owner = Owner::new();
+        owner.with(|| {
+            let request = StartBrewRequest {
+                intent: OperationIntent {
+                    account_id: "account".into(),
+                    workspace_id: "workspace".into(),
+                },
+                recipe_id: "recipe".into(),
+                selected_recipe_revision: 2,
+                expected_head_revision: Some(2),
+                expected_calculation_context: "context".into(),
+                request_id: "original-request".into(),
+            };
+            let pending = RwSignal::new(Some(request.clone()));
+            let prepared = RwSignal::new(Some(()));
+            let digest = RwSignal::new(Some("context".to_owned()));
+            let current = RwSignal::new(Some(2));
+            invalidate_selection(prepared, digest, current, pending);
+            assert!(!may_prepare(pending.get_untracked().as_ref()));
+            assert_eq!(retry_request(pending), Some(request));
+            assert!(prepared.get_untracked().is_none());
+        });
     }
 
     #[test]
     fn prepared_current_selection_keeps_original_head_guard() {
-        let selected = 2;
-        let prepared_guard = prepared_head_guard(selected, Some(2));
-        assert_eq!(prepared_guard, Some(2));
-        // Saving revision 3 after preparation must never turn revision 2 into
-        // an unguarded historical request.
-        let current_after_save = Some(3);
-        assert_ne!(current_after_save, Some(selected));
-        assert_eq!(
-            request_head_guard(selected, Some(2), current_after_save),
-            Some(2)
-        );
+        let owner = Owner::new();
+        owner.with(|| {
+            let prepared = RwSignal::new(Some(()));
+            let digest = RwSignal::new(Some("context".to_owned()));
+            let current = RwSignal::new(Some(2));
+            let pending = RwSignal::new(None);
+            let intent = OperationIntent {
+                account_id: "account".into(),
+                workspace_id: "workspace".into(),
+            };
+            let guarded = build_start_request(
+                intent.clone(),
+                "recipe".into(),
+                2,
+                digest.get_untracked(),
+                current.get_untracked(),
+                Some(3),
+                "id".into(),
+            )
+            .unwrap();
+            assert_eq!(guarded.expected_head_revision, Some(2));
+            invalidate_selection(prepared, digest, current, pending);
+            assert!(
+                build_start_request(
+                    intent,
+                    "recipe".into(),
+                    2,
+                    digest.get_untracked(),
+                    current.get_untracked(),
+                    Some(3),
+                    "id".into()
+                )
+                .is_none()
+            );
+        });
     }
 }
 
@@ -149,9 +212,7 @@ pub fn StartBrewPanel(
             if let Some(current) = current {
                 revision_text.set(current.to_string());
             }
-            prepared.set(None);
-            prepared_digest.set(None);
-            prepared_current.set(None);
+            invalidate_selection(prepared, prepared_digest, prepared_current, pending);
             last_current_revision.set(current);
         }
     });
@@ -290,7 +351,7 @@ pub fn StartBrewPanel(
         if busy.get_untracked() || !context_visible.get_untracked() {
             return;
         }
-        let request = if let Some(pending) = pending.get_untracked() {
+        let request = if let Some(pending) = retry_request(pending) {
             pending
         } else {
             let (Some(summary), Some(digest), Some(recipe_id)) = (
@@ -312,19 +373,16 @@ pub fn StartBrewPanel(
                 status.set("Unable to create a secure start request.".into());
                 return;
             };
-            let expected_head = request_head_guard(
+            build_start_request(
+                identity.get_untracked(),
+                recipe_id,
                 selected,
+                Some(digest),
                 prepared_current.get_untracked(),
                 revision.get_untracked(),
-            );
-            StartBrewRequest {
-                intent: identity.get_untracked(),
-                recipe_id,
-                selected_recipe_revision: selected,
-                expected_head_revision: expected_head,
-                expected_calculation_context: digest,
                 request_id,
-            }
+            )
+            .expect("prepared digest")
         };
         pending.set(Some(request.clone()));
         busy.set(true);
@@ -482,8 +540,7 @@ pub fn StartBrewPanel(
     });
     let revision_change = Callback::new(move |value: String| {
         revision_text.set(value);
-        prepared.set(None);
-        prepared_digest.set(None);
+        invalidate_selection(prepared, prepared_digest, prepared_current, pending);
         conflict.set(None);
         started.set(None);
         status.set(String::new());
