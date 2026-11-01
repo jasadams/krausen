@@ -35,8 +35,8 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
   await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
-  await page.locator('#recipe-attenuation').fill('78');
   await page.getByText('Recipe process and notes', { exact: true }).click();
+  await page.locator('#recipe-attenuation').fill('78');
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');
   await page.locator('#recipe-whirlpool').fill('15');
