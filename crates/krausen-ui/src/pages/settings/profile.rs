@@ -126,6 +126,7 @@ fn ProfileInfoCard(data: ProfileData) -> impl IntoView {
                             class=INPUT_CLASS
                             placeholder="Your name"
                             prop:value=name
+                            disabled=move || save_action.pending().get()
                             on:input=move |ev| set_name.set(event_target_value(&ev))
                             on:blur=on_blur
                         />
