@@ -472,7 +472,7 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(guard).toBeHidden();
   await expect(page).toHaveURL(/\/recipe-editor\/new/);
-  await page.getByLabel('Recipe name', { exact: true }).fill('');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Unsaved changes' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
   await expect(page).toHaveURL(/\/recipes$/);
