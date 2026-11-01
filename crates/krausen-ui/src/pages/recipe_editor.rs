@@ -160,6 +160,7 @@ pub(super) struct PendingRecipeSave {
 fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
     let identity = RwSignal::new(identity);
     let context_visible = RwSignal::new(true);
+    let context_lost = RwSignal::new(false);
     let profile_generation = RwSignal::new(0_u64);
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
@@ -215,7 +216,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let retry = RwSignal::new(None::<PendingRecipeSave>);
     let conflict = RwSignal::new(None::<RecipeSnapshot>);
     let print_preview = RwSignal::new(None::<ProcessSummary>);
-    let context_lost = RwSignal::new(false);
     let scale_open = RwSignal::new(false);
     let duplicate_open = RwSignal::new(false);
     let scale_uncertain = RwSignal::new(false);
