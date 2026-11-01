@@ -356,6 +356,7 @@ async fn exercise(db: DbPool) {
     let mut updated = equipment_request(&profile_id);
     updated.intent = intent(&actor);
     updated.expected_revision = 1;
+    updated.expected_metadata_revision = 1;
     updated.settings.boil_off_l_per_hour = Some(4.0);
     updated.request_id = Uuid::new_v4().to_string();
     equipment::save(&db, &actor, updated)
