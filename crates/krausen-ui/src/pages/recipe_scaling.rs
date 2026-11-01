@@ -288,7 +288,7 @@ pub fn ScaleDialog(
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(ScaleOutcome::ContextChanged) => {
-                    context_visible.set(false);
+                    context_lost.set(true);
                     message.set("Workspace changed; reload the recipe.".into());
                 }
                 Ok(ScaleOutcome::UnresolvedProfile) => {
@@ -375,7 +375,7 @@ pub fn ScaleDialog(
                     message.set("You no longer have access to this workspace.".into())
                 }
                 Ok(ScaleApplyOutcome::ContextChanged) => {
-                    context_visible.set(false);
+                    context_lost.set(true);
                     message.set("Workspace changed; reload the recipe.".into());
                 }
                 Ok(ScaleApplyOutcome::UnresolvedProfile) => {
