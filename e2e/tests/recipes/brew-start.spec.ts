@@ -475,6 +475,7 @@ test('failed retry context preflight retains the same uncertain request', async 
   const switcher = await context.newPage();
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await page.waitForTimeout(500);
   let releasePreflight!: () => void;
   const preflightReleased = new Promise<void>((resolve) => {
     releasePreflight = resolve;
@@ -495,7 +496,13 @@ test('failed retry context preflight retains the same uncertain request', async 
     preflightRequests += 1;
     preflightEntered();
     await preflightReleased;
-    const response = await route.fetch();
+    const cookies = await page.context().cookies();
+    const cookieHeader = cookies
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join('; ');
+    const response = await route.fetch({
+      headers: { ...route.request().headers(), cookie: cookieHeader },
+    });
     const body = await response.json();
     expect(JSON.stringify(body)).toContain(otherWorkspace);
     await route.fulfill({ response });
@@ -596,13 +603,19 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await olderHeld;
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await newerHeld;
   await switcher
     .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
     .click();
   await switcher.getByRole('button', { name: otherName, exact: true }).click();
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
+  await newerHeld;
+  await expect
+    .poll(() =>
+      sqliteExec(
+        `SELECT last_workspace_id FROM users WHERE user_id = '${getDefaultUserId()}'`,
+      ),
+    )
+    .toBe(otherWorkspace);
   releaseNewer();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   const olderResponse = page.waitForResponse((response) =>
