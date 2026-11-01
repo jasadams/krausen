@@ -115,6 +115,24 @@ cargo run --package krausen-server
 
 The server starts at `http://localhost:8003`. In development with Trunk, the frontend is served from `http://localhost:5173` with proxy to the backend.
 
+### Test cadence
+
+Run targeted checks while developing, then the full acceptance suite once when
+the PR is ready, either locally or in CI, not both. On failure, fix the cause and
+rerun only the failed test until it passes; then run the full suite once in the
+chosen environment. The **Foundation database tests** workflow is manual so
+pushes, readiness changes and merges cannot duplicate a local run.
+When choosing CI, explicitly run it on the ready PR's branch:
+
+```sh
+gh workflow run foundation.yml --ref <pr-branch>
+```
+
+Wait for the requested run before merging. A necessary retry is explicit; a new
+request cancels an in-progress run for the same branch. If the full suite already
+passed locally, record that evidence instead of dispatching CI. Retain the tested
+commit and scope with the PR; do not claim old results cover changed code.
+
 ## Repository
 
 ```sh
