@@ -58,6 +58,12 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.locator('#profile-chilling').selectOption('natural');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
+  await expect(
+    page
+      .locator('#equipment-profile-select option')
+      .filter({ hasText: 'E2E kettle' })
+      .first(),
+  ).toBeAttached();
   await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
   await page.getByText('Addition details', { exact: true }).first().click();
   await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
