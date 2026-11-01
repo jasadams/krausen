@@ -465,6 +465,279 @@ pub struct BrewPlanV1 {
     pub calculation_context: CalculationContext,
 }
 
+/// Stable measurement quantity definition. The ID encodes physical basis and
+/// stage; unit/stage/basis are retained and validated evidence, not display-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuantityDefinition {
+    pub id: &'static str,
+    pub unit: &'static str,
+    pub basis: &'static str,
+    pub stage: &'static str,
+    pub label: &'static str,
+}
+
+/// Initial versioned quantity vocabulary. A semantic change gets a new ID.
+pub const QUANTITIES: &[QuantityDefinition] = &[
+    QuantityDefinition {
+        id: "gravity.original.v1",
+        unit: "sg",
+        basis: "specific_gravity",
+        stage: "into_fermenter",
+        label: "Original gravity",
+    },
+    QuantityDefinition {
+        id: "gravity.final.v1",
+        unit: "sg",
+        basis: "specific_gravity",
+        stage: "post_fermentation",
+        label: "Final gravity",
+    },
+    QuantityDefinition {
+        id: "volume.pre_boil.v1",
+        unit: "l",
+        basis: "volume",
+        stage: "pre_boil",
+        label: "Pre-boil volume",
+    },
+    QuantityDefinition {
+        id: "volume.post_boil.v1",
+        unit: "l",
+        basis: "volume",
+        stage: "post_boil",
+        label: "Post-boil volume",
+    },
+    QuantityDefinition {
+        id: "volume.into_fermenter.v1",
+        unit: "l",
+        basis: "volume",
+        stage: "into_fermenter",
+        label: "Volume into fermenter",
+    },
+    QuantityDefinition {
+        id: "volume.packaged.v1",
+        unit: "l",
+        basis: "volume",
+        stage: "packaged",
+        label: "Packaged volume",
+    },
+    QuantityDefinition {
+        id: "temperature.mash.v1",
+        unit: "c",
+        basis: "temperature",
+        stage: "mash",
+        label: "Mash temperature",
+    },
+    QuantityDefinition {
+        id: "temperature.fermentation.v1",
+        unit: "c",
+        basis: "temperature",
+        stage: "fermentation",
+        label: "Fermentation temperature",
+    },
+];
+
+pub fn quantity_definition(id: &str) -> Option<&'static QuantityDefinition> {
+    QUANTITIES.iter().find(|quantity| quantity.id == id)
+}
+
+fn default_schema_version() -> u32 {
+    1
+}
+
+/// Optional observation metadata retained when supplied. Missing context stays
+/// absent; nothing is inferred from a previous reading or instrument default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct MeasurementMetadataV1 {
+    pub instrument: Option<String>,
+    pub sample_temperature_c: Option<f64>,
+    pub method: Option<String>,
+    pub reference_temperature_c: Option<f64>,
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// Immutable observation entry. A root entry names itself as its observation
+/// root; a correction/retraction points at the original root and the entry it
+/// supersedes. A retraction has no value; missing is not zero.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MeasurementEntry {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub entry_id: String,
+    pub quantity_id: String,
+    pub unit: String,
+    pub basis: String,
+    pub stage: String,
+    pub value: Option<f64>,
+    pub observed_at: i64,
+    pub time_source: String,
+    pub recorded_at: i64,
+    pub actor_id: String,
+    pub source: String,
+    pub root_observation_id: String,
+    pub supersedes_entry_id: Option<String>,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub metadata: MeasurementMetadataV1,
+}
+
+impl MeasurementEntry {
+    pub fn is_retraction(&self) -> bool {
+        self.value.is_none()
+    }
+}
+
+/// Complete actual ingredients/process. This is a projection of the planned
+/// recipe rows, never a second recipe with identity, targets or equipment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct ActualFormulationV1 {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    pub fermentables: Vec<FermentableAddition>,
+    pub hops: Vec<HopAddition>,
+    pub yeast: Vec<IngredientAddition>,
+    pub other_ingredients: Vec<IngredientAddition>,
+    pub process: ProcessV1,
+    pub notes: Option<String>,
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl Default for ActualFormulationV1 {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            fermentables: Vec::new(),
+            hops: Vec::new(),
+            yeast: Vec::new(),
+            other_ingredients: Vec::new(),
+            process: ProcessV1::default(),
+            notes: None,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+/// Append-only complete actual formulation revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ActualFormulationRevision {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub revision: i64,
+    pub predecessor_revision: Option<i64>,
+    pub document: ActualFormulationV1,
+    pub content_digest: String,
+    pub actor_id: String,
+    pub recorded_at: i64,
+    pub reason: Option<String>,
+}
+
+/// Qualitative note document. `None` is an explicit retraction; earlier text is
+/// retained by its immutable revision history.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct ObservationNoteV1 {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    pub text: Option<String>,
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl Default for ObservationNoteV1 {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            text: None,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ObservationNote {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub note_id: String,
+    pub current_revision: i64,
+    pub created_at: i64,
+    pub created_by: String,
+}
+
+/// Append-only note revision; corrections preserve all earlier text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ObservationRevision {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub note_id: String,
+    pub revision: i64,
+    pub document: ObservationNoteV1,
+    pub content_digest: String,
+    pub supersedes_revision: Option<i64>,
+    pub actor_id: String,
+    pub recorded_at: i64,
+    pub reason: Option<String>,
+}
+
+/// One nullable selected observation root per brew/quantity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ActualSelection {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub quantity_id: String,
+    pub revision: i64,
+    pub selected_root_observation_id: Option<String>,
+    pub updated_at: i64,
+    pub updated_by: String,
+}
+
+/// Append-only selection-change event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ActualSelectionEvent {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub quantity_id: String,
+    pub revision: i64,
+    pub selected_root_observation_id: Option<String>,
+    pub actor_id: String,
+    pub recorded_at: i64,
+}
+
+/// Append-only lifecycle transition, ordered by the brew aggregate revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BrewLifecycleEvent {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub brew_revision: i64,
+    pub from_status: BrewStatusV1,
+    pub to_status: BrewStatusV1,
+    pub reason: Option<String>,
+    pub actor_id: String,
+    pub recorded_at: i64,
+}
+
+/// Append-only archive metadata event; the plan and evidence are never pruned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BrewArchiveEvent {
+    pub workspace_id: String,
+    pub brew_id: String,
+    pub metadata_revision: i64,
+    pub archived: bool,
+    pub actor_id: String,
+    pub recorded_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
