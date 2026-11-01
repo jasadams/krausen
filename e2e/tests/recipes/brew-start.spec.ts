@@ -425,6 +425,167 @@ test('retained uncertain request recovers after a real workspace round trip', as
   await switcher.close();
 });
 
+test('failed retry context preflight retains the same uncertain request', async ({
+  page,
+  context,
+}) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Brew retry preflight ${Date.now()}`);
+  const workspace = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`,
+  );
+  const recordCommands: any[] = [];
+  let firstRecord = true;
+  await page.route('**/leptos-api/brew_measurement*', async (route) => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') {
+      await route.continue();
+      return;
+    }
+    recordCommands.push(command);
+    if (firstRecord) {
+      firstRecord = false;
+      await route.fetch();
+      await expect
+        .poll(() =>
+          sqliteExec(
+            `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
+          ),
+        )
+        .toBe('1');
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading' }).first().click();
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  const otherName = `Retry preflight ${Date.now()}`;
+  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  walCheckpoint();
+  const switcher = await context.newPage();
+  await switcher.goto(page.url());
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  let releasePreflight!: () => void;
+  const preflightReleased = new Promise<void>((resolve) => {
+    releasePreflight = resolve;
+  });
+  let preflightEntered!: () => void;
+  const preflightHeld = new Promise<void>((resolve) => {
+    preflightEntered = resolve;
+  });
+  let firstPreflight = true;
+  await page.route('**/leptos-api/get_user_context*', async (route) => {
+    if (!firstPreflight) {
+      await route.continue();
+      return;
+    }
+    firstPreflight = false;
+    preflightEntered();
+    await preflightReleased;
+    const response = await route.fetch();
+    await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: 'Retry same request' }).click();
+  await preflightHeld;
+  await switcher
+    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .click();
+  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
+  releasePreflight();
+  await expect(page.getByText('Account or workspace changed')).toBeVisible();
+  await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+  const originalName = sqliteExec(
+    `SELECT name FROM workspaces WHERE workspace_id = '${workspace}'`,
+  );
+  await switcher
+    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .click();
+  await switcher.getByRole('button', { name: originalName, exact: true }).click();
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('Outcome uncertain')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry same request' }).click();
+  await expect(page.getByText('Measurement recorded.')).toBeVisible();
+  await expect.poll(() => recordCommands.length).toBe(2);
+  expect(recordCommands[1].request_id).toBe(recordCommands[0].request_id);
+  expect(
+    sqliteExec(
+      `SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`,
+    ),
+  ).toBe('1');
+  await switcher.close();
+});
+
+test('out-of-order context success cannot restore hidden evidence', async ({
+  page,
+  context,
+}) => {
+  await startBrewAndOpenEvidence(page, `Brew out of order ${Date.now()}`);
+  const otherName = `Out of order ${Date.now()}`;
+  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  walCheckpoint();
+  let releaseOlder!: () => void;
+  const olderReleased = new Promise<void>((resolve) => {
+    releaseOlder = resolve;
+  });
+  let olderEntered!: () => void;
+  const olderHeld = new Promise<void>((resolve) => {
+    olderEntered = resolve;
+  });
+  let releaseNewer!: () => void;
+  const newerReleased = new Promise<void>((resolve) => {
+    releaseNewer = resolve;
+  });
+  let newerEntered!: () => void;
+  const newerHeld = new Promise<void>((resolve) => {
+    newerEntered = resolve;
+  });
+  let contextChecks = 0;
+  await page.route('**/leptos-api/get_user_context*', async (route) => {
+    contextChecks += 1;
+    if (contextChecks === 1) {
+      const response = await route.fetch();
+      olderEntered();
+      await olderReleased;
+      await route.fulfill({ response });
+      return;
+    }
+    if (contextChecks === 2) {
+      newerEntered();
+      await newerReleased;
+      const response = await route.fetch();
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await olderHeld;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await newerHeld;
+  const switcher = await context.newPage();
+  await switcher.goto(page.url());
+  await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await switcher
+    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .click();
+  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
+  releaseNewer();
+  await expect(page.getByText('Account or workspace changed')).toBeVisible();
+  const olderResponse = page.waitForResponse((response) =>
+    response.url().includes('/get_user_context'),
+  );
+  releaseOlder();
+  await olderResponse;
+  await expect(page.getByText('Account or workspace changed')).toBeVisible();
+  await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+  await expect(page.getByText('Brew evidence')).toHaveCount(0);
+  await switcher.close();
+});
+
 test('held overview response after same-document unmount is ignored', async ({ page }) => {
   await startBrewAndOpenEvidence(page, `Brew unmount ${Date.now()}`);
   const pageErrors: string[] = [];
