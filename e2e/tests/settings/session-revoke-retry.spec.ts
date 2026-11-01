@@ -1,17 +1,16 @@
 import { test, expect, type Browser } from '@playwright/test';
-import { db, gotoAuthenticated, isPersonalMode, isSelfHostedMode, loginUser, waitForWasm } from '../../helpers/test-helpers';
+import { db, gotoAuthenticated, isSelfHostedMode, loginUser } from '../../helpers/test-helpers';
 
 async function createSession(browser: Browser, userAgent: string) {
   const context = await browser.newContext({ userAgent });
   try {
     const page = await context.newPage();
-    if (isSelfHostedMode()) await loginUser(page, 'local@localhost', 'TestPassword1234');
-    else { await page.goto('/'); await waitForWasm(page); }
+    await loginUser(page, 'local@localhost', 'TestPassword1234');
   } finally { await context.close(); }
 }
 
 test('uncertain revocation retains its request identity when another row completes', async ({ page, browser }) => {
-  test.skip(isPersonalMode(), 'personal mode has no browser sessions');
+  test.skip(!isSelfHostedMode(), 'this regression creates distinct authenticated self-hosted sessions');
   const marker = `KRA11-${Date.now()}`;
   const agentA = `${marker}-A`;
   const agentB = `${marker}-B`;
@@ -24,10 +23,14 @@ test('uncertain revocation retains its request identity when another row complet
   await expect(rowB).toBeVisible();
   type Session = { token_id: string; [key: string]: unknown };
   let initialSessions: Session[] = [];
+  let latestRealSessions: Session[] = [];
+  let sessionReads = 0;
   let aToken: string | undefined;
   await page.route('**/leptos-api/get_sessions*', async route => {
     const response = await route.fetch();
     const sessions = await response.json() as Session[];
+    latestRealSessions = [...sessions];
+    sessionReads++;
     if (!aToken) initialSessions = sessions;
     // Keep A visible after B's success-triggered refresh, simulating a stale
     // screen where an uncertain committed response can be retried.
@@ -40,6 +43,8 @@ test('uncertain revocation retains its request identity when another row complet
   await page.locator('button[title="Refresh sessions"]').click();
   await expect.poll(() => initialSessions.length).toBeGreaterThanOrEqual(3);
   const requests: { token_id: string; request_id: string }[] = [];
+  let markRecovered!: () => void;
+  const recovered = new Promise<void>(resolve => { markRecovered = resolve; });
   await page.route('**/leptos-api/revoke_session*', async route => {
     const payload = route.request().postDataJSON() as { token_id: string; request_id: string };
     requests.push(payload);
@@ -58,7 +63,15 @@ test('uncertain revocation retains its request identity when another row complet
       expect(response.ok()).toBeTruthy();
       expect((await response.json()).outcome.status).toBe('revoked');
       await route.fulfill({ response });
-    } else await route.continue();
+      markRecovered();
+    } else {
+      expect(payload.token_id).toMatch(/^[A-Za-z0-9_-]+$/);
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      expect((await response.json()).outcome.status).toBe('revoked');
+      expect(db.exec(`SELECT COUNT(*) FROM account_session_revocations WHERE expected_token_id='${payload.token_id}'`)).toBe('1');
+      await route.fulfill({ response });
+    }
   });
   const disconnect = async (row: typeof rowA) => {
     await row.locator('button[title="Disconnect this session"]').click();
@@ -69,8 +82,12 @@ test('uncertain revocation retains its request identity when another row complet
   await disconnect(rowB);
   await expect(rowB).toHaveCount(0);
   await expect(rowA).toBeVisible();
+  const readsBeforeRecovery = sessionReads;
   await disconnect(rowA);
-  await expect.poll(() => requests.length).toBe(3);
+  await recovered;
+  // A successful UI outcome triggers a fresh authenticated sessions read.
+  await expect.poll(() => sessionReads).toBeGreaterThan(readsBeforeRecovery);
+  expect(latestRealSessions.some(session => session.is_current === true)).toBeTruthy();
   expect(requests[0].token_id).toBe(requests[2].token_id);
   expect(requests[0].token_id).not.toBe(requests[1].token_id);
   expect(requests[2].request_id).toBe(requests[0].request_id);
