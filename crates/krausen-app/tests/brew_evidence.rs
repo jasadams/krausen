@@ -1801,8 +1801,23 @@ async fn exercise_acceptance_cases(db: DbPool) {
             "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
             &actor.workspace_id
         );
+        let selection_before = view(&db, &actor, &brew_id).await;
+        let selection_before = selection_before
+            .measurements
+            .iter()
+            .find(|slot| slot.quantity_id == "gravity.original.v1")
+            .unwrap();
+        let selection_revision_before = selection_before.selection_revision;
+        let selected_root_before = selection_before.selected_root_observation_id.clone();
+        let lineage_before = count!(
+            "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND root_observation_id = $3",
+            &actor.workspace_id,
+            &brew_id,
+            selected_root_before.as_deref().unwrap()
+        );
         let workspace = actor.workspace_id.as_str();
         if db.is_postgres() {
+            run!("DROP TRIGGER IF EXISTS kra21_reject_change ON app_changes");
             let function = format!(
                 "CREATE OR REPLACE FUNCTION kra21_reject_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.workspace_id = '{workspace}' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$"
             );
@@ -1811,6 +1826,7 @@ async fn exercise_acceptance_cases(db: DbPool) {
                 "CREATE TRIGGER kra21_reject_change BEFORE INSERT ON app_changes FOR EACH ROW EXECUTE FUNCTION kra21_reject_change()"
             );
         } else {
+            run!("DROP TRIGGER IF EXISTS kra21_reject_change");
             let trigger = format!(
                 "CREATE TRIGGER kra21_reject_change BEFORE INSERT ON app_changes WHEN NEW.workspace_id = '{workspace}' BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
             );
@@ -1854,6 +1870,30 @@ async fn exercise_acceptance_cases(db: DbPool) {
             changes,
             "change record must roll back"
         );
+        let selection_after = view(&db, &actor, &brew_id).await;
+        let selection_after = selection_after
+            .measurements
+            .iter()
+            .find(|slot| slot.quantity_id == "gravity.original.v1")
+            .unwrap();
+        assert_eq!(
+            selection_after.selection_revision, selection_revision_before,
+            "selection revision must roll back"
+        );
+        assert_eq!(
+            selection_after.selected_root_observation_id, selected_root_before,
+            "selected root must roll back"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2 AND root_observation_id = $3",
+                &actor.workspace_id,
+                &brew_id,
+                selected_root_before.as_deref().unwrap()
+            ),
+            lineage_before,
+            "lineage history must roll back"
+        );
     }
 
     // Expired and revoked credentials fail before recovery; a fresh credential
@@ -1869,6 +1909,14 @@ async fn exercise_acceptance_cases(db: DbPool) {
             "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
             &actor.workspace_id,
             &brew_id
+        );
+        let requests = count!(
+            "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
+        );
+        let changes = count!(
+            "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
         );
         let past = chrono::Utc::now().timestamp() - 1;
         run!(
@@ -1910,13 +1958,32 @@ async fn exercise_acceptance_cases(db: DbPool) {
             chrono::Utc::now().timestamp()
         );
         assert_eq!(
-            record(
-                &db,
-                &actor,
-                record_request(&actor, &brew_id, "gravity.final.v1", 1.011),
-            )
-            .await,
-            MeasurementOutcome::Forbidden
+            record(&db, &actor, request.clone()).await,
+            MeasurementOutcome::Forbidden,
+            "revocation must deny replay of the same committed request"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            entries,
+            "revoked replay must not add evidence"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            requests
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            changes
         );
     }
 
@@ -1928,6 +1995,27 @@ async fn exercise_acceptance_cases(db: DbPool) {
         let MeasurementOutcome::Recorded(_) = record(&db, &actor, request.clone()).await else {
             panic!("result expiry fixture");
         };
+        let entries = count!(
+            "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+            &actor.workspace_id,
+            &brew_id
+        );
+        let requests = count!(
+            "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
+        );
+        let changes = count!(
+            "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
+        );
+        let selection_before = view(&db, &actor, &brew_id).await;
+        let selection_before = selection_before
+            .measurements
+            .iter()
+            .find(|slot| slot.quantity_id == "gravity.final.v1")
+            .unwrap();
+        let selection_revision = selection_before.selection_revision;
+        let selected_root = selection_before.selected_root_observation_id.clone();
         run!(
             "UPDATE app_requests SET result_expires_at = $4 WHERE workspace_id = $1 AND actor_id = $2 AND operation = 'brew.measurement.record.v1' AND request_id = $3",
             &actor.workspace_id,
@@ -1938,8 +2026,102 @@ async fn exercise_acceptance_cases(db: DbPool) {
         assert_eq!(
             record(&db, &actor, request).await,
             MeasurementOutcome::ResultExpired {
-                resource_id: Some(brew_id)
+                resource_id: Some(brew_id.clone())
             }
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            entries,
+            "expired result replay must not re-execute evidence writes"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            requests
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            changes
+        );
+        let selection_after = view(&db, &actor, &brew_id).await;
+        let selection_after = selection_after
+            .measurements
+            .iter()
+            .find(|slot| slot.quantity_id == "gravity.final.v1")
+            .unwrap();
+        assert_eq!(selection_after.selection_revision, selection_revision);
+        assert_eq!(selection_after.selected_root_observation_id, selected_root);
+    }
+
+    // Complete and cancel do not require any measurements.
+    for (transition, expected_status, expected_event) in [
+        (
+            BrewTransitionV1::Complete,
+            BrewStatusV1::Completed,
+            "completed",
+        ),
+        (
+            BrewTransitionV1::Cancel,
+            BrewStatusV1::Cancelled,
+            "cancelled",
+        ),
+    ] {
+        let (actor, brew_id, _) = fixture(&db).await;
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0
+        );
+        let outcome = brew_evidence::transition(
+            &db,
+            &actor,
+            TransitionBrewRequest {
+                intent: intent(&actor),
+                brew_id: brew_id.clone(),
+                expected_revision: 1,
+                transition,
+                reason: None,
+                request_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await;
+        assert_eq!(
+            outcome,
+            BrewLifecycleOutcome::Transitioned {
+                brew_id: brew_id.clone(),
+                status: expected_status,
+                revision: 2
+            }
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            0,
+            "terminal transition must not invent measurements"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_lifecycle_events WHERE workspace_id = $1 AND brew_id = $2 AND brew_revision = 2 AND to_status = $3",
+                &actor.workspace_id,
+                &brew_id,
+                expected_event
+            ),
+            1
         );
     }
 
