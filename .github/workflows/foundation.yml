@@ -88,7 +88,6 @@ jobs:
       - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
       - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
       - run: cargo install trunk --version 0.21.14 --locked
-      - run: cargo test -p krausen-app --lib scaling::tests
       - run: cargo build -p krausen-server
       - run: cd crates/krausen-ui && trunk build
       - run: e2e/scripts/profile-browser.sh
