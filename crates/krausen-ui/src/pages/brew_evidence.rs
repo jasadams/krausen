@@ -4,7 +4,9 @@ use crate::{
     components::{
         BreweryDraftArea, BreweryDraftField, BreweryMetric, BreweryNotice, BreweryPanel, Button,
         ButtonVariant,
+        layout::{CONTEXT_CHANGED_KEY, EditorGuard},
     },
+    pages::recipe_editor::current_context_matches,
     server_fns::brew::{
         brew_archive_shared, brew_evidence_view_shared, brew_measurement_shared, brew_note_shared,
     },
@@ -23,6 +25,14 @@ use krausen_types::{
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use std::collections::BTreeMap;
+
+#[derive(Clone)]
+enum PendingEvidence {
+    Measurement(MeasurementCommand),
+    Note(NoteCommand),
+    Lifecycle(TransitionBrewRequest),
+    Archive(ArchiveBrewRequest),
+}
 
 fn measurement_message(outcome: &MeasurementOutcome) -> (bool, String) {
     match outcome {
@@ -234,11 +244,14 @@ pub fn BrewEvidencePage() -> impl IntoView {
 fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView {
     let intent = StoredValue::new(intent);
     let brew_id = StoredValue::new(brew_id);
+    let editor_guard = expect_context::<EditorGuard>();
     let view = RwSignal::new(None::<BrewEvidenceView>);
     let readings = RwSignal::new(Vec::new());
     let message = RwSignal::new(String::new());
     let warning = RwSignal::new(false);
     let busy = RwSignal::new(false);
+    let context_valid = RwSignal::new(true);
+    let pending = RwSignal::new(None::<PendingEvidence>);
     let generation = RwSignal::new(0_u64);
     let inputs = RwSignal::new(BTreeMap::<String, String>::new());
     let note_text = RwSignal::new(String::new());
@@ -250,6 +263,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         let sequence = generation.get_untracked() + 1;
         generation.set(sequence);
         let expected = intent.get_value();
+        let expected_context = expected.clone();
         let id = brew_id.get_value();
         busy.set(true);
         leptos::task::spawn_local(async move {
@@ -271,6 +285,14 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             if generation.try_get_untracked() != Some(sequence) {
                 return;
             }
+            if !current_context_matches(&expected_context).await {
+                context_valid.set(false);
+                view.set(None);
+                readings.set(Vec::new());
+                busy.set(false);
+                return;
+            }
+            context_valid.set(true);
             busy.set(false);
             match view_outcome {
                 Ok(BrewEvidenceViewOutcome::View(data)) => {
@@ -287,12 +309,16 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     message.set("Brew not found in this workspace.".into());
                 }
                 Ok(BrewEvidenceViewOutcome::Forbidden) => {
+                    context_valid.set(false);
                     view.set(None);
+                    readings.set(Vec::new());
                     warning.set(true);
                     message.set("You no longer have access to this brew.".into());
                 }
                 Ok(BrewEvidenceViewOutcome::ContextChanged) => {
+                    context_valid.set(false);
                     view.set(None);
+                    readings.set(Vec::new());
                     warning.set(true);
                     message.set("Account or workspace changed. Reopen the brew.".into());
                 }
@@ -311,7 +337,101 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             }
         });
     });
-    on_mount(move || load.run(()));
+    Effect::new(move |_| load.run(()));
+    Effect::new(move |_| {
+        editor_guard.dirty.set(
+            inputs.get().values().any(|value| !value.trim().is_empty())
+                || !note_text.get().trim().is_empty()
+                || !reason.get().trim().is_empty()
+                || pending.get().is_some(),
+        );
+    });
+    Effect::new(move |_| {
+        editor_guard
+            .pending
+            .set(busy.get() || pending.get().is_some());
+    });
+    editor_guard.discard.set(Some(Callback::new(move |_| {
+        inputs.set(BTreeMap::new());
+        note_text.set(String::new());
+        reason.set(String::new());
+        pending.set(None);
+        true
+    })));
+    editor_guard.save.set(Some(Callback::new(move |_| {
+        warning.set(true);
+        message.set(
+            "Evidence writes are explicit. Use the action buttons to save, or choose Discard and leave."
+                .into(),
+        );
+        editor_guard.saving_to_leave.set(false);
+    })));
+    on_cleanup(move || {
+        editor_guard.dirty.set(false);
+        editor_guard.pending.set(false);
+        editor_guard.discard.set(None);
+        editor_guard.save.set(None);
+    });
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::{JsCast, closure::Closure};
+        let window = web_sys::window().expect("browser window");
+        let unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
+            move |event: web_sys::BeforeUnloadEvent| {
+                if editor_guard.dirty.get_untracked() {
+                    event.prevent_default();
+                    event.set_return_value("");
+                }
+            },
+        );
+        if window
+            .add_event_listener_with_callback("beforeunload", unload.as_ref().unchecked_ref())
+            .is_err()
+        {
+            tracing::warn!("Unable to install the evidence unsaved-changes warning");
+            editor_guard.navigation_error.set(
+                "The browser's unsaved-changes warning is unavailable; keep this page open.".into(),
+            );
+        }
+        let listener = send_wrapper::SendWrapper::new((window, unload));
+        on_cleanup(move || {
+            let (window, unload) = &*listener;
+            if window
+                .remove_event_listener_with_callback(
+                    "beforeunload",
+                    unload.as_ref().unchecked_ref(),
+                )
+                .is_err()
+            {
+                tracing::warn!("Unable to remove the evidence unsaved-changes warning");
+            }
+        });
+
+        let recheck = Callback::new(move |_| {
+            let expected = intent.get_value();
+            leptos::task::spawn_local(async move {
+                let valid = current_context_matches(&expected).await;
+                context_valid.set(valid);
+                if valid {
+                    load.run(());
+                } else {
+                    view.set(None);
+                    readings.set(Vec::new());
+                }
+            });
+        });
+        let focus = window_event_listener(leptos::ev::focus, move |_| recheck.run(()));
+        let storage = window_event_listener(leptos::ev::storage, move |event| {
+            if event.key().as_deref() == Some(CONTEXT_CHANGED_KEY) {
+                recheck.run(());
+            }
+        });
+        on_cleanup(move || {
+            focus.remove();
+            storage.remove();
+        });
+    }
 
     let load_lifecycle_more = Callback::new(move |_| {
         let Some(cursor) = lifecycle_cursor.get_untracked() else {
@@ -345,60 +465,266 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
     });
 
+    let blocked = Signal::derive(move || busy.get() || pending.get().is_some());
+
+    let dispatch = Callback::new(move |action: PendingEvidence| {
+        if busy.get_untracked() || pending.get_untracked().is_some() {
+            return;
+        }
+        let expected = intent.get_value();
+        pending.set(Some(action.clone()));
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            if !current_context_matches(&expected).await {
+                pending.set(None);
+                context_valid.set(false);
+                view.set(None);
+                readings.set(Vec::new());
+                busy.set(false);
+                warning.set(true);
+                message.set("Account or workspace changed. Reopen the brew.".into());
+                return;
+            }
+            match action {
+                PendingEvidence::Measurement(command) => {
+                    let outcome = brew_measurement_shared(command).await;
+                    busy.set(false);
+                    match outcome {
+                        Ok(outcome) => {
+                            let definitive = !matches!(
+                                &outcome,
+                                MeasurementOutcome::Retryable | MeasurementOutcome::Unavailable
+                            );
+                            if definitive {
+                                pending.set(None);
+                            }
+                            match outcome {
+                                MeasurementOutcome::Conflict { .. }
+                                | MeasurementOutcome::EntryConflict { .. } => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Changed elsewhere; current evidence refreshed. Review and reapply."
+                                            .into(),
+                                    );
+                                    load.run(());
+                                }
+                                MeasurementOutcome::Forbidden
+                                | MeasurementOutcome::ContextChanged => {
+                                    context_valid.set(false);
+                                    view.set(None);
+                                    readings.set(Vec::new());
+                                    warning.set(true);
+                                    message.set(
+                                        "Account or workspace changed. Reopen the brew.".into(),
+                                    );
+                                }
+                                MeasurementOutcome::Retryable | MeasurementOutcome::Unavailable => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Outcome uncertain; retry the same request or abandon it."
+                                            .into(),
+                                    );
+                                }
+                                other => {
+                                    let (ok, text) = measurement_message(&other);
+                                    warning.set(!ok);
+                                    if !text.is_empty() {
+                                        message.set(text);
+                                    }
+                                    if ok {
+                                        load.run(());
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            warning.set(true);
+                            message.set(format!(
+                                "Reading request uncertain: {error}. Retry the same request or abandon it."
+                            ));
+                        }
+                    }
+                }
+                PendingEvidence::Note(command) => {
+                    let outcome = brew_note_shared(command).await;
+                    busy.set(false);
+                    match outcome {
+                        Ok(outcome) => {
+                            let definitive = !matches!(
+                                &outcome,
+                                NoteOutcome::Retryable | NoteOutcome::Unavailable
+                            );
+                            if definitive {
+                                pending.set(None);
+                            }
+                            match outcome {
+                                NoteOutcome::Conflict { .. } => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Note changed elsewhere; current evidence refreshed. Review and reapply."
+                                            .into(),
+                                    );
+                                    load.run(());
+                                }
+                                NoteOutcome::Forbidden | NoteOutcome::ContextChanged => {
+                                    context_valid.set(false);
+                                    view.set(None);
+                                    readings.set(Vec::new());
+                                    warning.set(true);
+                                    message.set(
+                                        "Account or workspace changed. Reopen the brew.".into(),
+                                    );
+                                }
+                                NoteOutcome::Retryable | NoteOutcome::Unavailable => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Outcome uncertain; retry the same request or abandon it."
+                                            .into(),
+                                    );
+                                }
+                                other => {
+                                    let (ok, text) = note_message(&other);
+                                    warning.set(!ok);
+                                    if !text.is_empty() {
+                                        message.set(text);
+                                    }
+                                    if ok {
+                                        load.run(());
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            warning.set(true);
+                            message.set(format!(
+                                "Note request uncertain: {error}. Retry the same request or abandon it."
+                            ));
+                        }
+                    }
+                }
+                PendingEvidence::Lifecycle(request) => {
+                    let outcome = crate::server_fns::brew::brew_lifecycle_shared(request).await;
+                    busy.set(false);
+                    match outcome {
+                        Ok(outcome) => {
+                            let definitive = !matches!(
+                                &outcome,
+                                BrewLifecycleOutcome::Retryable | BrewLifecycleOutcome::Unavailable
+                            );
+                            if definitive {
+                                pending.set(None);
+                            }
+                            match outcome {
+                                BrewLifecycleOutcome::Conflict { .. } => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Brew changed elsewhere; current lifecycle refreshed. Review and reapply."
+                                            .into(),
+                                    );
+                                    load.run(());
+                                }
+                                BrewLifecycleOutcome::Forbidden
+                                | BrewLifecycleOutcome::ContextChanged => {
+                                    context_valid.set(false);
+                                    view.set(None);
+                                    readings.set(Vec::new());
+                                    warning.set(true);
+                                    message.set(
+                                        "Account or workspace changed. Reopen the brew.".into(),
+                                    );
+                                }
+                                BrewLifecycleOutcome::Retryable
+                                | BrewLifecycleOutcome::Unavailable => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Outcome uncertain; retry the same request or abandon it."
+                                            .into(),
+                                    );
+                                }
+                                other => {
+                                    let (ok, text) = lifecycle_message(&other);
+                                    warning.set(!ok);
+                                    message.set(text);
+                                    if ok {
+                                        load.run(());
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            warning.set(true);
+                            message.set(format!(
+                                "Lifecycle request uncertain: {error}. Retry the same request or abandon it."
+                            ));
+                        }
+                    }
+                }
+                PendingEvidence::Archive(request) => {
+                    let outcome = brew_archive_shared(request).await;
+                    busy.set(false);
+                    match outcome {
+                        Ok(outcome) => {
+                            let definitive = !matches!(
+                                &outcome,
+                                BrewArchiveOutcome::Retryable | BrewArchiveOutcome::Unavailable
+                            );
+                            if definitive {
+                                pending.set(None);
+                            }
+                            match outcome {
+                                BrewArchiveOutcome::Conflict { .. } => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Archive state changed elsewhere; current evidence refreshed. Review and reapply."
+                                            .into(),
+                                    );
+                                    load.run(());
+                                }
+                                BrewArchiveOutcome::Forbidden
+                                | BrewArchiveOutcome::ContextChanged => {
+                                    context_valid.set(false);
+                                    view.set(None);
+                                    readings.set(Vec::new());
+                                    warning.set(true);
+                                    message.set(
+                                        "Account or workspace changed. Reopen the brew.".into(),
+                                    );
+                                }
+                                BrewArchiveOutcome::Retryable | BrewArchiveOutcome::Unavailable => {
+                                    warning.set(true);
+                                    message.set(
+                                        "Outcome uncertain; retry the same request or abandon it."
+                                            .into(),
+                                    );
+                                }
+                                other => {
+                                    let (ok, text) = archive_message(&other);
+                                    warning.set(!ok);
+                                    message.set(text);
+                                    if ok {
+                                        load.run(());
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            warning.set(true);
+                            message.set(format!(
+                                "Archive request uncertain: {error}. Retry the same request or abandon it."
+                            ));
+                        }
+                    }
+                }
+            }
+        });
+    });
+
     let run_measurement = Callback::new(move |command: MeasurementCommand| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let outcome = brew_measurement_shared(command).await;
-            busy.set(false);
-            match outcome {
-                Ok(outcome) => {
-                    let (ok, text) = measurement_message(&outcome);
-                    warning.set(!ok);
-                    if !text.is_empty() {
-                        message.set(text);
-                    }
-                    if ok {
-                        load.run(());
-                    }
-                }
-                Err(error) => {
-                    warning.set(true);
-                    message.set(format!("Reading request failed: {error}"));
-                }
-            }
-        });
+        dispatch.run(PendingEvidence::Measurement(command));
     });
-
     let run_note = Callback::new(move |command: NoteCommand| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let outcome = brew_note_shared(command).await;
-            busy.set(false);
-            match outcome {
-                Ok(outcome) => {
-                    let (ok, text) = note_message(&outcome);
-                    warning.set(!ok);
-                    if !text.is_empty() {
-                        message.set(text);
-                    }
-                    if ok {
-                        load.run(());
-                    }
-                }
-                Err(error) => {
-                    warning.set(true);
-                    message.set(format!("Note request failed: {error}"));
-                }
-            }
-        });
+        dispatch.run(PendingEvidence::Note(command));
     });
-
     let run_transition = Callback::new(move |transition: BrewTransitionV1| {
         let Some(data) = view.get_untracked() else {
             return;
@@ -420,35 +746,15 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             message.set("Unable to create a secure request identity.".into());
             return;
         };
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let outcome = crate::server_fns::brew::brew_lifecycle_shared(TransitionBrewRequest {
-                intent: intent.get_value(),
-                brew_id: brew_id.get_value(),
-                expected_revision: data.revision,
-                transition,
-                reason: (!reason_text.is_empty()).then_some(reason_text),
-                request_id,
-            })
-            .await;
-            busy.set(false);
-            match outcome {
-                Ok(outcome) => {
-                    let (ok, text) = lifecycle_message(&outcome);
-                    warning.set(!ok);
-                    message.set(text);
-                    if ok {
-                        load.run(());
-                    }
-                }
-                Err(error) => {
-                    warning.set(true);
-                    message.set(format!("Lifecycle request failed: {error}"));
-                }
-            }
-        });
+        dispatch.run(PendingEvidence::Lifecycle(TransitionBrewRequest {
+            intent: intent.get_value(),
+            brew_id: brew_id.get_value(),
+            expected_revision: data.revision,
+            transition,
+            reason: (!reason_text.is_empty()).then_some(reason_text),
+            request_id,
+        }));
     });
-
     let run_archive = Callback::new(move |archived: bool| {
         let Some(data) = view.get_untracked() else {
             return;
@@ -458,40 +764,57 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             message.set("Unable to create a secure request identity.".into());
             return;
         };
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let outcome = brew_archive_shared(ArchiveBrewRequest {
-                intent: intent.get_value(),
-                brew_id: brew_id.get_value(),
-                archived,
-                expected_metadata_revision: data.metadata_revision,
-                request_id,
-            })
-            .await;
-            busy.set(false);
-            match outcome {
-                Ok(outcome) => {
-                    let (ok, text) = archive_message(&outcome);
-                    warning.set(!ok);
-                    message.set(text);
-                    if ok {
-                        load.run(());
-                    }
-                }
-                Err(error) => {
-                    warning.set(true);
-                    message.set(format!("Archive request failed: {error}"));
-                }
-            }
-        });
+        dispatch.run(PendingEvidence::Archive(ArchiveBrewRequest {
+            intent: intent.get_value(),
+            brew_id: brew_id.get_value(),
+            archived,
+            expected_metadata_revision: data.metadata_revision,
+            request_id,
+        }));
+    });
+    let retry_pending = Callback::new(move |_| {
+        if let Some(action) = pending.get_untracked() {
+            pending.set(None);
+            dispatch.run(action);
+        }
+    });
+    let abandon_pending = Callback::new(move |_| {
+        pending.set(None);
+        warning.set(true);
+        message.set(
+            "Uncertain request abandoned. Verify the current evidence before recording new content."
+                .into(),
+        );
+        load.run(());
     });
 
     view! {
         <div class="recipe-editor">
+            <Show
+                when=move || context_valid.get()
+                fallback=|| view! {
+                    <BreweryNotice
+                        title="Account or workspace changed"
+                        body="Reopen this brew in the original workspace. Evidence and drafts stay hidden until the original context is verified."
+                        warning=true
+                    />
+                }
+            >
             <BreweryPanel
                 title="Brew evidence"
                 description="Readings, notes, lifecycle and archive all use the same shared operations as MCP."
             >
+                {move || pending.get().map(|_| view! {
+                    <BreweryNotice
+                        title="Outcome uncertain"
+                        body="The last write may have committed. Retry the same request or abandon it before changing content."
+                        warning=true
+                    />
+                    <div class="recipe-editor__actions">
+                        <Button disabled=busy on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
+                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| abandon_pending.run(())>"Abandon uncertain request"</Button>
+                    </div>
+                })}
                 {move || (!message.get().is_empty()).then(|| view! {
                     <BreweryNotice title="Brew evidence" body=message.get() warning=warning.get()/>
                 })}
@@ -526,22 +849,22 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         </p>
                         <div class="recipe-editor__actions">
                             <Button
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| run_transition.run(BrewTransitionV1::Complete)
                             >"Complete"</Button>
                             <Button
                                 variant=ButtonVariant::Secondary
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| run_transition.run(BrewTransitionV1::Cancel)
                             >"Cancel brew"</Button>
                             <Button
                                 variant=ButtonVariant::Secondary
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| run_transition.run(BrewTransitionV1::Reopen)
                             >"Reopen"</Button>
                             <Button
                                 variant=ButtonVariant::Secondary
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| run_archive.run(!archived)
                             >{archive_label.to_string()}</Button>
                         </div>
@@ -674,10 +997,10 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                         numeric=true
                                     />
                                     <div class="recipe-editor__actions">
-                                        <Button disabled=busy on:click=record>"Record reading"</Button>
+                                        <Button disabled=blocked on:click=record>"Record reading"</Button>
                                         {current.clone().map(|_| view! {
-                                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=correct>"Correct selected"</Button>
-                                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=retract>"Retract selected"</Button>
+                                            <Button variant=ButtonVariant::Secondary disabled=blocked on:click=correct>"Correct selected"</Button>
+                                            <Button variant=ButtonVariant::Secondary disabled=blocked on:click=retract>"Retract selected"</Button>
                                         })}
                                     </div>
                                     {(!candidates.is_empty()).then(|| view! {
@@ -705,7 +1028,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                                     <li>
                                                         <span>{format!("{:?} at {}", entry.value, entry.observed_at)}</span>
                                                         {(!selected).then(|| view! {
-                                                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=select>"Select"</Button>
+                                                            <Button variant=ButtonVariant::Secondary disabled=blocked on:click=select>"Select"</Button>
                                                         })}
                                                     </li>
                                                 }
@@ -725,7 +1048,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         />
                         <div class="recipe-editor__actions">
                             <Button
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| {
                                     let text = note_text.get_untracked();
                                     if text.trim().is_empty() {
@@ -803,8 +1126,8 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                         <p>{text}</p>
                                         <p class="note-caption">{format!("Revision {revision}")}</p>
                                         <div class="recipe-editor__actions">
-                                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=correct_note>"Correct with draft"</Button>
-                                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=retract_note>"Retract"</Button>
+                                            <Button variant=ButtonVariant::Secondary disabled=blocked on:click=correct_note>"Correct with draft"</Button>
+                                            <Button variant=ButtonVariant::Secondary disabled=blocked on:click=retract_note>"Retract"</Button>
                                         </div>
                                     </li>
                                 }
@@ -828,13 +1151,14 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         {lifecycle_cursor.get().map(|_| view! {
                             <Button
                                 variant=ButtonVariant::Secondary
-                                disabled=busy
+                                disabled=blocked
                                 on:click=move |_| load_lifecycle_more.run(())
                             >"Load older lifecycle"</Button>
                         })}
                     }
                 })}
             </BreweryPanel>
+            </Show>
         </div>
     }
 }
