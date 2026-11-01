@@ -755,15 +755,6 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
 test('held context check after navigation cannot install the previous brew', async ({
   page,
 }) => {
-  const serverFnPaths = new Map<string, string>();
-  page.on('request', (request) => {
-    const path = new URL(request.url()).pathname;
-    const match = path.match(/^\/leptos-api\/([a-z_]+)\d+$/);
-    if (match) {
-      serverFnPaths.set(match[1], path);
-    }
-  });
-
   const firstBrew = await startBrewAndOpenEvidence(page, `Brew held A ${Date.now()}`);
   const secondBrew = await startBrewAndOpenEvidence(page, `Brew held B ${Date.now()}`);
   const workspace = sqliteExec(
@@ -771,10 +762,12 @@ test('held context check after navigation cannot install the previous brew', asy
   );
   const intent = { account_id: getDefaultUserId(), workspace_id: workspace };
 
+  const initialComparison = page.waitForResponse((response) =>
+    response.url().includes('/leptos-api/execute_brew_comparison'),
+  );
   await page.goto(`/brews/${firstBrew}/analysis`);
   await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
-  const comparisonPath = serverFnPaths.get('execute_brew_comparison');
-  expect(comparisonPath).toBeTruthy();
+  const comparisonPath = new URL((await initialComparison).request().url()).pathname;
   const firstComparison = outcomeOf(
     (
       await callServerFn(page, comparisonPath!, {
