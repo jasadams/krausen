@@ -3,27 +3,91 @@ permissions:
   contents: read
 on:
   workflow_dispatch:
+
+# Explicit CI acceptance for a ready PR; use local evidence instead if the
+# full suite already ran locally. Edits and merges never duplicate the run.
 concurrency:
-  group: kra18-targeted-${{ github.ref }}
+  group: foundation-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
-  scaling-browser:
+  foundation:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: krausen
+          POSTGRES_PASSWORD: krausen
+          POSTGRES_DB: krausen_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U krausen -d krausen_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      KRAUSEN_TEST_POSTGRES_URL: postgres://krausen:krausen@localhost:5432/krausen_test
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install playwright==1.58.0
+      - run: python3 -m playwright install --with-deps chromium
+        timeout-minutes: 5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y socat openssl
+        timeout-minutes: 5
+      - run: cargo test -p krausen-auth --test credential_lifecycle
+      - run: FRONTEND_URL=https://example.test cargo test -p krausen-auth --test secure_cookie
+      - run: FRONTEND_URL=https://localhost cargo test -p krausen-server --test https_proxy
+      - run: cargo test -p krausen-server --test browser_refresh
+      - run: cargo test -p krausen-server --lib security_tests
+      - run: cargo test -p krausen-server --test bootstrap --test migration_orders --test mcp_auth
+      - run: cargo test -p krausen-app --test foundation
+      - run: cargo test -p krausen-app --test formulation_preview
+      - run: cargo test -p krausen-app --test equipment_profiles
+      - run: cargo test -p krausen-app --test ingredient_catalogue
+      - run: cargo test -p krausen-app --lib style_reference
+      - run: cargo test -p krausen-app --lib scaling::tests
+      - run: cargo test -p krausen-app --test recipe_editor
+      - run: cargo test -p krausen-app --test interchange
+      - run: cargo test -p krausen-app --test recipe_library
+      - run: cargo test -p krausen-app --test process_summary
+      - run: cargo test -p krausen-app --test scaling
+      - run: cargo test -p krausen-beerxml -p krausen-types
+      - run: cargo test -p krausen-calc
+      - run: cargo test -p krausen-core --lib canonical_json
+      - run: cargo test -p krausen-brewery --lib
+      - run: cargo test -p krausen-brewery --test draft_validation
+      - run: cargo test -p krausen-brewery --test recipe_crud --test native_schema --test native_transactions
+      - run: cargo test -p krausen-brewery --test native_schema --test native_transactions -- --ignored
+      - run: cargo test -p krausen-app --test recipe_migration
+      - run: cargo test -p krausen-app --test recipe_migration -- --ignored
+      - run: cargo test -p krausen-ui --features ssr --lib retry_preserves_browser_request_identity
+      - run: cargo test -p krausen-ui --features ssr --lib verified_browser_principal_is_required_for_recovery
+      - run: cargo test -p krausen-ui --features ssr --lib request_id::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_draft::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_recovery::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_preview_gate::tests
+      - run: cargo test -p krausen-ui --features ssr --lib beerxml::tests
+      - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
+      - run: cargo test -p krausen-ui --features ssr --lib catalogue_picker::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_scaling::tests
+      - run: cargo check -p krausen-server
+      - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - run: npm ci --prefix e2e
       - run: npx --prefix e2e playwright install --with-deps chromium
+        timeout-minutes: 5
       - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
       - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
       - run: cargo install trunk --version 0.21.14 --locked
       - run: cargo build -p krausen-server
       - run: cd crates/krausen-ui && trunk build
-      - run: e2e/scripts/scaling-browser.sh
+      - run: e2e/scripts/profile-browser.sh
