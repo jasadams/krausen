@@ -795,6 +795,10 @@ test('held context check after navigation cannot install the previous brew', asy
   const contextHeld = new Promise<void>((resolve) => {
     contextEntered = resolve;
   });
+  let contextDelivered!: () => void;
+  const contextDeliveredLatch = new Promise<void>((resolve) => {
+    contextDelivered = resolve;
+  });
   await page.route('**/leptos-api/get_user_context*', async (route) => {
     if (!holdNextContext) {
       await route.continue();
@@ -804,9 +808,13 @@ test('held context check after navigation cannot install the previous brew', asy
     // Resolve the real context while the view still owns the first brew, but
     // deliver it only after the route has moved to the second brew.
     const response = await route.fetch();
+    const body = await response.json();
+    expect(body.user_id).toBe(intent.account_id);
+    expect(body.workspace_id).toBe(intent.workspace_id);
     contextEntered();
     await contextReleased;
     await route.fulfill({ response });
+    contextDelivered();
   });
 
   let releaseSecondComparison!: () => void;
@@ -842,7 +850,16 @@ test('held context check after navigation cannot install the previous brew', asy
   await expect(page).toHaveURL(new RegExp(secondBrew));
   await secondComparisonHeld;
   releaseContext();
-  await page.waitForTimeout(300);
+  // Wait for the matched workspace-A context response to complete and for the
+  // owning wasm task to get a frame, while the destination comparison is still
+  // held, instead of guessing with a fixed sleep.
+  await contextDeliveredLatch;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      }),
+  );
   await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
   await expect(page.getByText(secondComparison.plan.context_id)).toHaveCount(0);
   releaseSecondComparison();
