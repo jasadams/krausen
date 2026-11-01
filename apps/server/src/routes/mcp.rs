@@ -37,6 +37,27 @@ struct McpHandler {
 struct WorkspaceQuery {
     workspace_id: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvitationReply {
+    invitation_id: String,
+    action: krausen_types::invitation::InvitationAction,
+    request_id: uuid::Uuid,
+}
+async fn execute_invitation_reply(
+    db: &krausen_core::DbPool,
+    principal: &Principal,
+    input: InvitationReply,
+) -> krausen_types::invitation::InvitationResponseOutcome {
+    let actor = krausen_app::invitation::AccountActor {
+        actor_id: principal.user_id.clone(),
+        credential_id: principal.credential_id.clone(),
+        access_expires_at: principal.access_expires_at,
+    };
+    krausen_app::invitation::project(
+        krausen_app::invitation::respond(db, &actor, &input.invitation_id, input.action, input.request_id).await,
+    )
+}
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FormulationPreview {
@@ -342,6 +363,11 @@ impl ServerHandler for McpHandler {
                 ),
             ),
             Tool::new(
+                operations::INVITATION_RESPOND.mcp_tool,
+                "Accept or decline an invitation addressed to the authenticated account",
+                schema(json!({"type":"object","properties":{"invitation_id":{"type":"string"},"action":{"type":"string","enum":["accept","decline"]},"request_id":{"type":"string","format":"uuid"}},"required":["invitation_id","action","request_id"],"additionalProperties":false})),
+            ),
+            Tool::new(
                 operations::WORKSPACE_RENAME.mcp_tool,
                 "Rename a workspace using its observed revision and a stable request UUID",
                 schema(
@@ -417,6 +443,16 @@ impl ServerHandler for McpHandler {
         let operation = operations::by_tool(request.name.as_ref())
             .ok_or_else(|| ErrorData::invalid_params("Unknown tool", None))?;
         let result = match operation.id {
+            "invitation.respond.v1" => {
+                let input: InvitationReply = serde_json::from_value(input)
+                    .map_err(|_| ErrorData::invalid_params("Invalid invitation response", None))?;
+                let outcome = execute_invitation_reply(&self.db, principal, input).await;
+                if matches!(outcome, krausen_types::invitation::InvitationResponseOutcome::Accepted | krausen_types::invitation::InvitationResponseOutcome::Declined) {
+                    CallToolResult::structured(json!({"outcome":outcome}))
+                } else {
+                    CallToolResult::structured_error(json!({"outcome":outcome}))
+                }
+            }
             "beerxml.preview.v1" => {
                 let input: BeerXmlPreview = serde_json::from_value(input)
                     .map_err(|_| ErrorData::invalid_params("Invalid BeerXML preview", None))?;
@@ -1129,4 +1165,24 @@ async fn authenticate(
     };
     request.extensions_mut().insert(principal);
     next.run(request).await
+}
+
+#[cfg(test)]
+mod invitation_tests {
+    use super::*;
+    use krausen_types::invitation::{InvitationAction, InvitationResponseOutcome};
+
+    #[tokio::test]
+    async fn mcp_invitation_rejects_wrong_recipient() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('owner','owner@example.test'),('recipient','recipient@example.test'),('other','other@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('w','owner')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','other','mcp','test','test',4102444800)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspace_invitations (invitation_id,workspace_id,email,role,invited_by_user_id,expires_at) VALUES ('i','w','recipient@example.test','workspace_user','owner','2099-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let principal = Principal { user_id: "other".into(), credential_id: "c".into(), access_expires_at: 4102444800 };
+        let input = InvitationReply { invitation_id: "i".into(), action: InvitationAction::Decline, request_id: uuid::Uuid::new_v4() };
+        assert_eq!(execute_invitation_reply(&db, &principal, input).await, InvitationResponseOutcome::NotFound);
+    }
 }

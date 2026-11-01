@@ -13,6 +13,12 @@ pub const WORKSPACE_GET: Operation = Operation {
     input_contract: "workspace-id.v1",
     output_contract: "workspace-snapshot.v1",
 };
+pub const INVITATION_RESPOND: Operation = Operation {
+    id: "invitation.respond.v1",
+    mcp_tool: "invitation_respond",
+    input_contract: "invitation-response.v1",
+    output_contract: "InvitationResponseOutcome",
+};
 pub const WORKSPACE_RENAME: Operation = Operation {
     id: "workspace.rename.v1",
     mcp_tool: "workspace_rename",
@@ -206,6 +212,7 @@ pub const OPERATIONS: &[Operation] = &[
     INGREDIENT_GET,
     INGREDIENT_SEARCH,
     WORKSPACE_GET,
+    INVITATION_RESPOND,
     WORKSPACE_RENAME,
     RECIPE_RECOVER,
     RECIPE_CREATE,

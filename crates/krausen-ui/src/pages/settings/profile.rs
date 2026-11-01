@@ -456,15 +456,6 @@ fn CopyButton(text: String) -> impl IntoView {
 fn InvitationsCard(invitations: Vec<crate::types::InvitationData>) -> impl IntoView {
     let (inv_list, set_inv_list) = signal(invitations);
 
-    let accept_action = Action::new(|id: &String| {
-        let id = id.clone();
-        async move { accept_invitation(id).await }
-    });
-    let decline_action = Action::new(|id: &String| {
-        let id = id.clone();
-        async move { decline_invitation(id).await }
-    });
-
     view! {
         <Card>
             <CardHeader>
@@ -481,7 +472,10 @@ fn InvitationsCard(invitations: Vec<crate::types::InvitationData>) -> impl IntoV
                         {
                             let inv_id_accept = inv.invitation_id.clone();
                             let inv_id_decline = inv.invitation_id.clone();
-                            let inv_id_remove = inv.invitation_id.clone();
+                            let accept_request = RwSignal::new(None::<String>);
+                            let decline_request = RwSignal::new(None::<String>);
+                            let pending = RwSignal::new(false);
+                            let response_error = RwSignal::new(false);
                             view! {
                                 <div class="flex items-center justify-between p-4 border border-border rounded-lg">
                                     <div>
@@ -494,34 +488,63 @@ fn InvitationsCard(invitations: Vec<crate::types::InvitationData>) -> impl IntoV
                                     </div>
                                     <div class="flex gap-2">
                                         <button
+                                            disabled=move || pending.get()
                                             class="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
                                             on:click={
                                                 let set_list = set_inv_list;
                                                 let id = inv_id_accept.clone();
-                                                let remove_id = inv_id_remove.clone();
                                                 move |_| {
-                                                    accept_action.dispatch(id.clone());
-                                                    set_list.update(|list| list.retain(|i| i.invitation_id != remove_id));
+                                                    let Some(request) = accept_request.get_untracked().or_else(crate::utils::request_id::new_request_id) else {
+                                                        response_error.set(true);
+                                                        return;
+                                                    };
+                                                    accept_request.set(Some(request.clone()));
+                                                    pending.set(true);
+                                                    let id = id.clone();
+                                                    leptos::task::spawn_local(async move {
+                                                        if matches!(accept_invitation(id.clone(), request).await, Ok(krausen_types::invitation::InvitationResponseOutcome::Accepted)) {
+                                                            set_list.update(|list| list.retain(|i| i.invitation_id != id));
+                                                        } else {
+                                                            response_error.set(true);
+                                                            pending.set(false);
+                                                        }
+                                                    });
                                                 }
                                             }
                                         >
                                             "Accept"
                                         </button>
                                         <button
+                                            disabled=move || pending.get()
                                             class="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
                                             on:click={
                                                 let set_list = set_inv_list;
                                                 let id = inv_id_decline.clone();
-                                                let remove_id = inv_id_remove;
                                                 move |_| {
-                                                    decline_action.dispatch(id.clone());
-                                                    set_list.update(|list| list.retain(|i| i.invitation_id != remove_id));
+                                                    let Some(request) = decline_request.get_untracked().or_else(crate::utils::request_id::new_request_id) else {
+                                                        response_error.set(true);
+                                                        return;
+                                                    };
+                                                    decline_request.set(Some(request.clone()));
+                                                    pending.set(true);
+                                                    let id = id.clone();
+                                                    leptos::task::spawn_local(async move {
+                                                        if matches!(decline_invitation(id.clone(), request).await, Ok(krausen_types::invitation::InvitationResponseOutcome::Declined)) {
+                                                            set_list.update(|list| list.retain(|i| i.invitation_id != id));
+                                                        } else {
+                                                            response_error.set(true);
+                                                            pending.set(false);
+                                                        }
+                                                    });
                                                 }
                                             }
                                         >
                                             "Decline"
                                         </button>
                                     </div>
+                                    <Show when=move || response_error.get()>
+                                        <p role="alert">"Unable to respond to the invitation. Please retry."</p>
+                                    </Show>
                                 </div>
                             }
                         }

@@ -111,6 +111,7 @@ macro_rules! scalar {
         }
     };
 }
+pub mod invitation;
 fn db_error(e: sqlx::Error) -> Error {
     if let sqlx::Error::Database(ref d) = e {
         if matches!(

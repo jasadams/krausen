@@ -9,6 +9,7 @@ pub mod brewery;
 pub mod operations;
 pub mod sync;
 pub mod workspace;
+pub mod invitation;
 
 pub mod validation;
 
