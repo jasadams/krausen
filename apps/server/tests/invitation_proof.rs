@@ -1234,6 +1234,43 @@ async fn exercise(db: DbPool) {
     )
     .await
     .unwrap();
+    // Terminal transfers must not crowd the actionable inventory for either party.
+    for status in ["cancelled", "accepted", "declined"] {
+        let terminal_id = format!("t-{status}-{suffix}");
+        run!(
+            "INSERT INTO ownership_transfers (transfer_id,workspace_id,from_user_id,to_user_id,status,expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            &terminal_id,
+            &workspace,
+            &owner,
+            &wrong.actor_id,
+            status,
+            expiry
+        );
+    }
+    for party in [&owner_actor, &wrong] {
+        let inventory = krausen_app::ownership::list(&db, party).await.unwrap();
+        assert!(!inventory.truncated);
+        assert_eq!(inventory.items.len(), 1);
+        assert_eq!(inventory.items[0].transfer_id, transfer.transfer_id);
+    }
+    // Only one pending transfer per workspace is permitted, so expire and
+    // restore the live fixture rather than inserting a second pending row.
+    let expired = chrono::Utc::now() - chrono::Duration::days(1);
+    run!(
+        "UPDATE ownership_transfers SET expires_at=$1 WHERE transfer_id=$2",
+        expired,
+        &transfer.transfer_id
+    );
+    for party in [&owner_actor, &wrong] {
+        let inventory = krausen_app::ownership::list(&db, party).await.unwrap();
+        assert!(inventory.items.is_empty());
+        assert!(!inventory.truncated);
+    }
+    run!(
+        "UPDATE ownership_transfers SET expires_at=$1 WHERE transfer_id=$2",
+        expiry,
+        &transfer.transfer_id
+    );
     assert_eq!(
         transfer,
         krausen_app::ownership::start(

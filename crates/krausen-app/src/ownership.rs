@@ -35,7 +35,11 @@ pub async fn list(
     {
         return Err(Error::Forbidden);
     }
-    let sql = "SELECT t.transfer_id,t.workspace_id,t.from_user_id,source.email AS from_user_email,t.to_user_id,target.email AS to_user_email,t.status,CAST(t.created_at AS TEXT) AS created_at,CAST(t.expires_at AS TEXT) AS expires_at FROM ownership_transfers t JOIN users source ON source.user_id=t.from_user_id JOIN users target ON target.user_id=t.to_user_id JOIN workspaces w ON w.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND (t.to_user_id=$2 OR (t.from_user_id=$2 AND w.owner_user_id=$2)) ORDER BY t.transfer_id LIMIT 101";
+    let sql = if matches!(tx, DbTx::Postgres(_)) {
+        "SELECT t.transfer_id,t.workspace_id,t.from_user_id,source.email AS from_user_email,t.to_user_id,target.email AS to_user_email,t.status,CAST(t.created_at AS TEXT) AS created_at,CAST(t.expires_at AS TEXT) AS expires_at FROM ownership_transfers t JOIN users source ON source.user_id=t.from_user_id JOIN users target ON target.user_id=t.to_user_id JOIN workspaces w ON w.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND t.status='pending' AND t.expires_at>CURRENT_TIMESTAMP AND (t.to_user_id=$2 OR (t.from_user_id=$2 AND w.owner_user_id=$2)) ORDER BY t.transfer_id LIMIT 101"
+    } else {
+        "SELECT t.transfer_id,t.workspace_id,t.from_user_id,source.email AS from_user_email,t.to_user_id,target.email AS to_user_email,t.status,CAST(t.created_at AS TEXT) AS created_at,CAST(t.expires_at AS TEXT) AS expires_at FROM ownership_transfers t JOIN users source ON source.user_id=t.from_user_id JOIN users target ON target.user_id=t.to_user_id JOIN workspaces w ON w.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND t.status='pending' AND julianday(t.expires_at)>julianday('now') AND (t.to_user_id=$2 OR (t.from_user_id=$2 AND w.owner_user_id=$2)) ORDER BY t.transfer_id LIMIT 101"
+    };
     let rows = match &mut tx {
         DbTx::Postgres(t) => {
             sqlx::query_as::<_, TransferRow>(sql)
