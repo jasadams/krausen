@@ -26,12 +26,12 @@ function commandFrom(request: import('@playwright/test').Request): any {
 
 async function callServerFn(
   page: import('@playwright/test').Page,
-  name: string,
+  path: string,
   payload: unknown,
 ): Promise<{ status: number; body: any }> {
   return page.evaluate(
-    async ({ name, payload }) => {
-      const response = await fetch(`/leptos-api/${name}`, {
+    async ({ path, payload }) => {
+      const response = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ request_json: JSON.stringify(payload) }).toString(),
@@ -43,7 +43,7 @@ async function callServerFn(
       } catch {}
       return { status: response.status, body };
     },
-    { name, payload },
+    { path, payload },
   );
 }
 
@@ -755,6 +755,16 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
 test('feedback apply keeps one request through a lost response and ignores selection changes', async ({
   page,
 }) => {
+  // Leptos appends a per-module hash to server-fn paths. Capture the evidence
+  // module hash from the page's own request and reuse it for brew_actual.
+  const serverFnPaths = new Map<string, string>();
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    const match = path.match(/^\/leptos-api\/([a-z_]+)\d+$/);
+    if (match) {
+      serverFnPaths.set(match[1], path);
+    }
+  });
   const title = `Brew feedback ${Date.now()}`;
   const brewId = await startBrewAndOpenEvidence(page, title);
   const recipeId = sqliteExec(
@@ -764,30 +774,33 @@ test('feedback apply keeps one request through a lost response and ignores selec
     `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
   );
   const intent = { account_id: getDefaultUserId(), workspace_id: workspaceId };
+  const evidencePath = serverFnPaths.get('brew_evidence_view');
+  expect(evidencePath).toBeTruthy();
 
-  const comparison = await callServerFn(page, 'execute_brew_comparison', {
-    intent,
-    brew_id: brewId,
-  });
-  expect(comparison.status).toBe(200);
-  const plan = outcomeOf(comparison.body).Comparison;
+  const comparisonResponse = page.waitForResponse((response) =>
+    response.url().includes('/leptos-api/execute_brew_comparison'),
+  );
+  await page.goto(`/brews/${brewId}/analysis`);
+  const comparison = await (await comparisonResponse).json();
+  const plan = outcomeOf(comparison).Comparison;
   const document = structuredClone(plan.plan.recipe);
   document.boil_minutes = 70;
   document.notes = 'Browser proof actual';
-  const amended = await callServerFn(page, 'brew_actual', {
-    Amend: {
-      intent,
-      brew_id: brewId,
-      expected_actual_revision: null,
-      document,
-      reason: 'browser proof',
-      request_id: crypto.randomUUID(),
-    },
+  const actualPath = evidencePath!.replace('brew_evidence_view', 'brew_actual');
+  const amended = await callServerFn(page, actualPath, {
+    action: 'amend',
+    intent,
+    brew_id: brewId,
+    expected_actual_revision: null,
+    document,
+    reason: 'browser proof',
+    request_id: crypto.randomUUID(),
   });
-  expect(amended.status).toBe(200);
+  expect(amended.status, JSON.stringify(amended.body)).toBe(200);
+  expect(outcomeOf(amended.body).Amended, JSON.stringify(amended.body)).toBeTruthy();
   expect(outcomeOf(amended.body).Amended.revision).toBe(1);
 
-  await page.goto(`/brews/${brewId}/analysis`);
+  await page.reload();
   await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
   await expect(page.getByText(/actual revision 1/)).toBeVisible();
   await page
@@ -863,9 +876,10 @@ test('feedback apply keeps one request through a lost response and ignores selec
     ),
   ).toBe('3');
 
-  const after = await callServerFn(page, 'execute_brew_comparison', {
+  const after = await callServerFn(page, serverFnPaths.get('execute_brew_comparison')!, {
     intent,
     brew_id: brewId,
   });
   expect(outcomeOf(after.body).Comparison.plan.recipe.boil_minutes).toBe(60);
 });
+
