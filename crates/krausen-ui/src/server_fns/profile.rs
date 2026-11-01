@@ -52,22 +52,22 @@ pub async fn get_pending_invitations() -> Result<Vec<InvitationData>, ServerFnEr
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    let invitations =
-        krausen_auth::workspace_service::get_pending_invitations_for_email(&ctx.db, &auth.email)
-            .await
-            .into_sfn()?;
+    let actor = super::verified_account_actor(&auth)?;
+    list_received_invitations(&ctx.db, &actor).await
+}
 
-    Ok(invitations
-        .into_iter()
-        .map(|inv| InvitationData {
-            invitation_id: inv.invitation_id,
-            workspace_id: inv.workspace_id,
-            email: inv.email,
-            role: inv.role.to_string(),
-            created_at: inv.created_at.to_rfc3339(),
-            expires_at: inv.expires_at.to_rfc3339(),
-        })
-        .collect())
+#[cfg(feature = "ssr")]
+async fn list_received_invitations(db: &krausen_core::DbPool, actor: &krausen_app::invitation::AccountActor) -> Result<Vec<InvitationData>, ServerFnError> {
+    let mut cursor = None;
+    let mut invitations = Vec::new();
+    loop {
+        let outcome = krausen_app::invitation_read::project(krausen_app::invitation_read::recipient_invitations(db, actor, cursor.as_deref(), 100).await);
+        let krausen_types::invitation_read::RecipientInvitationListOutcome::Available { page } = outcome else { return Err(ServerFnError::new("Unable to load invitations")); };
+        invitations.extend(page.items.into_iter().map(|inv| InvitationData { invitation_id: inv.invitation_id, workspace_id: inv.workspace_id, email: inv.email, role: inv.role, created_at: inv.created_at, expires_at: inv.expires_at }));
+        cursor = page.next_cursor;
+        if cursor.is_none() { break; }
+    }
+    Ok(invitations)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ async fn respond_to_invitation(
 
 // Helpers — delegate to shared extractors in parent module
 #[cfg(feature = "ssr")]
-use super::{extract_auth, extract_context, IntoServerFnError};
+use super::{extract_auth, extract_context};
 
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
@@ -159,5 +159,21 @@ mod tests {
         assert!(matches!(result, krausen_types::account_read::AccountUpdateOutcome::Updated { settings_revision: 1 }));
         let stale = update_shared_name(&db, &auth, 0, "Stale").await.unwrap();
         assert!(matches!(stale, krausen_types::account_read::AccountUpdateOutcome::Conflict { expected: 0, current: 1 }));
+    }
+
+    #[tokio::test]
+    async fn received_invitations_follow_all_pages() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("../../apps/server/migrations-sqlite").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (user_id,email) VALUES ('owner','owner@example.test'),('u','u@example.test')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('w','owner')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','u','browser','test','test',4102444800)").execute(&pool).await.unwrap();
+        for i in 0..101 {
+            sqlx::query("INSERT INTO workspace_invitations (invitation_id,workspace_id,email,role,invited_by_user_id,status,expires_at) VALUES ($1,'w','u@example.test','workspace_user','owner','pending',$2)")
+                .bind(format!("inv-{i:03}")).bind(chrono::Utc::now() + chrono::Duration::days(1)).execute(&pool).await.unwrap();
+        }
+        let db = krausen_core::DbPool::Sqlite(pool);
+        let actor = krausen_app::invitation::AccountActor { actor_id: "u".into(), credential_id: "c".into(), access_expires_at: 4102444800 };
+        assert_eq!(list_received_invitations(&db, &actor).await.unwrap().len(), 101);
     }
 }
