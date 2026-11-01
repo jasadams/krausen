@@ -59,6 +59,8 @@ jobs:
       - run: cargo test -p krausen-app --test process_summary
       - run: cargo test -p krausen-app --test scaling
       - run: cargo test -p krausen-app --test brew_start
+      - run: cargo test -p krausen-app --test brew_evidence
+      - run: cargo test -p krausen-app --test brew_history
       - run: cargo test -p krausen-app --test baseline_golden
       - run: cargo test -p krausen-beerxml -p krausen-types
       - run: cargo test -p krausen-calc

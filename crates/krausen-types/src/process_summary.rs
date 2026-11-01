@@ -66,6 +66,13 @@ pub enum SummarySource {
         recipe_id: String,
         revision: i64,
     },
+    /// Frozen historical plan; targets come from the stored brew plan, not a
+    /// current recipe read or recalculation.
+    HistoricalBrew {
+        brew_id: String,
+        recipe_id: String,
+        selected_recipe_revision: i64,
+    },
     UnsavedDraft {
         recipe_id: Option<String>,
         base_revision: Option<i64>,

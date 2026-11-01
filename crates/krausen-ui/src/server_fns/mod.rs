@@ -179,6 +179,7 @@ pub mod catalogue;
 pub mod equipment;
 
 pub mod brew;
+pub mod brew_history;
 pub mod process_summary;
 pub mod recipe_library;
 pub mod scaling;

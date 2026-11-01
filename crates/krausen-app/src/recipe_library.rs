@@ -13,16 +13,16 @@ use krausen_types::recipe_library::{
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Cursor {
-    version: u8,
-    workspace: String,
-    kind: String,
-    filter: String,
-    order: String,
-    position: String,
-    id: String,
+pub(crate) struct Cursor {
+    pub(crate) version: u8,
+    pub(crate) workspace: String,
+    pub(crate) kind: String,
+    pub(crate) filter: String,
+    pub(crate) order: String,
+    pub(crate) position: String,
+    pub(crate) id: String,
 }
-fn decode(
+pub(crate) fn decode(
     value: &str,
     actor: &ActorContext,
     kind: &str,
@@ -46,7 +46,7 @@ fn decode(
     }
     Ok(c)
 }
-fn cursor(
+pub(crate) fn cursor(
     actor: &ActorContext,
     kind: &str,
     filter: &str,
@@ -64,7 +64,7 @@ fn cursor(
         id,
     })?))
 }
-fn limit(n: i64) -> Result<(), Error> {
+pub(crate) fn limit(n: i64) -> Result<(), Error> {
     if !(1..=100).contains(&n) {
         Err(Error::Invalid("limit"))
     } else {

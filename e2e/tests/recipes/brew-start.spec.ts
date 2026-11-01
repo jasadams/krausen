@@ -706,3 +706,21 @@ test('held overview response after same-document unmount is ignored', async ({ p
   await page.waitForTimeout(300);
   expect(pageErrors).toEqual([]);
 });
+
+test('recipe brew history and frozen historical print are reachable', async ({ page }) => {
+  const title = `Brew history ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  await page.goto(`/recipes/${recipeId}/brews`);
+  await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/)).toBeVisible();
+  await page.getByRole('link', { name: 'Compare and feedback' }).click();
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByText('Target versus selected actual')).toBeVisible();
+  await page.getByRole('button', { name: 'Print frozen plan' }).click();
+  await expect(page.getByText('Historical print preview')).toBeVisible();
+  await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
+  await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+});

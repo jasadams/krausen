@@ -14,6 +14,7 @@ mod recipe_recovery;
 
 pub mod beerxml;
 pub mod brew_evidence;
+pub mod brew_history;
 pub mod brew_start;
 pub mod catalogue_picker;
 pub mod equipment_profiles;
