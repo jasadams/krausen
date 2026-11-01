@@ -90,68 +90,6 @@ fn target_rows(
     ]
 }
 
-fn context_diff(
-    accepted: &krausen_types::scaling::AcceptedScaleContext,
-    fresh: &krausen_types::scaling::AcceptedScaleContext,
-) -> String {
-    let a = &accepted.context;
-    let b = &fresh.context;
-    let mut diff = Vec::new();
-    if a.workspace_id != b.workspace_id {
-        diff.push("workspace");
-    }
-    if a.draft != b.draft {
-        diff.push("draft");
-    }
-    if a.equipment_draft != b.equipment_draft {
-        diff.push("equipment_draft");
-    }
-    if a.effective_equipment != b.effective_equipment {
-        diff.push("effective_equipment");
-    }
-    if a.equipment_provenance != b.equipment_provenance {
-        diff.push("equipment_provenance");
-    }
-    if a.equipment_profile != b.equipment_profile {
-        diff.push("equipment_profile");
-    }
-    if a.assumptions != b.assumptions {
-        diff.push("assumptions");
-    }
-    if a.engine_version != b.engine_version {
-        diff.push("engine_version");
-    }
-    if a.engine_build != b.engine_build {
-        diff.push("engine_build");
-    }
-    if a.engine_source_hash != b.engine_source_hash {
-        diff.push("engine_source_hash");
-    }
-    if a.policy_source_hash != b.policy_source_hash {
-        diff.push("policy_source_hash");
-    }
-    if a.policy_version != b.policy_version {
-        diff.push("policy_version");
-    }
-    if a.style != b.style {
-        diff.push("style");
-    }
-    if accepted.targets != fresh.targets {
-        diff.push("targets");
-    }
-    if accepted.calculation_context_digest != fresh.calculation_context_digest {
-        diff.push("context_digest");
-    }
-    if accepted.digest != fresh.digest {
-        diff.push("accepted_digest");
-    }
-    if diff.is_empty() {
-        "none".to_owned()
-    } else {
-        diff.join(",")
-    }
-}
-
 fn change_text(change: &ScaleChange) -> String {
     let name = change
         .row_id
@@ -373,9 +311,8 @@ pub fn ScaleDialog(
                     reset.run(());
                 }
                 Ok(ScaleApplyOutcome::ContextConflict { fresh }) => {
-                    let detail = context_diff(&request.accepted, &fresh.accepted);
                     preview.set(Some(*fresh));
-                    message.set(format!("The saved recipe or calculation context changed. Review the fresh preview and apply again. [diag: {detail}]"));
+                    message.set("The saved recipe or calculation context changed. Review the fresh preview and apply again.".into());
                     retry.set(None);
                     generation.update(|value| *value = value.wrapping_add(1));
                 }

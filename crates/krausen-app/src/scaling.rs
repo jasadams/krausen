@@ -584,30 +584,12 @@ async fn context_conflict(
     }
 }
 
-fn target_diff(accepted: &Targets, fresh: &Targets) -> String {
-    let mut diff = Vec::new();
-    macro_rules! compare { ($($field:ident),*) => { $(if accepted.$field != fresh.$field { diff.push(format!("{}:{:?}->{:?}", stringify!($field), accepted.$field, fresh.$field)); })* }; }
-    compare!(
-        total_water_l,
-        pre_boil_l,
-        post_boil_l,
-        grain_absorption_l,
-        mash_water_l,
-        sparge_water_l,
-        kettle_water_l,
-        pre_boil_sg,
-        original_sg,
-        final_sg,
-        abv_percent,
-        colour_ebc,
-        ibu
-    );
-    diff.join(";")
-}
-
-/// Compare recomputed targets with the reference precision documented in
-/// CALCULATIONS.md: absolute 1e-9 for litres and SG, 1e-6 for ABV/IBU/EBC.
-/// Presence must match; an absorbed None never equals a concrete value.
+/// Compare recomputed target results with the numeric reference tolerance in
+/// CALCULATIONS.md (1e-9 for litres/SG, 1e-6 for ABV/IBU/EBC). This is
+/// target-result transport compatibility only: every input, context, profile,
+/// policy, version and digest comparison above remains exact, and presence must
+/// match so an absent value never equals a concrete one. Non-finite deltas fail
+/// closed.
 fn targets_match(accepted: &Targets, fresh: &Targets) -> bool {
     fn close(accepted: Option<f64>, fresh: Option<f64>, tolerance: f64) -> bool {
         match (accepted, fresh) {
@@ -825,7 +807,7 @@ async fn apply_inner(
         &accepted.calculation_context_digest,
     )?
     .eq(&accepted.digest);
-    let mismatch = context_mismatch(
+    let context_mismatch = context_mismatch(
         accepted,
         actor,
         &scaled.document,
@@ -835,31 +817,9 @@ async fn apply_inner(
         style.as_ref(),
         &targets,
     );
-    if !(revision_matches && target_matches && policy_matches && digest_ok) || mismatch.is_some() {
-        let target_diff =
-            (mismatch == Some("targets")).then(|| target_diff(&accepted.targets, &targets));
-        let validation_state = format!("{:?}", validation.state);
-        let validation_codes = validation
-            .diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.code.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        tracing::warn!(
-            revision_matches,
-            target_matches,
-            policy_matches,
-            digest_ok,
-            component = mismatch.unwrap_or("none"),
-            accepted_revision = accepted.source_revision,
-            actual_revision = actual,
-            accepted_target = accepted.target_batch_size_l,
-            request_target = request.target_batch_size_l,
-            validation_state = %validation_state,
-            validation_codes = %validation_codes,
-            target_diff = %target_diff.unwrap_or_default(),
-            "scaling apply rejected accepted context"
-        );
+    if !(revision_matches && target_matches && policy_matches && digest_ok)
+        || context_mismatch.is_some()
+    {
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(context_conflict(pool, actor, &request).await);
     }
