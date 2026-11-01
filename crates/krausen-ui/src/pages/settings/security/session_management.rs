@@ -140,7 +140,7 @@ pub fn SessionManagement() -> impl IntoView {
     let sessions = RwSignal::new(Vec::<SessionEntry>::new());
     let error = RwSignal::new(Option::<String>::None);
     let revoking_id = RwSignal::new(Option::<String>::None);
-    let revoke_attempt = RwSignal::new(Option::<(String, String)>::None);
+    let revoke_attempts = RwSignal::new(crate::utils::session_revoke_attempts::SessionRevokeAttempts::default());
 
     // ── Confirm dialog state ─────────────────────────────────────────────
     let dialog_open = RwSignal::new(false);
@@ -225,10 +225,10 @@ pub fn SessionManagement() -> impl IntoView {
         } else {
             // Revoke specific session
             let token_id = action_id.clone();
-            let request_id = match revoke_attempt.get_untracked() {
-                Some((ref token, ref request)) if token == &token_id => request.clone(),
-                _ => match crate::utils::request_id::new_request_id() {
-                    Some(request) => { revoke_attempt.set(Some((token_id.clone(), request.clone()))); request },
+            let request_id = match revoke_attempts.get_untracked().request(&token_id) {
+                Some(request) => request,
+                None => match crate::utils::request_id::new_request_id() {
+                    Some(request) => { revoke_attempts.update(|attempts| attempts.insert(token_id.clone(), request.clone())); request },
                     None => { error.set(Some("Unable to create request identity".into())); return; }
                 },
             };
@@ -236,13 +236,13 @@ pub fn SessionManagement() -> impl IntoView {
             error.set(None);
 
             leptos::task::spawn_local(async move {
-                match revoke_session(token_id, request_id).await {
+                match revoke_session(token_id.clone(), request_id.clone()).await {
                     Ok(response) if response.current_browser_revoked => {
-                        revoke_attempt.set(None);
+                        revoke_attempts.update(|attempts| attempts.clear_matching(&token_id, &request_id));
                         if let Some(window) = web_sys::window() { let _ = window.location().set_href("/login"); }
                     }
                     Ok(response) if matches!(&response.outcome, krausen_types::session_revoke::SessionRevokeOutcome::Revoked { .. }) => {
-                        revoke_attempt.set(None);
+                        revoke_attempts.update(|attempts| attempts.clear_matching(&token_id, &request_id));
                         revoking_id.set(None);
                         // Reload sessions
                         loading.set(true);
@@ -259,7 +259,7 @@ pub fn SessionManagement() -> impl IntoView {
                     }
                     Ok(response) => {
                         let outcome = response.outcome;
-                        if !matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Retryable | krausen_types::session_revoke::SessionRevokeOutcome::Unavailable) { revoke_attempt.set(None); }
+                        if !matches!(outcome, krausen_types::session_revoke::SessionRevokeOutcome::Retryable | krausen_types::session_revoke::SessionRevokeOutcome::Unavailable) { revoke_attempts.update(|attempts| attempts.clear_matching(&token_id, &request_id)); }
                         revoking_id.set(None);
                         error.set(Some(format!("Failed to disconnect session: {outcome:?}")));
                     }
