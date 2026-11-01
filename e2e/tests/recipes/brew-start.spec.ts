@@ -24,6 +24,33 @@ function commandFrom(request: import('@playwright/test').Request): any {
   return payload ? JSON.parse(payload) : null;
 }
 
+async function callServerFn(
+  page: import('@playwright/test').Page,
+  name: string,
+  payload: unknown,
+): Promise<{ status: number; body: any }> {
+  return page.evaluate(
+    async ({ name, payload }) => {
+      const response = await fetch(`/leptos-api/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ request_json: JSON.stringify(payload) }).toString(),
+      });
+      const text = await response.text();
+      let body: unknown = text;
+      try {
+        body = JSON.parse(text);
+      } catch {}
+      return { status: response.status, body };
+    },
+    { name, payload },
+  );
+}
+
+function outcomeOf(body: any): any {
+  return body?.Ok ?? body;
+}
+
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
@@ -723,4 +750,94 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
   await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+});
+
+test('feedback apply keeps one request through a lost response and ignores selection changes', async ({
+  page,
+}) => {
+  const title = `Brew feedback ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const workspaceId = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const intent = { account_id: getDefaultUserId(), workspace_id: workspaceId };
+
+  const comparison = await callServerFn(page, 'execute_brew_comparison', {
+    intent,
+    brew_id: brewId,
+  });
+  expect(comparison.status).toBe(200);
+  const plan = outcomeOf(comparison.body).Comparison;
+  const document = structuredClone(plan.plan.recipe);
+  document.boil_minutes = 70;
+  document.notes = 'Browser proof actual';
+  const amended = await callServerFn(page, 'brew_actual', {
+    Amend: {
+      intent,
+      brew_id: brewId,
+      expected_actual_revision: null,
+      document,
+      reason: 'browser proof',
+      request_id: crypto.randomUUID(),
+    },
+  });
+  expect(amended.status).toBe(200);
+  expect(outcomeOf(amended.body).Amended.revision).toBe(1);
+
+  await page.goto(`/brews/${brewId}/analysis`);
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByText(/actual revision 1/)).toBeVisible();
+  await page
+    .locator('li', { hasText: 'process:boil_minutes' })
+    .getByRole('checkbox')
+    .click();
+  await page.getByRole('button', { name: 'Preview selected feedback' }).click();
+  await expect(page.getByText(/Proposed recipe head 2/)).toBeVisible();
+
+  const applyRequests: any[] = [];
+  let allowApply = false;
+  await page.route('**/leptos-api/execute_brew_feedback_apply*', async (route) => {
+    const request = commandFrom(route.request());
+    if (request) {
+      applyRequests.push(request);
+    }
+    if (!allowApply) {
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Apply as new recipe revision' }).click();
+  await expect(page.getByText(/The response was lost/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(applyRequests).toHaveLength(1);
+
+  // Changing another selection while the request is uncertain must not cancel
+  // or replace the retained command.
+  await page
+    .locator('li', { hasText: 'Notes · notes' })
+    .getByRole('checkbox')
+    .click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(applyRequests).toHaveLength(1);
+
+  allowApply = true;
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByText(/Feedback applied as recipe revision 3/)).toBeVisible();
+  expect(applyRequests).toHaveLength(2);
+  expect(applyRequests[1].request_id).toBe(applyRequests[0].request_id);
+  expect(
+    sqliteExec(
+      `SELECT MAX(revision) FROM recipe_revisions WHERE recipe_id = '${recipeId.replaceAll("'", "''")}';`,
+    ),
+  ).toBe('3');
+
+  const after = await callServerFn(page, 'execute_brew_comparison', {
+    intent,
+    brew_id: brewId,
+  });
+  expect(outcomeOf(after.body).Comparison.plan.recipe.boil_minutes).toBe(60);
 });
