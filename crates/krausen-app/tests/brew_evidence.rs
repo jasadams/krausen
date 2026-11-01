@@ -847,7 +847,7 @@ async fn exercise(db: DbPool) {
                 intent: intent(&actor),
                 brew_id: brew_id.clone(),
                 note_id: None,
-                cursor: Some(foreign_lineage_cursor.clone()),
+                cursor: foreign_lineage_cursor.clone(),
                 limit: 1,
             }),
         )
