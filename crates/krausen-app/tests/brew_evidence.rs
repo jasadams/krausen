@@ -1775,6 +1775,87 @@ async fn exercise_acceptance_cases(db: DbPool) {
         );
     }
 
+    // An injected failure after the evidence, selection, request and change
+    // writes rolls the whole transaction back on both real backends.
+    {
+        let (actor, brew_id, _) = fixture(&db).await;
+        let MeasurementOutcome::Recorded(_) = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.050),
+        )
+        .await
+        else {
+            panic!("rollback fixture reading");
+        };
+        let entries = count!(
+            "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+            &actor.workspace_id,
+            &brew_id
+        );
+        let requests = count!(
+            "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
+        );
+        let changes = count!(
+            "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+            &actor.workspace_id
+        );
+        let workspace = actor.workspace_id.as_str();
+        if db.is_postgres() {
+            let function = format!(
+                "CREATE OR REPLACE FUNCTION kra21_reject_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.workspace_id = '{workspace}' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$"
+            );
+            run!(function.as_str());
+            run!(
+                "CREATE TRIGGER kra21_reject_change BEFORE INSERT ON app_changes FOR EACH ROW EXECUTE FUNCTION kra21_reject_change()"
+            );
+        } else {
+            let trigger = format!(
+                "CREATE TRIGGER kra21_reject_change BEFORE INSERT ON app_changes WHEN NEW.workspace_id = '{workspace}' BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
+            );
+            run!(trigger.as_str());
+        }
+        let outcome = record(
+            &db,
+            &actor,
+            record_request(&actor, &brew_id, "gravity.original.v1", 1.052),
+        )
+        .await;
+        if db.is_postgres() {
+            run!("DROP TRIGGER kra21_reject_change ON app_changes");
+            run!("DROP FUNCTION kra21_reject_change()");
+        } else {
+            run!("DROP TRIGGER kra21_reject_change");
+        }
+        assert_eq!(outcome, MeasurementOutcome::Unavailable);
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = $1 AND brew_id = $2",
+                &actor.workspace_id,
+                &brew_id
+            ),
+            entries,
+            "evidence must roll back"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_requests WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            requests,
+            "request result must roll back"
+        );
+        assert_eq!(
+            count!(
+                "SELECT COUNT(*) FROM app_changes WHERE workspace_id = $1 AND operation = 'brew.measurement.record.v1'",
+                &actor.workspace_id
+            ),
+            changes,
+            "change record must roll back"
+        );
+    }
+
     // Expired and revoked credentials fail before recovery; a fresh credential
     // can replay the same request and produce the original result.
     {

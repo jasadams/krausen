@@ -33,6 +33,66 @@ enum PendingEvidence {
     Archive(ArchiveBrewRequest),
 }
 
+fn measurement_is_uncertain(outcome: &MeasurementOutcome) -> bool {
+    matches!(
+        outcome,
+        MeasurementOutcome::Retryable | MeasurementOutcome::Unavailable
+    )
+}
+
+fn measurement_needs_refresh(outcome: &MeasurementOutcome) -> bool {
+    matches!(
+        outcome,
+        MeasurementOutcome::Conflict { .. } | MeasurementOutcome::EntryConflict { .. }
+    )
+}
+
+fn note_is_uncertain(outcome: &NoteOutcome) -> bool {
+    matches!(outcome, NoteOutcome::Retryable | NoteOutcome::Unavailable)
+}
+
+fn note_needs_refresh(outcome: &NoteOutcome) -> bool {
+    matches!(outcome, NoteOutcome::Conflict { .. })
+}
+
+fn lifecycle_is_uncertain(outcome: &BrewLifecycleOutcome) -> bool {
+    matches!(
+        outcome,
+        BrewLifecycleOutcome::Retryable | BrewLifecycleOutcome::Unavailable
+    )
+}
+
+fn lifecycle_needs_refresh(outcome: &BrewLifecycleOutcome) -> bool {
+    matches!(outcome, BrewLifecycleOutcome::Conflict { .. })
+}
+
+fn archive_is_uncertain(outcome: &BrewArchiveOutcome) -> bool {
+    matches!(
+        outcome,
+        BrewArchiveOutcome::Retryable | BrewArchiveOutcome::Unavailable
+    )
+}
+
+fn archive_needs_refresh(outcome: &BrewArchiveOutcome) -> bool {
+    matches!(outcome, BrewArchiveOutcome::Conflict { .. })
+}
+
+fn evidence_dirty(
+    inputs: &BTreeMap<String, String>,
+    note_text: &str,
+    reason: &str,
+    pending: bool,
+) -> bool {
+    inputs.values().any(|value| !value.trim().is_empty())
+        || !note_text.trim().is_empty()
+        || !reason.trim().is_empty()
+        || pending
+}
+
+fn retry_action(pending: Option<&PendingEvidence>) -> Option<PendingEvidence> {
+    pending.cloned()
+}
+
 fn measurement_message(outcome: &MeasurementOutcome) -> (bool, String) {
     match outcome {
         MeasurementOutcome::Recorded(_) => (true, "Measurement recorded.".into()),
@@ -491,10 +551,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     busy.set(false);
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !matches!(
-                                &outcome,
-                                MeasurementOutcome::Retryable | MeasurementOutcome::Unavailable
-                            );
+                            let definitive = !measurement_is_uncertain(&outcome);
                             if definitive {
                                 pending.set(None);
                             }
@@ -550,10 +607,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     busy.set(false);
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !matches!(
-                                &outcome,
-                                NoteOutcome::Retryable | NoteOutcome::Unavailable
-                            );
+                            let definitive = !note_is_uncertain(&outcome);
                             if definitive {
                                 pending.set(None);
                             }
@@ -664,10 +718,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     busy.set(false);
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !matches!(
-                                &outcome,
-                                BrewArchiveOutcome::Retryable | BrewArchiveOutcome::Unavailable
-                            );
+                            let definitive = !archive_is_uncertain(&outcome);
                             if definitive {
                                 pending.set(None);
                             }
@@ -773,7 +824,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         }));
     });
     let retry_pending = Callback::new(move |_| {
-        if let Some(action) = pending.get_untracked() {
+        if let Some(action) = retry_action(pending.get_untracked().as_ref()) {
             pending.set(None);
             dispatch.run(action);
         }
@@ -1160,5 +1211,99 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             </BreweryPanel>
             </Show>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod evidence_ui_state_tests {
+    use super::*;
+
+    #[test]
+    fn uncertain_outcomes_keep_pending_and_definitive_outcomes_clear_it() {
+        assert!(measurement_is_uncertain(&MeasurementOutcome::Retryable));
+        assert!(measurement_is_uncertain(&MeasurementOutcome::Unavailable));
+        assert!(!measurement_is_uncertain(&MeasurementOutcome::NotFound));
+        assert!(note_is_uncertain(&NoteOutcome::Retryable));
+        assert!(!note_is_uncertain(&NoteOutcome::Invalid));
+        assert!(lifecycle_is_uncertain(&BrewLifecycleOutcome::Unavailable));
+        assert!(!lifecycle_is_uncertain(&BrewLifecycleOutcome::Invalid));
+        assert!(archive_is_uncertain(&BrewArchiveOutcome::Retryable));
+        assert!(!archive_is_uncertain(&BrewArchiveOutcome::NotFound));
+    }
+
+    #[test]
+    fn conflicts_request_current_evidence_refresh() {
+        assert!(measurement_needs_refresh(&MeasurementOutcome::Conflict {
+            expected: 1,
+            actual: 2
+        }));
+        assert!(measurement_needs_refresh(
+            &MeasurementOutcome::EntryConflict {
+                expected: "old".into(),
+                actual: "current".into()
+            }
+        ));
+        assert!(!measurement_needs_refresh(&MeasurementOutcome::NotFound));
+        assert!(note_needs_refresh(&NoteOutcome::Conflict {
+            expected: 1,
+            actual: 2
+        }));
+        assert!(!note_needs_refresh(&NoteOutcome::Invalid));
+        assert!(lifecycle_needs_refresh(&BrewLifecycleOutcome::Conflict {
+            expected: 1,
+            actual: 2
+        }));
+        assert!(!lifecycle_needs_refresh(
+            &BrewLifecycleOutcome::InvalidTransition {
+                from: krausen_types::brewery::BrewStatusV1::Started,
+                to: krausen_types::brewery::BrewStatusV1::Started
+            }
+        ));
+        assert!(archive_needs_refresh(&BrewArchiveOutcome::Conflict {
+            expected: 1,
+            actual: 2
+        }));
+        assert!(!archive_needs_refresh(&BrewArchiveOutcome::NotFound));
+    }
+
+    #[test]
+    fn retry_preserves_exact_request_identity() {
+        let request_id = "00000000-0000-4000-8000-000000000001".to_owned();
+        let pending =
+            PendingEvidence::Measurement(MeasurementCommand::Record(RecordMeasurementRequest {
+                intent: OperationIntent {
+                    account_id: "account".into(),
+                    workspace_id: "workspace".into(),
+                },
+                brew_id: "brew".into(),
+                quantity_id: "gravity.original.v1".into(),
+                value: 1.050,
+                observed_at: None,
+                source: "manual".into(),
+                metadata: Default::default(),
+                request_id: request_id.clone(),
+            }));
+        let retry = retry_action(Some(&pending)).expect("same request retry");
+        match retry {
+            PendingEvidence::Measurement(MeasurementCommand::Record(request)) => {
+                assert_eq!(request.request_id, request_id);
+                assert_eq!(request.value, 1.050);
+            }
+            _ => panic!("retry changed the command family"),
+        }
+        assert!(retry_action(None).is_none());
+    }
+
+    #[test]
+    fn dirty_tracks_drafts_and_uncertain_work() {
+        let mut inputs = BTreeMap::new();
+        assert!(!evidence_dirty(&inputs, "", "", false));
+        inputs.insert("gravity.original.v1".into(), "  ".into());
+        assert!(!evidence_dirty(&inputs, "", "", false));
+        inputs.insert("gravity.original.v1".into(), "1.050".into());
+        assert!(evidence_dirty(&inputs, "", "", false));
+        assert!(evidence_dirty(&BTreeMap::new(), "note", "", false));
+        assert!(evidence_dirty(&BTreeMap::new(), "", "reason", false));
+        assert!(evidence_dirty(&BTreeMap::new(), "", "", true));
     }
 }
