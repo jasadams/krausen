@@ -21,12 +21,25 @@ fn warning_text(warning: &ScaleWarning) -> String {
             capacity_l,
             post_boil_l,
             pre_boil_l,
-        } => format!(
-            "Kettle capacity {capacity_l:.2} L is below the scaled post-boil {post_boil_l:.2} L{}. Choose a larger kettle or change the process; geometry is not changed automatically.",
-            pre_boil_l
-                .map(|value| format!(" (pre-boil {value:.2} L)"))
-                .unwrap_or_default()
-        ),
+        } => {
+            let post_exceeds = post_boil_l > capacity_l;
+            let pre_exceeds = pre_boil_l.is_some_and(|pre| pre > *capacity_l);
+            let fill = match (post_exceeds, pre_exceeds) {
+                (true, true) => format!(
+                    "pre-boil {:.2} L / post-boil {post_boil_l:.2} L",
+                    pre_boil_l.unwrap_or_default()
+                ),
+                (true, false) => format!("post-boil {post_boil_l:.2} L"),
+                (false, true) => format!(
+                    "pre-boil {:.2} L (post-boil {post_boil_l:.2} L fits)",
+                    pre_boil_l.unwrap_or_default()
+                ),
+                (false, false) => format!("post-boil {post_boil_l:.2} L"),
+            };
+            format!(
+                "Kettle capacity {capacity_l:.2} L does not fit the scaled {fill}. Choose a larger kettle or change the process; geometry is not changed automatically."
+            )
+        }
         ScaleWarning::CapacityUnknown { post_boil_l } => format!(
             "Kettle capacity is not set; check that the scaled post-boil volume of {post_boil_l:.2} L fits. Geometry is not changed automatically."
         ),
@@ -161,7 +174,8 @@ pub fn ScaleDialog(
     identity: RwSignal<OperationIntent>,
     recipe_id: RwSignal<Option<String>>,
     revision: RwSignal<Option<i64>>,
-    context_visible: RwSignal<bool>,
+    context_lost: RwSignal<bool>,
+    uncertain: RwSignal<bool>,
     pending: RwSignal<bool>,
     status: RwSignal<String>,
     on_applied: Callback<(RecipeDocumentV1, i64)>,
@@ -176,8 +190,15 @@ pub fn ScaleDialog(
     let reset = Callback::new(move |()| {
         preview.set(None);
         message.set(String::new());
-        retry.set(None);
         generation.update(|value| *value = value.wrapping_add(1));
+    });
+    let abandon = Callback::new(move |()| {
+        open.set(false);
+        reset.run(());
+        busy.set(false);
+        pending.set(false);
+        retry.set(None);
+        uncertain.set(false);
     });
     let close = Callback::new(move |()| {
         if busy.get_untracked() {
@@ -185,22 +206,35 @@ pub fn ScaleDialog(
         }
         open.set(false);
         reset.run(());
+        message.set(String::new());
     });
 
+    // A focus revalidation briefly hides the editor; that is not abandonment.
+    // Only a completed context mismatch closes and clears the dialog.
     Effect::new(move |_| {
-        if !context_visible.get() {
-            open.set(false);
-            reset.run(());
+        if context_lost.get() {
+            abandon.run(());
             message.set("Workspace changed; return to the original workspace.".into());
         }
     });
     Effect::new(move |_| {
         if open.get() {
-            message.set(String::new());
+            if retry.get().is_some() {
+                message.set(
+                    "An earlier apply may have committed. Retry the previous request before starting another."
+                        .into(),
+                );
+            } else {
+                message.set(String::new());
+            }
         }
     });
 
     let run_preview = Callback::new(move |()| {
+        if retry.get_untracked().is_some() {
+            message.set("Retry the previous apply before starting another.".into());
+            return;
+        }
         let Some(id) = recipe_id.get_untracked() else {
             message.set("Save the recipe before scaling it.".into());
             return;
@@ -218,7 +252,6 @@ pub fn ScaleDialog(
         busy.set(true);
         pending.set(true);
         message.set("Calculating scaled amounts and targets…".into());
-        retry.set(None);
         leptos::task::spawn_local(async move {
             let outcome = scale_preview_shared(ScalePreviewRequest {
                 intent: expected.clone(),
@@ -282,7 +315,6 @@ pub fn ScaleDialog(
         busy.set(true);
         pending.set(true);
         message.set("Applying scaling…".into());
-        retry.set(None);
         leptos::task::spawn_local(async move {
             let outcome = scale_apply_shared(request.clone()).await;
             if generation.try_get_untracked() != Some(next_generation) {
@@ -290,6 +322,17 @@ pub fn ScaleDialog(
             }
             busy.set(false);
             pending.set(false);
+            let uncertain_outcome = matches!(
+                outcome,
+                Ok(ScaleApplyOutcome::Unavailable) | Ok(ScaleApplyOutcome::Retryable) | Err(_)
+            );
+            if uncertain_outcome {
+                retry.set(Some(request.clone()));
+                uncertain.set(true);
+            } else {
+                retry.set(None);
+                uncertain.set(false);
+            }
             match outcome {
                 Ok(ScaleApplyOutcome::Applied {
                     revision: applied, ..
@@ -313,7 +356,6 @@ pub fn ScaleDialog(
                 Ok(ScaleApplyOutcome::ContextConflict { fresh }) => {
                     preview.set(Some(*fresh));
                     message.set("The saved recipe or calculation context changed. Review the fresh preview and apply again.".into());
-                    retry.set(None);
                     generation.update(|value| *value = value.wrapping_add(1));
                 }
                 Ok(ScaleApplyOutcome::Conflict { expected, actual }) => {
@@ -361,11 +403,9 @@ pub fn ScaleDialog(
                 Ok(ScaleApplyOutcome::Unavailable) => {
                     message
                         .set("Scaling is unavailable; the request identity was retained.".into());
-                    retry.set(Some(request.clone()));
                 }
                 Err(_) => {
                     message.set("The response was lost; the same request can be retried.".into());
-                    retry.set(Some(request.clone()));
                 }
             }
         });
@@ -410,8 +450,8 @@ pub fn ScaleDialog(
                     on_change=Callback::new(move |value: String| target.set(value))
                 />
                 <div class="recipe-editor__actions">
-                    <Button disabled=busy on:click=move |_| run_preview.run(())>"Preview scaling"</Button>
-                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || preview.get().is_none()) on:click=move |_| apply.run(())>"Apply scaling"</Button>
+                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| run_preview.run(())>"Preview scaling"</Button>
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || retry.get().is_some() || preview.get().is_none()) on:click=move |_| apply.run(())>"Apply scaling"</Button>
                     <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>"Cancel"</Button>
                 </div>
                 <p role="status">{move || message.get()}</p>
@@ -443,6 +483,8 @@ pub fn DuplicateDialog(
     identity: RwSignal<OperationIntent>,
     recipe_id: RwSignal<Option<String>>,
     revision: RwSignal<Option<i64>>,
+    context_lost: RwSignal<bool>,
+    uncertain: RwSignal<bool>,
     pending: RwSignal<bool>,
     status: RwSignal<String>,
 ) -> impl IntoView {
@@ -459,14 +501,29 @@ pub fn DuplicateDialog(
         }
         open.set(false);
         message.set(String::new());
-        retry.set(None);
     });
 
     Effect::new(move |_| {
+        if context_lost.get() {
+            open.set(false);
+            busy.set(false);
+            pending.set(false);
+            retry.set(None);
+            uncertain.set(false);
+            message.set("Workspace changed; return to the original workspace.".into());
+        }
+    });
+    Effect::new(move |_| {
         if open.get() {
             title.set(String::new());
-            message.set(String::new());
-            retry.set(None);
+            if retry.get().is_some() {
+                message.set(
+                    "An earlier duplicate may have committed. Retry the previous request before duplicating again."
+                        .into(),
+                );
+            } else {
+                message.set(String::new());
+            }
         }
     });
 
@@ -474,7 +531,6 @@ pub fn DuplicateDialog(
         busy.set(true);
         pending.set(true);
         message.set("Duplicating recipe…".into());
-        retry.set(None);
         leptos::task::spawn_local(async move {
             let outcome = duplicate_recipe_shared(request.clone()).await;
             let Some(_) = open.try_get_untracked() else {
@@ -482,6 +538,17 @@ pub fn DuplicateDialog(
             };
             busy.set(false);
             pending.set(false);
+            let uncertain_outcome = matches!(
+                outcome,
+                Ok(DuplicateOutcome::Unavailable) | Ok(DuplicateOutcome::Retryable) | Err(_)
+            );
+            if uncertain_outcome {
+                retry.set(Some(request.clone()));
+                uncertain.set(true);
+            } else {
+                retry.set(None);
+                uncertain.set(false);
+            }
             match outcome {
                 Ok(DuplicateOutcome::Duplicated {
                     recipe_id: new_id,
@@ -532,17 +599,19 @@ pub fn DuplicateDialog(
                 }
                 Ok(DuplicateOutcome::Unavailable) => {
                     message.set("Duplication is unavailable; the request identity was retained.".into());
-                    retry.set(Some(request.clone()));
                 }
                 Err(_) => {
                     message.set("The response was lost; the same request can be retried.".into());
-                    retry.set(Some(request.clone()));
                 }
             }
         });
     });
 
     let duplicate = Callback::new(move |()| {
+        if retry.get_untracked().is_some() {
+            message.set("Retry the previous duplicate request before starting another.".into());
+            return;
+        }
         let Some(source) = recipe_id.get_untracked() else {
             message.set("Save the recipe before duplicating it.".into());
             return;
@@ -581,7 +650,7 @@ pub fn DuplicateDialog(
                     on_change=Callback::new(move |value: String| title.set(value))
                 />
                 <div class="recipe-editor__actions">
-                    <Button disabled=busy on:click=move |_| duplicate.run(())>"Duplicate"</Button>
+                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| duplicate.run(())>"Duplicate"</Button>
                     <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>"Cancel"</Button>
                 </div>
                 <p role="status">{move || message.get()}</p>
@@ -608,6 +677,18 @@ mod tests {
         });
         assert!(text.contains("30.00 L"));
         assert!(text.contains("42.00 L"));
+        assert!(text.contains("not changed automatically"));
+    }
+
+    #[test]
+    fn pre_boil_only_capacity_overrun_is_named() {
+        let text = warning_text(&ScaleWarning::KettleCapacityExceeded {
+            capacity_l: 44.0,
+            post_boil_l: 42.0,
+            pre_boil_l: Some(45.0),
+        });
+        assert!(text.contains("pre-boil 45.00 L"));
+        assert!(text.contains("post-boil 42.00 L fits"));
         assert!(text.contains("not changed automatically"));
     }
 

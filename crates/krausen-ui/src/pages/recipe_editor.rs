@@ -178,6 +178,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         let check_generation = RwSignal::new(0_u64);
         let recheck = Callback::new(move |()| {
             context_visible.set(false);
+            context_lost.set(false);
             preview_gate.update_value(|gate| {
                 gate.invalidate();
             });
@@ -190,7 +191,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             leptos::task::spawn_local(async move {
                 let matches = current_context_matches(&expected).await;
                 if check_generation.try_get_untracked() == Some(generation) {
-                    context_visible.set(matches);
+                    if matches {
+                        context_visible.set(true);
+                    } else {
+                        context_lost.set(true);
+                    }
                 }
             });
         });
@@ -210,8 +215,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let retry = RwSignal::new(None::<PendingRecipeSave>);
     let conflict = RwSignal::new(None::<RecipeSnapshot>);
     let print_preview = RwSignal::new(None::<ProcessSummary>);
+    let context_lost = RwSignal::new(false);
     let scale_open = RwSignal::new(false);
     let duplicate_open = RwSignal::new(false);
+    let scale_uncertain = RwSignal::new(false);
+    let duplicate_uncertain = RwSignal::new(false);
     let on_scaled = Callback::new(
         move |(document, revision_number): (RecipeDocumentV1, i64)| {
             baseline.set(document.clone());
@@ -280,11 +288,19 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         });
     }
     Effect::new(move |_| editor_guard.message.set(status.get()));
-    Effect::new(move |_| editor_guard.pending.set(pending.get()));
     Effect::new(move |_| {
         editor_guard
-            .dirty
-            .set(draft.with(|d| d.dirty) || pending.get() || retry.get().is_some())
+            .pending
+            .set(pending.get() || scale_uncertain.get() || duplicate_uncertain.get())
+    });
+    Effect::new(move |_| {
+        editor_guard.dirty.set(
+            draft.with(|d| d.dirty)
+                || pending.get()
+                || retry.get().is_some()
+                || scale_uncertain.get()
+                || duplicate_uncertain.get(),
+        )
     });
     on_cleanup(move || {
         editor_guard.dirty.set(false);
@@ -983,8 +999,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { if retained.get() { "Unsaved changes · retained locally".to_owned() } else { "Unsaved changes".to_owned() } } else { message }
         }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button><Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></header>
-        <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_visible=context_visible pending=pending status=status on_applied=on_scaled/>
-        <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision pending=pending status=status/>
+        <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
+        <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
         <div class="recipe-editor__summary">
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change/>
             <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>

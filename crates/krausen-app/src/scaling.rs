@@ -248,7 +248,10 @@ fn warnings(
     }];
     if let Some(post_boil_l) = targets.post_boil_l {
         match effective_equipment.kettle_capacity_l {
-            Some(capacity_l) if post_boil_l > capacity_l => {
+            Some(capacity_l)
+                if post_boil_l > capacity_l
+                    || targets.pre_boil_l.is_some_and(|pre| pre > capacity_l) =>
+            {
                 warnings.push(ScaleWarning::KettleCapacityExceeded {
                     capacity_l,
                     post_boil_l,
@@ -1416,6 +1419,28 @@ mod tests {
             ..accepted.clone()
         };
         assert!(!targets_match(&accepted, &missing));
+    }
+
+    #[test]
+    fn capacity_warning_checks_pre_boil_fill_too() {
+        let targets = Targets {
+            post_boil_l: Some(42.0),
+            pre_boil_l: Some(45.0),
+            ..Default::default()
+        };
+        let equipment = EquipmentSettingsV1 {
+            kettle_capacity_l: Some(44.0),
+            ..Default::default()
+        };
+        let warnings = warnings(&document(), &targets, &equipment);
+        assert!(warnings.iter().any(|warning| matches!(
+            warning,
+            ScaleWarning::KettleCapacityExceeded {
+                capacity_l: 44.0,
+                post_boil_l: 42.0,
+                pre_boil_l: Some(45.0),
+            }
+        )));
     }
 
     #[test]

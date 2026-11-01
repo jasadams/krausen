@@ -71,3 +71,62 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue('4');
 });
+
+test('same-context focus during apply settles without losing the request', async ({ page }) => {
+  const title = `Focus apply ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await page.route('**/execute_scale_apply*', async route => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save recipe' })).toBeEnabled();
+});
+
+test('uncertain apply keeps its identity through dismissal and blocks navigation', async ({ page }) => {
+  const title = `Uncertain apply ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await page.route('**/execute_scale_apply*', route => route.abort());
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeDisabled();
+  const recipes = page.getByRole('link', { name: 'Recipes', exact: true }).first();
+  await recipes.click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await page.unroute('**/execute_scale_apply*');
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
+});
+
+test('uncertain duplicate keeps its identity through dismissal', async ({ page }) => {
+  const title = `Uncertain duplicate ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
+  await page.route('**/execute_duplicate_recipe*', route => route.abort());
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Duplicate', exact: true })).toBeDisabled();
+  await page.unroute('**/execute_duplicate_recipe*');
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
+});
