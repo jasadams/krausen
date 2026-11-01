@@ -297,6 +297,11 @@ pub const OPERATIONS: &[Operation] = &[
     RECIPE_SCALE_PREVIEW,
     RECIPE_SCALE_APPLY,
     RECIPE_DUPLICATE,
+    BREW_RECIPE_HISTORY,
+    BREW_COMPARISON,
+    BREW_FEEDBACK_PREVIEW,
+    BREW_FEEDBACK_APPLY,
+    BREW_PRINT,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

@@ -32,7 +32,7 @@ use krausen_types::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-fn begin<'a>(
+async fn begin<'a>(
     pool: &'a DbPool,
     actor: &ActorContext,
     intent: &OperationIntent,
@@ -125,7 +125,10 @@ async fn recipe_head(
     let document =
         native_store::load_document(tx, &actor.workspace_id, recipe_id, row.native_head_revision)
             .await
-            .map_err(boundary_error)?
+            .map_err(|error| {
+                tracing::error!(error = ?error, "recipe revision cannot be read");
+                Error::Invalid("unsupported recipe revision")
+            })?
             .ok_or(Error::Invalid("missing recipe revision"))?;
     Ok(Some((row.native_head_revision, document)))
 }
@@ -158,14 +161,19 @@ async fn history_inner(
     if !recipe_exists(&mut tx, actor, &query.recipe_id).await? {
         return Ok(RecipeBrewHistoryOutcome::NotFound);
     }
-    let filter = if query.include_archived {
-        "all"
-    } else {
-        "active"
-    };
+    let filter = format!(
+        "recipe:{}:{}",
+        query.recipe_id,
+        if query.include_archived {
+            "all"
+        } else {
+            "active"
+        }
+    );
     let (before_started, before_id) = match query.cursor.as_deref() {
         Some(value) => {
-            let cursor = crate::recipe_library::decode(value, actor, "brew", filter, "started")?;
+            let cursor =
+                crate::recipe_library::decode(value, actor, "brew", &filter, "started")?;
             let started = cursor
                 .position
                 .parse::<i64>()
@@ -192,7 +200,7 @@ async fn history_inner(
                 crate::recipe_library::cursor(
                     actor,
                     "brew",
-                    filter,
+                    &filter,
                     "started",
                     row.started_at.to_string(),
                     row.brew_id.clone(),
@@ -268,27 +276,11 @@ async fn comparison_inner(
             return Ok(BrewComparisonOutcome::Unavailable);
         }
     };
+    let plan = view.plan.clone();
     let measurements = view
         .measurements
         .into_iter()
-        .map(|slot| {
-            let target = slot.target;
-            let delta = match (target, slot.current.as_ref().and_then(|entry| entry.value)) {
-                (Some(target), Some(value)) => Some(value - target),
-                _ => None,
-            };
-            BrewMeasurementComparison {
-                quantity_id: slot.quantity_id,
-                label: slot.label,
-                unit: slot.unit,
-                stage: slot.stage,
-                basis: slot.basis,
-                target,
-                selected: slot.current,
-                comparable: target.is_some(),
-                delta,
-            }
-        })
+        .map(|slot| measurement_comparison(slot, &plan))
         .collect();
     let changes = comparison_changes(
         &view.plan,
@@ -309,8 +301,15 @@ async fn comparison_inner(
     }))
 }
 
+fn canonical_digest<T: serde::Serialize>(value: &T) -> Option<String> {
+    canonical_json::from_serializable(value)
+        .ok()
+        .and_then(|value| canonical_json::sha256(&value).ok())
+}
+
 fn value_for_fermentable(row: &krausen_types::brewery::FermentableAddition) -> BrewComparisonValue {
     BrewComparisonValue {
+        canonical_digest: canonical_digest(row),
         name: row.specification.name.clone(),
         amount: row.amount_kg,
         unit: Some("kg".into()),
@@ -322,6 +321,7 @@ fn value_for_fermentable(row: &krausen_types::brewery::FermentableAddition) -> B
 
 fn value_for_hop(row: &krausen_types::brewery::HopAddition) -> BrewComparisonValue {
     BrewComparisonValue {
+        canonical_digest: canonical_digest(row),
         name: row.specification.name.clone(),
         amount: row.amount_g,
         unit: Some("g".into()),
@@ -334,6 +334,7 @@ fn value_for_hop(row: &krausen_types::brewery::HopAddition) -> BrewComparisonVal
 
 fn value_for_other(row: &krausen_types::brewery::IngredientAddition) -> BrewComparisonValue {
     BrewComparisonValue {
+        canonical_digest: canonical_digest(row),
         name: row.specification.name.clone(),
         amount: row.amount,
         unit: row.unit.clone(),
@@ -343,6 +344,7 @@ fn value_for_other(row: &krausen_types::brewery::IngredientAddition) -> BrewComp
 
 fn value_for_step(row: &ProcessStep) -> BrewComparisonValue {
     BrewComparisonValue {
+        canonical_digest: canonical_digest(row),
         name: row.name.clone(),
         time_minutes: row.time_minutes,
         temperature_c: row.temperature_c,
@@ -421,6 +423,70 @@ fn ingredient_changes(
                 Some(value.clone()),
             ));
         }
+    }
+}
+
+fn measurement_comparison(slot: MeasurementSlot, plan: &BrewPlanV1) -> BrewMeasurementComparison {
+    let target = slot.target;
+    let selected = slot.current;
+    let (comparable, warning) = if target.is_none() {
+        (false, Some("no_planned_target_for_basis".to_owned()))
+    } else if plan
+        .assumptions
+        .iter()
+        .all(|assumption| assumption != "volume_reference_20c")
+    {
+        (
+            false,
+            Some("planned_reference_temperature_unknown".to_owned()),
+        )
+    } else if slot.basis == "volume" {
+        match selected
+            .as_ref()
+            .and_then(|entry| entry.metadata.sample_temperature_c)
+        {
+            Some(temperature) if (temperature - 20.0).abs() > 1e-9 => {
+                (false, Some("unlike_sample_temperature".to_owned()))
+            }
+            Some(_) => (true, None),
+            None => (false, Some("measurement_temperature_unknown".to_owned())),
+        }
+    } else if slot.basis == "specific_gravity" {
+        match selected
+            .as_ref()
+            .and_then(|entry| entry.metadata.reference_temperature_c)
+        {
+            Some(temperature) if (temperature - 20.0).abs() > 1e-9 => {
+                (false, Some("unlike_reference_temperature".to_owned()))
+            }
+            Some(_) => (true, None),
+            None => (
+                false,
+                Some("measurement_reference_temperature_unknown".to_owned()),
+            ),
+        }
+    } else {
+        (true, None)
+    };
+    let delta = if comparable {
+        match (target, selected.as_ref().and_then(|entry| entry.value)) {
+            (Some(target), Some(value)) => Some(value - target),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    BrewMeasurementComparison {
+        quantity_id: slot.quantity_id,
+        label: slot.label,
+        unit: slot.unit,
+        stage: slot.stage,
+        basis: slot.basis,
+        target,
+        selected,
+        comparable,
+        delta,
+        warning,
     }
 }
 
@@ -639,6 +705,44 @@ fn comparison_changes(
         &actual.process.fermentation_steps,
         &mut out,
     );
+    if recipe.extensions != actual.extensions {
+        out.push(change(
+            "extensions".into(),
+            BrewHistorySection::Extensions,
+            None,
+            None,
+            BrewChangeKind::Changed,
+            Some(BrewComparisonValue {
+                canonical_digest: canonical_digest(&recipe.extensions),
+                text: Some("document extensions differ".into()),
+                ..Default::default()
+            }),
+            Some(BrewComparisonValue {
+                canonical_digest: canonical_digest(&actual.extensions),
+                text: Some("document extensions differ".into()),
+                ..Default::default()
+            }),
+        ));
+    }
+    if recipe.process.unsupported != actual.process.unsupported {
+        out.push(change(
+            "process:unsupported".into(),
+            BrewHistorySection::Process,
+            None,
+            Some("unsupported".into()),
+            BrewChangeKind::Changed,
+            Some(BrewComparisonValue {
+                canonical_digest: canonical_digest(&recipe.process.unsupported),
+                text: Some("unsupported process data differs".into()),
+                ..Default::default()
+            }),
+            Some(BrewComparisonValue {
+                canonical_digest: canonical_digest(&actual.process.unsupported),
+                text: Some("unsupported process data differs".into()),
+                ..Default::default()
+            }),
+        ));
+    }
     if recipe.notes != actual.notes {
         out.push(change(
             "notes".into(),
@@ -659,6 +763,13 @@ fn comparison_changes(
     out
 }
 
+fn selected_row_ids<'a>(selected: &'a BTreeSet<String>, prefix: &str) -> BTreeSet<&'a str> {
+    selected
+        .iter()
+        .filter_map(|id| id.strip_prefix(prefix))
+        .collect()
+}
+
 fn apply_changes(
     base: &RecipeDocumentV1,
     plan: &BrewPlanV1,
@@ -672,13 +783,7 @@ fn apply_changes(
     }
     let mut document = base.clone();
     let mut diagnostics = Vec::new();
-    let selected_prefix = |prefix: &str| -> BTreeSet<&str> {
-        selected
-            .iter()
-            .filter(|id| id.starts_with(prefix))
-            .map(|id| id.trim_start_matches(prefix))
-            .collect()
-    };
+    let selected_prefix = |prefix: &str| selected_row_ids(selected, prefix);
 
     let grain_rows = selected_prefix("fermentables:");
     if !grain_rows.is_empty() {
@@ -907,6 +1012,18 @@ fn apply_changes(
     if selected.contains("notes") {
         document.notes = actual.notes.clone();
     }
+    if selected.contains("extensions") {
+        diagnostics.push(
+            "document extensions are retained as plan evidence and are not applied to the recipe"
+                .into(),
+        );
+    }
+    if selected.contains("process:unsupported") {
+        diagnostics.push(
+            "unsupported process data is retained as evidence and is not applied to the recipe"
+                .into(),
+        );
+    }
     Ok((document, diagnostics))
 }
 
@@ -999,7 +1116,7 @@ async fn feedback_preview_inner(
             Err(error) => return Err(error),
         };
     if proposed == document {
-        return Ok(BrewFeedbackPreviewOutcome::NoChanges);
+        return Ok(BrewFeedbackPreviewOutcome::NoChanges { diagnostics });
     }
     let preview = crate::formulation_kernel::resolve_in_tx(
         &mut tx,
@@ -1144,21 +1261,18 @@ async fn feedback_apply_inner(
             actual: head,
         });
     }
-    let (proposed, _) = match apply_changes(&document, &brew.plan, &actual.document, &selected) {
-        Ok(result) => result,
-        Err(Error::Invalid(_)) => {
-            tx.rollback().await.map_err(boundary_error)?;
-            return Ok(BrewFeedbackApplyOutcome::InvalidRequest);
-        }
-        Err(error) => return Err(error),
-    };
+    let (proposed, diagnostics) =
+        match apply_changes(&document, &brew.plan, &actual.document, &selected) {
+            Ok(result) => result,
+            Err(Error::Invalid(_)) => {
+                tx.rollback().await.map_err(boundary_error)?;
+                return Ok(BrewFeedbackApplyOutcome::InvalidRequest);
+            }
+            Err(error) => return Err(error),
+        };
     if proposed == document {
         tx.rollback().await.map_err(boundary_error)?;
-        return Ok(BrewFeedbackApplyOutcome::Unchanged {
-            brew_id: brew.brew_id,
-            recipe_id: brew.recipe_id,
-            recipe_revision: head,
-        });
+        return Ok(BrewFeedbackApplyOutcome::NoChanges { diagnostics });
     }
     let preview = crate::formulation_kernel::resolve_in_tx(
         &mut tx,
@@ -1520,5 +1634,21 @@ fn summary_from_plan(view: &krausen_types::brew::BrewEvidenceView) -> ProcessSum
             chilling: plan.equipment.chilling.clone(),
             unsupported: recipe.process.unsupported.clone(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_row_ids_strip_exactly_one_namespace_prefix() {
+        let mut selected = BTreeSet::new();
+        selected.insert("fermentables:fermentables:x".to_owned());
+        selected.insert("fermentables:y".to_owned());
+        let rows = selected_row_ids(&selected, "fermentables:");
+        assert!(rows.contains("fermentables:x"));
+        assert!(!rows.contains("x"));
+        assert!(rows.contains("y"));
     }
 }

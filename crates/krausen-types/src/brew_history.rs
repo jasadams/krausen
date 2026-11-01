@@ -90,6 +90,8 @@ pub struct BrewMeasurementComparison {
     pub comparable: bool,
     /// Only present when both sides are present and the planned target exists.
     pub delta: Option<f64>,
+    /// Explicit assumption/unknown-context warning; raw evidence is retained.
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +105,7 @@ pub enum BrewHistorySection {
     MashStep,
     FermentationStep,
     Notes,
+    Extensions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +119,9 @@ pub enum BrewChangeKind {
 /// Complete value for one changed row/field. Absent values remain absent.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BrewComparisonValue {
+    /// Canonical digest of the complete source row/step value, so spec,
+    /// provenance and extension-only deviations are still detected.
+    pub canonical_digest: Option<String>,
     pub name: Option<String>,
     pub amount: Option<f64>,
     pub unit: Option<String>,
@@ -194,7 +200,9 @@ pub struct BrewFeedbackPreview {
 pub enum BrewFeedbackPreviewOutcome {
     Preview(BrewFeedbackPreview),
     NoActual,
-    NoChanges,
+    NoChanges {
+        diagnostics: Vec<String>,
+    },
     NotFound,
     Forbidden,
     ContextChanged,
@@ -247,7 +255,9 @@ pub enum BrewFeedbackApplyOutcome {
         actual: Option<i64>,
     },
     NoActual,
-    NoChanges,
+    NoChanges {
+        diagnostics: Vec<String>,
+    },
     NotFound,
     Forbidden,
     ContextChanged,

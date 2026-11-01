@@ -8,8 +8,8 @@ use krausen_types::{
     brew::{
         ActualFormulationCommand, ActualFormulationOutcome, AmendActualFormulationRequest,
         ArchiveBrewRequest, BrewArchiveOutcome, BrewEvidenceViewOutcome, BrewEvidenceViewRequest,
-        MeasurementCommand, MeasurementOutcome, RecordMeasurementRequest,
-        RetractMeasurementRequest, StartBrewOutcome, StartBrewRequest,
+        MeasurementCommand, MeasurementOutcome, RecordMeasurementRequest, StartBrewOutcome,
+        StartBrewRequest,
     },
     brew_history::{
         BrewChangeKind, BrewComparisonOutcome, BrewComparisonRequest, BrewFeedbackApplyOutcome,
@@ -17,16 +17,14 @@ use krausen_types::{
         BrewPrintOutcome, BrewPrintRequest, RecipeBrewHistoryOutcome, RecipeBrewHistoryQuery,
     },
     brewery::{
-        ActualFormulationV1, AdditionStage, BrewPlanV1, ChillingV1, EquipmentProvenance,
-        EquipmentSettingsV1, FermentableAddition, FermentableSpecification, ProcessV1,
-        RecipeDocumentV1, StyleReference,
+        ActualFormulationV1, AdditionStage, BrewPlanV1, EquipmentProvenance, EquipmentSettingsV1,
+        FermentableAddition, FermentableSpecification, ProcessV1, RecipeDocumentV1, StyleReference,
     },
     equipment::SaveEquipment,
     formulation::{PreviewOutcome, PreviewRequest},
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome},
     recipe_library::{ArchiveRecipe, LibraryOutcome},
     request_context::OperationIntent,
-    validation::Readiness,
 };
 use uuid::Uuid;
 
@@ -205,7 +203,10 @@ fn measurement(
         value,
         observed_at: None,
         source: "manual".into(),
-        metadata: Default::default(),
+        metadata: krausen_types::brewery::MeasurementMetadataV1 {
+            reference_temperature_c: Some(20.0),
+            ..Default::default()
+        },
         request_id: Uuid::new_v4().to_string(),
     }
 }
@@ -270,7 +271,7 @@ async fn exercise(db: DbPool) {
             .any(|row| row.quantity_id == "volume.packaged.v1" && !row.comparable)
     );
 
-    let MeasurementOutcome::Recorded(entry) = brew_evidence::measurements(
+    let MeasurementOutcome::Recorded(_entry) = brew_evidence::measurements(
         &db,
         &actor,
         MeasurementCommand::Record(measurement(&actor, &brew_id, "gravity.original.v1", 1.050)),
@@ -299,6 +300,51 @@ async fn exercise(db: DbPool) {
     assert_eq!(slot.selected.as_ref().unwrap().value, Some(1.050));
     assert!(slot.comparable);
     assert!(slot.delta.is_some());
+    let hot = brew_evidence::measurements(
+        &db,
+        &actor,
+        MeasurementCommand::Record(RecordMeasurementRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            quantity_id: "volume.post_boil.v1".into(),
+            value: 22.0,
+            observed_at: None,
+            source: "manual".into(),
+            metadata: krausen_types::brewery::MeasurementMetadataV1 {
+                sample_temperature_c: Some(95.0),
+                ..Default::default()
+            },
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await;
+    assert!(matches!(hot, MeasurementOutcome::Recorded(_)));
+    let comparison = brew_history::comparison(
+        &db,
+        &actor,
+        BrewComparisonRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewComparisonOutcome::Comparison(comparison) = comparison else {
+        panic!("hot comparison")
+    };
+    let hot_slot = comparison
+        .measurements
+        .iter()
+        .find(|row| row.quantity_id == "volume.post_boil.v1")
+        .unwrap();
+    assert!(
+        !hot_slot.comparable,
+        "hot volume must not be a like-for-like delta"
+    );
+    assert_eq!(hot_slot.delta, None);
+    assert_eq!(
+        hot_slot.warning.as_deref(),
+        Some("unlike_sample_temperature")
+    );
 
     let doc = actual(&recipe);
     let ActualFormulationOutcome::Amended(actual_revision) = brew_evidence::actual(
@@ -395,7 +441,7 @@ async fn exercise(db: DbPool) {
         }
     );
     assert_eq!(
-        brew_history::feedback_apply(&db, &actor, request).await,
+        brew_history::feedback_apply(&db, &actor, request.clone()).await,
         BrewFeedbackApplyOutcome::Applied {
             brew_id: brew_id.clone(),
             recipe_id: recipe_id.clone(),
@@ -412,6 +458,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(updated.revision, 2);
     assert_eq!(updated.document.fermentables[0].amount_kg, Some(4.5));
     assert_eq!(updated.document.boil_minutes, Some(70.0));
+    let head_document = updated.document.clone();
 
     let stale = brew_history::feedback_apply(
         &db,
@@ -449,6 +496,94 @@ async fn exercise(db: DbPool) {
         "plan is immutable after feedback"
     );
 
+    // Complete canonical deviations: an actual spec-only change and an
+    // extension-only change must be visible and explicitly unapplied.
+    let mut spec_actual = actual(&recipe);
+    spec_actual.fermentables[0].amount_kg = Some(4.5);
+    spec_actual.fermentables[0].specification.yield_fraction = Some(0.82);
+    spec_actual
+        .extensions
+        .insert("fixture".into(), serde_json::json!(true));
+    let ActualFormulationOutcome::Amended(spec_revision) = brew_evidence::actual(
+        &db,
+        &actor,
+        ActualFormulationCommand::Amend(AmendActualFormulationRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(1),
+            document: spec_actual,
+            reason: Some("spec and extension evidence".into()),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+    )
+    .await
+    else {
+        panic!("spec amendment")
+    };
+    assert_eq!(spec_revision.revision, 2);
+    let comparison = brew_history::comparison(
+        &db,
+        &actor,
+        BrewComparisonRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+        },
+    )
+    .await;
+    let BrewComparisonOutcome::Comparison(comparison) = comparison else {
+        panic!("spec comparison")
+    };
+    assert!(
+        comparison
+            .changes
+            .iter()
+            .any(|change| change.id == "fermentables:grain-1")
+    );
+    assert!(
+        comparison
+            .changes
+            .iter()
+            .any(|change| change.id == "extensions")
+    );
+    let spec_preview = brew_history::feedback_preview(
+        &db,
+        &actor,
+        BrewFeedbackPreviewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(2),
+            change_ids: vec!["fermentables:grain-1".into()],
+        },
+    )
+    .await;
+    let BrewFeedbackPreviewOutcome::NoChanges { diagnostics } = spec_preview else {
+        panic!("spec-only preview should be explicit no-change: {spec_preview:?}")
+    };
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.contains("specification preserved"))
+    );
+    let extension_preview = brew_history::feedback_preview(
+        &db,
+        &actor,
+        BrewFeedbackPreviewRequest {
+            intent: intent(&actor),
+            brew_id: brew_id.clone(),
+            expected_actual_revision: Some(2),
+            change_ids: vec!["extensions".into()],
+        },
+    )
+    .await;
+    let BrewFeedbackPreviewOutcome::NoChanges { diagnostics } = extension_preview else {
+        panic!("extension-only preview should be explicit no-change: {extension_preview:?}")
+    };
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.contains("extensions"))
+    );
+
     let print = brew_history::historical_print(
         &db,
         &actor,
@@ -469,6 +604,111 @@ async fn exercise(db: DbPool) {
             .measurements
             .iter()
             .any(|row| row.quantity_id == "gravity.original.v1")
+    );
+
+    // Two brews give a real keyset continuation; the cursor is bound to its
+    // recipe parent, so reusing it for another recipe is rejected.
+    let head_preview = formulation::preview(
+        &db,
+        &actor,
+        PreviewRequest {
+            draft_generation: "second-brew".into(),
+            intent: intent(&actor),
+            draft: head_document,
+            equipment_draft: Default::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let PreviewOutcome::Preview(head_preview) = head_preview else {
+        panic!("second brew preview")
+    };
+    let StartBrewOutcome::Started {
+        brew_id: second_brew,
+        ..
+    } = brew_start::start(
+        &db,
+        &actor,
+        StartBrewRequest {
+            intent: intent(&actor),
+            recipe_id: recipe_id.clone(),
+            selected_recipe_revision: 2,
+            expected_head_revision: Some(2),
+            expected_calculation_context: head_preview.context_digest.unwrap(),
+            request_id: Uuid::new_v4().to_string(),
+        },
+    )
+    .await
+    else {
+        panic!("second brew")
+    };
+    let first_page = brew_history::history(
+        &db,
+        &actor,
+        RecipeBrewHistoryQuery {
+            intent: intent(&actor),
+            recipe_id: recipe_id.clone(),
+            include_archived: true,
+            cursor: None,
+            limit: 1,
+        },
+    )
+    .await;
+    let RecipeBrewHistoryOutcome::History(first_page) = first_page else {
+        panic!("first page")
+    };
+    assert_eq!(first_page.items.len(), 1);
+    let cursor = first_page.next_cursor.expect("continuation");
+    let second_page = brew_history::history(
+        &db,
+        &actor,
+        RecipeBrewHistoryQuery {
+            intent: intent(&actor),
+            recipe_id: recipe_id.clone(),
+            include_archived: true,
+            cursor: Some(cursor.clone()),
+            limit: 1,
+        },
+    )
+    .await;
+    let RecipeBrewHistoryOutcome::History(second_page) = second_page else {
+        panic!("second page")
+    };
+    assert_eq!(second_page.items.len(), 1);
+    assert_ne!(second_page.items[0].brew_id, first_page.items[0].brew_id);
+    let mut second_recipe = recipe.clone();
+    second_recipe.title = "Other history recipe".into();
+    let RecipeSaveOutcome::Saved {
+        recipe_id: other_recipe,
+        ..
+    } = recipe_editor::save(
+        &db,
+        &actor,
+        &intent(&actor),
+        None,
+        None,
+        &second_recipe,
+        Uuid::new_v4(),
+    )
+    .await
+    else {
+        panic!("second recipe")
+    };
+    assert_eq!(
+        brew_history::history(
+            &db,
+            &actor,
+            RecipeBrewHistoryQuery {
+                intent: intent(&actor),
+                recipe_id: other_recipe,
+                include_archived: true,
+                cursor: Some(cursor),
+                limit: 1,
+            },
+        )
+        .await,
+        RecipeBrewHistoryOutcome::InvalidRequest,
+        "a cursor must not cross parent recipes"
     );
 
     // Archive the recipe; immutable plan/history/print stay available.
@@ -503,8 +743,8 @@ async fn exercise(db: DbPool) {
     let RecipeBrewHistoryOutcome::History(page) = archived_history else {
         panic!("archived history")
     };
-    assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].brew_id, brew_id);
+    assert_eq!(page.items.len(), 2);
+    assert!(page.items.iter().any(|item| item.brew_id == brew_id));
     assert_eq!(
         brew_history::historical_print(
             &db,
@@ -545,7 +785,11 @@ async fn exercise(db: DbPool) {
         },
     )
     .await;
-    assert!(matches!(active, RecipeBrewHistoryOutcome::History(page) if page.items.is_empty()));
+    let RecipeBrewHistoryOutcome::History(active) = active else {
+        panic!("active history")
+    };
+    assert_eq!(active.items.len(), 1);
+    assert_eq!(active.items[0].brew_id, second_brew);
 
     let restored = recipe_library::archive(
         &db,
