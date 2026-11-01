@@ -64,6 +64,20 @@ Verify changes using the scoped guidance and checks appropriate to their impact.
 Keep draft/accepted status, limitations and unresolved decisions accurate; do
 not mark KRA tickets complete merely because a prototype or screenshot exists.
 
+### Test cadence
+
+- Keep the acceptance tests, but do not run the full suite on every commit or
+  again after merge. When a test fails, fix the cause and rerun only the failed
+  test until it passes. Then run the full suite once, either locally or in CI,
+  not both. Repeat that focused-fix cycle if the full run finds another failure.
+- The foundation workflow is explicitly dispatched on the ready PR's branch
+  when CI is the chosen environment. Pushes, readiness changes and merges do not
+  trigger it. If the full suite passed locally, record that evidence instead.
+- Preserve passing evidence for unchanged code. Do not use a full-suite run as
+  the diagnostic loop or duplicate an accepted full local run in CI.
+- Record the tested commit and actual scope honestly. Older passing evidence
+  is not proof that changed code passed; known failures still need resolution.
+
 ## Boundary checks for implementation and review
 
 - Both UI and MCP call `krausen-app`; no direct protected CRUD/calculation bypass.
