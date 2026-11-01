@@ -11,12 +11,10 @@ use crate::{
     ActorContext, Error, RequestIdentity, authorize_workspace, boundary_error, check_intent,
     db_error, record_change, record_request, recover_request,
 };
-use krausen_brewery::{
-    equipment_store, mapping::calculation, native_store, validation::validate_draft,
-};
+use krausen_brewery::native_store;
 use krausen_core::{DbPool, DbTx, canonical_json};
 use krausen_types::{
-    brewery::{EquipmentProfile, EquipmentSettingsV1, RecipeDocumentV1},
+    brewery::{EquipmentSettingsV1, RecipeDocumentV1},
     formulation::{CalculationContext, PreviewOutcome, PreviewRequest, Targets},
     scaling::{
         AcceptedScaleContext, DuplicateOutcome, DuplicateRecipe,
@@ -25,11 +23,6 @@ use krausen_types::{
     },
     validation::Validation,
 };
-use sha2::{Digest, Sha256};
-
-const ENGINE_VERSION: &str = krausen_calc::formulation::ENGINE_VERSION;
-const ENGINE_BUILD: &str = krausen_calc::formulation::ENGINE_BUILD;
-const POLICY_VERSION: &str = "krausen-formulation-v1";
 
 #[derive(Debug, PartialEq)]
 struct ScaledDocument {
@@ -150,89 +143,6 @@ fn scale_document(
         factor,
         changes,
     })
-}
-
-/// Mirror of the formulation resolver's effective-setting merge. Kept local
-/// because formulation.rs participates in its own policy-source hash and must
-/// not be refactored.
-/// Mirrors formulation.rs, which is hash-participating; keep byte-for-byte
-/// semantics. Drift is caught by `mirrored_context_components_match_real_preview`.
-fn effective(base: &EquipmentSettingsV1, overrides: &EquipmentSettingsV1) -> EquipmentSettingsV1 {
-    let mut e = base.clone();
-    macro_rules! apply { ($($field:ident),*) => { $(if overrides.$field.is_some() { e.$field = overrides.$field.clone(); })* }; }
-    apply!(
-        efficiency_override_fraction,
-        mash_efficiency_fraction,
-        boil_off_l_per_hour,
-        transfer_loss_l,
-        pre_boil_deadspace_l,
-        grain_absorption_l_per_kg,
-        mash_thickness_l_per_kg,
-        kettle_capacity_l,
-        kettle_diameter_cm,
-        kettle_opening_cm,
-        boil_temperature_c,
-        chilling
-    );
-    e.extensions.extend(overrides.extensions.clone());
-    e
-}
-
-/// Mirror of the formulation resolver's disclosed assumptions.
-/// Mirrors formulation.rs, which is hash-participating; keep byte-for-byte
-/// semantics. Drift is caught by `mirrored_context_components_match_real_preview`.
-fn assumptions(document: &RecipeDocumentV1, profile: Option<&EquipmentProfile>) -> Vec<String> {
-    let mut assumptions = vec![
-        "volume_reference_20c".to_owned(),
-        "solid_addition_volume_negligible".to_owned(),
-    ];
-    if let Some(profile) = profile {
-        assumptions.extend(
-            profile
-                .provenance
-                .assumptions
-                .iter()
-                .map(|item| format!("profile:{item}")),
-        );
-    }
-    if document.process.kettle_top_up_l.is_none() {
-        assumptions.push("kettle_top_up_default_zero".to_owned());
-    }
-    if document.process.whirlpool_minutes.is_none() && document.hops.is_empty() {
-        assumptions.push("whirlpool_duration_default_zero".to_owned());
-    }
-    assumptions
-}
-
-/// Current process build identity, used only for context-component comparison.
-/// The policy sources are the same bytes hashed by krausen-app::formulation.
-/// Mirrors formulation.rs, which is hash-participating; keep byte-for-byte
-/// semantics. Drift is caught by `mirrored_context_components_match_real_preview`.
-fn engine_source_hash() -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(krausen_calc::formulation::ENGINE_SOURCE.as_bytes())
-    )
-}
-
-/// Policy source identity mirror. Mirrors formulation.rs, which is
-/// hash-participating; keep byte-for-byte semantics. Drift is caught by
-/// `mirrored_context_components_match_real_preview`.
-fn policy_source_hash() -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(
-            concat!(
-                include_str!("formulation.rs"),
-                include_str!("style_reference.rs"),
-                include_str!("../../krausen-brewery/src/mapping/calculation.rs"),
-                include_str!("../../krausen-brewery/src/validation.rs"),
-                include_str!("../../krausen-types/src/brewery.rs"),
-                include_str!("../../krausen-core/src/canonical_json.rs")
-            )
-            .as_bytes()
-        )
-    )
 }
 
 fn warnings(
@@ -383,25 +293,6 @@ async fn load_head_document(
             Error::Invalid("unsupported recipe revision")
         })?
         .ok_or(Error::Invalid("missing recipe revision"))
-}
-
-async fn resolve_profile(
-    tx: &mut DbTx<'_>,
-    actor: &ActorContext,
-    document: &RecipeDocumentV1,
-) -> Result<Option<EquipmentProfile>, Error> {
-    let Some(profile_id) = &document.equipment_profile_id else {
-        return Ok(None);
-    };
-    let profile = equipment_store::load(tx, &actor.workspace_id, profile_id, true)
-        .await
-        .map_err(boundary_error)?;
-    // The profile row lock may have waited past the credential expiry boundary.
-    authorize_workspace(tx, actor).await?;
-    match profile {
-        Some(profile) if !profile.archived => Ok(Some(profile)),
-        _ => Err(Error::EquipmentArchived),
-    }
 }
 
 async fn build_preview(
@@ -616,73 +507,6 @@ fn targets_match(accepted: &Targets, fresh: &Targets) -> bool {
         && close(accepted.colour_ebc, fresh.colour_ebc, 1e-6)
 }
 
-fn context_mismatch(
-    accepted: &AcceptedScaleContext,
-    actor: &ActorContext,
-    document: &RecipeDocumentV1,
-    profile: Option<&EquipmentProfile>,
-    equipment_base: &EquipmentSettingsV1,
-    effective_equipment: &EquipmentSettingsV1,
-    style: Option<&krausen_types::formulation::StyleRanges>,
-    targets: &Targets,
-) -> Option<&'static str> {
-    let context = &accepted.context;
-    let provenance = if profile.is_some() {
-        "saved_profile"
-    } else {
-        "caller_supplied_equipment_draft"
-    };
-    if context.workspace_id != actor.workspace_id {
-        return Some("workspace_id");
-    }
-    if context.draft != *document {
-        return Some("draft");
-    }
-    if context.equipment_draft != *equipment_base {
-        return Some("equipment_draft");
-    }
-    if context.effective_equipment != *effective_equipment {
-        return Some("effective_equipment");
-    }
-    if context.equipment_provenance != provenance {
-        return Some("equipment_provenance");
-    }
-    if context.equipment_profile.as_ref() != profile {
-        return Some("equipment_profile");
-    }
-    if context.assumptions != assumptions(document, profile) {
-        return Some("assumptions");
-    }
-    if context.engine_version != ENGINE_VERSION {
-        return Some("engine_version");
-    }
-    if context.engine_build != ENGINE_BUILD {
-        return Some("engine_build");
-    }
-    if context.engine_source_hash != engine_source_hash() {
-        return Some("engine_source_hash");
-    }
-    if context.policy_source_hash != policy_source_hash() {
-        return Some("policy_source_hash");
-    }
-    if context.policy_version != POLICY_VERSION {
-        return Some("policy_version");
-    }
-    if context.native_schema_version != 1 {
-        return Some("native_schema_version");
-    }
-    if context.result_schema_version != 1 {
-        return Some("result_schema_version");
-    }
-    if context.style.as_ref() != style {
-        return Some("style");
-    }
-    if !targets_match(&accepted.targets, targets) {
-        return Some("targets");
-    }
-    None
-}
-
 async fn apply_inner(
     pool: &DbPool,
     actor: &ActorContext,
@@ -759,7 +583,19 @@ async fn apply_inner(
             return Ok(ScaleApplyOutcome::Unscalable(problem));
         }
     };
-    let profile = resolve_profile(&mut tx, actor, &scaled.document).await?;
+    let fresh_preview = crate::formulation_kernel::resolve_in_tx(
+        &mut tx,
+        actor,
+        PreviewRequest {
+            draft_generation: "scale-target".to_owned(),
+            intent: request.intent.clone(),
+            draft: scaled.document.clone(),
+            equipment_draft: EquipmentSettingsV1::default(),
+        },
+    )
+    .await?;
+    let (targets, validation, fresh_context, fresh_context_digest) =
+        preview_from_formulation(fresh_preview)?;
     // Profile lock acquired; now take the head lock in the save/start order.
     let Some((locked_actual, locked_archived)) =
         head_row(&mut tx, actor, &request.recipe_id, true).await?
@@ -780,24 +616,6 @@ async fn apply_inner(
             actual: locked_actual,
         });
     }
-    let base = profile
-        .as_ref()
-        .map(|profile| profile.settings.clone())
-        .unwrap_or_default();
-    let effective_equipment = effective(&base, &scaled.document.equipment_overrides);
-    let style = match &scaled.document.style {
-        Some(reference) => match crate::style_reference::resolve(reference) {
-            Some(style) => Some(style),
-            None => {
-                tx.rollback().await.map_err(boundary_error)?;
-                return Ok(ScaleApplyOutcome::UnresolvedStyle);
-            }
-        },
-        None => None,
-    };
-    let mut validation = validate_draft(&scaled.document, &effective_equipment);
-    let targets = calculation::targets(&scaled.document, &effective_equipment, &mut validation);
-
     let accepted = &request.accepted;
     let revision_matches = accepted.source_revision == actual;
     let target_matches = accepted.target_batch_size_l == request.target_batch_size_l;
@@ -810,18 +628,10 @@ async fn apply_inner(
         &accepted.calculation_context_digest,
     )?
     .eq(&accepted.digest);
-    let context_mismatch = context_mismatch(
-        accepted,
-        actor,
-        &scaled.document,
-        profile.as_ref(),
-        &base,
-        &effective_equipment,
-        style.as_ref(),
-        &targets,
-    );
     if !(revision_matches && target_matches && policy_matches && digest_ok)
-        || context_mismatch.is_some()
+        || accepted.context != fresh_context
+        || accepted.calculation_context_digest != fresh_context_digest
+        || !targets_match(&accepted.targets, &targets)
     {
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(context_conflict(pool, actor, &request).await);
@@ -1257,7 +1067,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mirrored_context_components_match_real_preview() {
+    async fn transaction_resolver_matches_real_preview() {
         use crate::{ActorContext, equipment};
         use krausen_types::equipment::SaveEquipment;
         use krausen_types::formulation::{PreviewOutcome, PreviewRequest};
@@ -1354,43 +1164,32 @@ mod tests {
             edition: Some("BJCP 2021".into()),
             style_id: Some("4A".into()),
         });
-        let preview = crate::formulation::preview(
-            &db,
-            &actor,
-            PreviewRequest {
-                draft_generation: "mirror".into(),
-                intent,
-                draft: draft.clone(),
-                equipment_draft: EquipmentSettingsV1::default(),
-            },
-        )
-        .await
-        .unwrap();
-        let PreviewOutcome::Preview(preview) = preview else {
-            panic!("real preview required");
+        let request = PreviewRequest {
+            draft_generation: "shared".into(),
+            intent,
+            draft,
+            equipment_draft: EquipmentSettingsV1::default(),
         };
-        let context = preview.context.expect("preview context");
-        let base = profile.settings.clone();
-        assert_eq!(context.workspace_id, actor.workspace_id);
-        assert_eq!(context.draft, draft);
-        assert_eq!(context.equipment_draft, base);
+        let preview = crate::formulation::preview(&db, &actor, request.clone())
+            .await
+            .unwrap();
+        let mut tx = db.begin_write().await.unwrap();
+        let held = crate::formulation_kernel::resolve_in_tx(&mut tx, &actor, request)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let PreviewOutcome::Preview(preview) = preview else {
+            panic!("preview required")
+        };
+        let PreviewOutcome::Preview(held) = held else {
+            panic!("transaction preview required")
+        };
+        assert_eq!(preview.context, held.context);
+        assert_eq!(preview.context_digest, held.context_digest);
+        assert_eq!(preview.targets, held.targets);
         assert_eq!(
-            context.effective_equipment,
-            effective(&base, &draft.equipment_overrides)
-        );
-        assert_eq!(context.equipment_provenance, "saved_profile");
-        assert_eq!(context.equipment_profile, Some(profile.clone()));
-        assert_eq!(context.assumptions, assumptions(&draft, Some(&profile)));
-        assert_eq!(context.engine_version, ENGINE_VERSION);
-        assert_eq!(context.engine_build, ENGINE_BUILD);
-        assert_eq!(context.engine_source_hash, engine_source_hash());
-        assert_eq!(context.policy_source_hash, policy_source_hash());
-        assert_eq!(context.policy_version, POLICY_VERSION);
-        assert_eq!(context.native_schema_version, 1);
-        assert_eq!(context.result_schema_version, 1);
-        assert_eq!(
-            context.style,
-            crate::style_reference::resolve(draft.style.as_ref().unwrap())
+            held.context.unwrap().policy_version,
+            "krausen-formulation-v2"
         );
     }
 
