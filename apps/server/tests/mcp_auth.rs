@@ -31,7 +31,11 @@ async fn brew_ui_outcome(
         .send()
         .await
         .unwrap();
-    assert!(response.status().is_success(), "brew UI HTTP {}", response.status());
+    assert!(
+        response.status().is_success(),
+        "brew UI HTTP {}",
+        response.status()
+    );
     response.json().await.unwrap()
 }
 
@@ -1366,7 +1370,9 @@ async fn exercise(db: DbPool) {
     .unwrap()
     .clone();
     let evidence_view = modern
-        .call_tool(CallToolRequestParams::new("brew_evidence_view").with_arguments(view_args.clone()))
+        .call_tool(
+            CallToolRequestParams::new("brew_evidence_view").with_arguments(view_args.clone()),
+        )
         .await
         .unwrap();
     assert_ne!(evidence_view.is_error, Some(true));
@@ -1418,7 +1424,9 @@ async fn exercise(db: DbPool) {
         .to_string();
     assert_eq!(recorded["outcome"]["Recorded"]["value"], 1.050);
     let replayed = modern
-        .call_tool(CallToolRequestParams::new("brew_measurement").with_arguments(record_args.clone()))
+        .call_tool(
+            CallToolRequestParams::new("brew_measurement").with_arguments(record_args.clone()),
+        )
         .await
         .unwrap();
     assert_ne!(replayed.is_error, Some(true));
@@ -1456,7 +1464,8 @@ async fn exercise(db: DbPool) {
     .await;
     let invalid_measurement = modern
         .call_tool(
-            CallToolRequestParams::new("brew_measurement").with_arguments(invalid_measurement.clone()),
+            CallToolRequestParams::new("brew_measurement")
+                .with_arguments(invalid_measurement.clone()),
         )
         .await
         .unwrap();
@@ -1645,7 +1654,11 @@ async fn exercise(db: DbPool) {
         .unwrap();
     assert_eq!(invalid_transition.is_error, Some(true));
     let invalid_transition = invalid_transition.structured_content.unwrap();
-    assert!(invalid_transition["outcome"].get("InvalidTransition").is_some());
+    assert!(
+        invalid_transition["outcome"]
+            .get("InvalidTransition")
+            .is_some()
+    );
     assert_eq!(ui_invalid_transition, invalid_transition["outcome"]);
 
     let archive_args = json!({
@@ -2215,12 +2228,23 @@ async fn exercise(db: DbPool) {
         .clone();
         let history = modern
             .call_tool(
-                CallToolRequestParams::new("brew_recipe_history").with_arguments(history_args),
+                CallToolRequestParams::new("brew_recipe_history")
+                    .with_arguments(history_args.clone()),
             )
             .await
             .unwrap();
         assert_ne!(history.is_error, Some(true));
         let history = history.structured_content.unwrap();
+        assert_eq!(
+            brew_ui_outcome(
+                &base,
+                &browser.access_token,
+                <krausen_ui::server_fns::brew_history::ExecuteBrewHistory as ServerFn>::PATH,
+                &history_args["request"]
+            )
+            .await,
+            history["outcome"]
+        );
         assert_eq!(
             history["outcome"]["History"]["items"][0]["brew_id"],
             brew_id
@@ -2234,12 +2258,23 @@ async fn exercise(db: DbPool) {
         .clone();
         let comparison = modern
             .call_tool(
-                CallToolRequestParams::new("brew_comparison").with_arguments(comparison_args),
+                CallToolRequestParams::new("brew_comparison")
+                    .with_arguments(comparison_args.clone()),
             )
             .await
             .unwrap();
         assert_ne!(comparison.is_error, Some(true));
         let comparison = comparison.structured_content.unwrap();
+        assert_eq!(
+            brew_ui_outcome(
+                &base,
+                &browser.access_token,
+                <krausen_ui::server_fns::brew_history::ExecuteBrewComparison as ServerFn>::PATH,
+                &comparison_args["request"]
+            )
+            .await,
+            comparison["outcome"]
+        );
         assert_eq!(
             comparison["outcome"]["Comparison"]["selected_recipe_revision"],
             1
@@ -2267,12 +2302,13 @@ async fn exercise(db: DbPool) {
         let feedback_preview = modern
             .call_tool(
                 CallToolRequestParams::new("brew_feedback_preview")
-                    .with_arguments(feedback_preview_args),
+                    .with_arguments(feedback_preview_args.clone()),
             )
             .await
             .unwrap();
         assert_ne!(feedback_preview.is_error, Some(true));
         let feedback_preview = feedback_preview.structured_content.unwrap();
+        assert_eq!(brew_ui_outcome(&base, &browser.access_token, <krausen_ui::server_fns::brew_history::ExecuteBrewFeedbackPreview as ServerFn>::PATH, &feedback_preview_args["request"]).await, feedback_preview["outcome"]);
         assert_eq!(
             feedback_preview["outcome"]["Preview"]["proposed_recipe"]["boil_minutes"],
             75.0
@@ -2281,6 +2317,19 @@ async fn exercise(db: DbPool) {
             .as_str()
             .unwrap()
             .to_string();
+        let mut stale_preview_args = feedback_preview_args;
+        stale_preview_args["request"]["expected_actual_revision"] = json!(99);
+        let stale_preview = modern
+            .call_tool(
+                CallToolRequestParams::new("brew_feedback_preview")
+                    .with_arguments(stale_preview_args.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stale_preview.is_error, Some(true));
+        let stale_preview = stale_preview.structured_content.unwrap();
+        assert!(stale_preview["outcome"].get("Conflict").is_some());
+        assert_eq!(brew_ui_outcome(&base, &browser.access_token, <krausen_ui::server_fns::brew_history::ExecuteBrewFeedbackPreview as ServerFn>::PATH, &stale_preview_args["request"]).await, stale_preview["outcome"]);
         let feedback_apply_args = json!({
             "workspace_id": &ws,
             "request": {
@@ -2299,14 +2348,22 @@ async fn exercise(db: DbPool) {
         let feedback_apply = modern
             .call_tool(
                 CallToolRequestParams::new("brew_feedback_apply")
-                    .with_arguments(feedback_apply_args),
+                    .with_arguments(feedback_apply_args.clone()),
             )
             .await
             .unwrap();
         assert_ne!(feedback_apply.is_error, Some(true));
+        let feedback_apply = feedback_apply.structured_content.unwrap();
+        assert_eq!(feedback_apply["outcome"]["Applied"]["recipe_revision"], 3);
         assert_eq!(
-            feedback_apply.structured_content.unwrap()["outcome"]["Applied"]["recipe_revision"],
-            3
+            brew_ui_outcome(
+                &base,
+                &browser.access_token,
+                <krausen_ui::server_fns::brew_history::ExecuteBrewFeedbackApply as ServerFn>::PATH,
+                &feedback_apply_args["request"]
+            )
+            .await,
+            feedback_apply["outcome"]
         );
         let print_args = json!({
             "workspace_id": &ws,
@@ -2316,11 +2373,21 @@ async fn exercise(db: DbPool) {
         .unwrap()
         .clone();
         let print = modern
-            .call_tool(CallToolRequestParams::new("brew_print").with_arguments(print_args))
+            .call_tool(CallToolRequestParams::new("brew_print").with_arguments(print_args.clone()))
             .await
             .unwrap();
         assert_ne!(print.is_error, Some(true));
         let print = print.structured_content.unwrap();
+        assert_eq!(
+            brew_ui_outcome(
+                &base,
+                &browser.access_token,
+                <krausen_ui::server_fns::brew_history::ExecuteBrewPrint as ServerFn>::PATH,
+                &print_args["request"]
+            )
+            .await,
+            print["outcome"]
+        );
         assert_eq!(
             print["outcome"]["Print"]["summary"]["source"]["kind"],
             "historical_brew"
