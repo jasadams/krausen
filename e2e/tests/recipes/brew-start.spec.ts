@@ -475,7 +475,11 @@ test('failed retry context preflight retains the same uncertain request', async 
   const switcher = await context.newPage();
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
-  await page.waitForTimeout(500);
+  const settleResponse = page.waitForResponse((response) =>
+    response.url().includes('/get_user_context'),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await settleResponse;
   let releasePreflight!: () => void;
   const preflightReleased = new Promise<void>((resolve) => {
     releasePreflight = resolve;
@@ -519,6 +523,12 @@ test('failed retry context preflight retains the same uncertain request', async 
   releasePreflight();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+  expect(recordCommands).toHaveLength(1);
+  await page.getByRole('link', { name: 'Recipes' }).first().click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeEnabled();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByText('Account or workspace changed')).toBeVisible();
   expect(recordCommands).toHaveLength(1);
   const originalName = sqliteExec(
     `SELECT name FROM workspaces WHERE workspace_id = '${workspace}'`,
@@ -618,12 +628,41 @@ test('out-of-order context success cannot restore hidden evidence', async ({
     .toBe(otherWorkspace);
   releaseNewer();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__oldEvidenceSeen = false;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('#measurement-gravity-original-v1')) {
+        (window as any).__oldEvidenceSeen = true;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    (window as any).__oldEvidenceObserver = observer;
+  });
   const olderResponse = page.waitForResponse((response) =>
     response.url().includes('/get_user_context'),
   );
   releaseOlder();
   await olderResponse;
-  await page.waitForTimeout(250);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        let frames = 0;
+        const tick = () => {
+          frames += 1;
+          if (frames >= 5) {
+            resolve();
+          } else {
+            requestAnimationFrame(tick);
+          }
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  const oldEvidenceSeen = await page.evaluate(() => {
+    (window as any).__oldEvidenceObserver?.disconnect();
+    return (window as any).__oldEvidenceSeen as boolean;
+  });
+  expect(oldEvidenceSeen).toBe(false);
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   await expect(page.getByText('Brew evidence')).toHaveCount(0);
