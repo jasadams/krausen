@@ -12,7 +12,7 @@ use crate::{
         BreweryDialog, BreweryDraftField, BreweryDraftSelect, BreweryNotice, Button, ButtonSize,
         ButtonVariant, CatalogueItem, EmptyState,
     },
-    pages::recipe_editor::current_context_matches,
+    pages::recipe_editor::{EditorAccess, EditorAuthorityHold, current_context_matches},
     server_fns::catalogue::catalogue_command_shared,
 };
 use krausen_types::{
@@ -196,6 +196,36 @@ pub fn CataloguePicker(
     let notice = RwSignal::new(None::<(String, String, bool)>);
     let generation = RwSignal::new(0_u64);
     let search_generation = RwSignal::new(0_u64);
+    // Only a genuine logical close/reset retires this open task. Query changes
+    // and authority-driven native hiding must not revive or cancel a command.
+    let session = RwSignal::new(0_u64);
+    let owns_session = move |issued: u64, expected: &OperationIntent| {
+        session.try_get_untracked() == Some(issued)
+            && open.try_get_untracked() == Some(true)
+            && identity.try_with_untracked(|current| current == expected) == Some(true)
+    };
+    let authority = use_context::<EditorAuthorityHold>();
+    let report_denial = Callback::new(move |(epoch, expected, outcome): (Option<u64>, OperationIntent, EditorAccess)| {
+        if open.try_get_untracked() != Some(true)
+            || context_visible.try_get_untracked() != Some(true)
+            || identity.try_with_untracked(|current| current.account_id == expected.account_id && current.workspace_id == expected.workspace_id) != Some(true) { return false; }
+        if let Some(authority) = authority {
+            let Some(epoch) = epoch else { return false; };
+            if authority.generation.try_get_untracked() != Some(epoch) { return false; }
+            authority.on_failure.run((epoch, outcome));
+        } else {
+            context_visible.set(false);
+        }
+        true
+    });
+    // Hide the native top-layer dialog without cancelling an uncertain command.
+    let dialog_open = RwSignal::new(false);
+    Effect::new(move |_| dialog_open.set(open.get() && context_visible.get()));
+    Effect::new(move |_| {
+        if !dialog_open.get() && context_visible.get_untracked() && open.get_untracked() {
+            open.set(false);
+        }
+    });
 
     // Form state. entry_id/request_id are allocated once per form session and
     // retained across uncertain outcomes; they rotate only after a committed
@@ -219,6 +249,8 @@ pub fn CataloguePicker(
 
     let load_page = Callback::new(move |cursor: Option<String>| {
         let expected = identity.get_untracked();
+        let issued_session = session.get_untracked();
+        let authority_epoch = authority.and_then(|authority| authority.generation.try_get_untracked());
         let filter_value = filter.get_untracked();
         let query_value = query.get_untracked();
         let include_archived = filter_value == CatalogueFilter::Workspace;
@@ -229,13 +261,17 @@ pub fn CataloguePicker(
         let generation_value = generation.get_untracked();
         loading.set(true);
         leptos::task::spawn_local(async move {
-            if !current_context_matches(&expected).await {
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_session(issued_session, &expected) { return; }
+            if !context_matches {
                 // The picker may have been unmounted while the context request
                 // was in flight; never touch disposed signals after an await.
                 if loading.try_get_untracked().is_none() {
                     return;
                 }
-                context_visible.set(false);
+                if authority.and_then(|hold| hold.generation.try_get_untracked()) == authority_epoch {
+                    context_visible.set(false);
+                }
                 loading.set(false);
                 return;
             }
@@ -251,7 +287,7 @@ pub fn CataloguePicker(
                 include_archived,
             }))
             .await;
-            if loading.try_get_untracked().is_none() {
+            if !owns_session(issued_session, &expected) {
                 return;
             }
             // A mounted denial must be handled before stale-generation
@@ -260,7 +296,8 @@ pub fn CataloguePicker(
                 &outcome,
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)
             ) {
-                context_visible.set(false);
+                let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
+                report_denial.run((authority_epoch, expected.clone(), reason));
                 loading.set(false);
                 return;
             }
@@ -268,11 +305,16 @@ pub fn CataloguePicker(
                 return;
             }
             loading.set(false);
-            if !current_context_matches(&expected).await {
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_session(issued_session, &expected)
+                || generation.try_get_untracked() != Some(generation_value) { return; }
+            if !context_matches {
                 if loading.try_get_untracked().is_none() {
                     return;
                 }
-                context_visible.set(false);
+                if authority.and_then(|hold| hold.generation.try_get_untracked()) == authority_epoch {
+                    context_visible.set(false);
+                }
                 return;
             }
             if loading.try_get_untracked().is_none() {
@@ -291,7 +333,10 @@ pub fn CataloguePicker(
                             .items
                             .iter()
                             .any(|entry| Some(&entry.entry_id) == selected_id.as_ref());
-                        if !contains && !archive_retrying.get_untracked() {
+                        // Initial in-flight Archive owns its selection/envelope
+                        // just as an uncertain retry does. Search is not cancel.
+                        if !contains && pending_archive.get_untracked().is_none()
+                            && !archive_retrying.get_untracked() {
                             selected.set(None);
                             pending_archive.set(None);
                             archive_retrying.set(false);
@@ -301,7 +346,8 @@ pub fn CataloguePicker(
                     next_cursor.set(page.next_cursor);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
-                    context_visible.set(false)
+                    let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
+                    report_denial.run((authority_epoch, expected.clone(), reason));
                 }
                 Ok(other) => {
                     if let Some((title, body, warning)) = terminal_notice(&other) {
@@ -331,6 +377,7 @@ pub fn CataloguePicker(
     };
 
     let reset = move || {
+        session.update(|value| *value = value.checked_add(1).expect("picker session exhausted"));
         view.set(PickerView::Catalogue);
         query.set(String::new());
         filter.set(CatalogueFilter::All);
@@ -363,13 +410,16 @@ pub fn CataloguePicker(
         }
     });
     let search_input = Callback::new(move |text: String| {
+        let issued_session = session.get_untracked();
+        let expected = identity.get_untracked();
         query.set(text);
         notice.set(None);
         search_generation.update(|n| *n += 1);
         let debounce_generation = search_generation.get_untracked();
         leptos::task::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(250).await;
-            if search_generation.try_get_untracked() == Some(debounce_generation) {
+            if owns_session(issued_session, &expected)
+                && search_generation.try_get_untracked() == Some(debounce_generation) {
                 load_page.run(None);
             }
         });
@@ -604,11 +654,37 @@ pub fn CataloguePicker(
             save
         };
         let is_edit = save.expected_revision > 0;
+        let expected = save.intent.clone();
+        let issued_session = session.get_untracked();
+        let owns_command = {
+            let expected = expected.clone();
+            let original_request = save.request_id.clone();
+            let original_entry = save.entry_id.clone();
+            move || owns_session(issued_session, &expected)
+                && pending_save.try_with_untracked(|pending| pending.as_ref().is_some_and(|pending|
+                    pending.request_id == original_request && pending.entry_id == original_entry)) == Some(true)
+        };
         let command = IngredientCommand::Save(save);
-        let expected = identity.get_untracked();
+        let authority_epoch = authority.and_then(|authority| authority.generation.try_get_untracked());
         busy.set(true);
         leptos::task::spawn_local(async move {
-            if !current_context_matches(&expected).await {
+            let retain_unresolved = || {
+                // Called only by this still-owned request, never a successor.
+                retrying.set(true);
+                busy.set(false);
+                notice.set(Some((
+                    "Save response held".to_owned(),
+                    "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
+                    true,
+                )));
+            };
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_command() { return; }
+            if authority.and_then(|hold| hold.generation.try_get_untracked()) != authority_epoch {
+                retain_unresolved();
+                return;
+            }
+            if !context_matches {
                 // The editor/picker may have been unmounted while the context
                 // request was in flight; never touch disposed signals.
                 if busy.try_get_untracked().is_none() {
@@ -622,15 +698,32 @@ pub fn CataloguePicker(
                 return;
             }
             let outcome = catalogue_command_shared(command).await;
-            if busy.try_get_untracked().is_none() {
+            if !owns_command() {
                 return;
             }
-            if !current_context_matches(&expected).await {
+            // A known resource denial takes precedence over unrelated generic
+            // postflight checks. A newer epoch cannot settle this old request.
+            if matches!(&outcome, Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)) {
+                let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
+                if report_denial.run((authority_epoch, expected.clone(), reason)) {
+                    busy.set(false);
+                    retrying.set(false);
+                    pending_save.set(None);
+                } else {
+                    retain_unresolved();
+                }
+                return;
+            }
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_command() { return; }
+            if !context_matches {
                 if busy.try_get_untracked().is_none() {
                     return;
                 }
-                context_visible.set(false);
-                busy.set(false);
+                if authority.and_then(|hold| hold.generation.try_get_untracked()) == authority_epoch {
+                    context_visible.set(false);
+                }
+                retain_unresolved();
                 return;
             }
             if busy.try_get_untracked().is_none() {
@@ -684,8 +777,7 @@ pub fn CataloguePicker(
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
-                    pending_save.set(None);
-                    context_visible.set(false)
+                    unreachable!("command authority classified before postflight")
                 }
                 Ok(IngredientOutcome::Unavailable) => {
                     // Completion is unknown: retain the full command and keep
@@ -750,11 +842,36 @@ pub fn CataloguePicker(
             pending_archive.set(Some(archive.clone()));
             archive
         };
+        let expected = archive.intent.clone();
+        let issued_session = session.get_untracked();
+        let owns_command = {
+            let expected = expected.clone();
+            let original_request = archive.request_id.clone();
+            let original_entry = archive.entry_id.clone();
+            move || owns_session(issued_session, &expected)
+                && pending_archive.try_with_untracked(|pending| pending.as_ref().is_some_and(|pending|
+                    pending.request_id == original_request && pending.entry_id == original_entry)) == Some(true)
+        };
         let command = IngredientCommand::Archive(archive);
-        let expected = identity.get_untracked();
+        let authority_epoch = authority.and_then(|authority| authority.generation.try_get_untracked());
         busy.set(true);
         leptos::task::spawn_local(async move {
-            if !current_context_matches(&expected).await {
+            let retain_unresolved = || {
+                archive_retrying.set(true);
+                busy.set(false);
+                notice.set(Some((
+                    "Change response held".to_owned(),
+                    "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
+                    true,
+                )));
+            };
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_command() { return; }
+            if authority.and_then(|hold| hold.generation.try_get_untracked()) != authority_epoch {
+                retain_unresolved();
+                return;
+            }
+            if !context_matches {
                 // The picker may have been unmounted while the context request
                 // was in flight; never touch disposed signals after an await.
                 if busy.try_get_untracked().is_none() {
@@ -768,15 +885,30 @@ pub fn CataloguePicker(
                 return;
             }
             let outcome = catalogue_command_shared(command).await;
-            if busy.try_get_untracked().is_none() {
+            if !owns_command() {
                 return;
             }
-            if !current_context_matches(&expected).await {
+            if matches!(&outcome, Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)) {
+                let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
+                if report_denial.run((authority_epoch, expected.clone(), reason)) {
+                    busy.set(false);
+                    archive_retrying.set(false);
+                    pending_archive.set(None);
+                } else {
+                    retain_unresolved();
+                }
+                return;
+            }
+            let context_matches = current_context_matches(&expected).await;
+            if !owns_command() { return; }
+            if !context_matches {
                 if busy.try_get_untracked().is_none() {
                     return;
                 }
-                context_visible.set(false);
-                busy.set(false);
+                if authority.and_then(|hold| hold.generation.try_get_untracked()) == authority_epoch {
+                    context_visible.set(false);
+                }
+                retain_unresolved();
                 return;
             }
             if busy.try_get_untracked().is_none() {
@@ -801,8 +933,7 @@ pub fn CataloguePicker(
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden) => {
-                    pending_archive.set(None);
-                    context_visible.set(false)
+                    unreachable!("command authority classified before postflight")
                 }
                 Ok(IngredientOutcome::Unavailable) => {
                     // Completion is unknown: retain the full command and keep
@@ -968,7 +1099,7 @@ pub fn CataloguePicker(
                 id="ingredient-picker"
                 title="Build your grain bill"
                 description="Find a fermentable in the starter catalogue, or add one to your own library."
-                open=open
+                open=dialog_open
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| cancel.run(())>"Cancel"</Button>
@@ -984,7 +1115,7 @@ pub fn CataloguePicker(
                 id="ingredient-create"
                 title="A fermentable of your own"
                 description="Save a malt or grain to your library, then use it in any recipe."
-                open=open
+                open=dialog_open
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| back_to_catalogue.run(())>"Back to catalogue"</Button>
@@ -1000,7 +1131,7 @@ pub fn CataloguePicker(
                 id="ingredient-edit"
                 title="Edit your library entry"
                 description="Update the specification kept in your workspace library. Recipes keep their own copied specifications."
-                open=open
+                open=dialog_open
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| back_to_catalogue.run(())>"Back to catalogue"</Button>

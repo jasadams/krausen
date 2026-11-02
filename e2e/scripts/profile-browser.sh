@@ -30,6 +30,9 @@ until curl --silent --fail "$BASE_URL/login" > /dev/null; do
 done
 cd e2e
 ./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'equipment profiles can be saved|an uncertain equipment save|showcase kit supports|shared kit native popovers' --reporter=line
+editor_state_pattern='ordinary bookmark|cleared print task|initial recovery authorization|obsolete preview context|explicit save conflict follow-up|a late committed save|typed print denial|successful revalidation preserves|revalidation never steals|a disposed editor|recovered older-base conflict|raw formatting settles|all numeric caller families|local retention failure|preview details and calculating|native input undo|context network failure|calculation retry uses|initial recipe load failure|authorized focus revalidation|a delayed save freezes|an explicit save keeps|shared preview exposes|editor controls remain usable|editor state controls|a dirty new recipe|undo and retained raw draft|navigation offers stay|stale saves retain edits|browser back keeps|retained draft stays isolated|save and leave waits|revoked credentials|recovered uncertain create|separate local drafts|a pending save|clean focus refetch'
+./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g "$editor_state_pattern" --workers=1 --reporter=line --list
+./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g "$editor_state_pattern" --workers=1 --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/beerxml.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/library.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/print.spec.ts --reporter=line
