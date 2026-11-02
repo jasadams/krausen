@@ -247,9 +247,11 @@ test('lost Record response is proven committed and retries the same identity', a
   await page.getByRole('button', { name: 'Record reading' }).first().click();
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await expect.poll(() => recordCommands.length).toBe(1);
+  await expect(page.getByRole('status').filter({ hasText: 'Outcome uncertain' })).toBeVisible();
   await page.getByRole('button', { name: 'Retry same request' }).click();
   await expect(page.getByText('Measurement recorded.')).toBeVisible();
   await expect.poll(() => recordCommands.length).toBe(2);
+  await expect(page.getByRole('status').filter({ hasText: 'Measurement recorded.' })).toBeVisible();
   expect(recordCommands[1].request_id).toBe(recordCommands[0].request_id);
   expect(recordCommands[1]).toEqual(recordCommands[0]);
   expect(

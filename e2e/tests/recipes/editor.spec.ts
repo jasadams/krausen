@@ -89,9 +89,17 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await page.setViewportSize({ width, height: 900 });
       await page.evaluate(value => localStorage.setItem('krausen-theme', value), theme);
       await page.goto('/design-system');
-      await expect(page.getByRole('heading', { name: 'A more considered brew day.' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Good design, on repeat.' })).toBeVisible();
+      // Existing login isolation initializes Light on navigation. Exercise the
+      // real appearance control and assert the actual theme, not stored intent.
+      if (await page.locator('html').evaluate(element => element.classList.contains('dark')) !== (theme === 'dark')) {
+        if (width < 768) await page.getByRole('button', { name: 'Toggle menu', exact: true }).click();
+        await page.getByRole('button', { name: theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
+        if (width < 768) await page.keyboard.press('Escape');
+      }
+      await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.getByLabel('Amount (kg)', { exact: true }).and(page.locator('#show-invalid'))).toHaveAttribute('aria-invalid', 'true');
       await page.getByRole('tab', { name: 'Recipe' }).focus();
       await page.keyboard.press('ArrowRight');
       await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
@@ -110,6 +118,219 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await page.keyboard.press('Escape');
     }
   }
+});
+
+test('shared kit native popovers preserve ordinary focus and raw field states', async ({ page }) => {
+  await page.goto('/design-system');
+  const opener = page.getByRole('button', { name: 'Recipe actions', exact: true });
+  const popup = page.locator('#showcase-actions');
+  await opener.focus();
+  await page.keyboard.press('Enter');
+  await expect(popup).toBeVisible();
+  await expect(opener).toHaveAttribute('aria-expanded', 'true');
+  expect(await popup.evaluate(element => element.matches(':popover-open'))).toBe(true);
+  await page.keyboard.press('Tab');
+  await expect(popup.getByRole('link', { name: 'View source context' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(opener).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await expect(popup.getByRole('button', { name: 'Use selected source' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  expect(await popup.evaluate(element => element.contains(document.activeElement))).toBe(false);
+  await popup.getByRole('link').focus();
+  await page.keyboard.press('Escape');
+  await expect(popup).toBeHidden();
+  await expect(opener).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(popup).toBeVisible();
+  await page.getByRole('heading', { name: 'After actions' }).click();
+  await expect(popup).toBeHidden();
+  await expect(opener).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByText('Example action selected', { exact: true })).toHaveCount(0);
+
+  const raw = page.getByLabel('Raw quantity (kg)', { exact: true });
+  await raw.fill('1e-');
+  await raw.evaluate((element: HTMLInputElement) => element.setSelectionRange(1, 2));
+  const identity = await raw.evaluate(element => { (window as any).__kra44RawField = element; return element.id; });
+  await raw.blur();
+  await expect(raw).toHaveValue('1e-');
+  await expect(raw).toHaveAttribute('aria-invalid', 'true');
+  await expect(raw).toHaveAttribute('aria-describedby', `${identity}-description`);
+  await raw.focus();
+  expect(await raw.evaluate(element => element === (window as any).__kra44RawField)).toBe(true);
+  expect(await raw.evaluate((element: HTMLInputElement) => [element.selectionStart, element.selectionEnd])).toEqual([1, 2]);
+  await expect(page.getByLabel('Read-only source amount (kg)', { exact: true })).toHaveAttribute('readonly', '');
+  await expect(page.getByLabel('Unavailable amount (kg)', { exact: true })).toBeDisabled();
+  await expect(page.getByText('Add a batch volume to see the affected estimates.', { exact: true }).locator('..').locator('..')).not.toHaveAttribute('role', 'status');
+});
+
+test('shared kit native popovers remain usable inside a native modal and viewport', async ({ page }) => {
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 560 });
+    await page.goto('/design-system');
+    await page.getByRole('button', { name: 'Open Navigation example', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Keep your changes?' });
+    const opener = dialog.getByRole('button', { name: 'Account actions example' });
+    await opener.click();
+    const popup = page.locator('#showcase-nested-account');
+    await expect(popup).toBeVisible();
+    expect(await popup.evaluate(element => !!element.closest('dialog[open]') && element.matches(':popover-open'))).toBe(true);
+    await page.keyboard.press('Tab');
+    await expect(popup.getByRole('link', { name: 'Profile example' })).toBeFocused();
+    const bounds = await popup.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(560);
+    const last = popup.getByRole('button', { name: 'Workspace example 30', exact: true });
+    await last.focus();
+    // Capture scroll and ResizeObserver work must settle before asserting that
+    // the focused action is still inside the native popup's scrollport.
+    await page.evaluate(async () => {
+      for (let frame = 0; frame < 6; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    });
+    await expect(last).toBeFocused();
+    const target = await last.boundingBox();
+    expect(target!.height).toBeGreaterThanOrEqual(44);
+    const settled = await popup.boundingBox();
+    const focusOutset = await last.evaluate(element => {
+      const style = getComputedStyle(element);
+      return style.outlineStyle === 'none' ? 0 : parseFloat(style.outlineWidth) + Math.max(0, parseFloat(style.outlineOffset));
+    });
+    expect(target!.y - focusOutset).toBeGreaterThanOrEqual(settled!.y);
+    expect(target!.y + target!.height + focusOutset).toBeLessThanOrEqual(settled!.y + settled!.height);
+    expect(target!.x - focusOutset).toBeGreaterThanOrEqual(settled!.x);
+    expect(target!.x + target!.width + focusOutset).toBeLessThanOrEqual(settled!.x + settled!.width);
+    await page.keyboard.press('Escape');
+    await expect(popup).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(opener).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+  }
+});
+
+test('shared kit native popovers expose the actual schedule variant and pending action', async ({ page }) => {
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/design-system');
+    const minutes = page.getByLabel('Contact time (min)', { exact: true });
+    const row = minutes.locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," k-compact-ingredient ")]');
+    await expect(minutes).toBeVisible();
+    expect(await minutes.evaluate(element => element.closest('details'))).toBeNull();
+    await minutes.fill('60.125');
+    await expect(minutes).toHaveValue('60.125');
+    const stage = page.getByLabel('Hop stage', { exact: true });
+    await stage.selectOption('whirlpool');
+    await expect(stage).toHaveValue('whirlpool');
+    const remove = row.getByRole('button', { name: /^Remove Hallertauer/ });
+    await expect(remove).toBeVisible();
+    const rowBounds = await row.boundingBox();
+    const target = await remove.boundingBox();
+    expect(rowBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(rowBounds!.x + rowBounds!.width).toBeLessThanOrEqual(width);
+    expect(target!.x + target!.width).toBeLessThanOrEqual(width);
+    if (width < 760) expect(target!.height).toBeGreaterThanOrEqual(44);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const pending = page.getByRole('button', { name: 'Save changes', exact: true });
+    await expect(pending).toBeDisabled();
+    await expect(pending).toHaveAttribute('aria-busy', 'true');
+  }
+});
+
+test('shared kit native popovers return to a safe successor when the opener is unavailable', async ({ page }, testInfo) => {
+  for (const unavailable of ['hidden', 'disabled', 'inert']) {
+    await page.goto('/design-system');
+    const opener = page.getByRole('button', { name: 'Recipe actions', exact: true });
+    await opener.click();
+    await page.locator('#showcase-actions').getByRole('link').focus();
+    // Controlled native DOM fault: the real mounted opener becomes unavailable.
+    // This is not a claim that a production Navigation breakpoint was tested.
+    await opener.evaluate((element, attribute) => element.setAttribute(attribute, ''), unavailable);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#showcase-actions')).toBeHidden();
+    await testInfo.attach(`focus-after-${unavailable}`, { body: JSON.stringify(await page.evaluate(() => ({ active: document.activeElement?.outerHTML, successor: document.querySelector('#showcase-popover-successor')?.outerHTML }))), contentType: 'application/json' });
+    await expect(page.locator('#showcase-popover-successor')).toBeFocused();
+  }
+  await page.goto('/design-system');
+  await page.getByRole('button', { name: 'Temporary actions example', exact: true }).click();
+  await page.getByRole('button', { name: 'Finish temporary example', exact: true }).click();
+  await expect(page.locator('#showcase-temporary-actions')).toHaveCount(0);
+  await expect(page.locator('#showcase-popover-successor')).toBeFocused();
+});
+
+test('shared kit native popovers refresh geometry after content grows while open', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto('/design-system');
+  await page.getByRole('button', { name: 'Changing actions example', exact: true }).click();
+  const popup = page.locator('#showcase-changing-actions');
+  await expect(popup).toBeVisible();
+  const initial = await popup.boundingBox();
+  await popup.getByRole('button', { name: 'Load example memberships' }).click();
+  const last = popup.getByRole('button', { name: 'Loaded membership 20', exact: true });
+  await expect(last).toBeAttached();
+  await testInfo.attach('content-growth-bounds', { body: JSON.stringify({ initial, after: await popup.boundingBox(), content: await popup.evaluate(element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })) }), contentType: 'application/json' });
+  await expect.poll(async () => (await popup.boundingBox())!.height).toBeGreaterThan(initial!.height + 44);
+  await last.focus();
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 6; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  });
+  await expect(last).toBeFocused();
+  const area = await popup.boundingBox();
+  const action = await last.boundingBox();
+  expect(action!.y).toBeGreaterThanOrEqual(area!.y);
+  expect(action!.y + action!.height).toBeLessThanOrEqual(area!.y + area!.height);
+  await page.keyboard.press('Escape');
+  await expect(popup).toBeHidden();
+});
+
+test('shared kit native popovers fit the real changed visual viewport', async ({ page, browserName }, testInfo) => {
+  expect(browserName).toBe('chromium');
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto('/design-system');
+  await page.getByRole('button', { name: 'Recipe actions', exact: true }).click();
+  const popup = page.locator('#showcase-actions');
+  await expect(popup).toBeVisible();
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+    await expect.poll(() => page.evaluate(() => window.visualViewport!.scale)).toBeGreaterThan(1);
+    // Actual browser visual scaling, not CSS resize or a mocked viewport API.
+    // Native browser zoom/OS keyboard/device/AT coverage is recorded separately.
+    const visible = await page.evaluate(() => {
+      const v = window.visualViewport!;
+      return { left: v.offsetLeft, top: v.offsetTop, width: v.width, height: v.height, scale: v.scale };
+    });
+    expect(visible.width).toBeLessThan(390);
+    await testInfo.attach('actual-visual-viewport-bounds', { body: JSON.stringify({ visible, popup: await popup.boundingBox(), userAgent: await page.evaluate(() => navigator.userAgent) }), contentType: 'application/json' });
+    await expect.poll(async () => {
+      const bounds = (await popup.boundingBox())!;
+      return bounds.x >= visible.left - 1 && bounds.y >= visible.top - 1 &&
+        bounds.x + bounds.width <= visible.left + visible.width + 1 &&
+        bounds.y + bounds.height <= visible.top + visible.height + 1;
+    }).toBe(true);
+    const action = popup.getByRole('button', { name: 'Use selected source' });
+    await action.focus();
+    await expect(action).toBeFocused();
+    const target = (await action.boundingBox())!;
+    expect(target.x + target.width).toBeLessThanOrEqual(visible.left + visible.width + 1);
+  } finally {
+    await session.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+    await session.detach();
+  }
+});
+
+test('shared kit native popovers preserve the existing workspace error announcement', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.route('**/leptos-api/list_user_workspaces*', route => route.fulfill({ status: 503, body: 'workspace lookup unavailable' }));
+  await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Your workspaces', exact: true });
+  await expect(dialog.getByText('Unable to load workspaces', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('status').filter({ hasText: 'Unable to load workspaces' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
 });
 
 test('a dirty new recipe remains private to its original account and workspace', async ({ page }) => {

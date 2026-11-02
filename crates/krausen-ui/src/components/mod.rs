@@ -3,6 +3,7 @@
 //! Shared UI components — no server-side dependencies.
 
 pub mod action_status;
+pub mod anchored_popover;
 pub mod brewery_kit;
 pub mod brew_evidence_rows;
 pub mod layout;
@@ -31,6 +32,8 @@ pub mod toast;
 pub mod tooltip;
 
 pub use action_status::ActionStatus;
+pub use anchored_popover::BreweryPopover;
+pub use brewery_kit::{BreweryActionGroup, BreweryFieldRow, BrewerySection, MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation};
 pub use alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonLink, ButtonSize, ButtonVariant, DownloadLink, ToggleButton};

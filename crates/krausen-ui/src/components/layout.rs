@@ -527,7 +527,7 @@ fn WorkspaceSwitcher(open: RwSignal<bool>) -> impl IntoView {
                         }.into_any()
                     }
                     Ok(_) => view! { <p>"No workspaces available."</p> }.into_any(),
-                    Err(_) => view! { <crate::components::BreweryNotice title="Unable to load workspaces" body="Close this dialog and reopen it to try again." warning=true/> }.into_any(),
+                    Err(_) => view! { <crate::components::BreweryNotice title="Unable to load workspaces" body="Close this dialog and reopen it to try again." warning=true announcement=crate::components::NoticeAnnouncement::Settled/> }.into_any(),
                 }
             })}
         </Suspense>

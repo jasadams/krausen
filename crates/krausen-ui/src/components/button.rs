@@ -93,13 +93,13 @@ fn variant_classes(variant: ButtonVariant) -> &'static str {
 
 fn size_classes(size: ButtonSize) -> &'static str {
     match size {
-        ButtonSize::Default => "min-h-[var(--k-control-height)] px-[var(--k-space-4)] py-0 max-[420px]:min-h-11",
+        ButtonSize::Default => "min-h-[var(--k-control-height)] px-[var(--k-space-4)] py-0 max-[760px]:min-h-[44px]",
         // Small: approved compact height and horizontal spacing.
-        ButtonSize::Sm => "min-h-[32px] px-[var(--k-space-3)] py-0 text-[length:var(--k-font-sm)] max-[420px]:min-h-10",
+        ButtonSize::Sm => "min-h-[32px] px-[var(--k-space-3)] py-0 text-[length:var(--k-font-sm)] max-[760px]:min-h-[44px]",
         // Large
         ButtonSize::Lg => "px-8 py-3",
         // Icon-only: approved control-sized square, enlarged for narrow touch screens.
-        ButtonSize::Icon => "h-[var(--k-control-height)] w-[var(--k-control-height)] p-0 max-[420px]:h-11 max-[420px]:w-11",
+        ButtonSize::Icon => "h-[var(--k-control-height)] w-[var(--k-control-height)] p-0 max-[760px]:h-[44px] max-[760px]:w-[44px]",
         // Compact icon-only: 28px square for dense action rows
         ButtonSize::IconSm => "h-7 w-7 p-0",
         // Extra-small icon-only: 20px square for inline tab/chip actions
@@ -136,6 +136,9 @@ pub fn Button(
     class: String,
     #[prop(optional, into)]
     disabled: MaybeProp<bool>,
+    /// Pending keeps the original accessible action name and blocks activation.
+    #[prop(optional, into)]
+    pending: MaybeProp<bool>,
     /// Accessibility label — required for icon-only buttons.
     #[prop(optional, into)]
     aria_label: MaybeProp<String>,
@@ -147,6 +150,15 @@ pub fn Button(
     /// actual submit action.
     #[prop(default = "button")]
     button_type: &'static str,
+    /// Native disclosure relationships; no menu keyboard behavior is implied.
+    #[prop(optional)]
+    node_ref: NodeRef<leptos::html::Button>,
+    #[prop(optional, into)]
+    aria_controls: Option<String>,
+    #[prop(optional, into)]
+    aria_expanded: MaybeProp<bool>,
+    #[prop(optional, into)]
+    popover_target: Option<String>,
     children: Children,
 ) -> impl IntoView {
     let classes = format!(
@@ -159,11 +171,16 @@ pub fn Button(
 
     view! {
         <button
+            node_ref=node_ref
             r#type=button_type
             class=classes
-            disabled=move || disabled.try_get().flatten().unwrap_or(false)
+            disabled=move || disabled.try_get().flatten().unwrap_or(false) || pending.try_get().flatten().unwrap_or(false)
+            aria-busy=move || pending.try_get().flatten().unwrap_or(false).to_string()
             aria-label=move || aria_label.try_get().flatten()
             aria-pressed=move || aria_pressed.try_get().flatten()
+            aria-controls=aria_controls
+            aria-expanded=move || aria_expanded.try_get().flatten().map(|value| value.to_string())
+            popovertarget=popover_target
             title=move || aria_label.try_get().flatten()
         >
             {children()}
@@ -259,6 +276,20 @@ pub fn DownloadLink(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn pending_preserves_name_and_blocks_native_activation() {
+        use leptos::tachys::view::RenderHtml;
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! { <Button pending=true>"Save changes"</Button> }.to_html();
+            assert!(html.contains("Save changes"));
+            assert!(html.contains("aria-busy=\"true\""));
+            assert!(html.contains("disabled"));
+            assert!(html.contains("type=\"button\""));
+        });
+    }
 
     #[test]
     fn standard_buttons_use_approved_compact_spacing() {

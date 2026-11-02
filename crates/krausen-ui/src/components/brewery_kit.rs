@@ -3,6 +3,66 @@
 //! Shared recipe controls and presentation components.
 use leptos::prelude::*;
 
+/// Appearance only: task state, validation and persistence remain caller-owned.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum PanelPresentation {
+    #[default]
+    Standard,
+    Summary,
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum MetricDensity {
+    #[default]
+    Headline,
+    Compact,
+    Quiet,
+}
+
+/// Persistent explanations are not live regions. Opt in only for settled outcomes.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum NoticeAnnouncement {
+    #[default]
+    Persistent,
+    Settled,
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum NoticeTone {
+    #[default]
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// Wrapping task actions; children choose their semantic Button variants.
+/// Use one primary, secondary Add and quiet Cancel/Back on each task surface.
+#[component]
+pub fn BreweryActionGroup(
+    #[prop(optional)] end: bool,
+    #[prop(optional, into)] label: Option<String>,
+    children: Children,
+) -> impl IntoView {
+    view! { <div class="k-action-group" class:k-action-group--end=end role=label.as_ref().map(|_| "group") aria-label=label>{children()}</div> }
+}
+
+/// A named section inside a panel, without another card around each field.
+#[component]
+pub fn BrewerySection(
+    #[prop(into)] title: String,
+    #[prop(optional)] actions: Option<ChildrenFn>,
+    children: Children,
+) -> impl IntoView {
+    view! { <section class="k-section"><header class="k-section__header"><h3>{title}</h3>{actions.map(|slot| slot())}</header><div class="k-section__body">{children()}</div></section> }
+}
+
+/// Shared responsive field alignment, including space for associated messages.
+#[component]
+pub fn BreweryFieldRow(children: Children) -> impl IntoView {
+    view! { <div class="k-field-row">{children()}</div> }
+}
+
 /// Compact semantic badge for contextual information, shared by kit consumers.
 #[component]
 pub fn BreweryBadge(
@@ -25,12 +85,16 @@ pub fn BreweryPanel(
     #[prop(optional, into)] description: Option<String>,
     #[prop(optional, into)] eyebrow: Option<String>,
     #[prop(default = false)] mobile_compact: bool,
+    #[prop(optional)] presentation: PanelPresentation,
+    #[prop(optional)] actions: Option<ChildrenFn>,
+    #[prop(optional)] footer: Option<ChildrenFn>,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <section class="k-panel" class:k-panel--mobile-compact=mobile_compact>
-            <header class="k-panel__header"><div>{eyebrow.map(|text| view! { <span class="k-panel__eyebrow">{text}</span> })}<h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div></header>
+        <section class="k-panel" class:k-panel--mobile-compact=mobile_compact class:k-panel--summary=matches!(presentation, PanelPresentation::Summary)>
+            <header class="k-panel__header"><div>{eyebrow.map(|text| view! { <span class="k-panel__eyebrow">{text}</span> })}<h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div>{actions.map(|slot| view! { <div class="k-panel__actions">{slot()}</div> })}</header>
             <div class="k-panel__body">{children()}</div>
+            {footer.map(|slot| view! { <footer class="k-panel__footer">{slot()}</footer> })}
         </section>
     }
 }
@@ -46,11 +110,13 @@ pub fn BreweryField(
     #[prop(optional, into)] hint: Option<String>,
     #[prop(optional, into)] error: Option<String>,
     #[prop(default = false)] disabled: bool,
+    #[prop(default = false)] numeric: bool,
+    #[prop(default = false)] read_only: bool,
 ) -> impl IntoView {
     view! { <BreweryDraftField id=id label=label value=Signal::from(value)
         on_change=Callback::new(move |next| value.set(next)) input_type=input_type
         unit=unit.unwrap_or_default() hint=MaybeProp::from(hint)
-        error=MaybeProp::from(error) disabled=disabled/> }
+        error=MaybeProp::from(error) disabled=disabled numeric=numeric read_only=read_only/> }
 
 }
 
@@ -147,9 +213,10 @@ pub fn BreweryMetric(
     #[prop(into)] value: String,
     #[prop(optional, into)] unit: String,
     #[prop(optional, into)] hint: Option<String>,
+    #[prop(optional)] density: MetricDensity,
     children: Children,
 ) -> impl IntoView {
-    view! { <div class="k-metric"><div class="k-metric__label">{label}</div><div class="k-metric__value">{value}<span class="k-metric__unit">{unit}</span></div>{children()}{hint.map(|h| view! { <div class="k-metric__hint">{h}</div> })}</div> }
+    view! { <div class="k-metric" class:k-metric--compact=matches!(density, MetricDensity::Compact) class:k-metric--quiet=matches!(density, MetricDensity::Quiet)><div class="k-metric__label">{label}</div><div class="k-metric__value">{value}<span class="k-metric__unit">{unit}</span></div>{children()}{hint.map(|h| view! { <div class="k-metric__hint">{h}</div> })}</div> }
 }
 
 #[component]
@@ -157,8 +224,16 @@ pub fn BreweryNotice(
     #[prop(into)] title: String,
     #[prop(into)] body: String,
     #[prop(default = false)] warning: bool,
+    #[prop(optional)] announcement: NoticeAnnouncement,
+    #[prop(optional)] tone: NoticeTone,
 ) -> impl IntoView {
-    view! { <div class=if warning { "k-notice k-notice--warning" } else { "k-notice" } role="status"><div><div class="k-notice__title">{title}</div><div class="k-notice__body">{body}</div></div></div> }
+    let class = match if warning { NoticeTone::Warning } else { tone } {
+        NoticeTone::Info => "k-notice",
+        NoticeTone::Success => "k-notice k-notice--success",
+        NoticeTone::Warning => "k-notice k-notice--warning",
+        NoticeTone::Error => "k-notice k-notice--error",
+    };
+    view! { <div class=class role=matches!(announcement, NoticeAnnouncement::Settled).then_some("status")><div><div class="k-notice__title">{title}</div><div class="k-notice__body">{body}</div></div></div> }
 }
 
 /// A native modal dialog supplies focus containment, Escape and focus return.
@@ -222,11 +297,13 @@ pub fn BreweryCompactIngredientRow(
     description: Signal<String>,
     name_field: AnyView,
     amount_field: AnyView,
+    /// Routine schedule controls stay visible; details are for secondary specs.
+    #[prop(optional)] schedule: Option<AnyView>,
     details: AnyView,
     on_remove: Callback<()>,
 ) -> impl IntoView {
     view! { <div class="k-compact-ingredient" role="group" aria-label=move || label.get()>
-        <div class="k-compact-ingredient__main">{name_field}{amount_field}<crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=Signal::derive(move || format!("Remove {}", label.get())) on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button></div>
+        <div class="k-compact-ingredient__main">{name_field}{amount_field}{schedule.map(|slot| view! { <div class="k-compact-ingredient__schedule">{slot}</div> })}<crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=Signal::derive(move || format!("Remove {}", label.get())) on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button></div>
         {move || { let text = description.get(); (!text.is_empty()).then(|| view! { <p class="k-compact-ingredient__description">{text}</p> }) }}
         <BreweryDisclosure title="Addition details" compact=true aria_label=Signal::derive(move || format!("Addition details for {}", label.get()))>{details}</BreweryDisclosure>
     </div> }
@@ -262,7 +339,7 @@ pub enum SaveState {
     Error,
 }
 #[component]
-pub fn BrewerySaveStatus(state: SaveState) -> impl IntoView {
+pub fn BrewerySaveStatus(state: SaveState, #[prop(optional)] quiet: bool) -> impl IntoView {
     let (class, label) = match state {
         SaveState::Saved => ("k-save-status k-save-status--saved", "Saved"),
         SaveState::Unsaved => ("k-save-status k-save-status--unsaved", "Unsaved changes"),
@@ -270,7 +347,7 @@ pub fn BrewerySaveStatus(state: SaveState) -> impl IntoView {
         SaveState::Conflict => ("k-save-status k-save-status--conflict", "Changed elsewhere"),
         SaveState::Error => ("k-save-status k-save-status--error", "Save failed"),
     };
-    view! { <span class=class role="status"><span class="k-save-status__dot" aria-hidden="true"></span>{label}</span> }
+    view! { <span class=class role=(!quiet).then_some("status")><span class="k-save-status__dot" aria-hidden="true"></span>{label}</span> }
 }
 
 /// Labelled select used by recipe and showcase; values remain caller-owned.
@@ -310,6 +387,58 @@ pub fn BreweryBeerPortrait() -> impl IntoView {
 mod tests {
     use super::*;
     use leptos::tachys::view::RenderHtml;
+
+    #[test]
+    fn panel_slots_and_field_states_are_shared_semantic_contracts() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let raw = RwSignal::new("1e-".to_owned());
+            let html = view! {
+                <BreweryPanel title="Equipment context" presentation=PanelPresentation::Summary
+                    actions=std::sync::Arc::new(|| view! { <BreweryBadge>"Recipe only"</BreweryBadge> }.into_any())
+                    footer=std::sync::Arc::new(|| view! { <BreweryActionGroup><span>"Source retained"</span></BreweryActionGroup> }.into_any())>
+                    <BreweryFieldRow><BreweryDraftField id="raw-contract" label="Quantity" unit="kg" value=Signal::from(raw)
+                        on_change=Callback::new(move |value| raw.set(value)) numeric=true read_only=true
+                        hint="Original raw entry" on_blur=Callback::new(|()| {})/></BreweryFieldRow>
+                </BreweryPanel>
+            }.to_html();
+            assert!(html.contains("k-panel__actions"));
+            assert!(html.contains("k-panel__footer"));
+            assert!(html.contains("Recipe only"));
+            assert!(html.contains("k-field--numeric"));
+            assert!(html.contains("type=\"text\""));
+            assert!(html.contains("inputmode=\"decimal\""));
+            assert!(html.contains("readonly"));
+            assert!(!html.contains("disabled"));
+            assert!(html.contains("aria-describedby=\"raw-contract-description\""));
+            assert_eq!(raw.get_untracked(), "1e-");
+        });
+    }
+
+    #[test]
+    fn persistent_help_is_not_an_automatic_live_announcement() {
+        let persistent = view! { <BreweryNotice title="Source help" body="This remains available while editing."/> }.to_html();
+        assert!(!persistent.contains("role=\"status\""));
+        let settled = view! { <BreweryNotice title="Saved" body="Revision 4 saved." announcement=NoticeAnnouncement::Settled/> }.to_html();
+        assert!(settled.contains("role=\"status\""));
+    }
+
+    #[test]
+    fn ordinary_popover_exposes_native_relationship_without_menu_roles() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let open = RwSignal::new(false);
+            let html = view! { <crate::components::BreweryPopover id="contract-actions" label="Recipe actions" open=open>
+                <a href="/recipes">"Recipes"</a>
+            </crate::components::BreweryPopover> }.to_html();
+            assert!(html.contains("popovertarget=\"contract-actions\""));
+            assert!(html.contains("aria-controls=\"contract-actions\""));
+            assert!(html.contains("aria-expanded=\"false\""));
+            assert!(html.contains("popover=\"auto\""));
+            assert!(!html.contains("role=\"menu"));
+            assert!(!html.contains("dialog"));
+        });
+    }
 
     #[test]
     fn fields_expose_units_and_associated_errors() {
@@ -484,6 +613,9 @@ pub fn BreweryDraftField(
     #[prop(default = false)] numeric: bool,
     #[prop(default = false)] disabled: bool,
     #[prop(default = false)] mobile_title: bool,
+    #[prop(default = false)] read_only: bool,
+    /// Event notification only; formatting/validation policy stays with the caller.
+    #[prop(optional)] on_blur: Option<Callback<()>>,
     #[prop(default = "text")] input_type: &'static str,
 ) -> impl IntoView {
     let description_id = format!("{id}-description");
@@ -491,10 +623,10 @@ pub fn BreweryDraftField(
     let label_unit = (!unit.is_empty()).then(|| format!(" ({unit})"));
     let display_unit = (!unit.is_empty()).then_some(unit);
     view! {
-        <div class="k-field" class:k-field--mobile-title=mobile_title>
+        <div class="k-field" class:k-field--mobile-title=mobile_title class:k-field--numeric=numeric>
             <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
-                <input id=id type=input_type inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled />
+                <input id=id type=input_type inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled readonly=read_only />
                 {display_unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
             </div>
             {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}

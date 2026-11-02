@@ -868,7 +868,7 @@ pub fn CataloguePicker(
     let notice_view = move || {
         notice
             .get()
-            .map(|(title, body, warning)| view! { <BreweryNotice title=title body=body warning=warning/> })
+            .map(|(title, body, warning)| view! { <BreweryNotice title=title body=body warning=warning announcement=crate::components::NoticeAnnouncement::Settled/> })
     };
 
     let catalogue_view = move || view! {

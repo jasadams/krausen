@@ -110,6 +110,7 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await create.getByLabel('Potential yield (%)').fill('79');
   await page.getByRole('button', { name: 'Save to library' }).click();
   await expect(create.getByText('That fermentable and producer are already in your library.')).toBeVisible();
+  await expect(create.getByRole('status').filter({ hasText: 'That fermentable and producer are already in your library.' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Back to catalogue' }).click();
   await expect(picker).toBeVisible();
@@ -163,6 +164,7 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await page.getByLabel('Potential yield (%)').fill('80');
   await create.getByRole('button', { name: 'Save to library' }).click();
   await expect(create.getByText('Save may not have completed')).toBeVisible();
+  await expect(create.getByRole('status').filter({ hasText: 'Save may not have completed' })).toBeVisible();
   await expect(create.getByLabel('Fermentable name')).toBeDisabled();
   await expect(create.getByLabel('Colour (EBC)')).toBeDisabled();
   await expect(create.getByLabel('Potential yield (%)')).toBeDisabled();
