@@ -2,13 +2,24 @@
 //! Presentation state for a native recipe draft. Brewing policy remains shared.
 use krausen_types::brewery::RecipeDocumentV1;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftContents {
     document: RecipeDocumentV1,
     raw_numbers: BTreeMap<String, String>,
     malformed: BTreeMap<String, String>,
+    #[serde(default)]
+    settled_numbers: BTreeSet<String>,
+}
+
+// Feedback timing is retained for recovery/Undo, but is not a content edit.
+impl PartialEq for DraftContents {
+    fn eq(&self, other: &Self) -> bool {
+        self.document == other.document
+            && self.raw_numbers == other.raw_numbers
+            && self.malformed == other.malformed
+    }
 }
 
 impl DraftContents {
@@ -22,6 +33,7 @@ pub struct RecipeDraft {
     document: RecipeDocumentV1,
     raw_numbers: BTreeMap<String, String>,
     malformed: BTreeMap<String, String>,
+    settled_numbers: BTreeSet<String>,
     diagnostics: Vec<krausen_types::validation::Diagnostic>,
     baseline: DraftContents,
     undo: Vec<DraftContents>,
@@ -35,11 +47,13 @@ impl RecipeDraft {
             document: document.clone(),
             raw_numbers: BTreeMap::new(),
             malformed: BTreeMap::new(),
+            settled_numbers: BTreeSet::new(),
         };
         Self {
             document,
             raw_numbers: BTreeMap::new(),
             malformed: BTreeMap::new(),
+            settled_numbers: BTreeSet::new(),
             diagnostics: Vec::new(),
             baseline,
             undo: Vec::new(),
@@ -64,6 +78,7 @@ impl RecipeDraft {
         self.remember();
         self.raw_numbers.retain(|path, _| !path.starts_with(prefix));
         self.malformed.retain(|path, _| !path.starts_with(prefix));
+        self.settled_numbers.retain(|path| !path.starts_with(prefix));
         change(&mut self.document);
         self.diagnostics.clear();
         self.dirty = true;
@@ -92,8 +107,17 @@ impl RecipeDraft {
     pub fn number_error(&self, path: &str) -> Option<&str> {
         self.malformed
             .get(path)
+            .filter(|_| self.settled_numbers.contains(path))
             .map(String::as_str)
             .or_else(|| self.validation_error(path))
+    }
+    /// Blur reveals formatting feedback without editing or normalizing content.
+    pub fn settle_number(&mut self, path: &str) {
+        self.settled_numbers.insert(path.to_owned());
+    }
+    /// Explicit submission settles all fields already touched by this draft.
+    pub fn settle_numbers(&mut self) {
+        self.settled_numbers.extend(self.raw_numbers.keys().cloned());
     }
     pub fn edit_number(
         &mut self,
@@ -138,11 +162,15 @@ impl RecipeDraft {
     pub fn unfinished_inputs(&self) -> Vec<(String, String)> {
         self.malformed.keys().filter_map(|path| self.raw_numbers.get(path).map(|text| (path.clone(), text.clone()))).collect()
     }
+    pub fn raw_numbers(&self) -> &BTreeMap<String, String> {
+        &self.raw_numbers
+    }
     fn contents(&self) -> DraftContents {
         DraftContents {
             document: self.document.clone(),
             raw_numbers: self.raw_numbers.clone(),
             malformed: self.malformed.clone(),
+            settled_numbers: self.settled_numbers.clone(),
         }
     }
     fn remember(&mut self) {
@@ -159,6 +187,7 @@ impl RecipeDraft {
             self.document = previous.document;
             self.raw_numbers = previous.raw_numbers;
             self.malformed = previous.malformed;
+            self.settled_numbers = previous.settled_numbers;
             self.diagnostics.clear();
             self.dirty = self.contents() != self.baseline;
             self.generation = self
@@ -175,6 +204,7 @@ impl RecipeDraft {
         self.document = contents.document;
         self.raw_numbers = contents.raw_numbers;
         self.malformed = contents.malformed;
+        self.settled_numbers = contents.settled_numbers;
         self.diagnostics.clear();
         self.dirty = self.contents() != self.baseline;
         self.generation = self
@@ -196,6 +226,7 @@ impl RecipeDraft {
             document,
             raw_numbers: BTreeMap::new(),
             malformed: BTreeMap::new(),
+            settled_numbers: BTreeSet::new(),
         };
         self.dirty = self.contents() != self.baseline;
     }
@@ -212,6 +243,63 @@ impl RecipeDraft {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transitional_number_is_retained_and_blocks_snapshot_without_premature_feedback() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        for text in ["-", "1e", "1e-"] {
+            draft.edit_number("batch_size_l", text.into(), |document, value| {
+                document.batch_size_l = value;
+            });
+            assert_eq!(draft.number_text("batch_size_l", None), text);
+            assert!(draft.snapshot().is_err(), "transient input must block submission");
+            assert_eq!(draft.number_error("batch_size_l"), None,
+                "formatting feedback must wait for blur or explicit submission");
+        }
+    }
+
+    #[test]
+    fn settled_feedback_tracks_correction_without_content_or_generation_changes_on_blur() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.edit_number("batch_size_l", "-".into(), |d, n| d.batch_size_l = n);
+        let generation = draft.generation;
+        let contents = draft.recovery();
+        draft.settle_number("batch_size_l");
+        assert_eq!(draft.generation, generation);
+        assert_eq!(draft.recovery(), contents);
+        assert_eq!(draft.number_error("batch_size_l"), Some("Enter a number"));
+        draft.edit_number("batch_size_l", "1e".into(), |d, n| d.batch_size_l = n);
+        assert_eq!(draft.number_error("batch_size_l"), Some("Enter a number"));
+        draft.edit_number("batch_size_l", "2.000000000000000e1".into(), |d, n| d.batch_size_l = n);
+        assert_eq!(draft.number_error("batch_size_l"), None);
+        assert_eq!(draft.number_text("batch_size_l", None), "2.000000000000000e1");
+        assert_eq!(draft.snapshot().unwrap().batch_size_l, Some(20.0));
+        draft.edit_number("batch_size_l", "-".into(), |d, n| d.batch_size_l = n);
+        let record = serde_json::to_string(&draft.recovery()).unwrap();
+        let mut recovered = RecipeDraft::new(RecipeDocumentV1::default());
+        recovered.restore(serde_json::from_str(&record).unwrap());
+        assert_eq!(recovered.number_text("batch_size_l", None), "-");
+        assert_eq!(recovered.number_error("batch_size_l"), Some("Enter a number"));
+        assert!(recovered.snapshot().is_err());
+        draft.undo();
+        assert_eq!(draft.number_text("batch_size_l", None), "2.000000000000000e1");
+        assert!(draft.snapshot().is_ok());
+    }
+
+    #[test]
+    fn explicit_submission_settles_raw_fields_and_old_recovery_remains_readable() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.edit_number("batch_size_l", "1e-".into(), |d, n| d.batch_size_l = n);
+        draft.settle_numbers();
+        assert_eq!(draft.number_error("batch_size_l"), Some("Enter a number"));
+        let mut legacy = serde_json::to_value(draft.recovery()).unwrap();
+        legacy.as_object_mut().unwrap().remove("settled_numbers");
+        let mut recovered = RecipeDraft::new(RecipeDocumentV1::default());
+        recovered.restore(serde_json::from_value(legacy).unwrap());
+        assert_eq!(recovered.number_text("batch_size_l", None), "1e-");
+        assert!(recovered.snapshot().is_err());
+        assert_eq!(recovered.number_error("batch_size_l"), None);
+    }
+
     #[test]
     fn editing_clears_stale_server_diagnostics_and_preview() {
         use krausen_types::validation::{Diagnostic, Readiness, Validation};

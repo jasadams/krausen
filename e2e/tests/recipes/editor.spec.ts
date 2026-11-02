@@ -5,6 +5,751 @@ test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
+for (const unavailable of ['missing', 'disabled', 'idless'] as const) {
+  test(`authorized recheck uses a visible safe successor for an ${unavailable} ordinary bookmark`, async ({ page }) => {
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const opener = unavailable === 'idless'
+      ? page.getByRole('button', { name: 'Save recipe', exact: true })
+      : page.getByLabel('Batch volume (L)');
+    await opener.focus();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let seen!: () => void;
+    const started = new Promise<void>(resolve => { seen = resolve; });
+    await page.route('**/leptos-api/get_user_context*', async route => {
+      const response = await route.fetch();
+      seen();
+      await held;
+      await route.fulfill({ response });
+    });
+    try {
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await started;
+      await expect(opener).toBeHidden();
+      if (unavailable === 'missing') await opener.evaluate(element => element.removeAttribute('id'));
+      if (unavailable === 'disabled') await opener.evaluate(element => element.setAttribute('disabled', ''));
+      release();
+      await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Recipe editor', exact: true })).toBeFocused();
+    } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+  });
+}
+
+test('cleared print task returns to a visible editor successor after authorized retry', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByText('Export and print', { exact: true }).click();
+  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
+  const print = page.getByRole('region', { name: 'Print preview', exact: true });
+  await expect(print).toBeVisible();
+  await print.getByRole('button', { name: 'Back to editor', exact: true }).focus();
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    const response = await route.fetch();
+    const context = await response.json();
+    await route.fulfill({ response, json: { ...context, workspace_id: 'cleared-print-context-fault' } });
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toBeVisible();
+  await expect(print).toHaveCount(0);
+  await page.unrouteAll({ behavior: 'wait' });
+  await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recipe editor', exact: true })).toBeFocused();
+});
+
+test('obsolete initial recovery authorization cannot replace newer verified access', async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let count = 0;
+  await page.route('**/leptos-api/list_formulation_styles*', async route => {
+    const index = ++count;
+    const response = await route.fetch();
+    if (index > 2) { await route.fulfill({ response }); return; }
+    if (index === 2) seen();
+    await held;
+    await route.fulfill(index === 1 ? { response, json: 'Forbidden' } : { response });
+  });
+  try {
+    await page.goto('/recipe-editor/new');
+    await started;
+    // Initialization and ordinary style loading both authorize before preview
+    // is ready. The later recheck's third style response is not held.
+    const newer = page.waitForResponse(response => response.url().includes('/list_formulation_styles') && count > 2);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await newer;
+    release();
+    await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+    await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+test('disposed initial recovery authorization cannot write into the retired editor', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  await page.route('**/leptos-api/list_formulation_styles*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto('/recipe-editor/new');
+    await started;
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await expect(page).toHaveURL(/settings\/profile/);
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(errors).toEqual([]);
+    await expect(page).toHaveURL(/settings\/profile/);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+test('obsolete preview context preflight cannot destroy a newer print task', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let completed!: () => void;
+  const oldCompleted = new Promise<void>(resolve => { completed = resolve; });
+  let first = true;
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    const response = await route.fetch();
+    const context = await response.json();
+    seen();
+    await held;
+    await route.fulfill({ response, json: { ...context, workspace_id: 'obsolete-context-fault' } });
+    completed();
+  });
+  try {
+    const volume = page.getByLabel('Batch volume (L)');
+    await volume.fill('21');
+    await started;
+    const newer = page.waitForResponse(async response => {
+      if (!response.url().includes('/preview_formulation') || !response.ok()) return false;
+      try { return (await response.json()).Preview?.context?.draft?.batch_size_l === 22; } catch { return false; }
+    });
+    await volume.fill('22');
+    await newer;
+    await page.getByText('Export and print', { exact: true }).click();
+    await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
+    const print = page.getByRole('region', { name: 'Print preview', exact: true });
+    await expect(print).toBeVisible();
+    release();
+    await oldCompleted;
+    // Synchronize with rendered reactive effects, not a time-based sleep.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(print).toBeVisible();
+  } finally { release(); }
+});
+
+for (const continuation of ['disposed', 'superseded', 'denied-after-edit'] as const) {
+test(`explicit save conflict follow-up cannot publish a ${continuation} task`, async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Conflict disposal ${Date.now()}`);
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Retained stale local work');
+  const remote = await page.context().newPage();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await remote.goto(url);
+    await remote.getByRole('button', { name: 'Start a separate draft', exact: true }).click();
+    await remote.getByLabel('Boil time (min)').fill('65');
+    await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+    let reads = 0;
+    await page.route('**/leptos-api/read_recipe*', async route => {
+      if (++reads > 1) { await route.continue(); return; }
+      const response = await route.fetch();
+      seen();
+      await held;
+      await route.fulfill(continuation === 'denied-after-edit' ? { response, json: 'Forbidden' } : { response });
+    });
+    await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await started;
+    await expect(page.getByRole('button', { name: 'Save recipe', exact: true })).toBeEnabled();
+    if (continuation === 'denied-after-edit') {
+      await page.getByLabel('Recipe name', { exact: true }).fill('New local edit must not cancel current denial');
+      release();
+      await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+      expect(errors).toEqual([]);
+      return;
+    }
+    if (continuation === 'superseded') {
+      await remote.getByLabel('Boil time (min)').fill('70');
+      await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+      await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      const conflict = page.getByRole('region', { name: 'Save conflict', exact: true });
+      await expect(conflict).toContainText('the current saved revision is 3');
+      const account = page.getByRole('button', { name: 'Account menu', exact: true });
+      await account.focus();
+      release();
+      await page.unrouteAll({ behavior: 'wait' });
+      await page.waitForLoadState('networkidle');
+      await expect(conflict).toContainText('the current saved revision is 3');
+      await expect(account).toBeFocused();
+      expect(errors).toEqual([]);
+      return;
+    }
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await page.getByRole('dialog', { name: 'Unsaved recipe changes' }).getByRole('button', { name: 'Discard and leave' }).click();
+    await expect(page).toHaveURL(/settings\/profile/);
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(errors).toEqual([]);
+    await expect(page).toHaveURL(/settings\/profile/);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); await remote.close(); }
+});
+}
+
+test('a late committed save cannot leave or rewrite the address after confirmed context loss', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const name = `Scoped pending save ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(name);
+  const original = page.url();
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let completed!: () => void;
+  const saveCompleted = new Promise<void>(resolve => { completed = resolve; });
+  const requests: string[] = [];
+  let committed: { recipe_id: string; revision: number } | undefined;
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    requests.push(route.request().postData() ?? '');
+    const response = await route.fetch();
+    committed = (await response.json()).Saved;
+    seen();
+    await held;
+    await route.fulfill({ response });
+    completed();
+  });
+  try {
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+    await guard.getByRole('button', { name: 'Save and leave', exact: true }).click();
+    await started;
+    const submitted = JSON.parse(requests[0]);
+    const retainedAttempt = () => page.evaluate(requestId => Object.keys(localStorage)
+      .filter(key => key.startsWith('krausen-draft-v1:'))
+      .map(key => JSON.parse(localStorage.getItem(key)!))
+      .find(record => record.pending?.request_id === requestId), submitted.request_id);
+    await expect.poll(retainedAttempt).toBeTruthy();
+    const retained = await retainedAttempt();
+    expect(retained.scope.account_id).toBe(submitted.account_id);
+    expect(retained.scope.workspace_id).toBe(submitted.workspace_id);
+    expect(retained.pending.request_id).toBe(submitted.request_id);
+    expect(retained.pending.document).toEqual(submitted.document);
+    expect(retained.pending.recipe_id).toBe(submitted.recipe_id);
+    expect(retained.pending.expected).toBe(submitted.expected_revision);
+    await page.route('**/leptos-api/get_user_context*', async route => {
+      const response = await route.fetch();
+      const context = await response.json();
+      await route.fulfill({ response, json: { ...context, workspace_id: 'confirmed-context-fault' } });
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toBeVisible();
+    release();
+    await saveCompleted;
+    // Observe the production receipt, not a frame evaluation that can throw
+    // merely because the broken implementation navigates during it.
+    await expect(page.locator('.recipe-editor__actions [role="status"]')).toContainText('Saved revision 1 in the original context.');
+    await expect(page).toHaveURL(original);
+    expect(requests).toHaveLength(1);
+    expect(committed?.revision).toBe(1);
+    expect(committed?.recipe_id).toBeTruthy();
+    expect(submitted.account_id).toBe(getDefaultUserId());
+    expect(submitted.workspace_id).toBe(getDefaultWorkspaceId());
+    expect(submitted.request_id).toBeTruthy();
+    expect(submitted.document.title).toBe(name);
+    const saved = JSON.parse(db.exec(`SELECT json_object('recipe_id', recipe_id, 'workspace_id', workspace_id, 'created_by', created_by, 'revision', native_head_revision) FROM recipes WHERE name = '${name}'`));
+    expect(saved).toEqual({ recipe_id: committed!.recipe_id, workspace_id: submitted.workspace_id,
+      created_by: submitted.account_id, revision: committed!.revision });
+    const revision = JSON.parse(db.exec(`SELECT json_object('revision', revision, 'workspace_id', workspace_id, 'saved_by', saved_by, 'document', json(document)) FROM recipe_revisions WHERE recipe_id = '${committed!.recipe_id}'`));
+    expect(revision).toEqual({ revision: committed!.revision, workspace_id: submitted.workspace_id,
+      saved_by: submitted.account_id, document: submitted.document });
+    expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
+  } finally { release(); }
+});
+
+test('typed print denial never labels a hidden editor as access verified', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.route('**/leptos-api/request_process_summary*', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: 'Forbidden' });
+  });
+  await page.getByText('Export and print', { exact: true }).click();
+  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+  await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+  await expect(page.getByText('Access verified', { exact: true })).toHaveCount(0);
+});
+
+test('successful revalidation preserves textarea selection and backward direction', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  const notes = page.getByLabel('Notes', { exact: true });
+  await notes.fill('First line\nSecond line');
+  await notes.focus();
+  await notes.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(2, 15, 'backward'));
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
+    page.evaluate(() => window.dispatchEvent(new Event('focus'))),
+  ]);
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(notes).toBeFocused();
+  expect(await notes.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd, element.selectionDirection]))
+    .toEqual([2, 15, 'backward']);
+});
+
+test('revalidation never steals a newer deliberate account focus', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.focus();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+    completed();
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await started;
+    await expect(volume).toBeHidden();
+    const account = page.getByRole('button', { name: 'Account menu', exact: true });
+    await account.focus();
+    release();
+    await finished;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(account).toBeFocused();
+  } finally { release(); }
+});
+
+test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Disposed check ${Date.now()}`);
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  await page.route('**/leptos-api/read_recipe*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+    completed();
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await started;
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await expect(page).toHaveURL(/settings\/profile/);
+    release();
+    await finished;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(errors).toEqual([]);
+    await expect(page).toHaveURL(/settings\/profile/);
+  } finally { release(); }
+});
+
+test('recovered older-base conflict does not invent an original document from the newer head', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Original recovery base');
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Retained old-base work');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
+  const remote = await page.context().newPage();
+  try {
+    await remote.goto(url);
+    await remote.getByRole('button', { name: 'Start a separate draft', exact: true }).click();
+    await remote.getByLabel('Recipe name', { exact: true }).fill('New remote head');
+    await remote.getByLabel('Boil time (min)').fill('65');
+    await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+    page.once('dialog', dialog => dialog.accept());
+    await page.reload();
+    await page.getByRole('button', { name: 'Restore draft', exact: true }).click();
+    await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    const conflict = page.getByRole('region', { name: 'Save conflict', exact: true });
+    await expect(conflict).toBeVisible();
+    await conflict.getByText('Compare saved revision and your draft', { exact: true }).click();
+    await expect(conflict).toContainText('The original revision is not available in this recovered draft.');
+    await expect(conflict).not.toContainText('No changes from the original saved revision.');
+    await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Retained old-base work');
+  } finally { await remote.close(); }
+});
+
+test('raw formatting settles on blur and correction preserves precision and caret', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.focus();
+  await page.keyboard.type('-');
+  await expect(volume).toHaveValue('-');
+  await expect(volume).toHaveAttribute('aria-invalid', 'false');
+  await expect(page.locator('#recipe-batch-description')).toHaveCount(0);
+  await expect(page.getByLabel(/Original gravity.*Style reference/)).toHaveCount(0);
+  await page.keyboard.press('Tab');
+  await expect(volume).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#recipe-batch-description')).toContainText('Enter a number');
+  await volume.focus();
+  await page.keyboard.press('ControlOrMeta+A');
+  const precise = '2.0123456789012345e1';
+  await page.keyboard.type(precise);
+  await expect(volume).toHaveValue(precise);
+  await expect(volume).toHaveAttribute('aria-invalid', 'false');
+  await expect(volume).toBeFocused();
+  expect(await volume.evaluate((element: HTMLInputElement) => [element.selectionStart, element.selectionEnd]))
+    .toEqual([precise.length, precise.length]);
+  await page.keyboard.press('Tab');
+  await volume.focus();
+  await expect(volume).toHaveValue(precise);
+  await volume.evaluate((element: HTMLInputElement) => element.setSelectionRange(2, 7));
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/get_user_context') && response.ok()),
+    page.evaluate(() => window.dispatchEvent(new Event('focus'))),
+  ]);
+  await expect(volume).toBeVisible();
+  await expect(volume).toBeFocused();
+  expect(await volume.evaluate((element: HTMLInputElement) => [element.selectionStart, element.selectionEnd]))
+    .toEqual([2, 7]);
+  await expect(volume).toHaveValue(precise);
+  const original = await volume.elementHandle();
+  await page.getByRole('tab', { name: 'History', exact: true }).click();
+  await page.getByRole('tab', { name: 'Recipe', exact: true }).click();
+  await page.getByText('Recipe process and notes', { exact: true }).click();
+  await expect(volume).toHaveValue(precise);
+  expect(await original!.evaluate(element => element.isConnected)).toBe(true);
+  for (const [text, native] of [['', null], ['0', 0], ['0.000000000000000', 0], ['.125', 0.125]] as const) {
+    const observed = page.waitForRequest(request => {
+      if (!request.url().includes('/preview_formulation')) return false;
+      const json = new URLSearchParams(request.postData() ?? '').get('request_json');
+      return json !== null && JSON.parse(json).draft.batch_size_l === native;
+    });
+    await volume.focus();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
+    if (text) await page.keyboard.type(text);
+    await observed;
+    await expect(volume).toHaveValue(text);
+  }
+  await volume.focus();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type(precise);
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage)
+    .filter(key => key.startsWith('krausen-draft-v1:'))
+    .map(key => JSON.parse(localStorage.getItem(key)!))
+    .some(record => record.draft.raw_numbers.batch_size_l === '2.0123456789012345e1'))).toBe(true);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await page.getByRole('button', { name: 'Restore draft', exact: true }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue(precise);
+});
+
+test('all numeric caller families settle format feedback on real blur without rewriting raw text', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const check = async (field: ReturnType<typeof page.getByLabel>, alreadySettled = false) => {
+    await field.fill('-');
+    await expect(field).toHaveValue('-');
+    await expect(field).toHaveAttribute('aria-invalid', alreadySettled ? 'true' : 'false');
+    await field.press('Tab');
+    await expect(field).toHaveAttribute('aria-invalid', 'true');
+    const description = await field.getAttribute('aria-describedby');
+    expect(description).toBeTruthy();
+    await expect(page.locator(`[id="${description}"]`)).toContainText('Enter a number');
+    await field.fill('1.230000000000000');
+    await field.press('Tab');
+    await expect(field).toHaveValue('1.230000000000000');
+    await expect(field).toHaveAttribute('aria-invalid', 'false');
+  };
+  await check(page.getByLabel('Batch volume (L)'));
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await picker.locator('.k-catalogue-item').first().click();
+  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await check(page.getByLabel('Amount (kg)', { exact: true }));
+  const yeast = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Yeast', exact: true }) });
+  await yeast.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await check(yeast.getByLabel('Amount', { exact: true }));
+  // The amount check's Tab lands here; refocusing amount to correct it already
+  // blurs attenuation. Its feedback must now remain current while correcting.
+  await check(yeast.getByLabel('Yeast attenuation (informational) (%)', { exact: true }), true);
+  const mash = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Mash steps', exact: true }) });
+  await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+  await check(mash.getByLabel('Time (min)', { exact: true }));
+});
+
+test('local retention failure keeps exact work open without claiming durable recovery', async ({ page }) => {
+  await page.addInitScript(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key: string, value: string) {
+      if (key.startsWith('krausen-draft-v1:')) throw new DOMException('Controlled draft storage failure', 'QuotaExceededError');
+      return setItem.call(this, key, value);
+    };
+  });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Keep this page open');
+  await page.getByLabel('Batch volume (L)').fill('20.000000000000000');
+  await expect(page.getByRole('status').filter({ hasText: 'Unable to retain this draft locally; keep this page open.' })).toBeVisible();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20.000000000000000');
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Keep this page open');
+  await expect(page.getByText('Unsaved changes · retained locally', { exact: true })).toHaveCount(0);
+});
+
+test('preview details and calculating text are not a per-keystroke live list', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await expect(page.locator('.recipe-editor__preview-summary div[role="status"]').filter({ has: page.locator('p') })).toHaveCount(0);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.getByLabel('Batch volume (L)').fill('21');
+    await started;
+    await expect(page.getByText('Calculating…', { exact: true })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Calculating…' })).toHaveCount(0);
+  } finally { release(); }
+});
+
+test('native input undo stays local while application undo restores removed raw rows', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const title = page.getByLabel('Recipe name', { exact: true });
+  await title.fill('Undo ownership');
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.focus();
+  await page.keyboard.type('20.012345678901234');
+  await expect(volume).toHaveValue('20.012345678901234');
+  await page.keyboard.press('ControlOrMeta+Z');
+  await expect(volume).not.toHaveValue('20.012345678901234');
+  await expect(title).toHaveValue('Undo ownership');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await picker.locator('.k-catalogue-item').first().click();
+  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  const amount = page.getByLabel('Amount (kg)', { exact: true });
+  const id = await amount.getAttribute('id');
+  await amount.fill('1.230000000000000');
+  await page.getByRole('button', { name: /Remove/ }).last().click();
+  await expect(amount).toHaveCount(0);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(amount).toHaveAttribute('id', id!);
+  await expect(amount).toHaveValue('1.230000000000000');
+  await expect(title).toHaveValue('Undo ownership');
+});
+
+test('context network failure has explicit retry and retains scoped raw work and focus', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const volume = page.getByLabel('Batch volume (L)');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Retained during context outage');
+  await volume.fill('20.012345678901234');
+  await volume.focus();
+  await volume.evaluate((element: HTMLInputElement) => element.setSelectionRange(3, 8));
+  // Wait for the original preview to finish before failing context reads.
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(volume).toBeHidden();
+  await expect(page.getByText('Network unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toHaveCount(0);
+  const retry = page.getByRole('button', { name: 'Retry check', exact: true });
+  await expect(retry).toBeVisible();
+  await page.unroute('**/leptos-api/get_user_context*');
+  await retry.click();
+  await expect(volume).toBeVisible();
+  await expect(volume).toHaveValue('20.012345678901234');
+  await expect(volume).toBeFocused();
+  expect(await volume.evaluate((element: HTMLInputElement) => [element.selectionStart, element.selectionEnd]))
+    .toEqual([3, 8]);
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Retained during context outage');
+});
+
+test('calculation retry uses the same draft and a fresh preview generation', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const requests: any[] = [];
+  let failed = false;
+  await page.route('**/leptos-api/preview_formulation*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('request_json');
+    if (payload) requests.push(JSON.parse(payload));
+    if (!failed) {
+      failed = true;
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.getByLabel('Batch volume (L)').fill('20.012345678901234');
+  await expect(page.getByRole('status').filter({ hasText: 'Preview unavailable' })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry calculation', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[1].draft).toEqual(requests[0].draft);
+  expect(requests[1].intent).toEqual(requests[0].intent);
+  expect(requests[1].draft_generation).not.toBe(requests[0].draft_generation);
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20.012345678901234');
+});
+
+test('initial recipe load failure retries without leaving the requested recipe', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const name = `Load retry ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(name);
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const url = page.url();
+  await page.route('**/leptos-api/read_recipe*', route => route.abort('failed'));
+  await page.reload();
+  await expect(page.getByText('Unable to load recipe', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveCount(0);
+  await page.unroute('**/leptos-api/read_recipe*');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(name);
+  await expect(page).toHaveURL(url);
+});
+
+test('authorized focus revalidation preserves an open print task and cleans up on return', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill('Print context continuity');
+  await page.getByText('Export and print', { exact: true }).click();
+  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
+  const preview = page.getByRole('region', { name: 'Print preview', exact: true });
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText('Print context continuity');
+  await preview.getByRole('button', { name: 'Back to editor', exact: true }).focus();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const received = new Promise<void>(resolve => { seen = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await received;
+    await expect(preview).toBeHidden();
+    release();
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText('Print context continuity');
+    expect(await preview.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    await preview.getByRole('button', { name: 'Back to editor', exact: true }).click();
+    await expect(preview).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+    await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Print context continuity');
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});
+
+test('a delayed save freezes its payload and preserves newer edits without duplicate dispatch', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const title = page.getByLabel('Recipe name', { exact: true });
+  const volume = page.getByLabel('Batch volume (L)');
+  const name = `Frozen save ${Date.now()}`;
+  await title.fill(name);
+  await volume.fill('20.012345678901234');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const received = new Promise<void>(resolve => { seen = resolve; });
+  const requests: string[] = [];
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    requests.push(route.request().postData() ?? '');
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    const save = page.getByRole('button', { name: 'Save recipe', exact: true });
+    await save.click();
+    await received;
+    await expect(save).toBeDisabled();
+    await volume.fill('21.012345678901234');
+    await title.fill(`${name} newer`);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).not.toContain('newer');
+    release();
+    await expect(page.getByRole('status').filter({ hasText: 'newer changes remain unsaved' })).toBeVisible();
+    await expect(title).toHaveValue(`${name} newer`);
+    await expect(volume).toHaveValue('21.012345678901234');
+    const saved = await page.context().newPage();
+    try {
+      await saved.goto(page.url());
+      // A retained candidate is local work, not the saved server revision.
+      const separate = saved.getByRole('button', { name: 'Start a separate draft', exact: true });
+      await expect(separate).toBeVisible();
+      await separate.click();
+      await expect(saved.getByLabel('Recipe name', { exact: true })).toHaveValue(name);
+      await expect(saved.getByLabel('Batch volume (L)')).toHaveValue('20.012345678901234');
+    } finally {
+      await saved.close();
+    }
+    await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+    await expect(page.getByRole('dialog', { name: 'Unsaved recipe changes' })).toBeVisible();
+    await page.getByRole('button', { name: 'Stay', exact: true }).click();
+    await expect(title).toHaveValue(`${name} newer`);
+  } finally {
+    release();
+  }
+});
+
 test('an explicit save keeps a numeric draft and reopens its native revision', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   const title = `Browser recipe ${Date.now()}`;
@@ -28,6 +773,13 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   await page.reload();
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await expect(page.getByLabel('Whole-wort apparent attenuation (%)')).toHaveValue('75');
+  const id = page.url().split('/').pop()!;
+  const before = Number(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`));
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  expect(Number(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`))).toBe(before);
+  expect(before).toBe(2);
+  expect(db.exec(`SELECT json_extract(document, '$.boil_minutes') IS NULL FROM recipe_revisions WHERE recipe_id = '${id}' AND revision = 2`)).toBe('1');
 });
 
 test('shared preview exposes style ranges and rejects an older response', async ({ page }) => {
@@ -71,7 +823,7 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(picker).toBeVisible();
   await expect(page.getByLabel('Search fermentables')).toBeVisible();
   await picker.locator('.k-catalogue-item').first().click();
-  await page.getByRole('button', { name: 'Add ingredient' }).click();
+  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
   await expect(picker).toBeHidden();
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
   await page.getByText('Addition details', { exact: true }).click();
@@ -81,6 +833,50 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('dialog', { name: 'Navigation' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
+});
+
+test('editor state controls keep raw labels and focus across representative presentation settings', async ({ page }, testInfo) => {
+  await testInfo.attach('browser-and-evidence-limits', { contentType: 'application/json', body: JSON.stringify({
+    browser: page.context().browser()?.version(), hostPlatform: process.platform,
+    scope: 'Headless desktop browser with viewport/theme/media/controlled-font settings; not native AT, OS zoom or physical device certification.',
+  }) });
+  for (const setting of [
+    { width: 1440, height: 900, theme: 'light', fallback: false },
+    { width: 390, height: 844, theme: 'light', fallback: false },
+    { width: 320, height: 700, theme: 'dark', fallback: true },
+  ]) {
+    await page.setViewportSize({ width: setting.width, height: setting.height });
+    await page.emulateMedia({ reducedMotion: setting.fallback ? 'reduce' : 'no-preference' });
+    await page.addInitScript(theme => localStorage.setItem('krausen-theme', theme), setting.theme);
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    if (setting.fallback) {
+      // Controlled browser-font fallback, not an OS zoom/device/AT claim.
+      await page.addStyleTag({ content: 'input, textarea, button { font-family: Arial, sans-serif !important; }' });
+    }
+    const volume = page.getByLabel('Batch volume (L)');
+    await volume.fill('-');
+    await expect(volume).toHaveAttribute('aria-invalid', 'false');
+    await volume.press('Tab');
+    await expect(volume).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#recipe-batch-description')).toContainText('Enter a number');
+    await volume.fill('20.000000000000000');
+    await volume.press('Tab');
+    await volume.focus();
+    await expect(volume).toHaveValue('20.000000000000000');
+    await expect(volume).toBeFocused();
+    const bounds = await volume.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(setting.width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await testInfo.attach(`editor-state-${setting.width}-${setting.theme}`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
+    await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+    await page.getByRole('dialog', { name: 'Unsaved recipe changes' })
+      .getByRole('button', { name: 'Discard and leave', exact: true }).click();
+    await expect(page).toHaveURL(/\/recipes$/);
+  }
 });
 
 test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({ page }) => {
@@ -353,7 +1149,7 @@ test('a dirty new recipe remains private to its original account and workspace',
   page.on('request', request => {
     if (watchForDraft && request.postData()?.includes('Private unsaved switch draft')) leakedRequests.push(request.url());
   });
-  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
+  await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
   await page.getByRole('button', { name: otherName }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
@@ -571,6 +1367,7 @@ test('stale saves retain edits and require deliberate reapply against current he
   await other.goto(url);
   await other.getByLabel('Recipe name', { exact: true }).fill('Remote edit');
   await page.getByLabel('Recipe name', { exact: true }).fill('My retained edit');
+  await page.getByLabel('Batch volume (L)').fill('20.000000000000000');
   await other.getByRole('button', { name: 'Save recipe' }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -582,8 +1379,13 @@ test('stale saves retain edits and require deliberate reapply against current he
   await conflict.getByText('Compare saved revision and your draft').click();
   await expect(conflict).toContainText('Remote edit');
   await expect(conflict).toContainText('My retained edit');
+  await expect(conflict).toContainText('20.000000000000000');
+  await expect(conflict.getByRole('heading', { name: 'Local changes', exact: true })).toBeVisible();
+  await expect(conflict.getByRole('heading', { name: 'Remote changes', exact: true })).toBeVisible();
   await conflict.getByRole('button', { name: 'Reapply my draft' }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('My retained edit');
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20.000000000000000');
+  await expect(page.getByRole('status').filter({ hasText: 'Review it, then choose Save' })).toBeVisible();
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
   await other.close();
@@ -648,6 +1450,11 @@ test('revoked credentials cannot read the retained draft until reauthentication'
   await other.goto('/recipe-editor/new');
   await expect(other.getByText('A retained draft is available')).toHaveCount(0);
   await expect(other.getByLabel('Recipe name', { exact: true })).toHaveCount(0);
+  // The newly opened route can be redirected by the shared authentication
+  // boundary. The existing original-scope editor owns the held draft notice.
+  await page.bringToFront();
+  await expect(page.getByText('Session expired', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry check', exact: true })).toBeVisible();
   await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await other.goto('/recipe-editor/new');
   await expect(other.getByText('A retained draft is available')).toBeVisible();
@@ -661,7 +1468,9 @@ test('recovered uncertain create retries its original request without a duplicat
   const name = `Uncertain create ${Date.now()}`;
   await page.getByLabel('Recipe name', { exact: true }).fill(name);
   let intercepted = false;
+  const submitted: string[] = [];
   await page.route('**/leptos-api/save_recipe*', async route => {
+    submitted.push(route.request().postData() ?? '');
     if (!intercepted) {
       intercepted = true;
       await route.fetch();
@@ -678,6 +1487,8 @@ test('recovered uncertain create retries its original request without a duplicat
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
+  expect(submitted).toHaveLength(2);
+  expect(submitted[1]).toBe(submitted[0]);
 });
 
 test('separate local drafts remain individually recoverable', async ({ page }) => {

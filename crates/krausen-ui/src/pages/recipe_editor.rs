@@ -20,9 +20,48 @@ use krausen_types::{
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
+#[path = "recipe_comparison.rs"]
+mod recipe_comparison;
+
 type EditorIdentity = krausen_types::request_context::OperationIntent;
 
-pub(crate) async fn current_context_matches(expected: &EditorIdentity) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditorAccess {
+    Verified,
+    Checking,
+    NetworkUnavailable,
+    Expired,
+    Mismatch,
+    Forbidden,
+}
+
+#[derive(Clone, Copy)]
+struct ContextCheckGeneration(RwSignal<u64>);
+
+impl EditorAccess {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Verified => "Access verified",
+            Self::Checking => "Checking access…",
+            Self::NetworkUnavailable => "Network unavailable",
+            Self::Expired => "Session expired",
+            Self::Mismatch => "Recipe held in its original workspace",
+            Self::Forbidden => "Access denied",
+        }
+    }
+    fn guidance(self) -> &'static str {
+        match self {
+            Self::Verified => "",
+            Self::Checking => "Your draft is hidden while access is checked.",
+            Self::NetworkUnavailable => "Unable to check access. Your draft is retained in this page; retry when the connection is available.",
+            Self::Expired => "Sign in again in another tab, then retry the check here. Keep this page open to retain your work.",
+            Self::Mismatch => "Return to the account and workspace where you opened this draft, then retry the check.",
+            Self::Forbidden => "Access to this workspace was denied. Keep this page open and reconnect with an authorized account before retrying.",
+        }
+    }
+}
+
+async fn check_editor_access(expected: &EditorIdentity) -> EditorAccess {
     let result = crate::server_fns::context::get_user_context().await;
     #[cfg(target_arch = "wasm32")]
     let result = if result
@@ -35,48 +74,110 @@ pub(crate) async fn current_context_matches(expected: &EditorIdentity) -> bool {
     } else {
         result
     };
-    result.is_ok_and(|ctx| {
-        ctx.user_id == expected.account_id
-            && ctx.workspace_id.as_deref() == Some(expected.workspace_id.as_str())
-    })
+    match result {
+        Ok(ctx) if ctx.user_id == expected.account_id
+            && ctx.workspace_id.as_deref() == Some(expected.workspace_id.as_str()) => EditorAccess::Verified,
+        Ok(_) => EditorAccess::Mismatch,
+        Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => EditorAccess::Expired,
+        Err(_) => EditorAccess::NetworkUnavailable,
+    }
 }
 
-fn comparison_text(document: &RecipeDocumentV1) -> String {
-    fn visit(value: &serde_json::Value, label: &str, lines: &mut Vec<String>) {
-        match value {
-            serde_json::Value::Object(fields) => {
-                for (name, value) in fields {
-                    if name == "schema_version" || name == "row_id" {
-                        continue;
-                    }
-                    let name = name.replace('_', " ");
-                    let path = if label.is_empty() {
-                        name
-                    } else {
-                        format!("{label} / {name}")
-                    };
-                    visit(value, &path, lines);
-                }
+pub(crate) async fn current_context_matches(expected: &EditorIdentity) -> bool {
+    check_editor_access(expected).await == EditorAccess::Verified
+}
+
+fn hold_editor(access: RwSignal<EditorAccess>, visible: RwSignal<bool>, outcome: EditorAccess) {
+    if access.try_get_untracked().is_some() && visible.try_get_untracked().is_some() {
+        access.set(outcome);
+        visible.set(false);
+    }
+}
+
+fn same_leave_destination(
+    original: &Option<crate::components::layout::EditorDestination>,
+    current: &Option<crate::components::layout::EditorDestination>,
+) -> bool {
+    use crate::components::layout::EditorDestination;
+    match (original, current) {
+        (Some(EditorDestination::Href(a)), Some(EditorDestination::Href(b))) => a == b,
+        (Some(EditorDestination::Workspace(a)), Some(EditorDestination::Workspace(b))) => a == b,
+        (Some(EditorDestination::Logout), Some(EditorDestination::Logout)) => true,
+        _ => false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+struct EditorFocus {
+    id: String,
+    print_return: bool,
+    selection: Option<(u32, u32, String)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl EditorFocus {
+    fn capture() -> Option<Self> {
+        let element = web_sys::window()?.document()?.active_element()?;
+        let id = element.id();
+        let print_return = element.closest("[aria-label='Print preview']").ok().flatten().is_some();
+        // Input and textarea share these DOM properties; use the native API
+        // without changing value or synthesizing input/Undo events.
+        let property = |name: &str| js_sys::Reflect::get(element.as_ref(), &name.into()).ok();
+        let selection = property("selectionStart").and_then(|v| v.as_f64())
+            .zip(property("selectionEnd").and_then(|v| v.as_f64()))
+            .map(|(start, end)| (start as u32, end as u32,
+                property("selectionDirection").and_then(|v| v.as_string()).unwrap_or_else(|| "none".into())));
+        Some(Self { id, print_return, selection })
+    }
+    fn restore(self) {
+        use wasm_bindgen::JsCast;
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else { return; };
+        // A deliberate focus move while the asynchronous check was pending
+        // takes precedence over our old bookmark.
+        if document.active_element().is_some_and(|active| active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
+        let try_focus = |element: &web_sys::Element| {
+            if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
+                || element.get_client_rects().length() == 0
+                || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
+                    .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
+            element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
+                && document.active_element().is_some_and(|active| active == *element)
+        };
+        let print = document.query_selector("[aria-label='Print preview']").ok().flatten();
+        let original = document.get_element_by_id(&self.id)
+            .filter(|_| print.is_none() || self.print_return)
+            .filter(|element| try_focus(element));
+        if let Some(element) = original {
+          if let Some((start, end, direction)) = self.selection {
+            if let Some(set_range) = js_sys::Reflect::get(element.as_ref(), &"setSelectionRange".into()).ok().and_then(|v| v.dyn_into::<js_sys::Function>().ok()) {
+                if set_range.call3(element.as_ref(), &start.into(), &end.into(), &direction.into()).is_err() { tracing::warn!("Unable to restore editor selection"); }
             }
-            serde_json::Value::Array(items) => {
-                for (index, value) in items.iter().enumerate() {
-                    visit(value, &format!("{label} {}", index + 1), lines);
-                }
-            }
-            serde_json::Value::Null => {}
-            serde_json::Value::String(text) if text.is_empty() => {}
-            serde_json::Value::String(text) => lines.push(format!("{label}: {text}")),
-            value => lines.push(format!("{label}: {value}")),
+          }
+          return;
+        }
+        // Never send focus behind a still-active print task. If that task was
+        // cleared by confirmed denial, return to the existing editor heading.
+        if let Some(print) = print {
+            if let Some(button) = print.query_selector("button").ok().flatten() { try_focus(&button); }
+        } else if let Some(heading) = document.get_element_by_id("recipe-editor-heading") {
+            try_focus(&heading);
         }
     }
-    let mut lines = Vec::new();
-    if let Ok(value) = serde_json::to_value(document) {
-        visit(&value, "", &mut lines);
-    }
-    if lines.is_empty() {
-        "No recipe details".into()
-    } else {
-        lines.join("\n")
+}
+
+fn comparison_changes(result: Result<Vec<recipe_comparison::RecipeChange>, serde_json::Error>) -> AnyView {
+    comparison_changes_from(result, "Original", "No changes from the original saved revision.")
+}
+
+fn comparison_changes_from(result: Result<Vec<recipe_comparison::RecipeChange>, serde_json::Error>, before_label: &'static str, empty: &'static str) -> AnyView {
+    match result {
+        Ok(changes) if changes.is_empty() => view! { <p>{empty}</p> }.into_any(),
+        Ok(changes) => view! { <ul>{changes.into_iter().map(|change| view! { <li><strong>{change.label}</strong><p>{format!("{before_label}: {}", change.before)}</p><p>{format!("Changed to: {}", change.after)}</p></li> }).collect_view()}</ul> }.into_any(),
+        Err(error) => {
+            tracing::warn!(%error, "Unable to prepare recipe comparison");
+            view! { <p>"Comparison is unavailable. Your complete original draft is still retained; no changes were merged."</p> }.into_any()
+        }
     }
 }
 
@@ -142,7 +243,8 @@ pub fn RecipeEditorPage() -> impl IntoView {
             Ok((_, Some(RecipeReadOutcome::NotFound))) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
             Ok((_, Some(RecipeReadOutcome::Forbidden))) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
             Ok((_, Some(RecipeReadOutcome::ContextChanged))) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
-            _ => view! { <BreweryNotice title="Unable to load recipe" body="Try again when the connection is available." warning=true/> }.into_any(),
+            Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => view! { <BreweryNotice title="Session expired" body=EditorAccess::Expired.guidance() warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
+            _ => view! { <BreweryNotice title="Unable to load recipe" body="Your recipe could not be loaded. Retry when the connection is available." warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
         } })}
     </Suspense> }
 }
@@ -159,6 +261,10 @@ pub(super) struct PendingRecipeSave {
 #[component]
 fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
     let identity = RwSignal::new(identity);
+    let access = RwSignal::new(EditorAccess::Verified);
+    let check_generation = RwSignal::new(0_u64);
+    provide_context(access);
+    provide_context(ContextCheckGeneration(check_generation));
     let context_visible = RwSignal::new(true);
     let context_lost = RwSignal::new(false);
     let profile_generation = RwSignal::new(0_u64);
@@ -166,11 +272,13 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let history_authority_failure = Callback::new(move |()| {
         if context_visible.try_get_untracked().is_none() { return; }
         context_visible.set(false);
+        access.set(EditorAccess::Forbidden);
         context_lost.set(true);
         preview_gate.update_value(|gate| { gate.invalidate(); });
     });
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
+    let original_baseline_available = RwSignal::new(true);
     let baseline = RwSignal::new(
         initial
             .as_ref()
@@ -181,31 +289,57 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         initial.map(|s| s.document).unwrap_or_default(),
     ));
     #[cfg(target_arch = "wasm32")]
-    {
-        let check_generation = RwSignal::new(0_u64);
-        let recheck = Callback::new(move |()| {
-            context_visible.set(false);
-            context_lost.set(false);
-            preview_gate.update_value(|gate| {
-                gate.invalidate();
-            });
-            let generation = check_generation
-                .get_untracked()
-                .checked_add(1)
-                .expect("context check generation exhausted");
-            check_generation.set(generation);
-            let expected = identity.get_untracked();
-            leptos::task::spawn_local(async move {
-                let matches = current_context_matches(&expected).await;
-                if check_generation.try_get_untracked() == Some(generation) {
-                    if matches {
-                        context_visible.set(true);
-                    } else {
-                        context_lost.set(true);
+    let focus_before_check = StoredValue::new(None::<EditorFocus>);
+    let recheck = Callback::new(move |()| {
+        #[cfg(target_arch = "wasm32")]
+        if context_visible.get_untracked() {
+            focus_before_check.set_value(EditorFocus::capture());
+        }
+        access.set(EditorAccess::Checking);
+        context_visible.set(false);
+        context_lost.set(false);
+        preview_gate.update_value(|gate| { gate.invalidate(); });
+        let generation = check_generation.get_untracked().checked_add(1).expect("context check generation exhausted");
+        check_generation.set(generation);
+        let expected = identity.get_untracked();
+        leptos::task::spawn_local(async move {
+            let mut outcome = check_editor_access(&expected).await;
+            if outcome == EditorAccess::Verified {
+                outcome = match crate::server_fns::formulation::list_formulation_styles(expected.account_id.clone(), expected.workspace_id.clone()).await {
+                    Ok(krausen_types::formulation::StyleListOutcome::Styles(_)) => EditorAccess::Verified,
+                    Ok(krausen_types::formulation::StyleListOutcome::Forbidden) => EditorAccess::Forbidden,
+                    Ok(krausen_types::formulation::StyleListOutcome::ContextChanged) => EditorAccess::Mismatch,
+                    Ok(krausen_types::formulation::StyleListOutcome::Unavailable) => EditorAccess::NetworkUnavailable,
+                    Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => EditorAccess::Expired,
+                    Err(_) => EditorAccess::NetworkUnavailable,
+                };
+            }
+            if check_generation.try_get_untracked() != Some(generation) { return; }
+            access.set(outcome);
+            if outcome == EditorAccess::Verified {
+                context_visible.set(true);
+                #[cfg(target_arch = "wasm32")]
+                request_animation_frame(move || {
+                    if context_visible.try_get_untracked() == Some(true)
+                        && check_generation.try_get_untracked() == Some(generation) {
+                        if let Some(focus) = focus_before_check.get_value() { focus.restore(); }
                     }
-                }
-            });
+                });
+            } else {
+                context_lost.set(true);
+            }
         });
+    });
+    // Legacy children still expose only a fail-closed visibility signal. Check
+    // the original scope through existing authorized calls rather than inventing
+    // a mismatch from that boolean. Explicit typed denials never take this path.
+    Effect::new(move |_| {
+        if !context_visible.get() && access.get() == EditorAccess::Verified {
+            recheck.run(());
+        }
+    });
+    #[cfg(target_arch = "wasm32")]
+    {
         let focus = window_event_listener(leptos::ev::focus, move |_| recheck.run(()));
         let storage = window_event_listener(leptos::ev::storage, move |event| {
             if event.key().as_deref() == Some(crate::components::layout::CONTEXT_CHANGED_KEY) {
@@ -219,6 +353,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     }
     let status = RwSignal::new(String::new());
     let pending = RwSignal::new(false);
+    let save_sequence = RwSignal::new(0_u64);
     let retry = RwSignal::new(None::<PendingRecipeSave>);
     let conflict = RwSignal::new(None::<RecipeSnapshot>);
     let print_preview = RwSignal::new(None::<ProcessSummary>);
@@ -229,6 +364,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let on_scaled = Callback::new(
         move |(document, revision_number): (RecipeDocumentV1, i64)| {
             baseline.set(document.clone());
+            original_baseline_available.set(true);
             draft.update(|draft| draft.replace_saved(document));
             revision.set(Some(revision_number));
             retry.set(None);
@@ -293,7 +429,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
         });
     }
-    Effect::new(move |_| editor_guard.message.set(status.get()));
+    Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.get() } else { access.get().guidance().to_owned() }));
+    Effect::new(move |_| {
+        if matches!(access.get(), EditorAccess::Mismatch | EditorAccess::Forbidden) {
+            editor_guard.saving_to_leave.set(false);
+        }
+    });
     Effect::new(move |_| {
         editor_guard
             .pending
@@ -335,9 +476,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             base_revision: revision.get_untracked(),
         };
         let tab = crate::utils::request_id::new_request_id();
-        let checking_recovery = RwSignal::new(false);
+        let checking_recovery = RwSignal::new(None::<u64>);
         Effect::new(move |_| {
-            if recovery_ready.get() || !context_visible.get() || checking_recovery.get() {
+            let epoch = check_generation.get();
+            if recovery_ready.get() || !context_visible.get() || checking_recovery.get() == Some(epoch) {
                 return;
             }
             if initial_scope.installation.is_empty() {
@@ -345,13 +487,24 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 recovery_ready.set(true);
                 return;
             }
-            checking_recovery.set(true);
+            checking_recovery.set(Some(epoch));
             let expected = expected.clone();
             let initial_scope = initial_scope.clone();
             leptos::task::spawn_local(async move {
-                if !current_context_matches(&expected).await {
-                    context_visible.set(false);
-                    checking_recovery.set(false);
+                let owns_task = move || checking_recovery.try_get_untracked() == Some(Some(epoch))
+                    && check_generation.try_get_untracked() == Some(epoch)
+                    && recovery_ready.try_get_untracked() == Some(false)
+                    && context_visible.try_get_untracked() == Some(true);
+                let retire = move || {
+                    if checking_recovery.try_get_untracked() == Some(Some(epoch)) {
+                        checking_recovery.set(None);
+                    }
+                };
+                let outcome = check_editor_access(&expected).await;
+                if !owns_task() { retire(); return; }
+                if outcome != EditorAccess::Verified {
+                    hold_editor(access, context_visible, outcome);
+                    retire();
                     return;
                 }
                 let authorized = crate::server_fns::formulation::list_formulation_styles(
@@ -359,13 +512,19 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     expected.workspace_id.clone(),
                 )
                 .await;
-                if !matches!(
-                    authorized,
-                    Ok(krausen_types::formulation::StyleListOutcome::Styles(_))
-                ) || !current_context_matches(&expected).await
-                {
-                    context_visible.set(false);
-                    checking_recovery.set(false);
+                if !owns_task() { retire(); return; }
+                let outcome = match authorized {
+                    Ok(krausen_types::formulation::StyleListOutcome::Styles(_)) => check_editor_access(&expected).await,
+                    Ok(krausen_types::formulation::StyleListOutcome::Forbidden) => EditorAccess::Forbidden,
+                    Ok(krausen_types::formulation::StyleListOutcome::ContextChanged) => EditorAccess::Mismatch,
+                    Ok(krausen_types::formulation::StyleListOutcome::Unavailable) => EditorAccess::NetworkUnavailable,
+                    Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => EditorAccess::Expired,
+                    Err(_) => EditorAccess::NetworkUnavailable,
+                };
+                if !owns_task() { retire(); return; }
+                if outcome != EditorAccess::Verified {
+                    hold_editor(access, context_visible, outcome);
+                    retire();
                     return;
                 }
                 match crate::pages::recipe_recovery::find(&initial_scope) {
@@ -376,7 +535,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     }
                 }
                 recovery_ready.set(true);
-                checking_recovery.set(false);
+                retire();
             });
         });
         Effect::new(move |_| {
@@ -464,9 +623,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 return;
             };
             let expected = identity.get_untracked();
+            let epoch = check_generation.get_untracked();
             leptos::task::spawn_local(async move {
-                if !current_context_matches(&expected).await {
-                    context_visible.set(false);
+                let outcome = check_editor_access(&expected).await;
+                if check_generation.try_get_untracked() != Some(epoch) { return; }
+                if outcome != EditorAccess::Verified {
+                    hold_editor(access, context_visible, outcome);
                     return;
                 }
                 let result = read_recipe(
@@ -475,14 +637,29 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     id.clone(),
                 )
                 .await;
-                if !current_context_matches(&expected).await {
-                    context_visible.set(false);
-                    return;
-                }
+                let outcome = check_editor_access(&expected).await;
                 if recipe_id.try_get_untracked() != Some(Some(id))
                     || revision.try_get_untracked() != Some(Some(observed))
                     || pending.try_get_untracked() != Some(false)
+                    || check_generation.try_get_untracked() != Some(epoch)
                 {
+                    return;
+                }
+                if outcome != EditorAccess::Verified {
+                    hold_editor(access, context_visible, outcome);
+                    return;
+                }
+                if matches!(&result, Ok(RecipeReadOutcome::Forbidden)) {
+                    hold_editor(access, context_visible, EditorAccess::Forbidden);
+                    return;
+                }
+                if matches!(&result, Ok(RecipeReadOutcome::ContextChanged)) {
+                    hold_editor(access, context_visible, EditorAccess::Mismatch);
+                    return;
+                }
+                if let Err(error) = &result {
+                    let outcome = if crate::utils::auth_refresh::is_auth_error(&error.to_string()) { EditorAccess::Expired } else { EditorAccess::NetworkUnavailable };
+                    hold_editor(access, context_visible, outcome);
                     return;
                 }
                 if let Ok(RecipeReadOutcome::Found(snapshot)) = result {
@@ -495,6 +672,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                             conflict.set(Some(snapshot));
                         } else {
                             baseline.set(snapshot.document.clone());
+                            original_baseline_available.set(true);
                             revision.set(Some(snapshot.revision));
                             draft.update(|d| d.replace_saved(snapshot.document));
                             status.set("Updated to the current saved revision.".into());
@@ -559,11 +737,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
             match result {
                 Ok(krausen_types::formulation::StyleListOutcome::Styles(list)) => styles.set(list),
-                Ok(
-                    krausen_types::formulation::StyleListOutcome::ContextChanged
-                    | krausen_types::formulation::StyleListOutcome::Forbidden,
-                ) => context_visible.set(false),
+                Ok(krausen_types::formulation::StyleListOutcome::ContextChanged) => {
+                    access.set(EditorAccess::Mismatch);
+                    context_visible.set(false);
+                }
+                Ok(krausen_types::formulation::StyleListOutcome::Forbidden) => {
+                    access.set(EditorAccess::Forbidden);
+                    context_visible.set(false);
+                }
                 Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    access.set(EditorAccess::Expired);
                     context_visible.set(false)
                 }
                 _ => styles.set(Vec::new()),
@@ -664,6 +847,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         let attempt = if let Some(attempt) = retry.get_untracked() {
             attempt
         } else {
+            draft.update(|d| d.settle_numbers());
             let snapshot = draft.with_untracked(|d| (d.snapshot(), d.generation));
             let Ok(document) = snapshot.0 else {
                 status.set("Complete invalid number fields before saving.".into());
@@ -686,18 +870,28 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             attempt
         };
         pending.set(true);
+        save_sequence.update(|sequence| *sequence = sequence.checked_add(1).expect("save sequence exhausted"));
+        let save_task = save_sequence.get_untracked();
+        let save_epoch = check_generation.get_untracked();
         editor_guard.pending.set(true);
         status.set("Saving…".into());
+        let leave_destination = if editor_guard.saving_to_leave.get_untracked() {
+            editor_guard.destination.get_untracked()
+        } else { None };
         leptos::task::spawn_local(async move {
             #[cfg(target_arch = "wasm32")]
             let creating = attempt.recipe_id.is_none();
             let identity = identity.get_untracked();
-            let same_context = current_context_matches(&identity).await;
+            let outcome = check_editor_access(&identity).await;
             if pending.try_get_untracked().is_none() {
                 return;
             }
-            if !same_context {
-                context_visible.set(false);
+            if check_generation.try_get_untracked() != Some(save_epoch)
+                || context_visible.try_get_untracked() != Some(true)
+                || outcome != EditorAccess::Verified {
+                if check_generation.try_get_untracked() == Some(save_epoch) && outcome != EditorAccess::Verified {
+                    hold_editor(access, context_visible, outcome);
+                }
                 pending.set(false);
                 editor_guard.pending.set(false);
                 editor_guard.saving_to_leave.set(false);
@@ -719,20 +913,27 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
                 && crate::utils::auth_refresh::try_refresh().await
             {
-                if !current_context_matches(&identity).await {
-                    context_visible.set(false);
+                if pending.try_get_untracked().is_none() { return; }
+                let outcome = check_editor_access(&identity).await;
+                if pending.try_get_untracked().is_none() { return; }
+                if check_generation.try_get_untracked() != Some(save_epoch)
+                    || context_visible.try_get_untracked() != Some(true)
+                    || outcome != EditorAccess::Verified {
+                    if check_generation.try_get_untracked() == Some(save_epoch) && outcome != EditorAccess::Verified {
+                        hold_editor(access, context_visible, outcome);
+                    }
                     pending.set(false);
                     editor_guard.pending.set(false);
                     editor_guard.saving_to_leave.set(false);
                     return;
                 }
                 save_recipe(
-                    identity.account_id,
-                    identity.workspace_id,
-                    attempt.recipe_id,
+                    identity.account_id.clone(),
+                    identity.workspace_id.clone(),
+                    attempt.recipe_id.clone(),
                     attempt.expected,
                     attempt.document.clone(),
-                    attempt.request_id,
+                    attempt.request_id.clone(),
                 )
                 .await
             } else {
@@ -741,6 +942,27 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             if pending.try_get_untracked().is_none() {
                 return;
             }
+            // A known commit still belongs to its original scope. Its receipt
+            // does not authorize an address change or a cancelled leave action.
+            let mut may_apply_scope = false;
+            if matches!(&result, Ok(RecipeSaveOutcome::Saved { .. }))
+                && context_visible.try_get_untracked() == Some(true)
+                && access.try_get_untracked() == Some(EditorAccess::Verified) {
+                let Some(epoch) = check_generation.try_get_untracked() else { return; };
+                let outcome = check_editor_access(&identity).await;
+                if pending.try_get_untracked().is_none() { return; }
+                if check_generation.try_get_untracked() == Some(epoch) {
+                    if outcome != EditorAccess::Verified { hold_editor(access, context_visible, outcome); }
+                    may_apply_scope = outcome == EditorAccess::Verified
+                        && context_visible.try_get_untracked() == Some(true)
+                        && access.try_get_untracked() == Some(EditorAccess::Verified)
+                        && identity_signal.try_with_untracked(|current| current.account_id == identity.account_id && current.workspace_id == identity.workspace_id) == Some(true);
+                }
+            }
+            let may_leave = may_apply_scope
+                && editor_guard.saving_to_leave.get_untracked()
+                && same_leave_destination(&leave_destination, &editor_guard.destination.get_untracked());
+            if !may_leave { editor_guard.saving_to_leave.set(false); }
             pending.set(false);
             editor_guard.pending.set(false);
             if !matches!(&result, Ok(RecipeSaveOutcome::Saved { .. })) {
@@ -753,8 +975,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 }) => {
                     retry.set(None);
                     baseline.set(attempt.document.clone());
+                    original_baseline_available.set(true);
                     #[cfg(target_arch = "wasm32")]
-                    if creating {
+                    if creating && may_apply_scope {
                         if let Some(window) = web_sys::window() {
                             let result = window.history().and_then(|history| {
                                 history.replace_state_with_url(
@@ -774,19 +997,19 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     revision.set(Some(saved));
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
                         draft.update(|d| d.mark_saved());
-                        status.set(format!("Saved revision {saved}."));
+                        status.set(if may_apply_scope { format!("Saved revision {saved}.") } else { format!("Saved revision {saved} in the original context. Recheck access before continuing; no leave action was performed.") });
                         #[cfg(target_arch = "wasm32")]
-                        let local_cleared = recovery_storage_key
+                        let local_cleared = may_apply_scope && recovery_storage_key
                             .get_untracked()
                             .is_none_or(|key| crate::pages::recipe_recovery::remove(&key).is_ok());
                         #[cfg(not(target_arch = "wasm32"))]
-                        let local_cleared = true;
+                        let local_cleared = may_apply_scope;
                         if local_cleared {
                             recovery_storage_key.set(None);
-                            if editor_guard.saving_to_leave.get_untracked() {
+                            if may_leave && editor_guard.saving_to_leave.get_untracked() {
                                 editor_guard.finish();
                             }
-                        } else {
+                        } else if may_apply_scope {
                             tracing::warn!("Unable to clear the retained draft after saving");
                             editor_guard.saving_to_leave.set(false);
                             status.set(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
@@ -816,28 +1039,69 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     status.set(format!(
                         "Changed elsewhere (current revision {actual}). Your draft is unchanged."
                     ));
-                    if let Some(id) = recipe_id.get_untracked() {
-                        let expected = identity_signal.get_untracked();
-                        if current_context_matches(&expected).await {
+                    if let Some(id) = attempt.recipe_id.clone() {
+                        let expected = identity.clone();
+                        let epoch = check_generation.get_untracked();
+                        let observed_revision = revision.get_untracked();
+                        let observed_draft = draft.with_untracked(|d| d.generation);
+                        let guard_id = id.clone();
+                        let guard_identity = expected.clone();
+                        let authority_current = move || save_sequence.try_get_untracked() == Some(save_task)
+                            && check_generation.try_get_untracked() == Some(epoch)
+                            && context_visible.try_get_untracked() == Some(true)
+                            && pending.try_get_untracked() == Some(false)
+                            && recipe_id.try_get_untracked() == Some(Some(guard_id.clone()))
+                            && identity_signal.try_with_untracked(|current| current.account_id == guard_identity.account_id && current.workspace_id == guard_identity.workspace_id) == Some(true);
+                        let content_current = {
+                            let authority_current = authority_current.clone();
+                            move || authority_current()
+                                && revision.try_get_untracked() == Some(observed_revision)
+                                && draft.try_with_untracked(|d| d.generation) == Some(observed_draft)
+                        };
+                        if !authority_current() { return; }
+                        let outcome = check_editor_access(&expected).await;
+                        if !authority_current() { return; }
+                        if outcome == EditorAccess::Verified {
                             let response = read_recipe(
                                 expected.account_id.clone(),
                                 expected.workspace_id.clone(),
                                 id,
                             )
                             .await;
-                            if !current_context_matches(&expected).await
-                                || !context_visible.get_untracked()
-                            {
-                                context_visible.set(false);
+                            if !authority_current() { return; }
+                            let outcome = check_editor_access(&expected).await;
+                            if !authority_current() { return; }
+                            if outcome != EditorAccess::Verified {
+                                hold_editor(access, context_visible, outcome);
                                 return;
                             }
                             match response {
-                                Ok(RecipeReadOutcome::Found(snapshot)) => conflict.set(Some(snapshot)),
-                                Ok(RecipeReadOutcome::Forbidden | RecipeReadOutcome::ContextChanged) => context_visible.set(false),
+                                Ok(RecipeReadOutcome::Found(snapshot)) => {
+                                    if !content_current() { return; }
+                                    conflict.set(Some(snapshot));
+                                    #[cfg(target_arch = "wasm32")]
+                                    request_animation_frame(move || {
+                                        use wasm_bindgen::JsCast;
+                                        if content_current() {
+                                            if let Some(target) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id("recipe-save-conflict")).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+                                                if target.focus().is_err() { tracing::warn!("Unable to focus the save conflict response"); }
+                                            }
+                                        }
+                                    });
+                                }
+                                Ok(RecipeReadOutcome::Forbidden) => {
+                                    access.set(EditorAccess::Forbidden);
+                                    context_visible.set(false);
+                                }
+                                Ok(RecipeReadOutcome::ContextChanged) => {
+                                    access.set(EditorAccess::Mismatch);
+                                    context_visible.set(false);
+                                }
+                                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => hold_editor(access, context_visible, EditorAccess::Expired),
                                 _ => status.set("The current saved revision could not be loaded. Your draft is unchanged.".into()),
                             }
                         } else {
-                            context_visible.set(false);
+                            hold_editor(access, context_visible, outcome);
                         }
                     }
                 }
@@ -864,10 +1128,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     status.set("The save request was invalid. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::ContextChanged) => {
+                    access.set(EditorAccess::Mismatch);
                     context_visible.set(false);
                     status.set("Your account or workspace changed. The draft is held in its original context.".into());
                 }
                 Ok(RecipeSaveOutcome::Forbidden) => {
+                    access.set(EditorAccess::Forbidden);
                     context_visible.set(false);
                     status.set("You no longer have access to this workspace.".into())
                 }
@@ -883,6 +1149,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     status.set("An ingredient or import reference could not be verified.".into());
                 }
                 Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    access.set(EditorAccess::Expired);
                     context_visible.set(false);
                     status.set(
                         "Your session expired. Sign in again; your draft is still open.".into(),
@@ -936,6 +1203,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 );
                 return;
             }
+            original_baseline_available.set(original_baseline_available.get_untracked() && revision.get_untracked() == record.scope.base_revision);
             revision.set(record.scope.base_revision);
             draft.update(|d| d.restore(record.draft));
             let mut attempt = record.pending;
@@ -963,13 +1231,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         recovery_choice.update(|records| records.retain(|(candidate, _)| candidate != &key));
     });
     Effect::new(move |_| {
-        if !context_visible.get() {
+        if matches!(access.get(), EditorAccess::Forbidden | EditorAccess::Mismatch) {
             print_preview.set(None);
         }
     });
     let close_print = Callback::new(move |()| print_preview.set(None));
     let active_tab = RwSignal::new("recipe".to_owned());
-    view! { <Show when=move || !context_visible.get()><BreweryNotice title="Recipe held in its original workspace" body="Return to the account and workspace where you opened this draft to continue." warning=true/></Show>
+    view! { <Show when=move || !context_visible.get()>
+        {move || view! { <BreweryNotice title=access.get().title() body=access.get().guidance() warning=true/> }}
+        <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || access.get() == EditorAccess::Checking) on:click=move |_| recheck.run(())>"Retry check"</Button>
+    </Show>
         <Show when=move || context_visible.get() && !recovery_choice.get().is_empty()>
             <section class="recipe-editor"><BreweryNotice title="A retained draft is available" body="Local drafts are not saved recipe revisions. Restore one or discard them before continuing."/>
                 {move || recovery_choice.get().into_iter().enumerate().map(|(index, (key, record))| {
@@ -986,27 +1257,39 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             let revision_number = current.revision;
             let remote_for_reload = current.clone();
             let remote_for_reapply = current.document.clone();
-            let remote_display = comparison_text(&current.document);
+            let known_original = original_baseline_available.get_untracked();
+            let comparison_base = if known_original { baseline.get_untracked() } else { current.document.clone() };
+            let remote_display = if known_original {
+                comparison_changes(recipe_comparison::changes(&comparison_base, &current.document, &Default::default()))
+            } else {
+                view! { <p>"The original revision is not available in this recovered draft."</p><p>"Compare the current saved revision with your retained local draft below. Remote changes since the original revision cannot be determined here."</p> }.into_any()
+            };
             view! { <section aria-label="Save conflict" class="k-panel print-hide">
-                <h2>"A newer saved revision is available"</h2>
+                <h2 id="recipe-save-conflict" tabindex="-1">"A newer saved revision is available"</h2>
                 <p>{format!("Your draft is based on revision {}; the current saved revision is {}.", revision.get().map(|v| v.to_string()).unwrap_or_else(|| "new".into()), revision_number)}</p>
-                <details><summary>"Compare saved revision and your draft"</summary><h3>"Current saved revision"</h3><pre class="overflow-auto">{remote_display}</pre><h3>"Your retained draft"</h3><pre class="overflow-auto">{move || draft.with(|d| comparison_text(d.document()))}</pre><p>{move || draft.with(|d| d.unfinished_inputs().into_iter().map(|(path, text)| format!("{}: {text}", path.replace('_', " "))).collect::<Vec<_>>().join("; "))}</p></details>
+                <details><summary>"Compare saved revision and your draft"</summary><h3>{if known_original { "Remote changes" } else { "Original comparison unavailable" }}</h3>{remote_display}<h3>{if known_original { "Local changes" } else { "Current saved revision versus your draft" }}</h3>{move || draft.with(|d| {
+                    let changes = recipe_comparison::changes(&comparison_base, d.document(), d.raw_numbers());
+                    if known_original { comparison_changes(changes) } else { comparison_changes_from(changes, "Current saved", "No differences from the current saved revision.") }
+                })}</details>
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(key) = recovery_storage_key.get_untracked() {
                         if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.set("Could not discard the retained local draft.".into()); return; }
                         recovery_storage_key.set(None);
                     }
-                    baseline.set(remote_for_reload.document.clone()); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
+                    baseline.set(remote_for_reload.document.clone()); original_baseline_available.set(true); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
                 }>"Discard draft and reload"</Button>
-                <Button on:click=move |_| { baseline.set(remote_for_reapply.clone()); draft.update(|d| d.mark_earlier_document_saved(remote_for_reapply.clone())); revision.set(Some(revision_number)); retry.set(None); conflict.set(None); status.set("Draft retained against the current revision. Review it, then choose Save.".into()); }>"Reapply my draft"</Button>
+                <Button on:click=move |_| { baseline.set(remote_for_reapply.clone()); original_baseline_available.set(true); draft.update(|d| d.mark_earlier_document_saved(remote_for_reapply.clone())); revision.set(Some(revision_number)); retry.set(None); conflict.set(None); status.set("Draft retained against the current revision. Review it, then choose Save.".into()); }>"Reapply my draft"</Button>
             </section> }
         })}
         <header class="recipe-editor__header recipe-editor__recipe-header"><div class="recipe-editor__topbar"><nav class="recipe-editor__breadcrumb" aria-label="Recipe breadcrumb"><a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span><span>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</span></nav><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
-            if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { if retained.get() { "Unsaved changes · retained locally".to_owned() } else { "Unsaved changes".to_owned() } } else { message }
+            if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) {
+                let local = if retained.get() { "Unsaved changes · retained locally" } else { "Unsaved changes" };
+                if message.is_empty() { local.to_owned() } else { format!("{message} {local}") }
+            } else { message }
         }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button>{move || recipe_id.get().map(|id| view! { <ButtonLink href=format!("/recipes/{id}/brews") variant=ButtonVariant::Secondary>"Brew history"</ButtonLink> })}<Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></div></header>
-        <div class="recipe-editor__heading"><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div>
+        <div class="recipe-editor__heading"><p class="kit-showcase__eyebrow">"Your recipe"</p><h1 id="recipe-editor-heading" tabindex="-1">{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
         <div class="recipe-editor__summary recipe-editor__identity-summary">
@@ -1096,6 +1379,8 @@ fn PrintRecipe(
     draft: RwSignal<RecipeDraft>,
     preview: RwSignal<Option<ProcessSummary>>,
 ) -> impl IntoView {
+    let access = expect_context::<RwSignal<EditorAccess>>();
+    let ContextCheckGeneration(check_generation) = expect_context::<ContextCheckGeneration>();
     let status = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let run = Callback::new(move |selection: ProcessSummarySelection| {
@@ -1109,6 +1394,7 @@ fn PrintRecipe(
             ProcessSummarySelection::Saved { .. } => None,
         };
         let expected = identity.get_untracked();
+        let context_epoch = check_generation.get_untracked();
         let request = ProcessSummaryRequest {
             intent: expected.clone(),
             selection,
@@ -1116,17 +1402,17 @@ fn PrintRecipe(
         busy.set(true);
         status.set("Preparing the print summary…".into());
         leptos::task::spawn_local(async move {
-            if !current_context_matches(&expected).await {
-                // The editor may have been unmounted while the context request
-                // was in flight; never touch disposed signals after an await.
-                if context_visible.try_get_untracked().is_none() {
-                    return;
-                }
-                context_visible.set(false);
+            let context_result = check_editor_access(&expected).await;
+            if context_visible.try_get_untracked().is_none() {
+                return;
+            }
+            if check_generation.try_get_untracked() != Some(context_epoch) {
                 busy.set(false);
                 return;
             }
-            if context_visible.try_get_untracked().is_none() {
+            if context_result != EditorAccess::Verified {
+                hold_editor(access, context_visible, context_result);
+                busy.set(false);
                 return;
             }
             let result =
@@ -1150,15 +1436,17 @@ fn PrintRecipe(
             if context_visible.try_get_untracked().is_none() {
                 return;
             }
-            if !current_context_matches(&expected).await {
-                if context_visible.try_get_untracked().is_none() {
-                    return;
-                }
-                context_visible.set(false);
+            let context_result = check_editor_access(&expected).await;
+            if context_visible.try_get_untracked().is_none() {
+                return;
+            }
+            if check_generation.try_get_untracked() != Some(context_epoch) {
                 busy.set(false);
                 return;
             }
-            if context_visible.try_get_untracked().is_none() {
+            if context_result != EditorAccess::Verified {
+                hold_editor(access, context_visible, context_result);
+                busy.set(false);
                 return;
             }
             // Authority denial must invalidate a mounted editor even when the
@@ -1168,7 +1456,8 @@ fn PrintRecipe(
                 &result,
                 Ok(ProcessSummaryOutcome::Forbidden | ProcessSummaryOutcome::ContextChanged)
             ) {
-                context_visible.set(false);
+                let outcome = if matches!(&result, Ok(ProcessSummaryOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
+                hold_editor(access, context_visible, outcome);
                 busy.set(false);
                 return;
             }
@@ -1189,9 +1478,8 @@ fn PrintRecipe(
                     "This saved revision is not available in this workspace. Save the recipe before printing it."
                         .into(),
                 ),
-                Ok(ProcessSummaryOutcome::Forbidden | ProcessSummaryOutcome::ContextChanged) => {
-                    context_visible.set(false)
-                }
+                Ok(ProcessSummaryOutcome::Forbidden) => hold_editor(access, context_visible, EditorAccess::Forbidden),
+                Ok(ProcessSummaryOutcome::ContextChanged) => hold_editor(access, context_visible, EditorAccess::Mismatch),
                 Ok(ProcessSummaryOutcome::UnresolvedEquipmentProfile) => status.set(
                     "The selected equipment profile is unavailable. Select a valid profile or use draft settings."
                         .into(),
@@ -1216,6 +1504,7 @@ fn PrintRecipe(
                         "This saved revision uses unsupported recipe schema version {schema_version}."
                     ),
                 ),
+                Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => hold_editor(access, context_visible, EditorAccess::Expired),
                 _ => status.set(
                     "Unable to prepare the print summary. Your draft remains open; try again when the connection is available."
                         .into(),
@@ -1330,7 +1619,8 @@ fn NumberField(
     let change = Callback::new(move |text| {
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
+    let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -1659,6 +1949,8 @@ fn IngredientNumberField(
     let read_path = path.clone();
     let read_id = id.clone();
     let error_path = path.clone();
+    let blur_path = path.clone();
+    let blur = Callback::new(move |()| draft.update(|d| d.settle_number(&blur_path)));
     let value = Signal::derive(move || {
         draft.with(|d| {
             d.number_text(
@@ -1696,7 +1988,7 @@ fn IngredientNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change numeric=true/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -1853,6 +2145,8 @@ fn AdditionalNumberField(
     let read_id = id.clone();
     let read_path = path.clone();
     let error_path = path.clone();
+    let blur_path = path.clone();
+    let blur = Callback::new(move |()| draft.update(|d| d.settle_number(&blur_path)));
     let diagnostic_path = if attenuation {
         format!("yeast[{id}].specification.attenuation_fraction")
     } else {
@@ -1900,9 +2194,9 @@ fn AdditionalNumberField(
         });
     });
     if attenuation {
-        view! { <BreweryDraftField id=input_id label="Yeast attenuation (informational)" unit="%" value=value error=error on_change=change numeric=true/> }.into_any()
+        view! { <BreweryDraftField id=input_id label="Yeast attenuation (informational)" unit="%" value=value error=error on_change=change on_blur=blur numeric=true/> }.into_any()
     } else {
-        view! { <BreweryDraftField id=input_id label="Amount" value=value error=error on_change=change numeric=true/> }.into_any()
+        view! { <BreweryDraftField id=input_id label="Amount" value=value error=error on_change=change on_blur=blur numeric=true/> }.into_any()
     }
 }
 
@@ -2028,6 +2322,8 @@ fn StepNumberField(
     let read_id = id.clone();
     let read_path = path.clone();
     let error_path = path.clone();
+    let blur_path = path.clone();
+    let blur = Callback::new(move |()| draft.update(|d| d.settle_number(&blur_path)));
     let value = Signal::derive(move || {
         draft.with(|d| {
             let n = kind
@@ -2059,7 +2355,7 @@ fn StepNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change numeric=true/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
 }
 
 #[component]
@@ -2072,6 +2368,10 @@ fn FormulationPreview(
     children: Children,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
+    let access = expect_context::<RwSignal<EditorAccess>>();
+    let ContextCheckGeneration(check_generation) = expect_context::<ContextCheckGeneration>();
+    let retry_generation = RwSignal::new(0_u64);
+    let retry_available = RwSignal::new(false);
     let result = RwSignal::new(None::<(u64, Preview)>);
     let message = RwSignal::new("Awaiting preview.".to_owned());
     let message_generation = RwSignal::new(0_u64);
@@ -2080,10 +2380,12 @@ fn FormulationPreview(
             draft.with(|d| d.generation),
             context_visible.get(),
             profile_generation.get(),
+            retry_generation.get(),
         )
     });
     Effect::new(move |_| {
-        let (draft_generation, visible, _) = trigger.get();
+        let (draft_generation, visible, _, _) = trigger.get();
+        retry_available.set(false);
         let mut generation = 0;
         gate.update_value(|g| generation = g.invalidate());
         result.set(None);
@@ -2097,6 +2399,7 @@ fn FormulationPreview(
         };
         message.set("Calculating…".into());
         let expected = identity.get_untracked();
+        let context_epoch = check_generation.get_untracked();
         let request = PreviewRequest {
             draft_generation: generation.to_string(),
             intent: expected.clone(),
@@ -2108,20 +2411,21 @@ fn FormulationPreview(
             gloo_timers::future::TimeoutFuture::new(250).await;
             if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
                 || context_visible.try_get_untracked() != Some(true)
+                || check_generation.try_get_untracked() != Some(context_epoch)
                 || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
             {
                 return;
             }
-            if !current_context_matches(&expected).await {
-                if gate.try_with_value(|g| g.is_current(generation)) == Some(true) {
-                    context_visible.set(false);
-                }
-                return;
-            }
+            let context_result = check_editor_access(&expected).await;
             if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
                 || context_visible.try_get_untracked() != Some(true)
+                || check_generation.try_get_untracked() != Some(context_epoch)
                 || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
             {
+                return;
+            }
+            if context_result != EditorAccess::Verified {
+                hold_editor(access, context_visible, context_result);
                 return;
             }
             let response =
@@ -2133,14 +2437,16 @@ fn FormulationPreview(
                 .is_some_and(|e| crate::utils::auth_refresh::is_auth_error(&e.to_string()))
                 && crate::utils::auth_refresh::try_refresh().await
             {
-                if !current_context_matches(&expected).await {
-                    context_visible.set(false);
-                    return;
-                }
+                let context_result = check_editor_access(&expected).await;
                 if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
                     || context_visible.try_get_untracked() != Some(true)
+                    || check_generation.try_get_untracked() != Some(context_epoch)
                     || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
                 {
+                    return;
+                }
+                if context_result != EditorAccess::Verified {
+                    hold_editor(access, context_visible, context_result);
                     return;
                 }
                 crate::server_fns::formulation::preview_formulation_shared(request.clone()).await
@@ -2149,6 +2455,7 @@ fn FormulationPreview(
             };
             if gate.try_with_value(|g| g.is_current(generation)) != Some(true)
                 || context_visible.try_get_untracked() != Some(true)
+                || check_generation.try_get_untracked() != Some(context_epoch)
                 || draft.try_with_untracked(|d| d.generation) != Some(draft_generation)
             {
                 return;
@@ -2199,6 +2506,7 @@ fn FormulationPreview(
                         message.set("Invalid: correct the highlighted inputs.".into());
                     } else {
                         message.set("Preview context changed. Try again.".into());
+                        retry_available.set(true);
                     }
                 }
                 Ok(PreviewOutcome::UnresolvedProfile) => message.set(
@@ -2208,16 +2516,25 @@ fn FormulationPreview(
                 Ok(PreviewOutcome::UnresolvedStyle) => message.set(
                     "Style reference unavailable. Choose a supported style or clear it.".into(),
                 ),
-                Ok(PreviewOutcome::ContextChanged | PreviewOutcome::Forbidden) => {
+                Ok(PreviewOutcome::ContextChanged) => {
+                    access.set(EditorAccess::Mismatch);
+                    context_visible.set(false)
+                }
+                Ok(PreviewOutcome::Forbidden) => {
+                    access.set(EditorAccess::Forbidden);
                     context_visible.set(false)
                 }
                 Ok(PreviewOutcome::Invalid) => {
                     message.set("Invalid draft. Correct the inputs before previewing.".into())
                 }
                 Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
+                    access.set(EditorAccess::Expired);
                     context_visible.set(false)
                 }
-                _ => message.set("Preview unavailable. Your draft remains open.".into()),
+                _ => {
+                    message.set("Preview unavailable. Your draft remains open.".into());
+                    retry_available.set(true);
+                }
             }
         });
     });
@@ -2225,11 +2542,20 @@ fn FormulationPreview(
         let current = draft.with(|d| d.generation);
         result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| preview)
     });
+    let settled_message = Signal::derive(move || {
+        let text = message.get();
+        if draft.with(|d| d.generation) != message_generation.get()
+            || matches!(text.as_str(), "Calculating…" | "Awaiting preview.") { String::new() } else { text }
+    });
     view! { <div class="recipe-editor__preview-summary"><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true presentation=crate::components::PanelPresentation::Summary>
-        <p role="status">{move || if draft.with(|d| d.generation) == message_generation.get() { message.get() } else { "Awaiting preview.".into() }}</p>
+        <p>{move || if draft.with(|d| d.generation) == message_generation.get() && message.get() == "Calculating…" { "Calculating…" } else { "" }}</p>
+        <p role="status">{move || settled_message.get()}</p>
+        <Show when=move || retry_available.get() && context_visible.get()>
+            <Button variant=ButtonVariant::Secondary on:click=move |_| retry_generation.update(|generation| *generation = generation.checked_add(1).expect("preview retry generation exhausted"))>"Retry calculation"</Button>
+        </Show>
         <crate::components::BreweryBeerPortrait/>
         {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview/> })}
-        <div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
+        <div>{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 
