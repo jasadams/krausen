@@ -41,6 +41,7 @@
   --k-color-overlay: rgb(28 33 25 / 35%);
   --k-color-brand: #2d352a;
   --k-color-auth-surface: var(--k-color-brand);
+  --k-color-auth-foreground: var(--k-color-brand-foreground);
   --k-color-brand-foreground: #fff9e9;
   --k-color-grain-base: #d7bb79;
   --k-color-grain-specialty: #b47c44;
@@ -112,6 +113,7 @@
   --k-color-overlay: rgb(0 0 0 / 60%);
   --k-color-brand: #c8d1b9;
   --k-color-auth-surface: var(--k-color-sidebar);
+  --k-color-auth-foreground: var(--k-color-foreground);
   --k-color-brand-foreground: #253024;
   --k-shadow-control: 0 1px 2px rgb(0 0 0 / 15%);
   --k-shadow-panel: 0 2px 6px rgb(0 0 0 / 8%);
