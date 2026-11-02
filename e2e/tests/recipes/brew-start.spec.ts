@@ -337,7 +337,7 @@ test('hidden uncertain request can be discarded after another tab changes contex
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .getByRole('button', { name: 'Switch workspace', exact: true })
     .click();
   await switcher.getByRole('button', { name: otherName, exact: true }).click();
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
@@ -432,7 +432,7 @@ test('retained uncertain request recovers after a real workspace round trip', as
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .getByRole('button', { name: 'Switch workspace', exact: true })
     .click();
   await switcher.getByRole('button', { name: otherName, exact: true }).click();
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
@@ -441,7 +441,7 @@ test('retained uncertain request recovers after a real workspace round trip', as
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   await expect(page.locator('#measurement-gravity-original-v1')).toHaveCount(0);
   await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .getByRole('button', { name: 'Switch workspace', exact: true })
     .click();
   await switcher.getByRole('button', { name: originalName, exact: true }).click();
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
@@ -642,7 +642,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await olderHeld;
   await switcher
-    .getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) })
+    .getByRole('button', { name: 'Switch workspace', exact: true })
     .click();
   await switcher.getByRole('button', { name: otherName, exact: true }).click();
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
@@ -1220,4 +1220,3 @@ test('feedback apply keeps one request through a lost response and ignores selec
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
 });
-
