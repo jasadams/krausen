@@ -406,7 +406,6 @@ fn Sidebar(
             <div class="brewery-sidebar__footer">
                 <nav class="brewery-sidebar__group" aria-label="The details">
                 <p class="brewery-sidebar__label">"The details"</p>
-                <a href="/design-system" class="brewery-sidebar__link" aria-current=move || (location.pathname.get() == "/design-system").then_some("page")>"Design system"</a>
                 <Button variant=ButtonVariant::GhostMuted on:click=move |_| {
                     if let Some(theme) = theme {
                         crate::components::theme::set_theme(if theme.effective.get_untracked() == "dark" { "light" } else { "dark" });

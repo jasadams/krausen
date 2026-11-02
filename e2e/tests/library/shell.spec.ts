@@ -12,7 +12,7 @@ test('approved shell uses real navigation, shared theme and accessible workspace
   const sidebar = page.locator('.app-shell__desktop');
   await expect(sidebar.getByRole('navigation', { name: 'Your brewery' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Recipes', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(sidebar.getByRole('link', { name: 'Design system' })).toHaveAttribute('href', '/design-system');
+  await expect(sidebar.getByRole('link', { name: 'Design system' })).toHaveCount(0);
   const geometry = await page.evaluate(() => {
     const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
     const sidebar = box('.app-shell__desktop');
@@ -63,12 +63,64 @@ test('mobile navigation is a focus-restoring modal and library does not overflow
   const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
   await expect(navigation).toBeVisible();
   await expect(navigation.getByRole('link', { name: 'Recipes', exact: true })).toBeVisible();
+  await expect(navigation.getByRole('link', { name: 'Design system' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(navigation).not.toBeVisible();
   await expect(menu).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('library-mobile.png'), fullPage: true });
 });
+
+for (const theme of ['light', 'dark']) {
+  test(`customer navigation excludes showcase but authenticated direct access remains in ${theme}`, async ({ page }) => {
+    if (theme === 'dark') {
+      await page.locator('.app-shell__desktop').getByRole('button', { name: /appearance/ }).click();
+    }
+    await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    for (const viewport of [
+      { width: 1440, height: 1000 }, { width: 1920, height: 1080 },
+      { width: 320, height: 568 }, { width: 390, height: 844 },
+      { width: 667, height: 375 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const mobile = viewport.width < 768;
+      const menu = page.getByRole('button', { name: 'Toggle menu' });
+      if (mobile) await menu.click();
+      const navigation = mobile
+        ? page.getByRole('dialog', { name: 'Navigation', exact: true })
+        : page.locator('.app-shell__desktop');
+      await expect(navigation.getByRole('link', { name: 'Recipes', exact: true })).toBeVisible();
+      // Check the DOM too: hiding a customer link from sight/AT is not removal.
+      await expect(navigation.locator('a[href="/design-system"]')).toHaveCount(0);
+      await expect(navigation.getByRole('button', { name: 'Account menu' })).toBeVisible();
+      await expect(navigation.getByRole('button', { name: /appearance/ })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`navigation-${theme}-${viewport.width}.png`), fullPage: true });
+      if (mobile) {
+        await page.keyboard.press('Escape');
+        await expect(navigation).not.toBeVisible();
+        await expect(menu).toBeFocused();
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto('/design-system');
+    await expect(page).toHaveURL(/\/design-system$/);
+    await expect(page.getByRole('heading', { name: 'Good design, on repeat.' })).toBeVisible();
+    // Full navigation reapplies this spec's light init preference. Establish the
+    // requested theme through the real appearance control on the showcase too.
+    if (theme === 'dark') {
+      await page.locator('.app-shell__desktop').getByRole('button', { name: /appearance/ }).click();
+    }
+    await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    // Exercise a real shared kit field, not just the route's static heading.
+    await page.getByLabel('Batch volume (L)', { exact: true }).fill('21.5');
+    await expect(page.getByLabel('Batch volume (L)', { exact: true })).toHaveValue('21.5');
+    await page.locator('.app-shell__desktop').getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('dialog', { name: 'Your account', exact: true }).getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await expect(page.getByRole('heading', { name: 'Profile Settings', exact: true })).toBeVisible();
+  });
+}
 
 test('navigation remains available across the desktop/mobile breakpoint seam', async ({ page }) => {
   for (const width of [760, 761, 767, 768]) {
