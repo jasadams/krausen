@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
 
-use crate::components::Spinner;
+use crate::components::{Button, ButtonVariant, Spinner};
 use crate::server_fns::sidebar::{
     SidebarUser, get_sidebar_user, list_user_workspaces, switch_workspace,
 };
@@ -186,7 +186,6 @@ impl EditorGuard {
 #[component]
 pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
-    let (user_menu_open, set_user_menu_open) = signal(false);
     let mobile_sidebar_open = RwSignal::new(false);
     let editor_guard = expect_context::<EditorGuard>();
     Effect::new(move |_| {
@@ -304,10 +303,10 @@ pub fn Layout() -> impl IntoView {
                 </div>
             }
         >
-            <div class="h-dvh flex bg-background">
+            <div class="app-shell h-dvh bg-background">
                 // Desktop sidebar
-                <div class="hidden md:block print-hide">
-                    <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
+                <div class="app-shell__desktop print-hide">
+                    <Sidebar user_info=user_info/>
                 </div>
 
                 <crate::components::BreweryDialog id="workspace-draft-warning" title="Unsaved recipe changes" description="Save, discard, or stay with your draft." open=editor_guard.notice>
@@ -324,26 +323,26 @@ pub fn Layout() -> impl IntoView {
                 </crate::components::BreweryDialog>
 
                 <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
-                    <Sidebar user_info=user_info user_menu_open=user_menu_open set_user_menu_open=set_user_menu_open/>
+                    <Sidebar user_info=user_info mobile=true/>
                 </crate::components::BreweryDialog>
 
-                <div class="flex-1 flex flex-col overflow-hidden">
+                <div class="app-shell__content flex-1 flex flex-col overflow-hidden">
                     // Mobile header bar
-                    <div class="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background print-hide">
-                        <button
-                            class="p-2 rounded-md hover:bg-secondary transition-colors"
+                    <div class="app-shell__mobile flex items-center gap-3 px-4 py-3 border-b border-border bg-background print-hide">
+                        <Button variant=ButtonVariant::GhostMuted
                             on:click=move |_| mobile_sidebar_open.set(true)
-                            aria-label="Toggle menu"
-                            aria-controls="mobile-navigation"
-                            aria-expanded=move || mobile_sidebar_open.get().to_string()
+                            aria_label="Toggle menu"
+                            attr:aria-controls="mobile-navigation"
+                            attr:aria-expanded=move || mobile_sidebar_open.get().to_string()
                         >
                             <svg class="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                             </svg>
-                        </button>
+                        </Button>
                         <crate::components::BreweryBrand/>
+                        <span class="app-shell__workspace">{move || user_info.get().and_then(Result::ok).and_then(|user| user.workspace_name).unwrap_or_default()}</span>
                     </div>
-                    <main class="flex-1 overflow-y-auto">
+                    <main class="app-shell__main flex-1 overflow-y-auto">
                         <Show when=move || !editor_guard.navigation_error.get().is_empty()>
                             <p role="alert">{move || editor_guard.navigation_error.get()}</p>
                         </Show>
@@ -359,25 +358,61 @@ pub fn Layout() -> impl IntoView {
 #[component]
 fn Sidebar(
     user_info: LocalResource<Result<SidebarUser, ServerFnError>>,
-    user_menu_open: ReadSignal<bool>,
-    set_user_menu_open: WriteSignal<bool>,
+    #[prop(default = false)] mobile: bool,
 ) -> impl IntoView {
     let editor_guard = expect_context::<EditorGuard>();
+    let workspace_dialog = RwSignal::new(false);
+    let account_dialog = RwSignal::new(false);
+    let location = leptos_router::hooks::use_location();
+    let theme = crate::components::theme::use_theme();
+    // Dismiss only after navigation commits; the document-capture draft guard
+    // can still intercept Settings and keep this dialog/draft intact on Stay.
+    Effect::new(move |_| {
+        location.pathname.get();
+        account_dialog.set(false);
+    });
 
     view! {
-        <div class="w-[var(--k-sidebar-width)] bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] flex flex-col h-full">
+        <div class="brewery-sidebar">
             // Logo
-            <div class="p-4 border-b border-[var(--color-sidebar-border)]">
+            <div class="brewery-sidebar__brand">
                 <crate::components::BreweryBrand/>
             </div>
 
+            <div class="brewery-sidebar__workspace">
+                <Button variant=ButtonVariant::Secondary class="w-full" on:click=move |_| workspace_dialog.set(true) aria_label="Switch workspace">
+                    <span class="min-w-0 truncate">{move || user_info.get().and_then(Result::ok).and_then(|user| user.workspace_name).unwrap_or_else(|| "Your brewery".into())}</span>
+                    <span aria-hidden="true">"⌄"</span>
+                </Button>
+            </div>
+            <crate::components::BreweryDialog id=if mobile { "mobile-workspace-switcher" } else { "workspace-switcher" } title="Your workspaces" description="Choose a workspace. Unsaved recipe changes remain protected." open=workspace_dialog>
+                <Show when=move || workspace_dialog.get()>
+                    <WorkspaceSwitcher open=workspace_dialog/>
+                </Show>
+            </crate::components::BreweryDialog>
+
             // Navigation
-            <nav class="flex-1 p-3 space-y-1">
-                <a href="/recipes" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-[var(--color-sidebar-foreground-secondary)] hover:text-[var(--color-sidebar-foreground)] hover:bg-[var(--color-sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+            <nav class="brewery-sidebar__nav" aria-label="Your brewery">
+                <p class="brewery-sidebar__label">"Your brewery"</p>
+                <a href="/recipes" class="brewery-sidebar__link" aria-current=move || {
+                    let path = location.pathname.get();
+                    (path == "/recipes" || path.starts_with("/recipes/") || path.starts_with("/recipe-editor/") || path.starts_with("/brews/")).then_some("page")
+                }>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h5"/></svg>
                     "Recipes"
                 </a>
-                <a href="/settings/profile" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-[var(--color-sidebar-foreground-secondary)] hover:text-[var(--color-sidebar-foreground)] hover:bg-[var(--color-sidebar-hover)] transition-colors">
+            </nav>
+            <div class="brewery-sidebar__detail" aria-hidden="true"><p>"A little curiosity."<br/>"A better next batch."</p></div>
+            <div class="brewery-sidebar__footer">
+                <nav class="brewery-sidebar__group" aria-label="The details">
+                <p class="brewery-sidebar__label">"The details"</p>
+                <a href="/design-system" class="brewery-sidebar__link" aria-current=move || (location.pathname.get() == "/design-system").then_some("page")>"Design system"</a>
+                <Button variant=ButtonVariant::GhostMuted on:click=move |_| {
+                    if let Some(theme) = theme {
+                        crate::components::theme::set_theme(if theme.effective.get_untracked() == "dark" { "light" } else { "dark" });
+                    }
+                }>{move || if theme.is_some_and(|theme| theme.effective.get() == "dark") { "Light appearance" } else { "Dark appearance" }}</Button>
+                <a href="/settings/profile" class="brewery-sidebar__link" aria-current=move || location.pathname.get().starts_with("/settings").then_some("page")>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -387,7 +422,7 @@ fn Sidebar(
             </nav>
 
             // User menu at bottom
-            <div class="border-t border-[var(--color-sidebar-border)] p-3 relative">
+            <div class="brewery-sidebar__account">
                 <Suspense fallback=|| view! {
                     <div class="px-3 py-2 text-sm text-[var(--color-sidebar-foreground-muted)]">"Loading..."</div>
                 }>
@@ -398,9 +433,9 @@ fn Sidebar(
                             let avatar_char = user.name.as_ref().and_then(|n| n.chars().next()).unwrap_or('?').to_uppercase().to_string();
                             let ws_name = user.workspace_name.clone().unwrap_or_default();
                             view! {
-                                <button
-                                    class="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-[var(--color-sidebar-hover)] transition-colors text-left"
-                                    on:click=move |_| set_user_menu_open.update(|v| *v = !*v)
+                                <Button variant=ButtonVariant::GhostMuted class="w-full"
+                                    on:click=move |_| account_dialog.set(true)
+                                    aria_label="Account menu"
                                 >
                                     // Avatar
                                     <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold flex-shrink-0">
@@ -418,27 +453,23 @@ fn Sidebar(
                                     <svg class="w-4 h-4 text-[var(--color-sidebar-foreground-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                     </svg>
-                                </button>
+                                </Button>
 
                                 // Dropdown menu
-                                <Show when=move || user_menu_open.get()>
-                                    <div class="absolute bottom-full left-3 right-3 mb-1 bg-popover border border-border rounded-lg shadow-lg py-1 z-50">
+                                <crate::components::BreweryDialog id=if mobile { "mobile-account-menu" } else { "account-menu" } title="Your account" description="Manage your account or sign out." open=account_dialog>
                                         // Workspace switcher (includes separator only when shown)
-                                        <WorkspaceSwitcher set_user_menu_open=set_user_menu_open/>
-                                        <a href="/settings/profile" class="block px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors">
+                                        <a href="/settings/profile" class="brewery-sidebar__link">
                                             "Settings"
                                         </a>
-                                        <button
-                                            class="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
+                                        <Button variant=ButtonVariant::GhostMuted
                                             on:click=move |_| {
-                                                set_user_menu_open.set(false);
+                                                account_dialog.set(false);
                                                 editor_guard.request(EditorDestination::Logout);
                                             }
                                         >
                                             "Sign Out"
-                                        </button>
-                                    </div>
-                                </Show>
+                                        </Button>
+                                </crate::components::BreweryDialog>
                             }.into_any()
                             },
                             Err(_) => view! {
@@ -448,21 +479,22 @@ fn Sidebar(
                     })}
                 </Suspense>
             </div>
+            </div>
         </div>
     }
 }
 
 /// Workspace switcher — shows list of workspaces, allows switching.
 #[component]
-fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
+fn WorkspaceSwitcher(open: RwSignal<bool>) -> impl IntoView {
     let editor_guard = expect_context::<EditorGuard>();
     let workspaces = LocalResource::new(list_user_workspaces);
 
     view! {
-        <Suspense fallback=|| ()>
+        <Suspense fallback=|| view! { <p role="status">"Loading workspaces…"</p> }>
             {move || workspaces.get().map(|result| {
                 match result {
-                    Ok(ref ws_list) if ws_list.len() > 1 => {
+                    Ok(ref ws_list) if !ws_list.is_empty() => {
                         let items = ws_list.clone();
                         view! {
                             <div class="px-3 py-1 text-xs text-muted-foreground font-medium uppercase tracking-wider">
@@ -473,12 +505,11 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                 let name = ws.name.clone();
                                 let is_current = ws.is_current;
                                 view! {
-                                    <button
-                                        class="w-full text-left px-4 py-2 text-sm hover:bg-secondary transition-colors flex items-center gap-2"
+                                    <Button variant=ButtonVariant::GhostMuted class="w-full"
                                         disabled=is_current
                                         on:click=move |_| {
                                             let ws_id = ws_id.clone();
-                                            set_user_menu_open.set(false);
+                                            open.set(false);
                                             editor_guard.request(EditorDestination::Workspace(ws_id));
                                         }
                                     >
@@ -487,16 +518,17 @@ fn WorkspaceSwitcher(set_user_menu_open: WriteSignal<bool>) -> impl IntoView {
                                         } else {
                                             view! { <span class="w-2 h-2 flex-shrink-0"/> }.into_any()
                                         }}
-                                        <span class=if is_current { "font-medium text-foreground" } else { "text-foreground" }>
+                                        <span class="min-w-0 truncate">
                                             {name}
                                         </span>
-                                    </button>
+                                    </Button>
                                 }
                             }).collect_view()}
                             <div class="border-t border-border my-1"/>
                         }.into_any()
                     }
-                    _ => view! { <span/> }.into_any(),
+                    Ok(_) => view! { <p>"No workspaces available."</p> }.into_any(),
+                    Err(_) => view! { <crate::components::BreweryNotice title="Unable to load workspaces" body="Close this dialog and reopen it to try again." warning=true/> }.into_any(),
                 }
             })}
         </Suspense>
