@@ -5,6 +5,7 @@
 //! Left panel: dark background with Krausen branding (desktop only).
 //! Right panel: centered content slot with title, subtitle, footer.
 
+use crate::components::brewery_kit::BreweryBrand;
 use leptos::prelude::*;
 
 /// Shared layout for all authentication pages.
@@ -36,12 +37,9 @@ pub fn AuthLayout(
             <div
                 class="hidden lg:flex lg:w-1/2 relative overflow-hidden auth-brand-panel items-center justify-center"
                 aria-hidden="true"
+                inert=""
             >
-                <img
-                    src="/public/krausen_full_logo_white.svg"
-                    alt=""
-                    class="h-48 xl:h-56 w-auto select-none"
-                />
+                <BreweryBrand inverse=true/>
 
                 // Bottom marginalia
                 <div class="absolute bottom-10 left-12 right-12 z-10 flex items-center justify-between font-mono text-[10px] uppercase text-[color:rgba(245,243,239,0.30)]" style="letter-spacing:0.18em;">
@@ -58,8 +56,7 @@ pub fn AuthLayout(
                     <div class="text-center mb-8">
                         // Mobile logo
                         <div class="lg:hidden mb-6">
-                            <img src="/public/krausen_full_logo.svg" alt="Krausen" class="h-12 mx-auto dark:hidden"/>
-                            <img src="/public/krausen_full_logo_white.svg" alt="Krausen" class="h-12 mx-auto hidden dark:block"/>
+                            <BreweryBrand/>
                         </div>
                         // Title — page-level landmark, 2xl token = 30px = text-3xl, Instrument Serif
                         <h1 class="text-3xl font-display text-foreground mb-2">

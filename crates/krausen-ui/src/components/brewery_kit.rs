@@ -489,8 +489,8 @@ pub fn BreweryDraftSelect(
 
 /// Approved local mark and wordmark, shared by desktop and mobile navigation.
 #[component]
-pub fn BreweryBrand() -> impl IntoView {
-    view! { <a href="/" class="k-brand"><img src="/public/brewery-mark.svg" alt=""/><span>"krausen"<span class="k-brand__dot">"."</span></span></a> }
+pub fn BreweryBrand(#[prop(optional)] inverse: bool) -> impl IntoView {
+    view! { <a href="/" class="k-brand" class:k-brand--inverse=inverse><img src="/public/brewery-mark.svg" alt=""/><span>"krausen"<span class="k-brand__dot">"."</span></span></a> }
 }
 
 /// A compact, keyboard-operable disclosure for secondary settings.
