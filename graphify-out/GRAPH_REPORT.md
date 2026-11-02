@@ -1,7 +1,7 @@
-# Graph Report - ux-authority  (2026-11-02)
+# Graph Report - kra35-showcase-link  (2026-11-02)
 
 ## Corpus Check
-- 387 files · ~347,175 words
+- 387 files · ~347,431 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 30 file(s) not represented in the graph (top: .ttf 16, .css 7, (none) 5)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f66a62d9`
+- Built from commit: `ffb434aa`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
