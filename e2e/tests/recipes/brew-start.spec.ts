@@ -12,6 +12,7 @@ import {
 const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
   ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
   : path.resolve(__dirname, '../../../data/krausen.db');
+const VISUAL_BREW_ID = process.env.KRAUSEN_VISUAL_BREW_ID;
 
 function sqliteExec(sql: string): string {
   return execFileSync('sqlite3', [DB_PATH, '.timeout 5000', sql], {
@@ -104,7 +105,7 @@ async function prepareAndStart(page: import('@playwright/test').Page, revision: 
   await expect(
     page.getByText('Ready to start the selected saved revision.'),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Start brew' }).click();
+  await page.locator('#start-brew').getByRole('button', { name: 'Start brew' }).click();
   await expect(page.getByText('Brew started', { exact: true })).toBeVisible();
 }
 
@@ -186,7 +187,7 @@ test('held Record stays locked while a real focus overview completes', async ({
     page
       .locator('.k-metric')
       .filter({ hasText: 'Status' })
-      .getByText('completed', { exact: true }),
+      .getByText('Completed', { exact: true }),
   ).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry same request' })).toBeDisabled();
@@ -377,7 +378,7 @@ test('conflict refreshes current evidence and keeps the draft for reapply', asyn
     page.getByText('Changed elsewhere; current evidence refreshed. Review and reapply.'),
   ).toBeVisible();
   await expect(page.locator('#measurement-gravity-original-v1')).toHaveValue('1.053');
-  await expect(page.getByText(/selected 1\.052/)).toBeVisible();
+  await expect(page.getByText(/selected actual 1\.052 SG/)).toBeVisible();
   await page.getByRole('button', { name: 'Correct selected' }).first().click();
   await expect(page.getByText('Measurement corrected.')).toBeVisible();
   await other.close();
@@ -734,6 +735,82 @@ test('held overview response after same-document unmount is ignored', async ({ p
   expect(pageErrors).toEqual([]);
 });
 
+test('populated historical comparison is human-readable at desktop/mobile light/dark', async ({
+  page,
+}) => {
+  test.skip(!VISUAL_BREW_ID, 'requires KRAUSEN_VISUAL_BREW_ID');
+  const forbidden = [
+    'Some(',
+    'BrewComparisonValue',
+    'measurement_reference_temperature_unknown',
+    'no_planned_target_for_basis',
+    'canonical_digest',
+  ];
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.goto(`/brews/${VISUAL_BREW_ID}/analysis`);
+      await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Planned target' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Selected actual' })).toBeVisible();
+      if (await page.getByRole('columnheader', { name: 'Change' }).count()) {
+        await expect(
+          page.getByRole('cell', { name: /Changed|Added|Removed/ }).first(),
+        ).toBeVisible();
+      }
+      for (const text of forbidden) {
+        await expect(page.getByText(text, { exact: false })).toHaveCount(0);
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      if (viewport.width === 390) {
+        const region = page.getByRole('region', {
+          name: 'Planned target versus selected actual table',
+        });
+        await expect(region).toHaveAttribute('tabindex', '0');
+        await region.focus();
+        await expect(region).toBeFocused();
+        const sizes = await region.evaluate((element) => ({
+          client: element.clientWidth,
+          scroll: element.scrollWidth,
+        }));
+        expect(sizes.scroll).toBeGreaterThan(sizes.client);
+        await page.keyboard.press('ArrowRight');
+        // Native arrow scrolling is asynchronous in Chromium; require the
+        // eventual scroll without accepting a non-scrolling region.
+        await expect
+          .poll(() => region.evaluate((element) => element.scrollLeft), { timeout: 2000 })
+          .toBeGreaterThan(0);
+        await region.evaluate((element) => {
+          element.scrollLeft = element.scrollWidth;
+        });
+        const headerBox = await page
+          .getByRole('columnheader', { name: 'Comparison' })
+          .boundingBox();
+        const regionBox = await region.boundingBox();
+        expect(headerBox).not.toBeNull();
+        expect(regionBox).not.toBeNull();
+        expect(headerBox!.x + headerBox!.width).toBeLessThanOrEqual(
+          regionBox!.x + regionBox!.width + 1,
+        );
+      }
+      const print = page.getByRole('button', { name: 'Print frozen plan' });
+      await print.focus();
+      await expect(print).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page.getByText('Historical print preview')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Recorded actuals' }),
+      ).toBeVisible();
+    }
+  }
+});
+
 test('recipe brew history and frozen historical print are reachable', async ({ page }) => {
   const title = `Brew history ${Date.now()}`;
   const brewId = await startBrewAndOpenEvidence(page, title);
@@ -742,15 +819,116 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   );
   await page.goto(`/recipes/${recipeId}/brews`);
   await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
-  await expect(page.getByText(/recipe revision 2/)).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/i)).toBeVisible();
   await page.getByRole('link', { name: 'Compare and feedback' }).click();
   await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
   await expect(page.getByText('Target versus selected actual')).toBeVisible();
   await page.getByRole('button', { name: 'Print frozen plan' }).click();
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
-  await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
 });
+
+test('historical presentation uses human labels and hides machine identifiers', async ({
+  page,
+}) => {
+  const serverFnPaths = new Map<string, string>();
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    const match = path.match(/^\/leptos-api\/([a-z_]+)\d+$/);
+    if (match) {
+      serverFnPaths.set(match[1], path);
+    }
+  });
+
+  const title = `Brew presentation ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const workspaceId = sqliteExec(
+    `SELECT workspace_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const startedBy = sqliteExec(
+    `SELECT started_by FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const intent = { account_id: getDefaultUserId(), workspace_id: workspaceId };
+  const evidencePath = serverFnPaths.get('brew_evidence_view');
+  expect(evidencePath).toBeTruthy();
+
+  const comparisonResponse = page.waitForResponse((response) =>
+    response.url().includes('/leptos-api/execute_brew_comparison'),
+  );
+  await page.goto(`/brews/${brewId}/analysis`);
+  const comparison = await (await comparisonResponse).json();
+  const plan = outcomeOf(comparison).Comparison;
+  const contextId = plan.plan.context_id;
+  const document = structuredClone(plan.plan.recipe);
+  document.boil_minutes = 70;
+  document.notes = 'Browser presentation actual';
+  const actualPath = evidencePath!.replace('brew_evidence_view', 'brew_actual');
+  const amended = await callServerFn(page, actualPath, {
+    action: 'amend',
+    intent,
+    brew_id: brewId,
+    expected_actual_revision: null,
+    document,
+    reason: 'presentation proof',
+    request_id: crypto.randomUUID(),
+  });
+  expect(amended.status, JSON.stringify(amended.body)).toBe(200);
+  await page.reload();
+
+  await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Planned target' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Selected actual' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Planned', exact: true })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Boil duration/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Brew notes/ })).toBeVisible();
+  await expect(page.getByText('No reading recorded').first()).toBeVisible();
+  for (const forbidden of [
+    'BrewComparisonValue',
+    'canonical_digest',
+    'process:boil_minutes',
+    'Some(',
+    'measurement_reference_temperature_unknown',
+  ]) {
+    await expect(page.getByText(forbidden, { exact: false })).toHaveCount(0);
+  }
+  await expect(page.getByText(contextId)).not.toBeVisible();
+  await expect(page.getByText(startedBy)).toHaveCount(0);
+  await expect(page.getByText('Recorded actual').first()).toBeVisible();
+  await expect(page.getByText('Revision 1').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Print frozen plan' }).click();
+  await expect(page.getByText('Historical print preview')).toBeVisible();
+  await expect(
+    page.getByText('Historical brew · frozen recipe revision 2', { exact: false }),
+  ).toBeVisible();
+  await expect(page.locator('.print-preview').getByText(brewId)).not.toBeVisible();
+
+  await page.goto(`/recipes/${recipeId}/brews`);
+  await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Plan' })).toBeVisible();
+  await expect(page.getByText(startedBy)).toHaveCount(0);
+  const historyTable = page.getByRole('region', { name: 'Brew history table' });
+  await expect(
+    historyTable.getByText(/^by (you|another workspace member)$/).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/\d{2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC/).first(),
+  ).toBeVisible();
+
+  await page.goto(`/brews/${brewId}`);
+  await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  await expect(page.getByText(startedBy)).toHaveCount(0);
+  await expect(page.getByText('Planned target').first()).toBeVisible();
+  await expect(page.getByText('Recorded actual').first()).toBeVisible();
+  await expect(
+    page.getByText(/Started .* by (you|another workspace member)/),
+  ).toBeVisible();
+});
+
 
 test('held context check after navigation cannot install the previous brew', async ({
   page,
@@ -860,9 +1038,10 @@ test('held context check after navigation cannot install the previous brew', asy
         requestAnimationFrame(() => setTimeout(resolve, 0));
       }),
   );
-  await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
-  await expect(page.getByText(secondComparison.plan.context_id)).toHaveCount(0);
+  await expect(page.getByText('Frozen plan provenance')).toHaveCount(0);
   releaseSecondComparison();
+  await expect(page.getByText('Frozen plan provenance')).toBeVisible();
+  await page.getByText('Frozen plan provenance').click();
   await expect(page.getByText(secondComparison.plan.context_id)).toBeVisible();
   await expect(page.getByText(firstComparison.plan.context_id)).toHaveCount(0);
 });
@@ -918,13 +1097,14 @@ test('feedback apply keeps one request through a lost response and ignores selec
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
-  await expect(page.getByText(/actual revision 1/)).toBeVisible();
+  await expect(page.getByText('Recorded actual').first()).toBeVisible();
+  await expect(page.getByText('Revision 1').first()).toBeVisible();
   await page
-    .locator('li', { hasText: 'process:boil_minutes' })
+    .getByRole('row', { name: /Boil duration/ })
     .getByRole('checkbox')
     .click();
   await page.getByRole('button', { name: 'Preview selected feedback' }).click();
-  await expect(page.getByText(/Proposed recipe head 2/)).toBeVisible();
+  await expect(page.getByText(/Based on recipe revision 2/)).toBeVisible();
 
   const applyRequests: any[] = [];
   let allowApply = false;
@@ -963,7 +1143,7 @@ test('feedback apply keeps one request through a lost response and ignores selec
   // Changing another selection while the request is uncertain must not cancel
   // or replace the retained command.
   await page
-    .locator('li', { hasText: 'Notes · notes' })
+    .getByRole('row', { name: /Brew notes/ })
     .getByRole('checkbox')
     .click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
@@ -1003,7 +1183,7 @@ test('feedback apply keeps one request through a lost response and ignores selec
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/recipes/${recipeId}/brews`);
   await expect(page.getByRole('heading', { name: 'Brew history' })).toBeVisible();
-  await expect(page.getByText(/recipe revision 2/).first()).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/i).first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
     true,
   );
@@ -1012,7 +1192,7 @@ test('feedback apply keeps one request through a lost response and ignores selec
   await compare.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Plan versus actual' })).toBeVisible();
-  await expect(page.getByText(/recipe revision 2/).first()).toBeVisible();
+  await expect(page.getByText(/recipe revision 2/i).first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
     true,
   );
@@ -1022,7 +1202,7 @@ test('feedback apply keeps one request through a lost response and ignores selec
   await page.keyboard.press('Enter');
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
-  await expect(page.getByText('Actuals (separate from the frozen plan)')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
   const printable = page.getByRole('article', {
     name: 'Printable recipe and process summary',
   });

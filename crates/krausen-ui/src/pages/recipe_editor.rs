@@ -3,8 +3,8 @@
 use crate::{
     components::{
         BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
-        BreweryDraftSelect, BreweryNotice, BreweryPanel, Button, ButtonLink, ButtonVariant,
-        printable_recipe::diagnostic_message,
+        BreweryCompactIngredientRow, BreweryDraftSelect, BreweryNotice, BreweryPanel, BreweryTabs, Button, ButtonLink,
+        ButtonVariant, printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
     pages::recipe_scaling::{DuplicateDialog, ScaleDialog},
@@ -22,7 +22,7 @@ use leptos_router::hooks::use_params_map;
 
 type EditorIdentity = krausen_types::request_context::OperationIntent;
 
-pub(super) async fn current_context_matches(expected: &EditorIdentity) -> bool {
+pub(crate) async fn current_context_matches(expected: &EditorIdentity) -> bool {
     let result = crate::server_fns::context::get_user_context().await;
     #[cfg(target_arch = "wasm32")]
     let result = if result
@@ -163,6 +163,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let context_lost = RwSignal::new(false);
     let profile_generation = RwSignal::new(0_u64);
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
+    let history_authority_failure = Callback::new(move |()| {
+        if context_visible.try_get_untracked().is_none() { return; }
+        context_visible.set(false);
+        context_lost.set(true);
+        preview_gate.update_value(|gate| { gate.invalidate(); });
+    });
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
     let baseline = RwSignal::new(
@@ -962,6 +968,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         }
     });
     let close_print = Callback::new(move |()| print_preview.set(None));
+    let active_tab = RwSignal::new("recipe".to_owned());
     view! { <Show when=move || !context_visible.get()><BreweryNotice title="Recipe held in its original workspace" body="Return to the account and workspace where you opened this draft to continue." warning=true/></Show>
         <Show when=move || context_visible.get() && !recovery_choice.get().is_empty()>
             <section class="recipe-editor"><BreweryNotice title="A retained draft is available" body="Local drafts are not saved recipe revisions. Restore one or discard them before continuing."/>
@@ -995,22 +1002,31 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button on:click=move |_| { baseline.set(remote_for_reapply.clone()); draft.update(|d| d.mark_earlier_document_saved(remote_for_reapply.clone())); revision.set(Some(revision_number)); retry.set(None); conflict.set(None); status.set("Draft retained against the current revision. Review it, then choose Save.".into()); }>"Reapply my draft"</Button>
             </section> }
         })}
-        <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div><div class="recipe-editor__actions"><span role="status">{move || {
+        <header class="recipe-editor__header recipe-editor__recipe-header"><div class="recipe-editor__topbar"><nav class="recipe-editor__breadcrumb" aria-label="Recipe breadcrumb"><a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span><span>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</span></nav><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) { if retained.get() { "Unsaved changes · retained locally".to_owned() } else { "Unsaved changes".to_owned() } } else { message }
-        }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button>{move || recipe_id.get().map(|id| view! { <ButtonLink href=format!("/recipes/{id}/brews") variant=ButtonVariant::Secondary>"Brew history"</ButtonLink> })}<Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></header>
+        }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button>{move || recipe_id.get().map(|id| view! { <ButtonLink href=format!("/recipes/{id}/brews") variant=ButtonVariant::Secondary>"Brew history"</ButtonLink> })}<Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></div></header>
+        <div class="recipe-editor__heading"><p class="kit-showcase__eyebrow">"Your recipe"</p><h1>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
-        <div class="recipe-editor__summary">
-            <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change/>
+        <div class="recipe-editor__summary recipe-editor__identity-summary">
+            <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change mobile_title=true/>
             <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
             <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
             {move || { let mut options = vec![(String::new(), "No style".to_owned())]; options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name)))); view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=selected_style on_change=change_style options=options/> } }}
         </div>
-        <div class="recipe-editor__layout"><div class="recipe-editor__sections">
-            <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
-            <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
-            <crate::pages::brew_start::StartBrewPanel identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision/>
+        <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("history".into(), "History".into()), ("brews".into(), "Brews".into())] active=active_tab/>
+        <Show when=move || active_tab.get() == "recipe"><Button variant=ButtonVariant::Secondary on:click=move |_| {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen::JsCast;
+                if let Some(target) = web_sys::window().and_then(|window| window.document()).and_then(|document| document.get_element_by_id("start-brew")).and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()) {
+                    if target.focus().is_err() { tracing::warn!("Unable to focus the start-brew workflow"); }
+                }
+            }
+        }>"Start brew"</Button></Show></div>
+        <div role="tabpanel" id="editor-panel-recipe" aria-labelledby="editor-tab-recipe" hidden=move || active_tab.get() != "recipe">
+        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation><div class="recipe-editor__sections">
             <IngredientEditor draft=draft identity=identity context_visible=context_visible/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>
@@ -1042,7 +1058,23 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Show when=move || chilling.get() == "forced"><NumberField id="recipe-chilling-rate" label="Cooling rate" unit="per min" path="equipment_overrides.chilling.rate_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..}) => *rate_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..})=&mut d.equipment_overrides.chilling { *rate_per_minute=n }/><NumberField id="recipe-chilling-plateau" label="Cooling plateau" unit="°C" path="equipment_overrides.chilling.plateau_c" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..}) => *plateau_c, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..})=&mut d.equipment_overrides.chilling { *plateau_c=n }/></Show>
                 <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
             </div></BreweryDisclosure>
-        </div><aside class="recipe-editor__preview"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation/></aside></div>
+            <BreweryDisclosure title="Export and print">
+                <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
+                <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
+            </BreweryDisclosure>
+        </div></FormulationPreview></div>
+        <section id="start-brew" aria-label="Start brew workflow" tabindex="-1"><crate::pages::brew_start::StartBrewPanel identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision/></section>
+        </div>
+        <div role="tabpanel" id="editor-panel-history" aria-labelledby="editor-tab-history" hidden=move || active_tab.get() != "history">
+            <Show when=move || active_tab.get() == "history" && context_visible.get()>
+                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved history yet" body="Save this recipe to create its first revision."/> }.into_any())}
+            </Show>
+        </div>
+        <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">
+            <Show when=move || active_tab.get() == "brews" && context_visible.get()>
+                {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() on_authority_failure=history_authority_failure/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
+            </Show>
+        </div>
     </div>
     {
         move || {
@@ -1349,6 +1381,7 @@ fn IngredientEditor(
     view! {
         <BreweryPanel title="Fermentables" description="Specify the grain, extract or sugar copied into this recipe.">
             <For each=move || draft.with(|d| d.document().fermentables.iter().map(|r| r.row_id.clone()).collect::<Vec<_>>()) key=|id| id.clone() children=move |id| view! { <IngredientFields draft=draft id=id kind=IngredientKind::Fermentable/> } />
+            <p class="k-compact-ingredient__summary">"Grain bill total and shares unavailable."</p>
             <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| picker_open.set(true)>"Add fermentable"</Button>
         </BreweryPanel>
         <BreweryPanel title="Hops" description="Record each addition and its contact time.">
@@ -1380,7 +1413,7 @@ fn IngredientFields(
     kind: IngredientKind,
 ) -> impl IntoView {
     let remove_id = id.clone();
-    let remove = move |_| {
+    let remove = Callback::new(move |()| {
         let prefix = format!("{}[{remove_id}].", kind.prefix());
         draft.update(|d| {
             d.edit_clearing(&prefix, |doc| match kind {
@@ -1388,7 +1421,7 @@ fn IngredientFields(
                 IngredientKind::Hop => doc.hops.retain(|r| r.row_id != remove_id),
             });
         });
-    };
+    });
     let name_id = id.clone();
     let type_id = id.clone();
     let stage_id = id.clone();
@@ -1396,18 +1429,38 @@ fn IngredientFields(
     let measure_id = id.clone();
     let extra_id = id.clone();
     let stage_detail_id = id.clone();
-    view! { <BreweryAddition>
-        <div class="recipe-editor__fields"><IngredientTextField draft=draft id=name_id kind=kind field=IngredientText::Name label="Name"/>
-        <IngredientNumberField draft=draft id=quantity_id kind=kind field=IngredientNumber::Amount label="Amount" unit=if matches!(kind, IngredientKind::Hop) {"g"} else {"kg"}/></div>
-        <BreweryDisclosure title="Addition details"><div class="recipe-editor__fields">
+    let descriptor_id = id.clone();
+    let label_id = id.clone();
+    let label = Signal::derive(move || draft.with(|d| {
+        let name = ingredient_text(d.document(), &label_id, kind, IngredientText::Name);
+        if name.trim().is_empty() { match kind { IngredientKind::Fermentable => "Unnamed fermentable".to_owned(), IngredientKind::Hop => "Unnamed hop".to_owned() } } else { name }
+    }));
+    let description = Signal::derive(move || draft.with(|d| {
+        let mut parts = Vec::new();
+        match kind {
+            IngredientKind::Fermentable => if let Some(row) = d.document().fermentables.iter().find(|row| row.row_id == descriptor_id) {
+                if let Some(value) = row.specification.producer.as_ref().filter(|v| !v.is_empty()) { parts.push(value.clone()); }
+                if let Some(value) = row.specification.kind.as_ref().filter(|v| !v.is_empty()) { parts.push(value.clone()); }
+                if d.number_error(&format!("fermentables[{descriptor_id}].specification.colour_ebc")).is_none() { if let Some(value) = row.specification.colour_ebc { let formatted = crate::components::brew_history_presentation::format_measurement_value(value, "ebc"); parts.push(if value != 0.0 && formatted == "0 EBC" { format!("{value} EBC") } else { format!("≈ {formatted}") }); } }
+            },
+            IngredientKind::Hop => if let Some(row) = d.document().hops.iter().find(|row| row.row_id == descriptor_id) {
+                if let Some(value) = row.specification.producer.as_ref().filter(|v| !v.is_empty()) { parts.push(value.clone()); }
+                if d.number_error(&format!("hops[{descriptor_id}].specification.alpha_fraction")).is_none() { if let Some(value) = row.specification.alpha_fraction { parts.push(format!("Alpha {value} (fraction)")); } }
+                if d.number_error(&format!("hops[{descriptor_id}].contact_minutes")).is_none() { if let Some(value) = row.contact_minutes { let formatted = crate::components::brew_history_presentation::format_measurement_value(value, "min"); parts.push(if value != 0.0 && formatted == "0 min" { format!("{value} min") } else { format!("≈ {formatted}") }); } }
+            },
+        }
+        parts.join(" · ")
+    }));
+    let name_field = view! { <IngredientTextField draft=draft id=name_id kind=kind field=IngredientText::Name label="Name"/> }.into_any();
+    let amount_field = view! { <IngredientNumberField draft=draft id=quantity_id kind=kind field=IngredientNumber::Amount label="Amount" unit=if matches!(kind, IngredientKind::Hop) {"g"} else {"kg"}/> }.into_any();
+    let details = view! { <div class="recipe-editor__fields">
             {matches!(kind, IngredientKind::Fermentable).then(|| view! { <IngredientTextField draft=draft id=type_id kind=kind field=IngredientText::Kind label="Type"/> })}
             <IngredientTextField draft=draft id=stage_id kind=kind field=IngredientText::Stage label="Stage"/>
             <IngredientNumberField draft=draft id=measure_id kind=kind field=IngredientNumber::YieldOrAlpha label=if matches!(kind, IngredientKind::Hop) {"Alpha acid"} else {"Yield"} unit="%"/>
             <IngredientNumberField draft=draft id=extra_id kind=kind field=IngredientNumber::ColourOrTime label=if matches!(kind, IngredientKind::Hop) {"Contact time"} else {"Colour"} unit=if matches!(kind, IngredientKind::Hop) {"min"} else {"EBC"}/>
             <IngredientNumberField draft=draft id=stage_detail_id kind=kind field=IngredientNumber::StageDetail label=if matches!(kind, IngredientKind::Hop) {"Whirlpool temperature"} else {"Boil addition time"} unit=if matches!(kind, IngredientKind::Hop) {"°C"} else {"min"}/>
-        </div></BreweryDisclosure>
-        <Button variant=crate::components::ButtonVariant::GhostDestructive on:click=remove>"Remove addition"</Button>
-    </BreweryAddition> }
+        </div> }.into_any();
+    view! { <BreweryCompactIngredientRow label=label description=description name_field=name_field amount_field=amount_field details=details on_remove=remove/> }
 }
 
 fn ingredient_text(
@@ -2016,6 +2069,7 @@ fn FormulationPreview(
     context_visible: RwSignal<bool>,
     gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
     profile_generation: RwSignal<u64>,
+    children: Children,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
     let result = RwSignal::new(None::<(u64, Preview)>);
@@ -2167,11 +2221,16 @@ fn FormulationPreview(
             }
         });
     });
-    view! { <BreweryPanel title="Your formulation" description="Estimates use the current draft.">
+    let accepted = Signal::derive(move || {
+        let current = draft.with(|d| d.generation);
+        result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| preview)
+    });
+    view! { <div class="recipe-editor__preview-summary"><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true>
         <p role="status">{move || if draft.with(|d| d.generation) == message_generation.get() { message.get() } else { "Awaiting preview.".into() }}</p>
-        {move || { let current = draft.with(|d| d.generation); result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| view! { <PreviewMetrics preview=preview/> }) }}
+        <crate::components::BreweryBeerPortrait/>
+        {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview/> })}
         <div role="status">{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
-    </BreweryPanel> }
+    </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 
 #[component]
@@ -2186,7 +2245,14 @@ fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView
         {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1)}
         {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1)}
     </div>
-    <BreweryDisclosure title="Water and gravity details"><div class="recipe-editor__metrics">
+    {preview.style.as_ref().map(|style| view! { <p class="recipe-editor__provenance">{format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition)}</p> })}
+    }
+}
+
+#[component]
+fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView {
+    view! {
+    <BreweryPanel title="Water plan"><div class="recipe-editor__metrics">
         {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1)}
         {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1)}
         {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1)}
@@ -2194,8 +2260,19 @@ fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView
         {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1)}
         {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1)}
         {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3)}
-    </div></BreweryDisclosure>
-    {preview.style.as_ref().map(|style| view! { <p class="recipe-editor__provenance">{format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition)}</p> })}
+    </div></BreweryPanel>
+    {preview.context.as_ref().map(|context| {
+        let equipment = context.effective_equipment.clone();
+        let name = context.equipment_profile.as_ref().map(|profile| format!("{} · revision {}", profile.name, profile.revision)).unwrap_or_else(|| "Recipe equipment settings".to_owned());
+        view! { <BreweryPanel title="Your equipment" description=name>
+            <div class="recipe-editor__metrics">
+                {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1)}
+                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1)}
+                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1)}
+            </div>
+            <p>"New brews use current settings; previous brews retain their original equipment."</p>
+        </BreweryPanel> }
+    })}
     {preview.context.as_ref().map(|context| {
         let assumptions = context.assumptions.iter().filter_map(|value| match value.as_str() {
             "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),

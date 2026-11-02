@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared recipe brew history, frozen comparison and explicit feedback views.
+use super::brew_history_presentation::{
+    actor_text, change_actual_text, change_kind_label, change_planned_text, change_section_text,
+    diagnostic_text, format_timestamp, humanize_words, item_label, measurement_status_text,
+    measurement_value_or, revision_text, selected_reading_context, status_label, validation_label,
+};
 use crate::{
-    components::{BreweryPanel, Button, ButtonLink, ButtonVariant, Checkbox, PrintableRecipe},
+    components::{
+        BreweryDisclosure, BreweryMetric, BreweryPanel, Button, ButtonLink, ButtonVariant,
+        Checkbox, PrintableRecipe,
+        brew_evidence_rows::{BrewMeasurementRow, BrewProvenanceFact},
+    },
     pages::recipe_editor::current_context_matches,
     server_fns::brew_history::{
         brew_comparison_shared, brew_feedback_apply_shared, brew_feedback_preview_shared,
@@ -15,31 +24,40 @@ use krausen_types::{
         BrewFeedbackPreviewRequest, BrewPrint, BrewPrintOutcome, BrewPrintRequest,
         RecipeBrewHistoryOutcome, RecipeBrewHistoryQuery, RecipeBrewSummary,
     },
-    brewery::BrewStatusV1,
     request_context::OperationIntent,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use std::collections::BTreeSet;
 
-fn status_label(status: BrewStatusV1) -> &'static str {
-    match status {
-        BrewStatusV1::Started => "Started",
-        BrewStatusV1::Completed => "Completed",
-        BrewStatusV1::Cancelled => "Cancelled",
-    }
-}
-
-fn measure_text(value: Option<f64>, unit: &str) -> String {
-    value
-        .map(|value| format!("{value} {unit}"))
-        .unwrap_or_else(|| "Missing".into())
-}
-
 #[component]
 pub fn RecipeBrewHistoryPage() -> impl IntoView {
+    view! { <BrewHistoryView/> }
+}
+
+/// Reusable history presentation. `embedded` omits the page header/panel for an
+/// editor tab; `recipe_id` supplies the trusted current recipe after a first
+/// save, because route params may still name a draft placeholder.
+#[component]
+pub fn BrewHistoryView(
+    #[prop(optional)] embedded: bool,
+    #[prop(optional, into)] recipe_id: Option<String>,
+    #[prop(optional)] intent: Option<OperationIntent>,
+    /// Embedded callers use this to redact their still-mounted parent draft on
+    /// authority/context loss. `try_run` makes a disposed parent a no-op.
+    #[prop(optional)]
+    on_authority_failure: Option<Callback<()>>,
+) -> impl IntoView {
     let params = use_params_map();
-    let recipe_id = Signal::derive(move || params.read().get("id").unwrap_or_default());
+    let route_recipe = Signal::derive(move || params.read().get("id").unwrap_or_default());
+    let explicit_recipe = recipe_id;
+    let recipe_id = Signal::derive(move || {
+        explicit_recipe
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| route_recipe.get())
+    });
+    let captured_intent = intent;
     let records = RwSignal::new(Vec::<RecipeBrewSummary>::new());
     let identity = RwSignal::new(None::<OperationIntent>);
     let next_cursor = RwSignal::new(None::<String>);
@@ -75,6 +93,17 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
             })
             .await;
             let context_ok = current_context_matches(&intent).await;
+            let denied = !context_ok
+                || matches!(
+                    &outcome,
+                    Ok(RecipeBrewHistoryOutcome::Forbidden)
+                        | Ok(RecipeBrewHistoryOutcome::ContextChanged)
+                );
+            if denied {
+                if let Some(callback) = on_authority_failure.clone() {
+                    let _ = callback.try_run(());
+                }
+            }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
             {
@@ -136,12 +165,53 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
             message.set("Recipe not found.".into());
             return;
         }
+        if embedded && recipe == "new" {
+            busy.set(false);
+            message.set("Save this recipe before viewing brew history.".into());
+            return;
+        }
+        if embedded && captured_intent.is_none() {
+            busy.set(false);
+            message.set("Open brew history from the saved recipe editor.".into());
+            return;
+        }
         busy.set(true);
         message.set("Loading brew history…".into());
         let mine = generation.get_untracked().wrapping_add(1);
         generation.set(mine);
+        if let Some(expected) = captured_intent.clone() {
+            // Embedded callers supply the editor's captured account/workspace.
+            // Verify it against the current authenticated context instead of
+            // adopting a newly selected workspace.
+            identity.set(Some(expected.clone()));
+            leptos::task::spawn_local(async move {
+                let context_ok = current_context_matches(&expected).await;
+                if !context_ok {
+                    if let Some(callback) = on_authority_failure.clone() {
+                        let _ = callback.try_run(());
+                    }
+                }
+                if generation.try_get_untracked() != Some(mine)
+                    || recipe_id.try_get_untracked() != Some(recipe)
+                {
+                    return;
+                }
+                if !context_ok {
+                    busy.set(false);
+                    message.set("Workspace changed; reload.".into());
+                    return;
+                }
+                load_page.run(None);
+            });
+            return;
+        }
         leptos::task::spawn_local(async move {
             let context = crate::server_fns::context::get_user_context().await;
+            if context.is_err() {
+                if let Some(callback) = on_authority_failure.clone() {
+                    let _ = callback.try_run(());
+                }
+            }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
             {
@@ -165,31 +235,89 @@ pub fn RecipeBrewHistoryPage() -> impl IntoView {
         });
     });
 
-    view! {
-        <div class="recipe-editor">
-            <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Your workspace"</p><h1>"Brew history"</h1><p>"Stored plans and optional actual evidence remain separate from the current recipe."</p></div></header>
-            <p role="status">{move || message.get()}</p>
-            <BreweryPanel title="Brews">
-                <ul>{move || records.get().into_iter().map(|record| {
+    let current_actor = Signal::derive(move || identity.get().map(|value| value.account_id));
+    let history_body = view! {
+        <p role="status">{move || message.get()}</p>
+        <div class="max-w-full overflow-x-auto" tabindex="0" role="region" aria-label="Brew history table">
+        <table class="print-sheet__table">
+            <thead>
+                <tr>
+                    <th scope="col">"Status"</th>
+                    <th scope="col">"Started"</th>
+                    <th scope="col">"Plan"</th>
+                    <th scope="col">"Evidence"</th>
+                    <th scope="col"><span class="sr-only">"Actions"</span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {move || records.get().into_iter().map(|record| {
                     let brew_id = record.brew_id.clone();
-                    let open = brew_id.clone();
+                    let analysis = brew_id.clone();
+                    let evidence = brew_id.clone();
+                    let started = format_timestamp(record.started_at);
+                    let actor = actor_text(&record.started_by, current_actor.get().as_deref());
+                    let evidence_text = record
+                        .actual_revision
+                        .map(|revision| format!("Actual formulation revision {revision}"))
+                        .unwrap_or_else(|| "Planned formulation only".to_owned());
                     view! {
-                        <li>
-                            <p><strong>{status_label(record.status)}</strong>{format!(" · recipe revision {} · brew revision {}{}", record.selected_recipe_revision, record.revision, if record.archived { " · archived" } else { "" })}</p>
-                            <p class="note-caption">{format!("Started {} by {}{}", record.started_at, record.started_by, record.actual_revision.map(|revision| format!(" · actual revision {revision}")).unwrap_or_default())}</p>
-                            <ButtonLink href=format!("/brews/{brew_id}/analysis") variant=ButtonVariant::Secondary>"Compare and feedback"</ButtonLink>
-                            <ButtonLink href=format!("/brews/{open}") variant=ButtonVariant::Ghost>"Open evidence"</ButtonLink>
-                        </li>
+                        <tr>
+                            <td>
+                                <span class="print-sheet__name">{status_label(record.status)}</span>
+                                {record.archived.then(|| view! { <span class="print-sheet__sub">"Archived"</span> })}
+                            </td>
+                            <td>
+                                <span class="print-sheet__name">{started}</span>
+                                <span class="print-sheet__sub">{format!("by {actor}")}</span>
+                            </td>
+                            <td>
+                                <span class="print-sheet__name">{format!("Recipe revision {}", record.selected_recipe_revision)}</span>
+                                <span class="print-sheet__sub">{format!("Brew revision {}", record.revision)}</span>
+                            </td>
+                            <td><span class="print-sheet__sub">{evidence_text}</span></td>
+                            <td>
+                                <div class="recipe-editor__actions">
+                                    <ButtonLink href=format!("/brews/{analysis}/analysis") variant=ButtonVariant::Secondary>"Compare and feedback"</ButtonLink>
+                                    <ButtonLink href=format!("/brews/{evidence}") variant=ButtonVariant::Ghost>"Open evidence"</ButtonLink>
+                                </div>
+                            </td>
+                        </tr>
                     }
-                }).collect_view()}</ul>
-                <Show when=move || next_cursor.get().is_some()>
-                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_page.run(next_cursor.get_untracked())>"Load more"</Button>
-                </Show>
-                <Show when=move || !busy.get() && next_cursor.get().is_none() && !records.with(|items| items.is_empty())>
-                    <p class="note-caption">"End of retained brew history."</p>
-                </Show>
-            </BreweryPanel>
+                }).collect_view()}
+            </tbody>
+        </table>
         </div>
+        <Show when=move || next_cursor.get().is_some()>
+            <p class="note-caption">{move || format!("Showing {} brews; more are retained.", records.with(|items| items.len()))}</p>
+            <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_page.run(next_cursor.get_untracked())>"Load more"</Button>
+        </Show>
+        <Show when=move || !busy.get() && next_cursor.get().is_none() && !records.with(|items| items.is_empty())>
+            <p class="note-caption">"End of retained brew history."</p>
+        </Show>
+        {embedded.then(|| view! {
+            <div class="recipe-editor__actions">
+                <ButtonLink href=format!("/recipes/{}/brews", recipe_id.get_untracked()) variant=ButtonVariant::Secondary>"View full brew history"</ButtonLink>
+            </div>
+        })}
+    };
+    if embedded {
+        view! { <div class="recipe-editor__sections">{history_body}</div> }.into_any()
+    } else {
+        view! {
+            <div class="recipe-editor">
+                <header class="recipe-editor__header">
+                    <div>
+                        <p class="kit-showcase__eyebrow">"Your workspace"</p>
+                        <h1>"Brew history"</h1>
+                        <p>"Stored plans and optional actual evidence remain separate from the current recipe."</p>
+                    </div>
+                </header>
+                <BreweryPanel title="Brews" description="Immutable plans and retained evidence for this recipe.">
+                    {history_body}
+                </BreweryPanel>
+            </div>
+        }
+        .into_any()
     }
 }
 
@@ -424,7 +552,9 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 Ok(BrewFeedbackPreviewOutcome::Conflict { expected, actual }) => {
                     preview.set(None);
                     message.set(format!(
-                        "Actual revision changed from {expected:?} to {actual:?}; reload the comparison."
+                        "The recorded actual formulation changed from {} to {}; reload the comparison.",
+                        revision_text(expected),
+                        revision_text(actual)
                     ))
                 }
                 Ok(BrewFeedbackPreviewOutcome::NotFound) => {
@@ -537,7 +667,9 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 }
                 Ok(BrewFeedbackApplyOutcome::ActualConflict { expected, actual }) => {
                     message.set(format!(
-                        "The actual revision changed from {expected:?} to {actual:?}; reload the comparison."
+                        "The recorded actual formulation changed from {} to {}; reload the comparison.",
+                        revision_text(expected),
+                        revision_text(actual)
                     ))
                 }
                 Ok(BrewFeedbackApplyOutcome::NoActual) => {
@@ -572,8 +704,8 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 }
                 Ok(BrewFeedbackApplyOutcome::Invalid(validation)) => {
                     message.set(format!(
-                        "The proposed recipe is invalid ({:?}).",
-                        validation.state
+                        "The proposed recipe is {}; review the selected changes.",
+                        validation_label(validation.state).to_lowercase()
                     ))
                 }
                 Ok(BrewFeedbackApplyOutcome::UnresolvedIngredientSource) => {
@@ -712,61 +844,263 @@ pub fn BrewAnalysisPage() -> impl IntoView {
 
     view! {
         <div class="recipe-editor">
-            <header class="recipe-editor__header"><div><p class="kit-showcase__eyebrow">"Frozen brew record"</p><h1>"Plan versus actual"</h1><p>"Targets and formulation come from the immutable plan; actual evidence is shown separately."</p></div><div class="recipe-editor__actions"><Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_comparison.run(())>"Refresh"</Button><Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_print.run(())>"Print frozen plan"</Button></div></header>
+            <header class="recipe-editor__header">
+                <div>
+                    <p class="kit-showcase__eyebrow">"Frozen brew record"</p>
+                    <h1>"Plan versus actual"</h1>
+                    <p>"Targets and planned formulation come from the immutable plan; recorded evidence is shown separately."</p>
+                </div>
+                <div class="recipe-editor__actions">
+                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_comparison.run(())>"Refresh"</Button>
+                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_print.run(())>"Print frozen plan"</Button>
+                </div>
+            </header>
             <p role="status">{move || message.get()}</p>
             {move || comparison.get().map(|brew| {
                 let changes = brew.changes.clone();
+                let changes_for_preview = changes.clone();
                 let has_changes = !changes.is_empty();
+                let status = status_label(brew.status);
+                let actual = brew.actual.as_ref()
+                    .map(|actual| format!("Revision {}", actual.revision))
+                    .unwrap_or_else(|| "Planned only".to_owned());
+                let archived = if brew.archived { "Archived" } else { "Active" };
                 view! {
-                <BreweryPanel title=format!("Brew · {} · recipe revision {}", status_label(brew.status), brew.selected_recipe_revision)>
-                    <p>{format!("Brew revision {} · plan {} · {}{}", brew.revision, brew.plan.context_id, if brew.archived { "archived" } else { "active" }, brew.actual.as_ref().map(|actual| format!(" · actual revision {}", actual.revision)).unwrap_or_default())}</p>
-                    <h3>"Target versus selected actual"</h3>
-                    <ul>{brew.measurements.iter().map(|row| view! {
-                        <li>{format!("{}: target {} · selected {} · {}{}{}", row.label, measure_text(row.target, &row.unit), row.selected.as_ref().map(|entry| measure_text(entry.value, &row.unit)).unwrap_or_else(|| "missing".into()), if let (Some(target), Some(actual)) = (row.target, row.selected.as_ref().and_then(|entry| entry.value)) { format!("delta {:.4} {}", actual - target, row.unit) } else { "not comparable".into() }, row.warning.as_ref().map(|warning| format!(" · {warning}")).unwrap_or_default(), if row.comparable { "" } else { " · no compatible planned target" })}</li>
-                    }).collect_view()}</ul>
-                    <h3>"Formulation changes"</h3>
-                    {if has_changes {
-                        view! { <ul>{changes.iter().map(|change| { let id = change.id.clone(); view! {
-                            <li><label><Checkbox checked=Signal::derive({ let id = id.clone(); move || selected.with(|set| set.contains(&id)) }) on_change=Callback::new({ let id = id.clone(); move |_| {
-                                if busy.get_untracked() || retry.get_untracked().is_some() {
-                                    return;
-                                }
-                                let id = id.clone();
-                                preview.set(None);
-                                busy.set(false);
-                                generation.update(|value| *value = value.wrapping_add(1));
-                                selected.update(|set| { if !set.remove(&id) { set.insert(id); } });
-                            } })/> {format!("{:?} · {} · {:?} → {:?}", change.section, change.id, change.planned, change.actual)}</label></li>
-                        } }).collect_view()}</ul> }.into_any()
-                    } else {
-                        view! { <p>"The plan is still the effective actual formulation; no amended rows to compare."</p> }.into_any()
-                    }}
-                    <div class="recipe-editor__actions"><Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| run_preview.run(())>"Preview selected feedback"</Button></div>
-                    {move || preview.get().map(|preview_value| view! {
-                        <BreweryPanel title="Feedback preview">
-                            <ul>{preview_value.applied_change_ids.iter().map(|id| view! { <li>{id.clone()}</li> }).collect_view()}</ul>
-                            <p>{format!("Proposed recipe head {} · validation {:?}", preview_value.base_recipe_head, preview_value.preview.validation.state)}</p>
-                            <ul>{preview_value.diagnostics.iter().map(|diagnostic| view! { <li>{diagnostic.clone()}</li> }).collect_view()}</ul>
-                            <div class="recipe-editor__actions"><Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| apply.run(())>"Apply as new recipe revision"</Button></div>
-                        </BreweryPanel>
-                    })}
-                    <Show when=move || retry.get().is_some_and(|request| request.brew_id == current_brew.get())>
-                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| { if let Some(request) = retry.get_untracked() { submit.run(request); } }>"Retry previous request"</Button>
-                    </Show>
-                    <Show when=move || retry.get().is_some_and(|request| request.brew_id != current_brew.get())>
-                        <p class="note-caption">"An earlier feedback request is unresolved; reopen its brew to retry it."</p>
-                    </Show>
-                </BreweryPanel>
-            }})}
-            {move || print.get().map(|print| view! {
-                <section class="print-preview" aria-label="Historical print preview">
-                    <div class="print-preview__toolbar"><p class="kit-showcase__eyebrow">"Historical print preview"</p><Button on:click=move |_| { #[cfg(target_arch = "wasm32")] if let Some(window) = web_sys::window() { let _ = window.print(); } }>"Print / Save as PDF"</Button></div>
-                    <div class="print-preview__sheet"><PrintableRecipe summary=print.summary/></div>
-                    <BreweryPanel title="Actuals (separate from the frozen plan)">
-                        <ul>{print.measurements.iter().map(|row| view! { <li>{format!("{}: target {} · selected {}", row.label, measure_text(row.target, &row.unit), row.current.as_ref().map(|entry| measure_text(entry.value, &row.unit)).unwrap_or_else(|| "missing".into()))}</li> }).collect_view()}</ul>
-                        <p>{print.actual.as_ref().map(|actual| format!("Actual formulation revision {} recorded {} by {}", actual.revision, actual.recorded_at, actual.actor_id)).unwrap_or_else(|| "No actual formulation amendment.".into())}</p>
+                    <BreweryPanel
+                        title=format!("Brew · recipe revision {}", brew.selected_recipe_revision)
+                        description="Stored targets and planned formulation do not change; selected actual readings and amended formulation are retained evidence."
+                    >
+                        <div class="recipe-editor__metrics">
+                            <BreweryMetric label="Status" value=status.to_string() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Recipe revision" value=brew.selected_recipe_revision.to_string() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Brew revision" value=brew.revision.to_string() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Recorded actual" value=actual unit="">{""}</BreweryMetric>
+                        </div>
+                        <BreweryDisclosure title="Frozen plan provenance">
+                            <dl class="print-sheet__facts">
+                                <BrewProvenanceFact label="Brew reference".to_owned() value=brew.brew_id.clone()/>
+                                <BrewProvenanceFact label="Frozen recipe revision".to_owned() value=format!("{}", brew.plan.recipe_revision)/>
+                                <BrewProvenanceFact label="Record state".to_owned() value=archived.to_owned()/>
+                                <BrewProvenanceFact label="Calculation context".to_owned() value=brew.plan.context_id.clone() mono=true/>
+                            </dl>
+                        </BreweryDisclosure>
+
+                        <h3 class="recipe-editor__section-title">"Target versus selected actual"</h3>
+                        <p class="note-caption">
+                            "Planned targets come from the frozen plan. A missing reading is not zero, and unlike measurement bases are not converted."
+                        </p>
+                        <div class="max-w-full overflow-x-auto" tabindex="0" role="region" aria-label="Planned target versus selected actual table">
+                        <table class="print-sheet__table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">"Measurement"</th>
+                                    <th scope="col">"Planned target"</th>
+                                    <th scope="col">"Selected actual"</th>
+                                    <th scope="col">"Comparison"</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {brew.measurements.iter().map(|row| {
+                                    let target = measurement_value_or(row.target, &row.unit, "No planned target");
+                                    let actual = row.selected.as_ref().and_then(|entry| entry.value);
+                                    let actual_text = measurement_value_or(actual, &row.unit, "No reading recorded");
+                                    let context = row.selected.as_ref()
+                                        .map(|entry| selected_reading_context(entry, &row.basis))
+                                        .unwrap_or_default();
+                                    let status = if row.target.is_none() {
+                                        "No planned target for this measurement.".to_owned()
+                                    } else if row.selected.is_none() {
+                                        "No reading recorded.".to_owned()
+                                    } else {
+                                        measurement_status_text(row.comparable, row.delta, &row.unit, row.warning.as_deref())
+                                    };
+                                    let basis = humanize_words(&row.basis);
+                                    view! {
+                                        <BrewMeasurementRow
+                                            label=row.label.clone()
+                                            basis=basis
+                                            planned=target
+                                            actual=actual_text
+                                            actual_context=context
+                                            comparison=status
+                                        />
+                                    }
+                                }).collect_view()}
+                            </tbody>
+                        </table>
+                        </div>
+
+                        <h3 class="recipe-editor__section-title">"Formulation changes"</h3>
+                        {if has_changes {
+                            view! {
+                                <p class="note-caption">
+                                    "Select the recorded differences to preview as one explicit recipe revision. Unselected evidence stays with the brew."
+                                </p>
+                                <div class="max-w-full overflow-x-auto" tabindex="0" role="region" aria-label="Formulation changes table">
+                                <table class="print-sheet__table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col"><span class="sr-only">"Include in feedback"</span></th>
+                                            <th scope="col">"Section"</th>
+                                            <th scope="col">"Item"</th>
+                                            <th scope="col">"Planned"</th>
+                                            <th scope="col">"Recorded actual"</th>
+                                            <th scope="col">"Change"</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {changes.iter().map(|change| {
+                                            let id = change.id.clone();
+                                            let item = item_label(change);
+                                            let checked = Signal::derive({
+                                                let id = id.clone();
+                                                move || selected.with(|set| set.contains(&id))
+                                            });
+                                            view! {
+                                                <tr>
+                                                    <td>
+                                                        <label>
+                                                            <Checkbox
+                                                                checked=checked
+                                                                on_change=Callback::new({
+                                                                    let id = id.clone();
+                                                                    move |_| {
+                                                                        if busy.get_untracked() || retry.get_untracked().is_some() {
+                                                                            return;
+                                                                        }
+                                                                        let id = id.clone();
+                                                                        preview.set(None);
+                                                                        busy.set(false);
+                                                                        generation.update(|value| *value = value.wrapping_add(1));
+                                                                        selected.update(|set| { if !set.remove(&id) { set.insert(id); } });
+                                                                    }
+                                                                })
+                                                            />
+                                                            <span class="sr-only">{format!("Include {item} in feedback")}</span>
+                                                        </label>
+                                                    </td>
+                                                    <td>{change_section_text(change)}</td>
+                                                    <td>{item}</td>
+                                                    <td>{change_planned_text(change)}</td>
+                                                    <td>{change_actual_text(change)}</td>
+                                                    <td>{change_kind_label(change.kind)}</td>
+                                                </tr>
+                                            }
+                                        }).collect_view()}
+                                    </tbody>
+                                </table>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <p class="note-caption">"The plan is still the effective actual formulation; no amended rows to compare."</p>
+                            }.into_any()
+                        }}
+                        <div class="recipe-editor__actions">
+                            <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| run_preview.run(())>"Preview selected feedback"</Button>
+                        </div>
+                        {move || preview.get().map(|preview_value| {
+                            let selected_labels = preview_value.applied_change_ids.iter().map(|id| {
+                                changes_for_preview.iter()
+                                    .find(|change| &change.id == id)
+                                    .map(item_label)
+                                    .unwrap_or_else(|| "Selected change".to_owned())
+                            }).collect::<Vec<_>>();
+                            view! {
+                                <BreweryPanel
+                                    title="Recipe feedback preview"
+                                    description="Applying creates one new recipe revision. The frozen brew plan and recorded evidence stay unchanged."
+                                >
+                                    <ul>
+                                        {selected_labels.into_iter().map(|label| view! { <li>{label}</li> }).collect_view()}
+                                    </ul>
+                                    <p class="note-caption">
+                                        {format!(
+                                            "Based on recipe revision {}. Proposed formulation is {}.",
+                                            preview_value.base_recipe_head,
+                                            validation_label(preview_value.preview.validation.state).to_lowercase()
+                                        )}
+                                    </p>
+                                    {(!preview_value.diagnostics.is_empty()).then(|| view! {
+                                        <ul>
+                                            {preview_value.diagnostics.iter().map(|diagnostic| view! { <li>{diagnostic_text(diagnostic)}</li> }).collect_view()}
+                                        </ul>
+                                    })}
+                                    <div class="recipe-editor__actions">
+                                        <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| apply.run(())>"Apply as new recipe revision"</Button>
+                                    </div>
+                                </BreweryPanel>
+                            }
+                        })}
+                        <Show when=move || retry.get().is_some_and(|request| request.brew_id == current_brew.get())>
+                            <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| { if let Some(request) = retry.get_untracked() { submit.run(request); } }>"Retry previous request"</Button>
+                        </Show>
+                        <Show when=move || retry.get().is_some_and(|request| request.brew_id != current_brew.get())>
+                            <p class="note-caption">"An earlier feedback request is unresolved; reopen its brew to retry it."</p>
+                        </Show>
                     </BreweryPanel>
-                </section>
+                }
+            })}
+            {move || print.get().map(|print| {
+                let actual = print.actual.as_ref().map(|actual| {
+                    format!(
+                        "Actual formulation revision {} · recorded {}",
+                        actual.revision,
+                        format_timestamp(actual.recorded_at)
+                    )
+                }).unwrap_or_else(|| "No actual formulation amendment.".to_owned());
+                view! {
+                    <section class="print-preview" aria-label="Historical print preview">
+                        <div class="print-preview__toolbar">
+                            <div>
+                                <p class="kit-showcase__eyebrow">"Historical print preview"</p>
+                                <p class="note-caption">
+                                    {format!("Frozen recipe revision {}. Planned targets are printed with recorded actuals listed separately.", print.selected_recipe_revision)}
+                                </p>
+                            </div>
+                            <Button on:click=move |_| { #[cfg(target_arch = "wasm32")] if let Some(window) = web_sys::window() { let _ = window.print(); } }>"Print / Save as PDF"</Button>
+                        </div>
+                        <div class="print-preview__sheet"><PrintableRecipe summary=print.summary/></div>
+                        <BreweryPanel
+                            title="Recorded actuals"
+                            description="Separate from the frozen plan; these readings and amendments never replace the printed targets."
+                        >
+                            <table class="print-sheet__table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">"Measurement"</th>
+                                        <th scope="col">"Planned target"</th>
+                                        <th scope="col">"Recorded actual"</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {print.measurements.iter().map(|row| {
+                                        let target = measurement_value_or(row.target, &row.unit, "No planned target");
+                                        let current = row.current.as_ref().and_then(|entry| entry.value);
+                                        let actual_text = measurement_value_or(current, &row.unit, "No reading recorded");
+                                        view! {
+                                            <BrewMeasurementRow
+                                                label=row.label.clone()
+                                                planned=target
+                                                actual=actual_text
+                                            />
+                                        }
+                                    }).collect_view()}
+                                </tbody>
+                            </table>
+                            <p class="note-caption">{actual}</p>
+                            <BreweryDisclosure title="Frozen print provenance">
+                                <dl class="print-sheet__facts">
+                                    <BrewProvenanceFact label="Brew reference".to_owned() value=print.brew_id.clone()/>
+                                    <BrewProvenanceFact label="Recipe revision".to_owned() value=format!("{}", print.selected_recipe_revision)/>
+                                    {print.actual.as_ref().map(|actual| view! {
+                                        <BrewProvenanceFact label="Actual recorded by".to_owned() value=actual.actor_id.clone()/>
+                                    })}
+                                </dl>
+                            </BreweryDisclosure>
+                        </BreweryPanel>
+                    </section>
+                }
             })}
         </div>
     }

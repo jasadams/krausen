@@ -2,8 +2,12 @@
 //! Minimal brew evidence surface over the shared KRA-21 operations.
 use crate::{
     components::{
-        BreweryDraftArea, BreweryDraftField, BreweryMetric, BreweryNotice, BreweryPanel, Button,
-        ButtonVariant, layout::EditorGuard,
+        BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryMetric, BreweryNotice,
+        BreweryPanel, Button, ButtonVariant, brew_evidence_rows::BrewProvenanceFact,
+        layout::EditorGuard,
+    },
+    pages::brew_history_presentation::{
+        actor_text, format_measurement_value, format_timestamp, status_label,
     },
     pages::recipe_editor::current_context_matches,
     server_fns::brew::{
@@ -200,14 +204,17 @@ fn lifecycle_message(outcome: &BrewLifecycleOutcome) -> (bool, String) {
             status, revision, ..
         } => (
             true,
-            format!("Brew is now {} at revision {revision}.", status.as_str()),
+            format!(
+                "Brew is now {} at revision {revision}.",
+                status_label(*status)
+            ),
         ),
         BrewLifecycleOutcome::InvalidTransition { from, to } => (
             false,
             format!(
                 "Cannot move from {} to {} in that direction.",
-                from.as_str(),
-                to.as_str()
+                status_label(*from),
+                status_label(*to)
             ),
         ),
         BrewLifecycleOutcome::Conflict { expected, actual } => (
@@ -1001,18 +1008,25 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     <BreweryNotice title="Brew evidence" body=message.get() warning=warning.get()/>
                 })}
                 {move || view.get().map(|data| {
-                    let status = data.status.as_str().to_owned();
-                    let actual_source = if data.actual.is_some() { "actual amendment" } else { "frozen plan" };
+                    let status = status_label(data.status).to_owned();
+                    let actual_source = if data.actual.is_some() { "Recorded actual formulation" } else { "Planned formulation" };
+                    let actual_revision = data.actual.as_ref()
+                        .map(|actual| format!("Revision {}", actual.revision))
+                        .unwrap_or_else(|| "Planned formulation only".to_owned());
                     let boil_minutes = data.actual.as_ref()
                         .map(|actual| actual.document.boil_minutes)
                         .unwrap_or(data.plan.recipe.boil_minutes);
                     let archive_label = if data.archived { "Unarchive brew" } else { "Archive brew" };
                     let archived = data.archived;
+                    let current_actor = intent.get_value().account_id;
+                    let started_by = actor_text(&data.started_by, Some(current_actor.as_str()));
+                    let started = format_timestamp(data.started_at);
                     view! {
                         <div class="recipe-editor__metrics">
-                            <BreweryMetric label="Status" value=status.clone() unit="">{""}</BreweryMetric>
-                            <BreweryMetric label="Revision" value=data.revision.to_string() unit="">{""}</BreweryMetric>
-                            <BreweryMetric label="Metadata revision" value=data.metadata_revision.to_string() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Status" value=status unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Started" value=started.clone() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Recipe revision" value=data.selected_recipe_revision.to_string() unit="">{""}</BreweryMetric>
+                            <BreweryMetric label="Recorded actual" value=actual_revision unit="">{""}</BreweryMetric>
                             <BreweryMetric label="Actual source" value=actual_source.to_string() unit="">{""}</BreweryMetric>
                             <BreweryMetric
                                 label="Boil duration"
@@ -1022,13 +1036,20 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         </div>
                         <p class="note-caption">
                             {format!(
-                                "Started {} by {}. Recipe revision {} (frozen). Archived: {}.",
-                                data.started_at,
-                                data.started_by,
+                                "Started {} by {}. The recipe revision {} is frozen for this brew.{}",
+                                started,
+                                started_by,
                                 data.selected_recipe_revision,
-                                if data.archived { "yes" } else { "no" }
+                                if archived { " This brew is archived." } else { " This brew is active." }
                             )}
                         </p>
+                        <BreweryDisclosure title="Record provenance">
+                            <dl class="print-sheet__facts">
+                                <BrewProvenanceFact label="Brew reference".to_owned() value=data.brew_id.clone()/>
+                                <BrewProvenanceFact label="Brew revision".to_owned() value=data.revision.to_string()/>
+                                <BrewProvenanceFact label="Record revision".to_owned() value=data.metadata_revision.to_string()/>
+                            </dl>
+                        </BreweryDisclosure>
                         <div class="recipe-editor__actions">
                             <Button
                                 disabled=blocked
@@ -1159,23 +1180,26 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                             let candidates = readings.get().into_iter()
                                 .filter(|entry| entry.quantity_id == quantity_id && entry.value.is_some())
                                 .collect::<Vec<_>>();
-                            let target = slot.target.map(|value| format!("{value:.3}")).unwrap_or_else(|| "—".into());
+                            let unit = slot.unit.clone();
+                            let target = slot.target
+                                .map(|value| format_measurement_value(value, &unit))
+                                .unwrap_or_else(|| "No planned target".into());
                             let current_value = slot.current.as_ref()
                                 .and_then(|entry| entry.value)
-                                .map(|value| format!("{value:.3}"))
-                                .unwrap_or_else(|| "—".into());
+                                .map(|value| format_measurement_value(value, &unit))
+                                .unwrap_or_else(|| "No reading recorded".into());
                             view! {
                                 <div class="recipe-editor__summary">
-                                    <h4>{format!("{} ({})", slot.label, slot.unit)}</h4>
+                                    <h4>{slot.label.clone()}</h4>
                                     <p class="note-caption">
-                                        {format!("Target {} · selected {}", target, current_value)}
+                                        {format!("Planned target {} · selected actual {}", target, current_value)}
                                     </p>
                                     <BreweryDraftField
                                         id=field_id
                                         label=slot.label
                                         value=input_value
                                         on_change=input_change
-                                        unit=slot.unit
+                                        unit=unit.clone()
                                         numeric=true
                                     />
                                     <div class="recipe-editor__actions">
@@ -1208,7 +1232,16 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                                 };
                                                 view! {
                                                     <li>
-                                                        <span>{format!("{:?} at {}", entry.value, entry.observed_at)}</span>
+                                                        <span>
+                                                            {format!(
+                                                                "{} · {}",
+                                                                entry.value
+                                                                    .map(|value| format_measurement_value(value, &unit))
+                                                                    .unwrap_or_else(|| "Retracted".into()),
+                                                                format_timestamp(entry.observed_at)
+                                                            )}
+                                                        </span>
+                                                        {selected.then(|| view! { <span class="note-caption">"Selected"</span> })}
                                                         {(!selected).then(|| view! {
                                                             <Button variant=ButtonVariant::Secondary disabled=blocked on:click=select>"Select"</Button>
                                                         })}
@@ -1306,7 +1339,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                 view! {
                                     <li>
                                         <p>{text}</p>
-                                        <p class="note-caption">{format!("Revision {revision}")}</p>
+                                        <p class="note-caption">{format!("Updated {} · revision {revision}", format_timestamp(note_view.current.recorded_at))}</p>
                                         <div class="recipe-editor__actions">
                                             <Button variant=ButtonVariant::Secondary disabled=blocked on:click=correct_note>"Correct with draft"</Button>
                                             <Button variant=ButtonVariant::Secondary disabled=blocked on:click=retract_note>"Retract"</Button>
@@ -1321,11 +1354,12 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                             {data.lifecycle.into_iter().chain(lifecycle_extra.get().into_iter()).map(|event| view! {
                                 <li>
                                     {format!(
-                                        "Revision {}: {} → {}{}",
-                                        event.brew_revision,
-                                        event.from_status.as_str(),
-                                        event.to_status.as_str(),
-                                        event.reason.as_ref().map(|reason| format!(" ({reason})")).unwrap_or_default()
+                                        "{}: {} → {}{} · revision {}",
+                                        format_timestamp(event.recorded_at),
+                                        status_label(event.from_status),
+                                        status_label(event.to_status),
+                                        event.reason.as_ref().map(|reason| format!(" ({reason})")).unwrap_or_default(),
+                                        event.brew_revision
                                     )}
                                 </li>
                             }).collect_view()}

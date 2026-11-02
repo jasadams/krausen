@@ -4,6 +4,7 @@
 
 pub mod action_status;
 pub mod brewery_kit;
+pub mod brew_evidence_rows;
 pub mod layout;
 pub mod alert;
 pub mod badge;
@@ -18,6 +19,7 @@ pub mod modal;
 pub mod navigation_progress;
 pub mod popover;
 pub mod printable_recipe;
+pub mod recipe_revision_history;
 pub mod search_input;
 pub mod select;
 pub mod skeleton;
@@ -52,3 +54,8 @@ pub use tooltip::Tooltip;
 pub use brewery_kit::{BreweryAddition, BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
 
 pub use printable_recipe::PrintableRecipe;
+pub use recipe_revision_history::RecipeRevisionHistory;
+pub use brew_evidence_rows::{BrewMeasurementRow, BrewProvenanceFact};
+pub use brewery_kit::BreweryBeerPortrait;
+pub use brewery_kit::BreweryCompactIngredientRow;
+pub use crate::pages::brew_history_presentation;

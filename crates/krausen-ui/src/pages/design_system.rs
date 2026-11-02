@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Live showcase: these are the components used by the recipe editor.
+use crate::components::brewery_kit::BreweryBadge;
 use crate::components::{
-    BreweryAddition, BreweryDialog, BreweryDisclosure, BreweryField, BreweryIngredientRow,
-    BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs,
+    BreweryDialog, BreweryDisclosure, BreweryField,
+    BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs,
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
 };
 use leptos::prelude::*;
+use phosphor_leptos::Icon;
 
 fn printable_example() -> krausen_types::process_summary::ProcessSummary {
     use krausen_types::{
@@ -199,6 +201,7 @@ pub fn DesignSystemPage() -> impl IntoView {
     let invalid = RwSignal::new("-1".to_owned());
     let dialog = RwSignal::new(false);
     let grain = RwSignal::new("4.20".to_owned());
+    let grain_name = RwSignal::new("Pilsner malt".to_owned());
     let show_grain = RwSignal::new(true);
     let style = RwSignal::new("example-a".to_owned());
     let notes = RwSignal::new("A clean, malt-forward lager.".to_owned());
@@ -207,29 +210,37 @@ pub fn DesignSystemPage() -> impl IntoView {
     let search_query = RwSignal::new(String::new());
     view! {
         <div class="kit-showcase">
-            <header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Krausen design system"</p><h1>"A more considered brew day."</h1><p>"The shared controls, typography and calculation states used across your workspace."</p></header>
+            <header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Krausen / Design system / 01"</p><h1>"Good design, "<em>"on repeat."</em></h1><p>"One considered system. Every ingredient, every interaction, every screen."</p><div class="kit-showcase__badges"><BreweryBadge tone="accent">"Living component library"</BreweryBadge><BreweryBadge>"Approved direction"</BreweryBadge></div></header>
+            <div class="kit-showcase__principles"><div><span>"01 / Warm & precise"</span><p>"A little craft. A lot of clarity."</p></div><div><span>"02 / Component first"</span><p>"Same building blocks. Everywhere."</p></div><div><span>"03 / Quietly useful"</span><p>"Nothing between you and the recipe."</p></div></div>
             <div class="kit-showcase__grid">
-                <BreweryPanel title="A grounded palette" description="Semantic tokens keep every surface consistent.">
+                <BreweryPanel title="A grounded palette" eyebrow="Foundations / Colour" description="Semantic tokens, rather than page-specific colours.">
                     <div class="kit-showcase__swatches"><TokenSwatch role=SwatchRole::Background/><TokenSwatch role=SwatchRole::Surface/><TokenSwatch role=SwatchRole::Ink/><TokenSwatch role=SwatchRole::Copper/><TokenSwatch role=SwatchRole::Sage/><TokenSwatch role=SwatchRole::Border/></div>
+                    <div class="kit-showcase__badges"><BreweryBadge tone="success">"Saved"</BreweryBadge><BreweryBadge tone="warning">"Unsaved"</BreweryBadge><BreweryBadge tone="accent">"All grain"</BreweryBadge></div>
                 </BreweryPanel>
-                <BreweryPanel title="Type with a point of view" description="Instrument Serif, DM Sans and Geist Mono.">
-                    <div class="kit-showcase__stack"><p class="kit-type-specimen">"Made to be brewed."</p><p>"Clear, comfortable reading for the details that matter."</p><p class="kit-number-specimen">"1.045    20.5 L    78%"</p></div>
+                <BreweryPanel title="Type with a point of view" eyebrow="Foundations / Typography">
+                    <div class="kit-showcase__stack"><p class="kit-type-specimen">"Made to be brewed."</p><p>"DM Sans keeps the everyday clear and effortless."</p><p class="kit-number-specimen">"1.045　 20.5 L　 78%"</p><p class="kit-showcase__token">"INSTRUMENT SERIF / DM SANS / GEIST MONO"</p></div>
                 </BreweryPanel>
-                <BreweryPanel title="Actions" description="Clear actions and quiet alternatives.">
-                    <div class="kit-showcase__row"><Button>"Save recipe"</Button><Button variant=ButtonVariant::Secondary>"Preview"</Button><Button variant=ButtonVariant::Ghost>"Cancel"</Button><Button variant=ButtonVariant::Destructive size=ButtonSize::Sm>"Delete"</Button><Button disabled=true>"Saving…"</Button></div>
+                <BreweryPanel title="Actions with hierarchy" eyebrow="Component / Button" description="A deliberate primary action. Supporting controls stay quiet.">
+                    <div class="kit-showcase__stack"><div class="kit-showcase__row"><Button><Icon icon=phosphor_leptos::CHECK size="16px"/>"Save recipe"</Button><Button variant=ButtonVariant::Secondary><Icon icon=phosphor_leptos::PLUS size="16px"/>"Add ingredient"</Button><Button variant=ButtonVariant::Ghost>"View history"</Button></div><div class="kit-showcase__row"><Button disabled=true>"Saving…"</Button><Button variant=ButtonVariant::Secondary size=ButtonSize::Icon aria_label="Equipment settings"><Icon icon=phosphor_leptos::GEAR size="16px"/></Button><Button variant=ButtonVariant::Destructive size=ButtonSize::Sm>"Delete"</Button></div><p class="kit-showcase__token">"Button · variant / size / icon / disabled"</p></div>
                 </BreweryPanel>
-                <BreweryPanel title="Fields" description="Labels, units and validation stay visible.">
-                    <div class="kit-showcase__stack"><BreweryField id="show-name" label="Recipe name" value=name/><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" hint="Volume into the fermenter"/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" error="Enter a non-negative amount"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryTextArea id="show-notes" label="Notes" value=notes/></div>
+                <BreweryPanel title="Forms without the friction" eyebrow="Component / Field & Select" description="Labels, units and validation stay visible.">
+                    <div class="kit-showcase__fields"><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" hint="Volume into the fermenter"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" error="Enter a non-negative amount"/><BreweryField id="show-name" label="Recipe name" value=name/><BreweryTextArea id="show-notes" label="Notes" value=notes/></div>
                 </BreweryPanel>
                 <BreweryPanel title="Measurements" description="Style ranges are guidance, not a save restriction.">
+                    <crate::components::BreweryBeerPortrait/>
                     <div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
                 </BreweryPanel>
+                <BreweryPanel title="Brew measurements" description="Frozen planned targets and selected readings remain distinct.">
+                    <div class="kit-showcase__table-scroll" tabindex="0" role="region" aria-label="Brew measurements table"><table class="print-sheet__table"><thead><tr><th scope="col">"Measurement"</th><th scope="col">"Planned target"</th><th scope="col">"Selected actual"</th><th scope="col">"Comparison"</th></tr></thead><tbody>
+                        <crate::components::BrewMeasurementRow label="Original gravity".to_owned() basis="Specific gravity".to_owned() planned=crate::components::brew_history_presentation::measurement_value_or(Some(1.050), "sg", "No planned target") actual=crate::components::brew_history_presentation::measurement_value_or(Some(1.056), "sg", "No reading recorded") comparison=crate::components::brew_history_presentation::measurement_status_text(true, Some(0.006), "sg", None)/>
+                        <crate::components::BrewMeasurementRow label="Batch volume".to_owned() planned=crate::components::brew_history_presentation::measurement_value_or(Some(20.5), "l", "No planned target") actual=crate::components::brew_history_presentation::measurement_value_or(None, "l", "No reading recorded") comparison="No reading recorded.".to_owned()/>
+                    </tbody></table></div>
+                    <dl class="print-sheet__facts"><crate::components::BrewProvenanceFact label="Recipe revision".to_owned() value="Revision 3".to_owned()/></dl>
+                </BreweryPanel>
                 <BreweryPanel title="Ingredients" description="Editable quantities stay with their source specification.">
-                    <BreweryAddition>
                     <Show when=move || show_grain.get() fallback=move || view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_grain.set(true)>"Restore example"</Button> }>
-                        <BreweryIngredientRow name="Pilsner malt" description="Weyermann · 3 EBC" unit="kg" amount=grain on_remove=Callback::new(move |()| show_grain.set(false))/>
+                        <BreweryCompactIngredientRow label=Signal::derive(move || { let name = grain_name.get(); if name.trim().is_empty() { "Unnamed fermentable".to_owned() } else { name } }) description=Signal::derive(|| "Weyermann · 3 EBC".to_owned()) name_field=view! { <BreweryField id="show-grain-name" label="Name" value=grain_name/> }.into_any() amount_field=view! { <BreweryField id="show-grain-amount" label="Amount" unit="kg" value=grain/> }.into_any() details=view! { <p>"Source specification and stage"</p> }.into_any() on_remove=Callback::new(move |()| show_grain.set(false))/>
                     </Show>
-                    </BreweryAddition>
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
                     <div class="kit-showcase__row"><BrewerySaveStatus state=SaveState::Saved/><BrewerySaveStatus state=SaveState::Unsaved/><BrewerySaveStatus state=SaveState::Saving/><BrewerySaveStatus state=SaveState::Conflict/><BrewerySaveStatus state=SaveState::Error/></div>
