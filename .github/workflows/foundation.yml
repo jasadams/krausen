@@ -82,6 +82,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib pages::brew_history_presentation::presentation_tests
       - run: cargo test -p krausen-ui --features ssr --lib printable_recipe::tests
       - run: cargo test -p krausen-ui --features ssr --lib button::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recovery_password_action_submits_its_form
       - run: cargo test -p krausen-ui --features ssr --lib brew_evidence_rows::tests
       - run: cargo test -p krausen-ui --features ssr --lib beerxml::tests
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
