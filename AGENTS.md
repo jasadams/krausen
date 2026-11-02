@@ -1,7 +1,7 @@
 # Krausen agent guidance
 
 Status: implementation guidance for the shared application contracts and approved
-visual system. [ADOPTION.md](docs/ADOPTION.md) records KRA-5 review/adoption status.
+UX/IA/visual system. [ADOPTION.md](docs/ADOPTION.md) records KRA-5 review/adoption status.
 Explicit current user instructions control when they conflict with older documents.
 
 ## Required reading
@@ -9,8 +9,11 @@ Explicit current user instructions control when they conflict with older documen
 Before working in this repository, read:
 
 1. [Documentation index](docs/README.md) for document status and scope.
-2. [Design system](DESIGN.md) for confirmed interactions, approved visuals,
-   shared component ownership and production/prototype boundaries.
+2. [Information architecture](docs/INFORMATION_ARCHITECTURE.md) and
+   [UX design](docs/UX_DESIGN.md): authoritative approved presentation/navigation
+   targets, stable requirements, complete control migration and acceptance gate.
+   ALL coders and reviewers MUST follow them. Read [design system](DESIGN.md)
+   for approved visuals, shared component ownership and prototype boundaries.
 3. [Architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md) and
    [calculations](docs/CALCULATIONS.md) for canonical implementation contracts; read [adoption](docs/ADOPTION.md)
    for boundary decisions, delivery order and acceptance evidence.
@@ -36,6 +39,31 @@ Use `DESIGN.md` for the confirmed explicit-save/draft behavior, equal UI/MCP
 permissions, independent revision-checked editing and historical snapshot
 requirements. Reuse shared components and tokens; pages must not restyle them.
 The showcase and recipe use the same kit.
+
+The 2026-11-02 UX/IA contracts govern presentation and navigation over older
+composition/prototype/source examples. Backend contracts remain owned by
+architecture/data/calculations. Target approval is not implementation acceptance.
+Equipment is an approved new UI management destination using existing services;
+global Brews, new catalogues and grain-total/share projection remain deferred
+capability decisions, not invented implemented features. Do not revive cancelled
+account/security/MCP expansion through this UX work; preserve existing operations.
+
+### Mandatory UX/IA review gate
+
+- Every implementation ticket/PR MUST link applicable IA-/UX-/INT-/VIS-/ACC-
+  requirement IDs, current base/instructions, preserved controls and exact evidence.
+- Review the actual recipe against approved desktop/mobile sample images, not
+  only palette parity or a previously accepted broken layout. Recipe and showcase
+  MUST use the same actual components/variants; pages MUST NOT restyle internals.
+- Material departures from the target, sample or relevant pinned Tane/Kyomi
+  patterns MUST document reason, user impact and Jason's approval before coding.
+  Legacy source/screenshots and worker preference are not permission to diverge.
+- Apply the UX screen/state verification matrix. Source-inferred risks require
+  failing reproduction before fixes; screenshots, sampled components and CSS
+  intent do not certify runtime, native zoom or real assistive-technology behavior.
+- Obtain three independent written candidate-bound reviews covering correctness/
+  acceptance, lifecycle/state and integration/reuse. Self-review is not approval;
+  material deltas require affected-lens re-review. Follow existing test cadence.
 
 [KRAUSEN.md](KRAUSEN.md) is historical reasoning, clearly superseded by the canonical
 documents. Its learning/sensor vision does not expand current scope. The archived
@@ -91,7 +119,12 @@ not mark KRA tickets complete merely because a prototype or screenshot exists.
 ## Delivery coordination
 
 Do not create any new Trakkt ticket or sub-ticket without Jason's explicit
-approval. Refine existing scope, acceptance and dependencies instead. Each
+approval. For the 2026-11-02 approved UX/IA delivery, Jason explicitly authorizes
+the lead to create/update deduplicated autonomous implementation-gap tickets
+AFTER the authoritative documentation merges; refine KRA-33–43 first. This does
+not approve optional/deferred capability expansion, reopen Done history or resume
+paused product candidates by itself. Refine existing scope, acceptance and
+dependencies otherwise. Each
 assigned developer owns one ticket through implementation, tests, review fixes
 and an open PR. The delivery lead reviews/merges, records completion and assigns
 the next ticket; developers do not merge or start another ticket themselves.

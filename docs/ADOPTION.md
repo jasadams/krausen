@@ -17,6 +17,12 @@ live collaboration or automatic recipe/equipment learning is introduced.
 The canonical documents are [architecture](ARCHITECTURE.md),
 [data model](DATA_MODEL.md), [calculations](CALCULATIONS.md),
 [design system](../DESIGN.md) and [coding standards](CODING_STANDARDS.md).
+The user-approved 2026-11-02 [information architecture](INFORMATION_ARCHITECTURE.md)
+and [UX design](UX_DESIGN.md) are authoritative for presentation/navigation and
+mandatory for every coder/reviewer. Their target/control/state/evidence contracts
+supersede conflicting older composition examples, not backend semantics. They
+do not claim product implementation or runtime acceptance. Material sample or
+Tane/Kyomi departures need documented reason, user impact and Jason's approval.
 This record binds their decisions and tracks implementation ownership. Historical
 KRAUSEN/starter text cannot override them. KRA-1–4 design delivery stays complete;
 only materially changed contracts need fresh review.
@@ -46,6 +52,25 @@ are settled in calculations. Supporting import/scale/print/conflict/actual-entry
 interactions are specified in DESIGN.md using the approved kit.
 
 ## Delivery order and acceptance ownership
+
+The original KRA-6–24 table below preserves adoption-era ownership/dependencies,
+not live ticket status or a command to reactivate completed/cancelled work. Read
+current Trakkt records; in particular the cancelled KRA-11 is not revived by
+preserving its historical row or by this presentation work. Existing account,
+security, brewing UI/MCP operations and permissions remain intact; no account/
+security MCP expansion is authorized here.
+
+For the 2026-11-02 UX/IA target, Jason authorized documentation publication first,
+then a current implementation-gap inventory and creation/update of deduplicated
+autonomous implementation tickets after merge. Refine KRA-33–43 first; link exact
+merged requirements, migration controls and state/evidence acceptance. New
+Equipment UI management reuses existing services. Global Brews, new catalogues,
+grain totals/shares projection and other explicit UX/IA deferrals still need
+separate capability approval, not fabricated UI values or premature agent-ready
+backend scope. Historical A4 defects remain deferred. Publication does not resume
+paused product candidates or reopen all Done tickets. Three independent written
+candidate-bound reviews remain required; no review/implementation pass is implied
+by documenting the approved target.
 
 This is a dependency map, not an instruction to execute all tickets at once.
 Implementation descriptions must link these canonical contracts. Tickets can
