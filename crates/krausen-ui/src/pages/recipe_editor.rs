@@ -2225,7 +2225,7 @@ fn FormulationPreview(
         let current = draft.with(|d| d.generation);
         result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| preview)
     });
-    view! { <div class="recipe-editor__preview-summary"><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true>
+    view! { <div class="recipe-editor__preview-summary"><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true presentation=crate::components::PanelPresentation::Summary>
         <p role="status">{move || if draft.with(|d| d.generation) == message_generation.get() { message.get() } else { "Awaiting preview.".into() }}</p>
         <crate::components::BreweryBeerPortrait/>
         {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview/> })}
@@ -2238,12 +2238,12 @@ fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView
     let style = preview.style.as_ref();
     let comparison = preview.style_comparison.as_ref();
     view! { <div class="recipe-editor__metrics">
-        {preview_metric("Original gravity", preview.targets.original_sg, style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3)}
-        {preview_metric("Final gravity", preview.targets.final_sg, style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3)}
-        {preview_metric("Alcohol", preview.targets.abv_percent, style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1)}
-        {preview_metric("Bitterness", preview.targets.ibu, style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1)}
-        {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1)}
-        {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1)}
+        {preview_metric("Original gravity", preview.targets.original_sg, style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline)}
+        {preview_metric("Final gravity", preview.targets.final_sg, style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline)}
+        {preview_metric("Alcohol", preview.targets.abv_percent, style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Bitterness", preview.targets.ibu, style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1, crate::components::MetricDensity::Headline)}
     </div>
     {preview.style.as_ref().map(|style| view! { <p class="recipe-editor__provenance">{format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition)}</p> })}
     }
@@ -2253,22 +2253,22 @@ fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView
 fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView {
     view! {
     <BreweryPanel title="Water plan"><div class="recipe-editor__metrics">
-        {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1)}
-        {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1)}
-        {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1)}
-        {preview_metric("Grain absorption", preview.targets.grain_absorption_l, None, None, "L", 1)}
-        {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1)}
-        {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1)}
-        {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3)}
+        {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Grain absorption", preview.targets.grain_absorption_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
+        {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3, crate::components::MetricDensity::Quiet)}
     </div></BreweryPanel>
     {preview.context.as_ref().map(|context| {
         let equipment = context.effective_equipment.clone();
         let name = context.equipment_profile.as_ref().map(|profile| format!("{} · revision {}", profile.name, profile.revision)).unwrap_or_else(|| "Recipe equipment settings".to_owned());
         view! { <BreweryPanel title="Your equipment" description=name>
             <div class="recipe-editor__metrics">
-                {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1)}
-                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1)}
-                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1)}
+                {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1, crate::components::MetricDensity::Quiet)}
+                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1, crate::components::MetricDensity::Quiet)}
+                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
             </div>
             <p>"New brews use current settings; previous brews retain their original equipment."</p>
         </BreweryPanel> }
@@ -2292,6 +2292,7 @@ fn preview_metric(
     comparison: Option<krausen_types::formulation::RangeStatus>,
     unit: &'static str,
     digits: usize,
+    density: crate::components::MetricDensity,
 ) -> AnyView {
     use krausen_types::formulation::RangeStatus;
     let formatted = value
@@ -2301,5 +2302,5 @@ fn preview_metric(
         let state = match comparison { Some(RangeStatus::Below) => crate::components::StyleState::Below, Some(RangeStatus::Within) => crate::components::StyleState::Within, Some(RangeStatus::Above) => crate::components::StyleState::Above, None => crate::components::StyleState::Awaiting };
         view! { <crate::components::StyleRange label=label min=r.min max=r.max value=value state=state unit=unit digits=digits/> }
     });
-    view! { <crate::components::BreweryMetric label=label value=formatted unit=unit>{range_view}</crate::components::BreweryMetric> }.into_any()
+    view! { <crate::components::BreweryMetric label=label value=formatted unit=unit density=density>{range_view}</crate::components::BreweryMetric> }.into_any()
 }

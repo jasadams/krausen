@@ -7,6 +7,8 @@ use crate::components::{
     BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs,
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
+    BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryPopover, BrewerySection,
+    MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation,
 };
 use leptos::prelude::*;
 use phosphor_leptos::Icon;
@@ -208,6 +210,18 @@ pub fn DesignSystemPage() -> impl IntoView {
     let active_tab = RwSignal::new("recipe".to_owned());
     let selected_item = RwSignal::new(false);
     let search_query = RwSignal::new(String::new());
+    let popup = RwSignal::new(false);
+    let nested_popup = RwSignal::new(false);
+    let field_error = RwSignal::new(None::<String>);
+    let settled = RwSignal::new(String::new());
+    let hop_name = RwSignal::new("Hallertauer Mittelfrüh — long shared schedule example".to_owned());
+    let hop_amount = RwSignal::new("28.0".to_owned());
+    let hop_minutes = RwSignal::new("60".to_owned());
+    let hop_stage = RwSignal::new("boil".to_owned());
+    let changing_popup = RwSignal::new(false);
+    let more_memberships = RwSignal::new(false);
+    let temporary_popup = RwSignal::new(false);
+    let show_temporary = RwSignal::new(true);
     view! {
         <div class="kit-showcase">
             <header class="kit-showcase__heading"><p class="kit-showcase__eyebrow">"Krausen / Design system / 01"</p><h1>"Good design, "<em>"on repeat."</em></h1><p>"One considered system. Every ingredient, every interaction, every screen."</p><div class="kit-showcase__badges"><BreweryBadge tone="accent">"Living component library"</BreweryBadge><BreweryBadge>"Approved direction"</BreweryBadge></div></header>
@@ -220,13 +234,42 @@ pub fn DesignSystemPage() -> impl IntoView {
                 <BreweryPanel title="Type with a point of view" eyebrow="Foundations / Typography">
                     <div class="kit-showcase__stack"><p class="kit-type-specimen">"Made to be brewed."</p><p>"DM Sans keeps the everyday clear and effortless."</p><p class="kit-number-specimen">"1.045　 20.5 L　 78%"</p><p class="kit-showcase__token">"INSTRUMENT SERIF / DM SANS / GEIST MONO"</p></div>
                 </BreweryPanel>
-                <BreweryPanel title="Actions with hierarchy" eyebrow="Component / Button" description="A deliberate primary action. Supporting controls stay quiet.">
+                <BreweryPanel title="Actions with hierarchy" eyebrow="Component / Button" description="A deliberate primary action. Supporting controls stay quiet."
+                    actions=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Ghost>"Back"</Button> }.into_any())
+                    footer=std::sync::Arc::new(move || view! { <BreweryActionGroup end=true label="Example task actions"><Button variant=ButtonVariant::Ghost>"Cancel"</Button><Button>"Save recipe"</Button></BreweryActionGroup> }.into_any())>
                     <div class="kit-showcase__stack"><div class="kit-showcase__row"><Button><Icon icon=phosphor_leptos::CHECK size="16px"/>"Save recipe"</Button><Button variant=ButtonVariant::Secondary><Icon icon=phosphor_leptos::PLUS size="16px"/>"Add ingredient"</Button><Button variant=ButtonVariant::Ghost>"View history"</Button></div><div class="kit-showcase__row"><Button disabled=true>"Saving…"</Button><Button variant=ButtonVariant::Secondary size=ButtonSize::Icon aria_label="Equipment settings"><Icon icon=phosphor_leptos::GEAR size="16px"/></Button><Button variant=ButtonVariant::Destructive size=ButtonSize::Sm>"Delete"</Button></div><p class="kit-showcase__token">"Button · variant / size / icon / disabled"</p></div>
                 </BreweryPanel>
-                <BreweryPanel title="Forms without the friction" eyebrow="Component / Field & Select" description="Labels, units and validation stay visible.">
-                    <div class="kit-showcase__fields"><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" hint="Volume into the fermenter"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" error="Enter a non-negative amount"/><BreweryField id="show-name" label="Recipe name" value=name/><BreweryTextArea id="show-notes" label="Notes" value=notes/></div>
+                <BreweryPanel title="Ordinary anchored actions" description="Tab leaves naturally; Escape returns to the opener. No menu roles or arrow-key promise.">
+                    <BreweryActionGroup label="Popover examples">
+                        <BreweryPopover id="showcase-actions" label="Recipe actions" open=popup return_focus_id="showcase-popover-successor">
+                            <a href="#showcase-popover-successor">"View source context"</a>
+                            <Button variant=ButtonVariant::Ghost on:click=move |_| { popup.set(false); settled.set("Example action selected".into()); }>"Use selected source"</Button>
+                            <Button variant=ButtonVariant::Secondary disabled=true>"Export unavailable source"</Button>
+                            <p class="note-caption">"Save a source before exporting. This example performs no business command."</p>
+                        </BreweryPopover>
+                        <Button variant=ButtonVariant::Secondary on:click=move |_| dialog.set(true)>"Open Navigation example"</Button>
+                        <BreweryPopover id="showcase-changing-actions" label="Changing actions example" open=changing_popup>
+                            <Button variant=ButtonVariant::Secondary on:click=move |_| more_memberships.set(true)>"Load example memberships"</Button>
+                            <Show when=move || more_memberships.get()>{(1..=20).map(|number| view! { <Button variant=ButtonVariant::Ghost>{format!("Loaded membership {number}")}</Button> }).collect_view()}</Show>
+                        </BreweryPopover>
+                        <Show when=move || show_temporary.get()>
+                            <BreweryPopover id="showcase-temporary-actions" label="Temporary actions example" open=temporary_popup return_focus_id="showcase-popover-successor">
+                                <Button variant=ButtonVariant::Secondary on:click=move |_| show_temporary.set(false)>"Finish temporary example"</Button>
+                            </BreweryPopover>
+                        </Show>
+                    </BreweryActionGroup>
+                    <h3 id="showcase-popover-successor" tabindex="-1">"After actions"</h3>
+                    <p role="status">{move || settled.get()}</p>
                 </BreweryPanel>
-                <BreweryPanel title="Measurements" description="Style ranges are guidance, not a save restriction.">
+                <BreweryPanel title="Forms without the friction" eyebrow="Component / Field & Select" description="Labels, units and validation stay visible.">
+                    <BrewerySection title="Source fields"><BreweryFieldRow><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" numeric=true hint="Volume into the fermenter"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" numeric=true error="Enter a non-negative amount"/><BreweryField id="show-name" label="Recipe name" value=name/><BreweryTextArea id="show-notes" label="Notes" value=notes/></BreweryFieldRow></BrewerySection>
+                    <BrewerySection title="Raw field states"><BreweryFieldRow>
+                        <BreweryDraftField id="show-raw" label="Raw quantity" unit="kg" numeric=true value=Signal::from(grain) on_change=Callback::new(move |next: String| { grain.set(next); field_error.set(None); }) on_blur=Callback::new(move |()| field_error.set(Some("Demonstration of a settled field message; raw text is retained.".into()))) error={Signal::<Option<String>>::from(field_error)} hint="Type a transient value, then blur; this example does not parse or normalize."/>
+                        <BreweryField id="show-readonly" label="Read-only source amount" unit="kg" numeric=true value=grain read_only=true hint="Readable and focusable, but not editable"/>
+                        <BreweryField id="show-disabled" label="Unavailable amount" unit="kg" numeric=true value=grain disabled=true hint="Unavailable while this example is pending"/>
+                    </BreweryFieldRow></BrewerySection>
+                </BreweryPanel>
+                <BreweryPanel title="Measurements" presentation=PanelPresentation::Summary mobile_compact=true description="Style ranges are guidance, not a save restriction.">
                     <crate::components::BreweryBeerPortrait/>
                     <div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
                 </BreweryPanel>
@@ -238,12 +281,21 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <dl class="print-sheet__facts"><crate::components::BrewProvenanceFact label="Recipe revision".to_owned() value="Revision 3".to_owned()/></dl>
                 </BreweryPanel>
                 <BreweryPanel title="Ingredients" description="Editable quantities stay with their source specification.">
+                    <BreweryCompactIngredientRow label=Signal::derive(move || hop_name.get()) description=Signal::derive(|| "Hop schedule example — ordinary decisions remain outside secondary details".to_owned())
+                        name_field=view! { <BreweryField id="show-hop-name" label="Hop name" value=hop_name/> }.into_any()
+                        amount_field=view! { <BreweryField id="show-hop-amount" label="Hop amount" unit="g" numeric=true value=hop_amount/> }.into_any()
+                        schedule=view! { <BreweryFieldRow><BrewerySelect id="show-hop-stage" label="Hop stage" value=hop_stage options=vec![("boil".into(), "Boil".into()), ("whirlpool".into(), "Whirlpool".into())]/><BreweryField id="show-hop-minutes" label="Contact time" unit="min" numeric=true value=hop_minutes/></BreweryFieldRow> }.into_any()
+                        details=view! { <BreweryField id="show-hop-alpha" label="Alpha acid example" unit="%" value=RwSignal::new("4.5".to_owned()) numeric=true/> }.into_any()
+                        on_remove=Callback::new(move |()| settled.set("Example removal requested; demonstration row retained.".into()))/>
                     <Show when=move || show_grain.get() fallback=move || view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_grain.set(true)>"Restore example"</Button> }>
-                        <BreweryCompactIngredientRow label=Signal::derive(move || { let name = grain_name.get(); if name.trim().is_empty() { "Unnamed fermentable".to_owned() } else { name } }) description=Signal::derive(|| "Weyermann · 3 EBC".to_owned()) name_field=view! { <BreweryField id="show-grain-name" label="Name" value=grain_name/> }.into_any() amount_field=view! { <BreweryField id="show-grain-amount" label="Amount" unit="kg" value=grain/> }.into_any() details=view! { <p>"Source specification and stage"</p> }.into_any() on_remove=Callback::new(move |()| show_grain.set(false))/>
+                        <BreweryCompactIngredientRow label=Signal::derive(move || { let name = grain_name.get(); if name.trim().is_empty() { "Unnamed fermentable".to_owned() } else { name } }) description=Signal::derive(|| "Weyermann · 3 EBC".to_owned()) name_field=view! { <BreweryField id="show-grain-name" label="Name" value=grain_name/> }.into_any() amount_field=view! { <BreweryField id="show-grain-amount" label="Amount" unit="kg" value=grain numeric=true/> }.into_any() details=view! { <p>"Source specification and stage"</p> }.into_any() on_remove=Callback::new(move |()| show_grain.set(false))/>
                     </Show>
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
-                    <div class="kit-showcase__row"><BrewerySaveStatus state=SaveState::Saved/><BrewerySaveStatus state=SaveState::Unsaved/><BrewerySaveStatus state=SaveState::Saving/><BrewerySaveStatus state=SaveState::Conflict/><BrewerySaveStatus state=SaveState::Error/></div>
+                    <BreweryActionGroup label="Pending task actions"><Button pending=true>"Save changes"</Button><Button variant=ButtonVariant::Ghost disabled=true>"Cancel"</Button></BreweryActionGroup>
+                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/></BreweryActionGroup>
+                    <BreweryMetric label="Supporting water" value="28.36" unit="L" density=MetricDensity::Quiet>{()}</BreweryMetric>
+                    <BreweryMetric label="Compact estimate" value="1.049" unit="SG" density=MetricDensity::Compact>{()}</BreweryMetric>
                 </BreweryPanel>
                 <BreweryPanel title="Ingredient catalogue" description="A copied specification stays with the recipe.">
                     <div class="k-catalogue-list">
@@ -267,14 +319,15 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div role="tabpanel" id="show-tabs-panel-brews" aria-labelledby="show-tabs-tab-brews" hidden=move || active_tab.get() != "brews">"Brews section"</div>
                 </BreweryPanel>
                 <BreweryPanel title="Feedback" description="Status is expressed in words as well as colour.">
-                    <div class="kit-showcase__stack"><BreweryNotice title="Draft incomplete" body="Add a batch volume to see the affected estimates." warning=true/><BreweryNotice title="Recipe saved" body="Your revision is available to everyone in this workspace."/><Button variant=ButtonVariant::Secondary on:click=move |_| dialog.set(true)>"Open dialog"</Button></div>
+                    <BreweryNotice title="Example save failed" body="Keep this page open and retry when the connection is available. Your local values remain editable." tone=NoticeTone::Error/>
+                    <div class="kit-showcase__stack"><BreweryNotice title="Draft incomplete" body="Add a batch volume to see the affected estimates." warning=true/><BreweryNotice title="Recipe saved" body="Your revision is available to everyone in this workspace." announcement=NoticeAnnouncement::Settled/><Button variant=ButtonVariant::Secondary on:click=move |_| dialog.set(true)>"Open dialog"</Button></div>
                 </BreweryPanel>
             </div>
             <BreweryDisclosure title="Printable recipe and process summary">
                 <p class="note-caption">"The same shared summary is used by the editor print preview and the MCP operation. A saved revision and an unsaved draft are identified separately."</p>
                 <div class="print-preview__sheet"><PrintableRecipe summary=printable_example()/></div>
             </BreweryDisclosure>
-            <BreweryDialog id="showcase-dialog" title="Keep your changes?" description="A saved recipe revision is separate from your draft." open=dialog><p>"You can return to this recipe before deciding."</p></BreweryDialog>
+            <BreweryDialog id="showcase-dialog" title="Keep your changes?" description="A saved recipe revision is separate from your draft." open=dialog><p>"You can return to this recipe before deciding."</p><BreweryPopover id="showcase-nested-account" label="Account actions example" open=nested_popup><a href="#showcase-popover-successor">"Profile example"</a>{(1..=30).map(|number| view! { <Button variant=ButtonVariant::Ghost>{format!("Workspace example {number}{}", if number == 1 { " (current)" } else { "" })}</Button> }).collect_view()}</BreweryPopover></BreweryDialog>
         </div>
     }
 }

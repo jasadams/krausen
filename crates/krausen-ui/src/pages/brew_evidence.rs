@@ -998,6 +998,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         title="Outcome uncertain"
                         body="The last write may have committed. Retry the same request or abandon it before changing content."
                         warning=true
+                        announcement=crate::components::NoticeAnnouncement::Settled
                     />
                     <div class="recipe-editor__actions">
                         <Button disabled=write_busy on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
@@ -1005,7 +1006,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     </div>
                 })}
                 {move || (!message.get().is_empty()).then(|| view! {
-                    <BreweryNotice title="Brew evidence" body=message.get() warning=warning.get()/>
+                    <BreweryNotice title="Brew evidence" body=message.get() warning=warning.get() announcement=crate::components::NoticeAnnouncement::Settled/>
                 })}
                 {move || view.get().map(|data| {
                     let status = status_label(data.status).to_owned();
