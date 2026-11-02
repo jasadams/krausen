@@ -25,6 +25,7 @@ async function importRecipe(page: import('@playwright/test').Page, xml: string) 
   await page.getByRole('button', { name: 'Import recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Recipe imported' })).toBeVisible();
   await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
 }
 
 test('a saved revision prints the shared sheet and identifies its source', async ({ page }) => {
@@ -60,6 +61,7 @@ test('an unsaved draft is labelled and closing the preview preserves it', async 
   await page.goto('/recipe-editor/new');
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('Draft print');
+  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
   await page.getByRole('button', { name: 'Preview unsaved draft' }).click();
   const preview = page.getByRole('region', { name: 'Print preview' });
   await expect(preview).toBeVisible();
@@ -202,6 +204,7 @@ test('print uses the light paper palette in dark mode and the print class never 
   await page.goto('/recipe-editor/new');
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByLabel('Recipe name', { exact: true }).fill('Dark print');
+  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
   await page.getByRole('button', { name: 'Preview unsaved draft' }).click();
   await expect(page.locator('body')).toHaveClass(/krausen-printing/);
   await page.emulateMedia({ media: 'print' });
