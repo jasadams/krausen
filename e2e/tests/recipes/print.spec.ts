@@ -192,7 +192,7 @@ test('a delayed summary denial redacts a mounted editor even after a draft edit'
   await requestStarted;
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('Edited during print');
-  await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
+  await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
   await expect(name).toBeHidden();
   await expect(page.locator('.print-sheet')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);

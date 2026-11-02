@@ -26,7 +26,7 @@ mod recipe_comparison;
 type EditorIdentity = krausen_types::request_context::OperationIntent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EditorAccess {
+pub(crate) enum EditorAccess {
     Verified,
     Checking,
     NetworkUnavailable,
@@ -37,6 +37,13 @@ enum EditorAccess {
 
 #[derive(Clone, Copy)]
 struct ContextCheckGeneration(RwSignal<u64>);
+
+/// Existing editor authority presentation, shared with protected child tasks.
+#[derive(Clone, Copy)]
+pub(crate) struct EditorAuthorityHold {
+    pub(crate) generation: RwSignal<u64>,
+    pub(crate) on_failure: Callback<(u64, EditorAccess)>,
+}
 
 impl EditorAccess {
     fn title(self) -> &'static str {
@@ -275,6 +282,21 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         access.set(EditorAccess::Forbidden);
         context_lost.set(true);
         preview_gate.update_value(|gate| { gate.invalidate(); });
+    });
+    provide_context(EditorAuthorityHold {
+        generation: check_generation,
+        on_failure: Callback::new(move |(epoch, outcome)| {
+            if check_generation.try_get_untracked() != Some(epoch) { return; }
+            if outcome == EditorAccess::Forbidden {
+                history_authority_failure.run(());
+            } else {
+                hold_editor(access, context_visible, outcome);
+                if outcome == EditorAccess::Mismatch {
+                    context_lost.set(true);
+                    preview_gate.update_value(|gate| { gate.invalidate(); });
+                }
+            }
+        }),
     });
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));

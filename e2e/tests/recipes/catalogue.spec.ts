@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 import { DEFAULT_TEST_USER, db, loginUser, sqlText } from '../../helpers/test-helpers';
 
 async function waitForCatalogueSearch(page: Page) {
@@ -17,6 +17,279 @@ async function waitForCatalogueSearch(page: Page) {
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
+
+// These gates delay actual production continuations; no picker state is copied
+// into a test reducer. Only the transport outcome and delivery order are varied.
+function catalogueGate() {
+  let release!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  return { ready, release: () => release(), hold: async () => { started(); await gate; } };
+}
+
+function ingredientCommand(route: Route) {
+  const raw = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function catalogueCreateForm(page: Page, name: string) {
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'A fermentable of your own' });
+  await expect(create).toBeVisible();
+  await create.getByLabel('Fermentable name').fill(name);
+  await create.getByLabel('Colour (EBC)').fill('4.5');
+  await create.getByLabel('Potential yield (%)').fill('80');
+  return create;
+}
+
+async function catalogueAction(page: Page, kind: 'Search' | 'Save' | 'Archive') {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  const name = `E2E lifecycle ${kind} ${Date.now()}`;
+  if (kind === 'Archive') {
+    const create = await catalogueCreateForm(page, name);
+    await create.getByRole('button', { name: 'Save to library' }).click();
+    await expect(picker).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expect(picker.getByRole('button', { name })).toHaveCount(1);
+    await picker.getByRole('button', { name }).click();
+  }
+  const create = kind === 'Save' ? await catalogueCreateForm(page, name) : null;
+  return {
+    picker, create, name, errors,
+    fire: async () => {
+      if (kind === 'Search') await picker.getByLabel('Search fermentables').fill(name);
+      else if (kind === 'Save') await create!.getByRole('button', { name: 'Save to library' }).click();
+      else await picker.getByRole('button', { name: 'Archive', exact: true }).click();
+    },
+  };
+}
+
+for (const kind of ['Save', 'Archive'] as const) {
+  test(`CAT-L1 ${kind} publishes current denial before a failed legacy postflight`, async ({ page }) => {
+    const action = await catalogueAction(page, kind);
+    const requests: any[] = [];
+    let failNextContext = false;
+    let failedPostflights = 0;
+    await page.route('**/leptos-api/get_user_context*', async route => {
+      if (failNextContext) {
+        failNextContext = false;
+        failedPostflights++;
+        await route.fulfill({ status: 503, body: 'transient postflight failure' });
+      } else await route.continue();
+    });
+    await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+      const command = ingredientCommand(route);
+      if (!command?.[kind]) return route.continue();
+      requests.push(command[kind]);
+      failNextContext = true;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+    });
+    await action.fire();
+    try {
+      await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+      await expect(action.picker).toBeHidden();
+      if (action.create) await expect(action.create).toBeHidden();
+      expect(requests).toHaveLength(1);
+      expect(action.errors).toEqual([]);
+    } finally {
+      await test.info().attach('command-denial-order', { body: JSON.stringify({ requests, failedPostflights }), contentType: 'application/json' });
+    }
+  });
+}
+
+for (const kind of ['Search', 'Save', 'Archive'] as const) {
+  test(`CAT-L2 old ${kind} cannot redact or unlock a reopened successor command`, async ({ page }) => {
+    const action = await catalogueAction(page, kind);
+    const old = catalogueGate();
+    const successor = catalogueGate();
+    const requests: any[] = [];
+    let capturedOld = false;
+    await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+      const command = ingredientCommand(route);
+      if (command?.[kind] && !capturedOld) {
+        capturedOld = true;
+        requests.push({ old: command });
+        await old.hold();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+      }
+      if (command?.Save) {
+        const retry = requests.some(request => request.successor);
+        requests.push({ successor: command.Save });
+        if (retry) return route.continue();
+        await successor.hold();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Unavailable') });
+      }
+      await route.continue();
+    });
+    try {
+      await action.fire();
+      await old.ready;
+      // Search keeps focus in its input; use the actual task Cancel control
+      // rather than treating native Escape readiness as ownership evidence.
+      if (kind === 'Search') await action.picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+      else await page.keyboard.press('Escape');
+      if (action.create) await expect(action.create).toBeHidden();
+      await expect(action.picker).toBeHidden();
+      await page.getByRole('button', { name: 'Add fermentable' }).click();
+      await expect(action.picker).toBeVisible();
+      const name = `E2E successor ${kind} ${Date.now()}`;
+      const create = await catalogueCreateForm(page, name);
+      await create.getByRole('button', { name: 'Save to library' }).click();
+      await successor.ready;
+      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
+      await expect(create.getByRole('button', { name: 'Save to library' })).toBeDisabled();
+      const oldResponse = page.waitForResponse(response => {
+        const raw = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+        return response.url().includes('execute_ingredient_command') && !!raw && JSON.stringify(JSON.parse(raw)) === JSON.stringify(requests[0].old);
+      });
+      old.release();
+      await (await oldResponse).finished();
+      successor.release();
+      // Both held transports have now completed. Drain any real postflights,
+      // then verify the successor's observable retained state and full replay.
+      await page.waitForLoadState('networkidle');
+      await expect(create).toBeVisible();
+      await expect(create.getByLabel('Fermentable name')).toHaveValue(name);
+      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
+      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
+      await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
+      await create.getByRole('button', { name: 'Retry previous request' }).click();
+      await expect.poll(() => requests.length).toBe(3);
+      expect(requests[2].successor).toEqual(requests[1].successor);
+      await expect(action.picker).toBeVisible();
+      await page.waitForLoadState('networkidle');
+      expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(name)}`)).toBe('1');
+      expect(action.errors).toEqual([]);
+    } finally {
+      old.release();
+      successor.release();
+      await test.info().attach('originating-and-successor-commands', { body: JSON.stringify(requests), contentType: 'application/json' });
+    }
+  });
+}
+
+test('CAT-v2-L1 initial Archive retains its selection and exact request across nonmatching Search', async ({ page }) => {
+  const action = await catalogueAction(page, 'Archive');
+  const initial = catalogueGate();
+  const requests: any[] = [];
+  let emptySearch: any = null;
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const command = ingredientCommand(route);
+    if (command?.Archive) {
+      requests.push(command.Archive);
+      if (requests.length === 1) {
+        await initial.hold();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Unavailable') });
+      }
+    }
+    await route.continue();
+  });
+  try {
+    await action.fire();
+    await initial.ready;
+    const query = `no-matching-inflight-archive-${Date.now()}`;
+    const searched = page.waitForResponse(async response => {
+      if (!response.url().includes('/execute_ingredient_command')) return false;
+      const raw = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+      if (!raw || JSON.parse(raw)?.Search?.query !== query) return false;
+      emptySearch = await response.json();
+      return true;
+    });
+    await action.picker.getByLabel('Search fermentables').fill(query);
+    await searched;
+    expect(emptySearch.Entries.items).toEqual([]);
+    // This is actual rendered application of the nonmatching Entries page,
+    // not merely delivery of an intercepted response.
+    await expect(action.picker.getByText('Make this library your own')).toBeVisible();
+    await expect(action.picker.locator('.k-catalogue-selection strong')).toHaveText(action.name);
+    initial.release();
+    await page.waitForLoadState('networkidle');
+    const retry = action.picker.getByRole('button', { name: 'Retry previous request' });
+    await expect(retry).toBeEnabled();
+    await expect(action.picker.getByRole('button', { name: 'Edit library entry' })).toBeDisabled();
+    await expect(action.picker.locator('.k-catalogue-selection strong')).toHaveText(action.name);
+    await retry.click();
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1]).toEqual(requests[0]);
+    await page.waitForLoadState('networkidle');
+    expect(db.exec(`SELECT COUNT(*) FROM ingredient_archive_events WHERE entry_id = ${sqlText(requests[0].entry_id)}`)).toBe('1');
+    expect(db.exec(`SELECT archived FROM ingredient_entries WHERE entry_id = ${sqlText(requests[0].entry_id)}`)).toBe('1');
+    expect(action.errors).toEqual([]);
+  } finally {
+    initial.release();
+    await test.info().attach('initial-archive-and-nonmatching-search', { body: JSON.stringify({ requests, emptySearch }), contentType: 'application/json' });
+  }
+});
+
+for (const kind of ['Save', 'Archive'] as const) {
+  test(`CAT-L3 newer epoch preserves locked exact ${kind} replay after old denial`, async ({ page }) => {
+    const action = await catalogueAction(page, kind);
+    const old = catalogueGate();
+    const requests: any[] = [];
+    await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+      const command = ingredientCommand(route);
+      if (!command?.[kind]) return route.continue();
+      requests.push(command[kind]);
+      if (requests.length === 1) {
+        await old.hold();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+      }
+      await route.continue();
+    });
+    try {
+      await action.fire();
+      await old.ready;
+      const reauthorized = page.waitForResponse(response => response.url().includes('/list_formulation_styles') && response.ok());
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await reauthorized;
+      const active = action.create ?? action.picker;
+      await expect(active).toBeVisible();
+      const delivered = page.waitForResponse(response => {
+        const raw = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+        return response.url().includes('execute_ingredient_command') && !!raw && JSON.parse(raw)?.[kind] !== undefined;
+      });
+      old.release();
+      await delivered;
+      const retry = active.getByRole('button', { name: 'Retry previous request' });
+      await expect(retry).toBeEnabled();
+      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
+      if (action.create) {
+        await expect(action.create.getByLabel('Fermentable name')).toBeDisabled();
+        await expect(action.create.getByLabel('Colour (EBC)')).toBeDisabled();
+        await expect(action.create.getByLabel('Potential yield (%)')).toBeDisabled();
+      } else {
+        await expect(action.picker.getByRole('button', { name: 'Edit library entry' })).toBeDisabled();
+        // The real result remains clickable, but cannot retarget the retained
+        // archive. Filter changes also must not clear its selected entry.
+        await action.picker.getByRole('button', { name: 'All fermentables', exact: true }).click();
+        await expect(action.picker.getByRole('button', { name: /Weyermann Vienna/ })).toHaveCount(1);
+        await action.picker.getByRole('button', { name: /Weyermann Vienna/ }).click();
+        await expect(action.picker.locator('.k-catalogue-selection strong')).toHaveText(action.name);
+      }
+      await retry.click();
+      await expect.poll(() => requests.length).toBe(2);
+      expect(requests[1]).toEqual(requests[0]);
+      await expect(action.picker).toBeVisible();
+      await page.waitForLoadState('networkidle');
+      expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(action.name)}`)).toBe('1');
+      if (kind === 'Archive') expect(db.exec(`SELECT COUNT(*) FROM ingredient_archive_events WHERE entry_id = ${sqlText(requests[0].entry_id)}`)).toBe('1');
+      expect(action.errors).toEqual([]);
+    } finally {
+      old.release();
+      await test.info().attach('original-and-replayed-command', { body: JSON.stringify(requests), contentType: 'application/json' });
+    }
+  });
+}
 
 test('the starter catalogue search copies a resolved specification into the recipe', async ({ page }) => {
   await page.goto('/recipe-editor/new');
@@ -328,12 +601,22 @@ test('an unavailable create keeps the pending command locked and retries identic
   await expect(create.getByLabel('Fermentable name')).toBeDisabled();
   await expect(create.getByLabel('Colour (EBC)')).toBeDisabled();
   await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
-  const retrySearch = waitForCatalogueSearch(page);
+  // Do not confuse an older initial/all search with the post-save library
+  // refresh. Bind the actual returned row to this retained command's entry ID.
+  const retrySearch = page.waitForResponse(async response => {
+    if (!response.url().includes('execute_ingredient_command')) return false;
+    const payload = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+    if (!payload || JSON.parse(payload)?.Search?.filter !== 'workspace') return false;
+    const result = await response.json();
+    return result.Entries?.items?.some((entry: any) => entry.entry_id === requests[0].entry_id) === true;
+  });
   await create.getByRole('button', { name: 'Retry previous request' }).click();
   await retrySearch;
   await page.unroute('**/leptos-api/execute_ingredient_command*');
+  await page.waitForLoadState('networkidle');
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
   expect(requests).toHaveLength(2);
+  expect(requests[1].entry_id).toBe(requests[0].entry_id);
   expect(requests[1].request_id).toBe(requests[0].request_id);
   expect(requests[1].document).toEqual(requests[0].document);
 });
@@ -371,7 +654,9 @@ test('a stale catalogue search denial still redacts the mounted editor', async (
   await libraryFilter.click();
   await expect(libraryFilter).toHaveAttribute('aria-pressed', 'true');
   release();
-  await expect(page.getByText('Recipe held in its original workspace')).toBeVisible();
+  await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+  await expect(picker).toBeHidden();
   expect(errors).toEqual([]);
 });
 

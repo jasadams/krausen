@@ -1,8 +1,8 @@
 {
   ".github/workflows/foundation.yml": {
-    "mtime": 1793620941.4373972,
-    "seen": 1793633448.2016025,
-    "ast_hash": "edd0deedd1d493865c0b59bfcf0da5f8",
+    "mtime": 1793639250.3583493,
+    "seen": 1793644163.0265036,
+    "ast_hash": "3116e3e44d7fff088755512921ef3062",
     "semantic_hash": ""
   },
   ".github/workflows/release.yml": {
@@ -1380,9 +1380,9 @@
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/catalogue_picker.rs": {
-    "mtime": 1793630801.3688023,
-    "seen": 1793633448.202121,
-    "ast_hash": "9ed13558a554685e0c6e2e9ef91f703b",
+    "mtime": 1793645117.2325413,
+    "seen": 1793645213.5200393,
+    "ast_hash": "9432cd9c164234ddf30552e4466f4663",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/design_system.rs": {
@@ -1416,9 +1416,9 @@
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_editor.rs": {
-    "mtime": 1793635803.4301264,
-    "seen": 1793635868.9163375,
-    "ast_hash": "8b30b152bef7936bdcf17747eba63bd6",
+    "mtime": 1793642116.883099,
+    "seen": 1793644163.0379505,
+    "ast_hash": "bd152629f37f66db4f7018cc89eae9c9",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_preview_gate.rs": {
@@ -1770,9 +1770,9 @@
     "semantic_hash": ""
   },
   "e2e/scripts/profile-browser.sh": {
-    "mtime": 1793630801.3698022,
-    "seen": 1793633448.2022614,
-    "ast_hash": "553c6211e260ab94cde722bbb4c97046",
+    "mtime": 1793639250.3583493,
+    "seen": 1793644163.0408556,
+    "ast_hash": "b31919109033d132a48d04d314a37d4a",
     "semantic_hash": ""
   },
   "e2e/tests/auth/account-recovery.spec.ts": {
@@ -1866,9 +1866,9 @@
     "semantic_hash": ""
   },
   "e2e/tests/recipes/catalogue.spec.ts": {
-    "mtime": 1793630801.3708024,
-    "seen": 1793633448.202294,
-    "ast_hash": "85f0eb626b737148bc80d37afd2729a0",
+    "mtime": 1793645049.3656719,
+    "seen": 1793645213.5242555,
+    "ast_hash": "1193e5b4bc29ac3f847cfad78528f6c3",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/design-fidelity.spec.ts": {
@@ -1890,9 +1890,9 @@
     "semantic_hash": ""
   },
   "e2e/tests/recipes/print.spec.ts": {
-    "mtime": 1793620941.4900198,
-    "seen": 1793633448.2023017,
-    "ast_hash": "d80837835b84dbbd111f09d5d949ec26",
+    "mtime": 1793641235.4707997,
+    "seen": 1793644163.041754,
+    "ast_hash": "d5f27522483a01ba18f4eaff6f89801b",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/scaling.spec.ts": {
