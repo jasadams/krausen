@@ -1,5 +1,18 @@
 # Krausen design system
 
+**Current presentation authority (2026-11-02):** all coders and reviewers MUST
+follow [information architecture](docs/INFORMATION_ARCHITECTURE.md) and
+[UX design](docs/UX_DESIGN.md), including their requirement IDs, full control
+migration and evidence gate. This document continues to own visual identity,
+tokens and shared-component rules. The newer target supersedes older navigation/
+composition examples: no prominent workspace selector, no customer showcase
+entry, one Recipe / Saved versions / Brews vocabulary, scoped on-demand tasks.
+Equipment is an approved new UI manager; global Brews/catalogue expansion and
+grain-total/share projection remain deferred decisions. Backend semantics remain
+owned by architecture/data/calculations. Target approval is not implementation
+acceptance; original prototype/production-status statements below describe the
+design-pack baseline, not a current release manifest.
+
 Review the [recipe mockup](docs/design/previews/recipe-desktop.png),
 [component showcase](docs/design/previews/design-system.png) and
 [mobile recipe](docs/design/previews/recipe-mobile.png). The
@@ -30,12 +43,16 @@ UI-only production calculation path.
 Read this document, `docs/CODING_STANDARDS.md`, and the applicable architecture,
 data-model and calculation documents before changing UI components. Follow
 explicit current user decisions when older repository guidance conflicts.
+The UX/IA documents above are required for every implementation/review; material
+departures from target/sample/reference patterns need recorded reason, user
+impact and Jason's approval, not quiet worker choice.
 `KRAUSEN.md` contains useful calculation/history principles, but its broader
 product scope and some profile-adoption guidance predate the current decisions.
 The adoption record defines current contract status and implementation ownership.
 
 | Source | Authority in this design work |
 | --- | --- |
+| `docs/INFORMATION_ARCHITECTURE.md`, `docs/UX_DESIGN.md` | Current authoritative presentation/task targets and acceptance; override older composition examples |
 | Confirmed interactions below | Product behavior confirmed during design review |
 | `DESIGN.md` | Approved visual/component reference; production integration pending |
 | `docs/design/prototype/tokens.css` | Single source of approved prototype token values |

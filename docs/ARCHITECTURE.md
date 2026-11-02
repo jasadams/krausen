@@ -7,6 +7,12 @@ This specifies target behavior; it does not claim services are already implement
 Read with [data model](DATA_MODEL.md), [calculations](CALCULATIONS.md),
 [design system](../DESIGN.md) and [coding standards](CODING_STANDARDS.md).
 These contracts supersede conflicting starter/historical instructions.
+The 2026-11-02 [information architecture](INFORMATION_ARCHITECTURE.md) and
+[UX design](UX_DESIGN.md) govern presentation/task organization for all coders and
+reviewers. They do not replace shared-operation, permission, transaction, native
+data, calculation or immutable-history contracts. New Equipment management is a
+UI destination over existing capabilities, not a parallel service. Optional
+global brew-list/catalogue/projection expansion is not implicitly authorized.
 
 ## Confirmed product contracts
 
@@ -421,6 +427,12 @@ succeeds. These outcomes must be exercised through both adapters during
 implementation acceptance.
 
 ## Existing implementation and gaps
+
+The following is the original architecture-adoption baseline inventory, not a
+current release/status manifest. Consult current source/tickets before work;
+subsequent delivered foundations are not reopened by this historical narrative.
+The new UX/IA documents distinguish their approved target from their reviewed
+`f66a62d` implementation baseline and required future acceptance.
 
 The repository contains reusable account/session/workspace services, OAuth
 client/token associations, brewing recipe persistence, calculation and BeerXML

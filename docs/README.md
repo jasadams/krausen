@@ -5,17 +5,24 @@ calculation and workflow contracts are consolidated for KRA-5; the exact adoptio
 status and independent changed-contract verdicts are in [ADOPTION.md](ADOPTION.md).
 Production implementation and its acceptance tests remain separate work.
 
+The **2026-11-02 user-approved UX and information architecture targets** are
+authoritative for ALL coders and reviewers. Target approval is not a claim of
+implementation or runtime verification. They supersede conflicting older
+navigation/composition examples, while backend contracts retain their ownership.
+
 ## Read first
 
 | Document | Purpose and status |
 | --- | --- |
 | [Agent guidance](../AGENTS.md) | Required reading, checkout/delegation/review rules and current scope |
+| [Information architecture](INFORMATION_ARCHITECTURE.md) | Authoritative IA- requirements: destinations, account/workspace navigation, route preservation, inheritance and deferred capabilities |
+| [UX design](UX_DESIGN.md) | Authoritative UX-/INT-/VIS-/ACC- requirements: editor/task states, full control migration, six-review disposition and mandatory verification/review gate |
 | [Adoption record](ADOPTION.md) | Review resolutions, delivery dependencies and required implementation acceptance |
 | [Installation authentication](AUTHENTICATION.md) | Credential cutover, local owner setup and supported MCP authorization |
 | [Architecture](ARCHITECTURE.md) | Shared UI/MCP operations, transaction/auth/tenant and crate boundaries |
 | [Data model](DATA_MODEL.md) | Versioned native records, immutable plans, readings/corrections and lifecycle |
 | [Calculations](CALCULATIONS.md) | Versioned formula/input/context, equipment, scaling and preservation contracts |
-| [Design system](../DESIGN.md) | Living component/token specification, confirmed interactions and approved visual direction |
+| [Design system](../DESIGN.md) | Approved visual/component/token reference; read with authoritative UX/IA target, not as proof of current implementation |
 | [Prototype guidance](design/prototype/AGENTS.md) | Scoped ownership rules for the reusable kit, tokens, page composition and real calculation bridge |
 | [Prototype README](design/prototype/README.md) | Build/run instructions, review checklist and browser-local limitations |
 | [Coding standards](CODING_STANDARDS.md) | Reconciled Rust/Leptos, transaction, shared-service and adapter conventions |
@@ -36,6 +43,11 @@ one developer owning each through its PR and lead-controlled integration.
 
 Repository documents are the durable contract. Tracker records link delivery and
 evidence; later accepted changes update both documents and applicable guidance.
+The original delivery map is historical ownership, not a current status ledger:
+read current tickets, including cancellations, before work. After the new target
+documents merge, the lead maps implementation gaps to KRA-33–43 first, then may
+create user-authorized deduplicated gap tickets. No optional backend expansion,
+paused UI resumption or blanket reopening of Done tickets follows from publication.
 
 ## Independent reviews
 
