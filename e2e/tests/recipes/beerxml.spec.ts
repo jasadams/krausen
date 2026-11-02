@@ -96,6 +96,7 @@ test('an unsaved export is invalidated when the draft changes', async ({ page })
   await page.goto('/recipe-editor/new');
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('First draft');
+  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
   await page.getByRole('button', { name: 'Prepare unsaved draft' }).click();
   const download = page.getByRole('link', { name: 'Download BeerXML', exact: true });
   await expect(download).toBeVisible();
@@ -125,6 +126,7 @@ test('file preview, explicit import and saved/original downloads share native va
   await page.getByLabel('Recipe name', { exact: true }).fill(editedTitle);
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
   await page.getByLabel('Saved revision').fill('2');
   await page.getByRole('button', { name: 'Prepare saved revision' }).click();
   await expect(page.getByRole('button', { name: 'Acknowledge omissions and prepare download' })).toBeVisible();

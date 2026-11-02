@@ -17,7 +17,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 
-/// Krausen logo PNG, embedded at compile time.
+/// Approved brewery-mark.svg rasterized at 3x for email clients (CID PNG).
 static LOGO_BYTES: &[u8] =
     include_bytes!("../../../assets/krausen_email_logo.png");
 
@@ -300,7 +300,7 @@ impl EmailService {
             <a href="{frontend_url}/unsubscribe?email={escaped_email}">Unsubscribe</a> &middot;
             <a href="{frontend_url}/privacy">Privacy</a> &middot;
             <a href="{frontend_url}/terms">Terms</a> &middot;
-            <a href="{frontend_url}" style="color: #4f46e5;">krausen.ai</a>
+            <a href="{frontend_url}" style="color: #a34728;">krausen.ai</a>
         </p>"#
         );
 
@@ -367,6 +367,8 @@ This invitation will expire in 7 days.
 
         let text_body = format!("{subject}\n\n{body_text}\n\nView: {}/settings/team\n", self.frontend_url);
 
+        let html_body = email_template(&self.frontend_url, &html_body, "");
+
         self.send_email(email, &subject, &html_body, Some(&text_body), None, &[])
             .await
     }
@@ -399,7 +401,7 @@ This invitation will expire in 7 days.
             <a href="{escaped_link}" class="button">Create New Passkey</a>
         </div>
 
-        <p style="color: #e74c3c; font-size: 14px;"><strong>This link expires in 15 minutes and can only be used once.</strong></p>
+        <p class="security-notice" style="color: #a2332c; font-size: 14px;"><strong>This link expires in 15 minutes and can only be used once.</strong></p>
 
         <p>If you didn't request this, please ignore this email. Your account is secure—no changes have been made.</p>
 
@@ -411,7 +413,7 @@ This invitation will expire in 7 days.
             You're receiving this because you requested account recovery for Krausen.
         </p>
         <p style="margin: 0;">
-            <a href="{escaped_frontend}" style="color: #4f46e5;">krausen.ai</a>
+            <a href="{escaped_frontend}" style="color: #a34728;">krausen.ai</a>
         </p>"#
         );
 
@@ -472,7 +474,7 @@ You're receiving this email because you requested account recovery for Krausen.
             <a href="{escaped_link}" class="button">Recover Account</a>
         </div>
 
-        <p style="color: #e74c3c; font-size: 14px;"><strong>This link expires in 15 minutes and can only be used once.</strong></p>
+        <p class="security-notice" style="color: #a2332c; font-size: 14px;"><strong>This link expires in 15 minutes and can only be used once.</strong></p>
 
         <p>If you didn't request this, please ignore this email. Your account is secure—no changes have been made.</p>
 
@@ -484,7 +486,7 @@ You're receiving this email because you requested account recovery for Krausen.
             You're receiving this because you requested account recovery for Krausen.
         </p>
         <p style="margin: 0;">
-            <a href="{escaped_frontend}" style="color: #4f46e5;">krausen.ai</a>
+            <a href="{escaped_frontend}" style="color: #a34728;">krausen.ai</a>
         </p>"#
         );
 
@@ -545,7 +547,7 @@ You're receiving this email because you requested account recovery for Krausen.
             <a href="{escaped_link}" class="button">Verify Email Address</a>
         </div>
 
-        <p style="color: #e74c3c; font-size: 14px;"><strong>This link expires in 24 hours.</strong></p>
+        <p class="security-notice" style="color: #a2332c; font-size: 14px;"><strong>This link expires in 24 hours.</strong></p>
 
         <p>If you didn't create a Krausen account, please ignore this email.</p>
 
@@ -557,7 +559,7 @@ You're receiving this email because you requested account recovery for Krausen.
             You're receiving this because someone signed up for Krausen with this email address.
         </p>
         <p style="margin: 0;">
-            <a href="{escaped_frontend}" style="color: #4f46e5;">krausen.ai</a>
+            <a href="{escaped_frontend}" style="color: #a34728;">krausen.ai</a>
         </p>"#
         );
 
@@ -645,6 +647,7 @@ You're receiving this because someone signed up for Krausen with this email addr
 /// all CSS classes used by any user-facing template (including dark-mode media query),
 /// the CID-referenced logo header, and all closing tags.
 fn email_template(frontend_url: &str, body_html: &str, footer_html: &str) -> String {
+    // Literal approved-tokens.css values: CSS variables are not email-safe.
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -658,17 +661,17 @@ fn email_template(frontend_url: &str, body_html: &str, footer_html: &str) -> Str
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
-            color: #1C1917;
+            color: #292c25;
             max-width: 600px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #FAFAF8;
+            background-color: #f7f6f2;
         }}
         .header {{
             text-align: center;
             margin-bottom: 16px;
             padding: 16px 0;
-            border-bottom: 1px solid #E8E5DE;
+            border-bottom: 1px solid #dedfd4;
         }}
         .logo-img {{
             height: 48px;
@@ -678,31 +681,31 @@ fn email_template(frontend_url: &str, body_html: &str, footer_html: &str) -> Str
             padding: 20px 0;
         }}
         h1 {{
-            color: #1C1917;
+            color: #292c25;
             font-size: 24px;
             font-weight: 700;
             margin-bottom: 16px;
         }}
         h2 {{
-            color: #1C1917;
+            color: #292c25;
             font-size: 20px;
             font-weight: 600;
             margin: 24px 0 12px 0;
         }}
         h3 {{
-            color: #1C1917;
+            color: #292c25;
             font-size: 18px;
             font-weight: 600;
             margin: 20px 0 10px 0;
         }}
         p {{
-            color: #6B6660;
+            color: #6d7166;
             font-size: 14px;
             margin: 12px 0;
         }}
         .highlight {{
-            background-color: #fffbeb;
-            border-left: 4px solid #4f46e5;
+            background-color: #f8efd8;
+            border-left: 4px solid #a34728;
             padding: 16px;
             margin: 24px 0;
             border-radius: 0 8px 8px 0;
@@ -713,8 +716,8 @@ fn email_template(frontend_url: &str, body_html: &str, footer_html: &str) -> Str
         }}
         .button {{
             display: inline-block;
-            background-color: #4f46e5;
-            color: #ffffff !important;
+            background-color: #a34728;
+            color: #fffdf8 !important;
             padding: 14px 28px;
             text-decoration: none;
             border-radius: 8px;
@@ -724,34 +727,37 @@ fn email_template(frontend_url: &str, body_html: &str, footer_html: &str) -> Str
         .footer {{
             margin-top: 20px;
             padding-top: 16px;
-            border-top: 1px solid #E8E5DE;
+            border-top: 1px solid #dedfd4;
             text-align: center;
-            color: #9C9790;
+            color: #6d7166;
             font-size: 12px;
         }}
         .footer a {{
-            color: #6B6660;
+            color: #6d7166;
             text-decoration: none;
         }}
         .footer a:hover {{
             text-decoration: underline;
         }}
         @media (prefers-color-scheme: dark) {{
-            body {{ background-color: #12100F !important; color: #F5F3EF !important; }}
-            h1, h2, h3 {{ color: #F5F3EF !important; }}
-            p {{ color: #A8A29E !important; }}
-            .header {{ border-bottom-color: #2E2925 !important; }}
-            .highlight {{ background-color: #2C241E !important; }}
-            .feature {{ color: #A8A29E !important; }}
-            .footer {{ border-top-color: #2E2925 !important; color: #78716C !important; }}
-            .footer a {{ color: #A8A29E !important; }}
+            body {{ background-color: #1c211c !important; color: #f0eee5 !important; }}
+            h1, h2, h3, .brand-name {{ color: #f0eee5 !important; }}
+            p {{ color: #b5bbac !important; }}
+            .header {{ border-bottom-color: #3a4539 !important; }}
+            .highlight {{ background-color: #443a27 !important; border-left-color: #e4a37e !important; }}
+            .button {{ background-color: #e4a37e !important; color: #302016 !important; }}
+            .security-notice {{ color: #f0a79c !important; }}
+            .feature {{ color: #b5bbac !important; }}
+            .footer {{ border-top-color: #3a4539 !important; color: #b5bbac !important; }}
+            .footer a {{ color: #b5bbac !important; }}
         }}
     </style>
 </head>
-<body style="background-color: #FAFAF8; color: #1C1917;">
+<body style="background-color: #f7f6f2; color: #292c25;">
     <div class="header">
         <a href="{frontend_url}" style="text-decoration: none;">
-            <img src="cid:krausen_logo" alt="Krausen" class="logo-img" style="height: 48px; width: auto;">
+            <img src="cid:krausen_logo" alt="Krausen" class="logo-img" width="48" height="48" style="height: 48px; width: 48px; vertical-align: middle;">
+            <span class="brand-name" style="font-family: Georgia, serif; font-size: 32px; color: #292c25; vertical-align: middle;">krausen<span style="color: #a34728;">.</span></span>
         </a>
     </div>
     <div class="content">
@@ -783,50 +789,51 @@ fn admin_email_template(frontend_url: &str, subject: &str, sections_html: &str) 
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            color: #1C1917;
+            color: #292c25;
             max-width: 600px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #FAFAF8;
+            background-color: #f7f6f2;
         }}
         .header {{
             text-align: center;
             margin-bottom: 16px;
             padding: 16px 0;
-            border-bottom: 1px solid #E8E5DE;
+            border-bottom: 1px solid #dedfd4;
         }}
         h2 {{
-            color: #1C1917;
+            color: #292c25;
         }}
         td {{
-            color: #6B6660;
+            color: #6d7166;
         }}
         td:first-child {{
-            color: #1C1917;
+            color: #292c25;
         }}
         .footer {{
             margin-top: 20px;
             padding-top: 16px;
-            border-top: 1px solid #E8E5DE;
+            border-top: 1px solid #dedfd4;
             text-align: center;
-            color: #9C9790;
+            color: #6d7166;
             font-size: 12px;
         }}
         @media (prefers-color-scheme: dark) {{
-            body {{ background-color: #12100F !important; color: #F5F3EF !important; }}
-            h2 {{ color: #F5F3EF !important; }}
-            .header {{ border-bottom-color: #2E2925 !important; }}
-            .footer {{ border-top-color: #2E2925 !important; color: #78716C !important; }}
-            .footer a {{ color: #A8A29E !important; }}
-            td {{ color: #A8A29E !important; }}
-            td:first-child {{ color: #F5F3EF !important; }}
+            body {{ background-color: #1c211c !important; color: #f0eee5 !important; }}
+            h2, .brand-name {{ color: #f0eee5 !important; }}
+            .header {{ border-bottom-color: #3a4539 !important; }}
+            .footer {{ border-top-color: #3a4539 !important; color: #b5bbac !important; }}
+            .footer a {{ color: #b5bbac !important; }}
+            td {{ color: #b5bbac !important; }}
+            td:first-child {{ color: #f0eee5 !important; }}
         }}
     </style>
 </head>
-<body>
+<body style="background-color: #f7f6f2; color: #292c25;">
     <div class="header">
         <a href="{frontend_url}" style="text-decoration: none;">
-            <img src="cid:krausen_logo" alt="Krausen" style="height: 48px; width: auto;">
+            <img src="cid:krausen_logo" alt="Krausen" width="48" height="48" style="height: 48px; width: 48px; vertical-align: middle;">
+            <span class="brand-name" style="font-family: Georgia, serif; font-size: 32px; color: #292c25; vertical-align: middle;">krausen<span style="color: #a34728;">.</span></span>
         </a>
     </div>
     <h2 style="margin:0 0 16px 0;">{subject}</h2>
@@ -834,7 +841,7 @@ fn admin_email_template(frontend_url: &str, subject: &str, sections_html: &str) 
         {sections_html}
     </table>
     <div class="footer">
-        <p style="margin:0;"><a href="{frontend_url}" style="color: #4f46e5;">krausen.ai</a></p>
+        <p style="margin:0;"><a href="{frontend_url}" style="color: #a34728;">krausen.ai</a></p>
     </div>
 </body>
 </html>"#
@@ -896,6 +903,45 @@ mod tests {
         assert_eq!(html_escape("a/b"), "a&#x2F;b");
         assert_eq!(html_escape("a`b"), "a&#96;b");
         assert_eq!(html_escape("safe text 123"), "safe text 123");
+    }
+
+    #[test]
+    fn shared_email_brand_preserves_content_and_links() {
+        let link = html_escape("https://example.test/recover?token=a&next=\"<>'/`");
+        let name = html_escape("<Alice & Bob>");
+        let body = format!("<p>{name}</p><a href=\"{link}\">Recover Account</a>");
+        let footer = "<p>This link expires in 15 minutes and can only be used once.</p>";
+        let html = email_template("https://example.test", &body, footer);
+        assert!(html.contains(&body));
+        assert!(html.contains(footer));
+        assert!(html.contains("&lt;Alice &amp; Bob&gt;"));
+        assert!(!html.contains("<Alice"));
+        assert!(html.contains("href=\"https://example.test\""));
+        assert_email_brand(&html);
+    }
+
+    #[test]
+    fn admin_email_brand_preserves_escaped_sections() {
+        let subject = html_escape("<Signup & feedback>");
+        let sections = format!("<tr><td>{}</td></tr>", html_escape("<name> & value"));
+        let html = admin_email_template("https://example.test", &subject, &sections);
+        assert!(html.contains(&subject));
+        assert!(html.contains(&sections));
+        assert!(!html.contains("<name>"));
+        assert!(html.contains("href=\"https://example.test\""));
+        assert_email_brand(&html);
+    }
+
+    fn assert_email_brand(html: &str) {
+        assert!(html.contains("src=\"cid:krausen_logo\""));
+        assert!(html.contains("alt=\"Krausen\""));
+        assert!(html.contains(">krausen<span"));
+        assert!(!html.to_lowercase().contains("#4f46e5"));
+        for color in ["#f7f6f2", "#292c25", "#a34728", "#1c211c", "#f0eee5"] {
+            assert!(html.contains(color), "missing approved email color {color}");
+        }
+        assert!(LOGO_BYTES.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_eq!(&LOGO_BYTES[16..24], &[0, 0, 0, 120, 0, 0, 0, 120]);
     }
 
     #[tokio::test]

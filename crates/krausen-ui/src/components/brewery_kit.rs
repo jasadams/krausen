@@ -3,16 +3,33 @@
 //! Shared recipe controls and presentation components.
 use leptos::prelude::*;
 
+/// Compact semantic badge for contextual information, shared by kit consumers.
+#[component]
+pub fn BreweryBadge(
+    #[prop(default = "neutral")] tone: &'static str,
+    children: Children,
+) -> impl IntoView {
+    let class = match tone {
+        "success" => "k-badge k-badge--success",
+        "warning" => "k-badge k-badge--warning",
+        "accent" => "k-badge k-badge--accent",
+        _ => "k-badge",
+    };
+    view! { <span class=class>{children()}</span> }
+}
+
 /// Compact, titled surface shared by the editor and component showcase.
 #[component]
 pub fn BreweryPanel(
     #[prop(into)] title: String,
     #[prop(optional, into)] description: Option<String>,
+    #[prop(optional, into)] eyebrow: Option<String>,
+    #[prop(default = false)] mobile_compact: bool,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <section class="k-panel">
-            <header class="k-panel__header"><div><h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div></header>
+        <section class="k-panel" class:k-panel--mobile-compact=mobile_compact>
+            <header class="k-panel__header"><div>{eyebrow.map(|text| view! { <span class="k-panel__eyebrow">{text}</span> })}<h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div></header>
             <div class="k-panel__body">{children()}</div>
         </section>
     }
@@ -198,6 +215,23 @@ pub fn BreweryDialog(
     }
 }
 
+/// Shared compact layout; callers retain ownership of their controlled inputs.
+#[component]
+pub fn BreweryCompactIngredientRow(
+    label: Signal<String>,
+    description: Signal<String>,
+    name_field: AnyView,
+    amount_field: AnyView,
+    details: AnyView,
+    on_remove: Callback<()>,
+) -> impl IntoView {
+    view! { <div class="k-compact-ingredient" role="group" aria-label=move || label.get()>
+        <div class="k-compact-ingredient__main">{name_field}{amount_field}<crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=Signal::derive(move || format!("Remove {}", label.get())) on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button></div>
+        {move || { let text = description.get(); (!text.is_empty()).then(|| view! { <p class="k-compact-ingredient__description">{text}</p> }) }}
+        <BreweryDisclosure title="Addition details" compact=true aria_label=Signal::derive(move || format!("Addition details for {}", label.get()))>{details}</BreweryDisclosure>
+    </div> }
+}
+
 /// Ingredient identity and quantity controls retain an accessible name on mobile.
 #[component]
 pub fn BreweryIngredientRow(
@@ -264,6 +298,12 @@ pub fn BreweryTextArea(
     view! { <BreweryDraftArea id=id label=label value=Signal::from(value)
         on_change=Callback::new(move |next| value.set(next)) hint=MaybeProp::from(hint)/> }
 
+}
+
+/// Decorative portrait shared by formulation and the component showcase.
+#[component]
+pub fn BreweryBeerPortrait() -> impl IntoView {
+    view! { <div class="beer-portrait" aria-hidden="true"><span class="beer-portrait__halo"></span><svg viewBox="0 0 100 140" fill="none"><path class="beer-glass__outline" d="M28 19h44l-4 91c-.3 8-8 14-18 14s-17.7-6-18-14L28 19Z"/><path class="beer-glass__liquid" d="M31 41h38l-3 67c-.3 7-7 12-16 12s-15.7-5-16-12l-3-67Z"/><path class="beer-glass__foam" d="M30 23h40l-.8 18c-5 2-8-1-12 1s-7-1-12 1-9-1-14-1L30 23Z"/><path class="beer-glass__shine" d="m37 51 2 52M40 112l4 3"/><circle class="beer-glass__bubble" cx="55" cy="66" r="1.2"/><circle class="beer-glass__bubble" cx="46" cy="89" r="1"/><circle class="beer-glass__bubble" cx="58" cy="101" r="1.2"/><path class="beer-glass__base" d="M36 130h28"/></svg></div> }
 }
 
 #[cfg(all(test, feature = "ssr"))]
@@ -443,6 +483,7 @@ pub fn BreweryDraftField(
     #[prop(optional, into)] hint: MaybeProp<String>,
     #[prop(default = false)] numeric: bool,
     #[prop(default = false)] disabled: bool,
+    #[prop(default = false)] mobile_title: bool,
     #[prop(default = "text")] input_type: &'static str,
 ) -> impl IntoView {
     let description_id = format!("{id}-description");
@@ -450,7 +491,7 @@ pub fn BreweryDraftField(
     let label_unit = (!unit.is_empty()).then(|| format!(" ({unit})"));
     let display_unit = (!unit.is_empty()).then_some(unit);
     view! {
-        <div class="k-field">
+        <div class="k-field" class:k-field--mobile-title=mobile_title>
             <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
                 <input id=id type=input_type inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled />
@@ -495,8 +536,13 @@ pub fn BreweryBrand(#[prop(optional)] inverse: bool) -> impl IntoView {
 
 /// A compact, keyboard-operable disclosure for secondary settings.
 #[component]
-pub fn BreweryDisclosure(#[prop(into)] title: String, children: Children) -> impl IntoView {
-    view! { <details class="k-disclosure"><summary>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
+pub fn BreweryDisclosure(
+    #[prop(into)] title: String,
+    #[prop(optional)] compact: bool,
+    #[prop(optional, into)] aria_label: MaybeProp<String>,
+    children: Children,
+) -> impl IntoView {
+    view! { <details class="k-disclosure" class:k-disclosure--compact=compact><summary aria-label=move || aria_label.try_get().flatten()>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
 }
 
 /// Controlled multiline text for descriptions and notes.

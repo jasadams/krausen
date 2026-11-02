@@ -46,12 +46,9 @@ fn source_label(source: &SummarySource) -> String {
     match source {
         SummarySource::Saved { revision, .. } => format!("Saved revision {revision}"),
         SummarySource::HistoricalBrew {
-            brew_id,
             selected_recipe_revision,
             ..
-        } => {
-            format!("Historical brew {brew_id} · frozen recipe revision {selected_recipe_revision}")
-        }
+        } => format!("Historical brew · frozen recipe revision {selected_recipe_revision}"),
         SummarySource::UnsavedDraft {
             base_revision: Some(revision),
             ..
@@ -526,6 +523,14 @@ mod tests {
                 base_revision: None
             }),
             "Unsaved draft · not saved"
+        );
+        assert_eq!(
+            source_label(&SummarySource::HistoricalBrew {
+                brew_id: "brew-4f6d2d1b-2d1c-4f1f-9f6f-123456789abc".into(),
+                recipe_id: "r".into(),
+                selected_recipe_revision: 4
+            }),
+            "Historical brew · frozen recipe revision 4"
         );
     }
 

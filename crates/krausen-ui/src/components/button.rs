@@ -59,7 +59,7 @@ pub enum ButtonSize {
 // the default-enabled colors so disabled primary buttons read as neutral gray,
 // not "pale amber". Ghost / Link / Pill variants keep `opacity-50` for their
 // transparent disabled state.
-const BASE: &str = "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--k-radius-sm)] text-[length:var(--k-font-sm)] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
+const BASE: &str = "inline-flex items-center justify-center gap-[var(--k-space-2)] whitespace-nowrap rounded-[var(--k-radius-sm)] text-[length:var(--k-font-sm)] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
 
 fn variant_classes(variant: ButtonVariant) -> &'static str {
     match variant {
@@ -93,13 +93,13 @@ fn variant_classes(variant: ButtonVariant) -> &'static str {
 
 fn size_classes(size: ButtonSize) -> &'static str {
     match size {
-        ButtonSize::Default => "min-h-[var(--k-control-height)] px-4 py-0",
-        // Small: 8px 14px (py-2 px-3.5), 13px font — py-2 gives ~36px height for touch accessibility
-        ButtonSize::Sm => "px-3.5 py-2 text-[13px]",
+        ButtonSize::Default => "min-h-[var(--k-control-height)] px-[var(--k-space-4)] py-0 max-[420px]:min-h-11",
+        // Small: approved compact height and horizontal spacing.
+        ButtonSize::Sm => "min-h-[32px] px-[var(--k-space-3)] py-0 text-[length:var(--k-font-sm)] max-[420px]:min-h-10",
         // Large
         ButtonSize::Lg => "px-8 py-3",
-        // Icon-only: square
-        ButtonSize::Icon => "h-11 w-11 p-0",
+        // Icon-only: approved control-sized square, enlarged for narrow touch screens.
+        ButtonSize::Icon => "h-[var(--k-control-height)] w-[var(--k-control-height)] p-0 max-[420px]:h-11 max-[420px]:w-11",
         // Compact icon-only: 28px square for dense action rows
         ButtonSize::IconSm => "h-7 w-7 p-0",
         // Extra-small icon-only: 20px square for inline tab/chip actions
@@ -138,7 +138,7 @@ pub fn Button(
     disabled: MaybeProp<bool>,
     /// Accessibility label — required for icon-only buttons.
     #[prop(optional, into)]
-    aria_label: Option<String>,
+    aria_label: MaybeProp<String>,
     /// Pressed/toggled state for toggle-style controls (`aria-pressed`).
     #[prop(optional, into)]
     aria_pressed: MaybeProp<String>,
@@ -162,9 +162,9 @@ pub fn Button(
             r#type=button_type
             class=classes
             disabled=move || disabled.try_get().flatten().unwrap_or(false)
-            aria-label=aria_label.clone()
+            aria-label=move || aria_label.try_get().flatten()
             aria-pressed=move || aria_pressed.try_get().flatten()
-            title=aria_label
+            title=move || aria_label.try_get().flatten()
         >
             {children()}
         </button>
@@ -254,4 +254,16 @@ pub fn DownloadLink(
         size_classes(ButtonSize::Default)
     );
     view! { <a href=move || href.get() download=filename class=classes>{children()}</a> }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standard_buttons_use_approved_compact_spacing() {
+        assert!(BASE.contains("gap-[var(--k-space-2)]"));
+        assert!(size_classes(ButtonSize::Default).contains("px-[var(--k-space-4)]"));
+        assert!(size_classes(ButtonSize::Sm).contains("px-[var(--k-space-3)]"));
+    }
 }

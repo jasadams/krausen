@@ -36,4 +36,9 @@ cd e2e
 ./node_modules/.bin/playwright test tests/recipes/catalogue.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/brew-start.spec.ts --reporter=line
+# The populated history assertion in brew-start.spec.ts is env-gated by
+# KRAUSEN_VISUAL_BREW_ID and is exercised manually against the exact visual
+# fixture runtime; it is intentionally skipped in this default CI flow.
+./node_modules/.bin/playwright test tests/recipes/design-fidelity.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/library/shell.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/editor.spec.ts -g 'profile pagination exposes' --reporter=line
