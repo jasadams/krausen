@@ -110,6 +110,7 @@ fn same_leave_destination(
         (Some(EditorDestination::Href(a)), Some(EditorDestination::Href(b))) => a == b,
         (Some(EditorDestination::Workspace(a)), Some(EditorDestination::Workspace(b))) => a == b,
         (Some(EditorDestination::Logout), Some(EditorDestination::Logout)) => true,
+        (Some(EditorDestination::History { key: a, attempt: x }), Some(EditorDestination::History { key: b, attempt: y })) => a == b && x == y,
         _ => false,
     }
 }
@@ -397,6 +398,20 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         },
     );
     let editor_guard = expect_context::<crate::components::layout::EditorGuard>();
+    use crate::components::layout::{GuardTaskKind, GuardScope, GuardTaskState, GuardTaskCallbacks, GuardLeaveAttempt, GuardSaveResolution};
+    let saving_to_leave = RwSignal::new(false);
+    let leave_attempt = StoredValue::new(None::<GuardLeaveAttempt>);
+    let guard_save = StoredValue::new(None::<Callback<GuardLeaveAttempt>>);
+    let guard_discard = StoredValue::new(None::<Callback<(), bool>>);
+    let source = identity.get_untracked();
+    let guard_task = editor_guard.register_task(GuardTaskKind::Recipe, GuardScope {
+        installation: GuardScope::installation(), account_id: source.account_id,
+        workspace_id: source.workspace_id, resource_id: recipe_id.get_untracked(), base_revision: revision.get_untracked(),
+    }, GuardTaskCallbacks {
+        save_and_leave: Some(Callback::new(move |attempt| { if let Some(save) = guard_save.get_value() { save.run(attempt); } })),
+        return_to_actions: None,
+        discard_unsent: Callback::new(move |()| guard_discard.get_value().is_some_and(|discard| discard.run(()))),
+    });
     #[cfg(target_arch = "wasm32")]
     {
         // The router may mount this form before it writes its new URL to
@@ -422,7 +437,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         let window = web_sys::window().expect("browser window");
         let unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
             move |event: web_sys::BeforeUnloadEvent| {
-                if editor_guard.dirty.get_untracked() {
+                if editor_guard.should_warn_unload(&event) {
                     event.prevent_default();
                     event.set_return_value("");
                 }
@@ -454,27 +469,17 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.get() } else { access.get().guidance().to_owned() }));
     Effect::new(move |_| {
         if matches!(access.get(), EditorAccess::Mismatch | EditorAccess::Forbidden) {
-            editor_guard.saving_to_leave.set(false);
+            saving_to_leave.set(false);
         }
     });
     Effect::new(move |_| {
-        editor_guard
-            .pending
-            .set(pending.get() || scale_uncertain.get() || duplicate_uncertain.get())
+        guard_task.update(GuardTaskState {
+            dirty: draft.with(|d| d.dirty), generation: draft.with(|d| d.generation),
+            in_flight: pending.get(), uncertain: retry.get().is_some() || scale_uncertain.get() || duplicate_uncertain.get(),
+            recovery_retained: false, context_visible: context_visible.get(),
+        });
     });
-    Effect::new(move |_| {
-        editor_guard.dirty.set(
-            draft.with(|d| d.dirty)
-                || pending.get()
-                || retry.get().is_some()
-                || scale_uncertain.get()
-                || duplicate_uncertain.get(),
-        )
-    });
-    on_cleanup(move || {
-        editor_guard.dirty.set(false);
-        editor_guard.pending.set(false);
-    });
+    on_cleanup(move || guard_task.unregister());
     let recovery_ready = RwSignal::new(false);
     let retained = RwSignal::new(false);
     let recovery_choice =
@@ -863,7 +868,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             || !recovery_ready.get_untracked()
             || !recovery_choice.get_untracked().is_empty()
         {
-            editor_guard.saving_to_leave.set(false);
+            saving_to_leave.set(false);
             return;
         }
         let attempt = if let Some(attempt) = retry.get_untracked() {
@@ -873,12 +878,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             let snapshot = draft.with_untracked(|d| (d.snapshot(), d.generation));
             let Ok(document) = snapshot.0 else {
                 status.set("Complete invalid number fields before saving.".into());
-                editor_guard.saving_to_leave.set(false);
+                saving_to_leave.set(false);
                 return;
             };
             let Some(request_id) = crate::utils::request_id::new_request_id() else {
                 status.set("Unable to create a secure save request.".into());
-                editor_guard.saving_to_leave.set(false);
+                saving_to_leave.set(false);
                 return;
             };
             let attempt = PendingRecipeSave {
@@ -891,13 +896,13 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             retry.set(Some(attempt.clone()));
             attempt
         };
+        let submitted_generation = attempt.generation;
         pending.set(true);
         save_sequence.update(|sequence| *sequence = sequence.checked_add(1).expect("save sequence exhausted"));
         let save_task = save_sequence.get_untracked();
         let save_epoch = check_generation.get_untracked();
-        editor_guard.pending.set(true);
         status.set("Saving…".into());
-        let leave_destination = if editor_guard.saving_to_leave.get_untracked() {
+        let leave_destination = if saving_to_leave.get_untracked() {
             editor_guard.destination.get_untracked()
         } else { None };
         leptos::task::spawn_local(async move {
@@ -915,8 +920,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     hold_editor(access, context_visible, outcome);
                 }
                 pending.set(false);
-                editor_guard.pending.set(false);
-                editor_guard.saving_to_leave.set(false);
+                saving_to_leave.set(false);
                 return;
             }
             let result = save_recipe(
@@ -945,8 +949,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         hold_editor(access, context_visible, outcome);
                     }
                     pending.set(false);
-                    editor_guard.pending.set(false);
-                    editor_guard.saving_to_leave.set(false);
+                    saving_to_leave.set(false);
                     return;
                 }
                 save_recipe(
@@ -982,13 +985,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 }
             }
             let may_leave = may_apply_scope
-                && editor_guard.saving_to_leave.get_untracked()
+                && saving_to_leave.get_untracked()
                 && same_leave_destination(&leave_destination, &editor_guard.destination.get_untracked());
-            if !may_leave { editor_guard.saving_to_leave.set(false); }
+            if !may_leave { saving_to_leave.set(false); }
             pending.set(false);
-            editor_guard.pending.set(false);
             if !matches!(&result, Ok(RecipeSaveOutcome::Saved { .. })) {
-                editor_guard.saving_to_leave.set(false);
+                saving_to_leave.set(false);
             }
             match result {
                 Ok(RecipeSaveOutcome::Saved {
@@ -1028,16 +1030,19 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         let local_cleared = may_apply_scope;
                         if local_cleared {
                             recovery_storage_key.set(None);
-                            if may_leave && editor_guard.saving_to_leave.get_untracked() {
-                                editor_guard.finish();
+                            if may_leave && saving_to_leave.get_untracked() {
+                                guard_task.update(GuardTaskState { dirty: false, generation: draft.with_untracked(|d| d.generation), in_flight: false, uncertain: false, recovery_retained: false, context_visible: true });
+                                if let Some(leave_token) = leave_attempt.get_value() {
+                                    guard_task.complete_save(leave_token, GuardSaveResolution::Saved { submitted_generation });
+                                }
                             }
                         } else if may_apply_scope {
                             tracing::warn!("Unable to clear the retained draft after saving");
-                            editor_guard.saving_to_leave.set(false);
+                            saving_to_leave.set(false);
                             status.set(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
                         }
                     } else {
-                        editor_guard.saving_to_leave.set(false);
+                        saving_to_leave.set(false);
                         draft.update(|d| d.mark_earlier_document_saved(attempt.document.clone()));
                         status.set(format!(
                             "Saved revision {saved}; newer changes remain unsaved."
@@ -1182,16 +1187,15 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         .into(),
                 ),
             }
-            if editor_guard.saving_to_leave.get_untracked() && draft.with_untracked(|d| d.dirty) {
-                editor_guard.saving_to_leave.set(false);
+            if saving_to_leave.get_untracked() && draft.with_untracked(|d| d.dirty) {
+                saving_to_leave.set(false);
             }
         });
     };
-    editor_guard
-        .save
-        .set_value(Some(Callback::new(move |()| save())));
-    editor_guard
-        .discard
+    guard_save.set_value(Some(Callback::new(move |attempt| {
+        leave_attempt.set_value(Some(attempt)); saving_to_leave.set(true); save();
+    })));
+    guard_discard
         .set_value(Some(Callback::new(move |()| {
             #[cfg(target_arch = "wasm32")]
             if let Some(key) = recovery_storage_key.get_untracked() {
@@ -1204,11 +1208,23 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
             draft.update(|d| d.replace_saved(baseline.get_untracked()));
             retry.set(None);
+            // Publish the reset generation before discard_active captures its
+            // departure lease; the reactive mirror runs after this callback.
+            guard_task.update(GuardTaskState {
+                dirty: draft.with_untracked(|d| d.dirty),
+                generation: draft.with_untracked(|d| d.generation),
+                in_flight: pending.get_untracked(),
+                uncertain: retry.get_untracked().is_some()
+                    || scale_uncertain.get_untracked()
+                    || duplicate_uncertain.get_untracked(),
+                recovery_retained: false,
+                context_visible: context_visible.get_untracked(),
+            });
             true
         })));
     on_cleanup(move || {
-        editor_guard.save.set_value(None);
-        editor_guard.discard.set_value(None);
+        guard_save.set_value(None);
+        guard_discard.set_value(None);
     });
     let restore_recovery = Callback::new(move |chosen: String| {
         if let Some((key, record)) = recovery_choice

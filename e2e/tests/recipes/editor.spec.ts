@@ -1338,7 +1338,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
-  await expect(guard.getByRole('status')).toContainText('Complete invalid number fields');
+  await expect(guard.getByRole('status').filter({ hasText: 'Complete invalid number fields' })).toContainText('Complete invalid number fields');
   await expect(page).toHaveURL(/recipe-editor/);
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Navigation draft');
@@ -1346,15 +1346,15 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await page.route('**/leptos-api/save_recipe*', route => route.abort('failed'));
   await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
-  await expect(guard.getByRole('status')).toContainText('Save failed');
+  await expect(guard.getByRole('status').filter({ hasText: 'Save failed' })).toContainText('Save failed');
   await expect(page).toHaveURL(/recipe-editor/);
+  // A lost save response leaves the outcome uncertain, so discarding is blocked until it is resolved.
+  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeDisabled();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await page.unroute('**/leptos-api/save_recipe*');
   await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
-  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(page).toHaveURL(/settings\/profile/);
-  await page.goto('/recipe-editor/new');
-  await expect(page.getByText('A retained draft is available')).toHaveCount(0);
 });
 
 test('stale saves retain edits and require deliberate reapply against current head', async ({ page }) => {
@@ -1608,4 +1608,251 @@ test('a failed sign-out is reported after choosing to discard', async ({ page })
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not sign out.');
   await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('repeated guarded Back Forward Stay preserves native entries and the exact draft position', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(/\/recipe-editor\/new$/);
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Preserve the original history draft');
+  const before = await name.evaluate((element: HTMLInputElement) => {
+    element.setSelectionRange(2, 7);
+    const main = document.querySelector<HTMLElement>('.app-shell__main')!;
+    main.scrollTop = 180;
+    return { href: location.href, historyLength: history.length, scroll: main.scrollTop,
+      value: element.value, start: element.selectionStart, end: element.selectionEnd };
+  });
+  expect(before.scroll).toBeGreaterThan(0);
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes', exact: true });
+  for (const direction of ['forward', 'back', 'forward'] as const) {
+    await page.evaluate(direction => history[direction](), direction);
+    await expect(guard).toBeVisible();
+    await guard.getByRole('button', { name: 'Stay', exact: true }).click();
+    await expect(guard).not.toBeVisible();
+    await expect(page).toHaveURL(before.href);
+    await expect(name).toHaveValue(before.value);
+    await expect(name).toBeFocused();
+    await expect.poll(() => name.evaluate((element: HTMLInputElement) => ({
+      historyLength: history.length,
+      scroll: document.querySelector<HTMLElement>('.app-shell__main')!.scrollTop,
+      start: element.selectionStart, end: element.selectionEnd,
+    }))).toEqual({ historyLength: before.historyLength, scroll: before.scroll, start: before.start, end: before.end });
+  }
+  await page.evaluate(() => history.forward());
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  expect(await page.evaluate(() => history.length)).toBe(before.historyLength);
+});
+
+test('recipe discard publishes its reset generation before the native departure lease is captured', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  const target = await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length }));
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(/\/recipe-editor\/new$/);
+  await page.getByLabel('Recipe name', { exact: true }).fill('Discard only this unsent draft');
+  const saves: string[] = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && /\/leptos-api\/save_recipe/.test(request.url())) saves.push(request.url());
+  });
+  await page.evaluate(() => history.forward());
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(guard).not.toBeVisible();
+  expect(await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length }))).toEqual(target);
+  expect(saves).toHaveLength(0);
+});
+
+test('native asynchronous restoration rejection exposes an owned retry without replacing the first destination', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  const destinationKey = await page.evaluate(() => (window as any).navigation.currentEntry.key);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(/\/recipe-editor\/new$/);
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Keep the original native recovery attempt');
+  const before = await name.evaluate((element: HTMLInputElement) => {
+    element.setSelectionRange(3, 8, 'backward');
+    return { href: location.href, length: history.length, key: (window as any).navigation.currentEntry.key };
+  });
+  await page.evaluate(sourceKey => {
+    const navigation = (window as any).navigation;
+    const traverseTo = navigation.traverseTo.bind(navigation);
+    let rejectOriginalRestoration = true;
+    navigation.traverseTo = (key: string, options?: unknown) => {
+      if (key === sourceKey && rejectOriginalRestoration) {
+        rejectOriginalRestoration = false;
+        return { committed: Promise.reject(new DOMException('Controlled original-key rejection', 'AbortError')), finished: Promise.reject(new DOMException('Controlled original-key rejection', 'AbortError')) };
+      }
+      return traverseTo(key, options);
+    };
+  }, before.key);
+  await page.evaluate(() => history.forward());
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await expect(guard.getByText(/browser rejected the original history traversal/i)).toBeVisible();
+  await guard.getByRole('button', { name: 'Retry original history restoration', exact: true }).click();
+  await expect(page).toHaveURL(before.href);
+  await guard.getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(guard).not.toBeVisible();
+  await expect(name).toHaveValue('Keep the original native recovery attempt');
+  await expect(name).toBeFocused();
+  expect(await name.evaluate((element: HTMLInputElement) => ({ length: history.length, start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection })))
+    .toEqual({ length: before.length, start: 3, end: 8, direction: 'backward' });
+  await page.evaluate(() => history.forward());
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  expect(await page.evaluate(() => (window as any).navigation.currentEntry.key)).toBe(destinationKey);
+  expect(await page.evaluate(() => history.length)).toBe(before.length);
+});
+
+for (const successor of ['source-only retry', 'new destination', 'new focus'] as const) {
+test(`Stay during held native restoration fences ${successor} after rejection`, async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(/\/recipe-editor\/new$/);
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Cancelled destination must never reopen');
+  const source = await name.evaluate((element: HTMLInputElement) => {
+    element.setSelectionRange(2, 9, 'backward');
+    return { href: location.href, key: (window as any).navigation.currentEntry.key, length: history.length };
+  });
+  await page.evaluate(sourceKey => {
+    const navigation = (window as any).navigation;
+    const traverseTo = navigation.traverseTo.bind(navigation);
+    (window as any).__sourceRestorationCalls = [];
+    navigation.traverseTo = (key: string, options?: unknown) => {
+      (window as any).__sourceRestorationCalls.push(key);
+      const calls = (window as any).__sourceRestorationCalls.length;
+      if (key === sourceKey && calls === 1) {
+        return { committed: Promise.reject(new DOMException('Initial controlled source failure', 'AbortError')), finished: Promise.reject(new DOMException('Initial controlled source failure', 'AbortError')) };
+      }
+      if (key === sourceKey && calls === 2) {
+        const held = new Promise((_, reject) => { (window as any).__rejectHeldSourceRestoration = reject; });
+        return { committed: held, finished: held };
+      }
+      return traverseTo(key, options);
+    };
+  }, source.key);
+  await page.evaluate(() => history.forward());
+  const guard = page.locator('#workspace-draft-warning');
+  const retry = guard.getByRole('button', { name: 'Retry original history restoration', exact: true });
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__sourceRestorationCalls.length)).toBe(2);
+  await guard.getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(guard).not.toBeVisible();
+  if (successor === 'new destination') {
+    await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+    await expect(guard).toBeVisible();
+  } else if (successor === 'new focus') {
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().focus();
+  }
+  await page.evaluate(() => (window as any).__rejectHeldSourceRestoration(new DOMException('Controlled failure after Stay', 'AbortError')));
+  // A settled animation frame follows the real rejected-promise continuation.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  if (successor !== 'source-only retry') {
+    await expect(guard.getByText(/cancelled destination will not be reopened/i)).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+    if (successor === 'new destination') await expect(guard).toBeVisible();
+    else {
+      await expect(guard).not.toBeVisible();
+      await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeFocused();
+    }
+    expect(await page.evaluate(() => (window as any).__sourceRestorationCalls)).toEqual([source.key, source.key]);
+    return;
+  }
+  await expect(guard.getByText(/cancelled destination will not be reopened/i)).toBeVisible();
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect(page).toHaveURL(source.href);
+  await expect(guard).not.toBeVisible();
+  await expect(name).toHaveValue('Cancelled destination must never reopen');
+  await expect(name).toBeFocused();
+  expect(await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length, calls: (window as any).__sourceRestorationCalls })))
+    .toEqual({ key: source.key, length: source.length, calls: [source.key, source.key, source.key] });
+  expect(await name.evaluate((element: HTMLInputElement) => ({ start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection })))
+    .toEqual({ start: 2, end: 9, direction: 'backward' });
+});
+}
+
+// KNOWN LIMITATION (KRA-46, accepted by Jason): with the Navigation API masked before
+// app startup, dirty editor, Forward, Stay leaves the URL on Settings instead of
+// restoring the editor URL. Kept visible as fixme; no history workaround is applied.
+test.fixme('feature-disabled history must preserve actual Forward Stay entry and draft position', async ({ page }) => {
+  // Disable before app initialization. This exercises production's absent-native-
+  // entry branch, not a copied guard or a patched History implementation.
+  await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined, configurable: true }));
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(/\/recipe-editor\/new$/);
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Unsupported history acceptance is not a banner PASS');
+  const before = await name.evaluate((element: HTMLInputElement) => {
+    element.setSelectionRange(3, 8, 'backward');
+    return { href: location.href, length: history.length, value: element.value };
+  });
+  await page.evaluate(() => history.forward());
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes', exact: true });
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(page).toHaveURL(before.href);
+  await expect(name).toHaveValue(before.value);
+  expect(await name.evaluate((element: HTMLInputElement) => ({ length: history.length, start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection })))
+    .toEqual({ length: before.length, start: 3, end: 8, direction: 'backward' });
+});
+
+test('an unconfirmed recipe save cannot discard its identity before save and leave checks the original result', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const title = `Unconfirmed guarded recipe ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  const requests: string[] = [];
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    requests.push(route.request().postData() ?? '');
+    if (requests.length === 1) {
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}' AND native_head_revision = 1`)).toBe('1');
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Save failed' })).toBeVisible();
+  expect(requests).toHaveLength(1);
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes', exact: true });
+  await expect(guard).toBeVisible();
+  // The transport has finished, but the server already committed. Local discard
+  // must not erase the request and let an identical create become a fresh retry.
+  await expect(guard.getByRole('button', { name: 'Discard and leave', exact: true })).toBeDisabled();
+  await guard.getByRole('button', { name: 'Save and leave', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toBe(requests[0]);
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}' AND native_head_revision = 1`)).toBe('1');
 });
