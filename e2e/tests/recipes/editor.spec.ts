@@ -1338,7 +1338,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
-  await expect(guard.getByRole('status')).toContainText('Complete invalid number fields');
+  await expect(guard.getByRole('status').filter({ hasText: 'Complete invalid number fields' })).toContainText('Complete invalid number fields');
   await expect(page).toHaveURL(/recipe-editor/);
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Navigation draft');
@@ -1346,7 +1346,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await page.route('**/leptos-api/save_recipe*', route => route.abort('failed'));
   await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
-  await expect(guard.getByRole('status')).toContainText('Save failed');
+  await expect(guard.getByRole('status').filter({ hasText: 'Save failed' })).toContainText('Save failed');
   await expect(page).toHaveURL(/recipe-editor/);
   await guard.getByRole('button', { name: 'Stay' }).click();
   await page.unroute('**/leptos-api/save_recipe*');
