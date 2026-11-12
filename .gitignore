@@ -7,7 +7,7 @@
 data/
 .gstack/
 .gstack-screenshots/
-e2e/node_modules/
+e2e/node_modules
 e2e/test-results/
 e2e/playwright-report/
 e2e/.auth-state.json
