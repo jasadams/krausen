@@ -236,6 +236,173 @@ pub fn BreweryNotice(
     view! { <div class=class role=matches!(announcement, NoticeAnnouncement::Settled).then_some("status")><div><div class="k-notice__title">{title}</div><div class="k-notice__body">{body}</div></div></div> }
 }
 
+/// A return bookmark owned by the logical task, not by a replaceable dialog view.
+#[derive(Clone, Copy)]
+pub struct BreweryDialogReturnFocus {
+    _generation: StoredValue<u64>,
+    content_generation: StoredValue<u64>,
+}
+
+impl BreweryDialogReturnFocus {
+    /// Invalidate a deferred content handoff when its task/context is retired.
+    pub fn cancel_content_focus(self) {
+        self.content_generation.update_value(|value| *value = value.checked_add(1).expect("dialog content generation exhausted"));
+    }
+
+    /// Call before replacing an owned task's content. Native opening focus is
+    /// insufficient when the renderer retains an already-open dialog element.
+    pub fn focus_after_content_change(
+        self,
+        from_id: &str,
+        to_id: &'static str,
+        target_id: &'static str,
+        current: impl FnOnce() -> bool + 'static,
+    ) {
+        self.cancel_content_focus();
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (from_id, to_id, target_id, current);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::{JsCast, closure::Closure};
+            let Some(window) = web_sys::window() else { return; };
+            let Some(document) = window.document() else { return; };
+            let Some(native) = document.get_element_by_id(from_id)
+                .and_then(|element| element.dyn_into::<web_sys::HtmlDialogElement>().ok()) else { return; };
+            if !native.is_connected() || !native.open() || !native.matches(":modal").unwrap_or(false)
+                || !document.has_focus().unwrap_or(false) { return; }
+            let retired = document.active_element();
+            if retired.as_ref().is_some_and(|active| !native.contains(Some(active))
+                && active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
+            let generation = self.content_generation.get_value();
+            let task_generation = self._generation.get_value();
+            // Even a briefly focused newer destination takes precedence if it
+            // disappears again before the handoff. Removal happens on the frame
+            // or scheduling failure, not automatically on owner cancellation.
+            let newer_focus = std::rc::Rc::new(std::cell::Cell::new(false));
+            let observed = newer_focus.clone();
+            let focus = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                if event.target().and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                    .is_some_and(|target| target.tag_name() != "BODY" && target.tag_name() != "HTML") {
+                    observed.set(true);
+                }
+            });
+            // JS owns the callback lifetime: even a native removal error cannot
+            // leave a document listener referring to a dropped Rust Closure.
+            let focus = focus.into_js_value();
+            let cleanup = {
+                let document = document.clone();
+                let focus = focus.clone();
+                move || {
+                    if let Err(error) = document.remove_event_listener_with_callback_and_bool("focusin", focus.unchecked_ref(), true) {
+                        tracing::warn!(error = ?error, "Unable to remove dialog content focus observer");
+                    }
+                }
+            };
+            if let Err(error) = document.add_event_listener_with_callback_and_bool("focusin", focus.unchecked_ref(), true) {
+                cleanup();
+                tracing::warn!(error = ?error, "Unable to observe dialog content focus");
+                return;
+            }
+            let scheduling_failed_cleanup = cleanup.clone();
+            // Reactive content commits before this one frame; no polling/retry.
+            if let Err(error) = request_animation_frame_with_handle(move || {
+                cleanup();
+                if self.content_generation.try_get_value() != Some(generation)
+                    || self._generation.try_get_value() != Some(task_generation)
+                    || !current() || newer_focus.get()
+                    || !document.has_focus().unwrap_or(false)
+                    || !native.is_connected() || !native.open() || !native.matches(":modal").unwrap_or(false)
+                    || document.get_element_by_id(to_id) != Some(native.clone().into()) { return; }
+                // Do not overwrite a surviving owned control or newer/foreign
+                // focus. Only retired owned focus or its BODY fallback is ours.
+                if retired.as_ref().is_some_and(|element| element.tag_name() != "BODY" && element.tag_name() != "HTML" && element.is_connected())
+                    || document.active_element().is_some_and(|active| active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
+                let Ok(layers) = document.query_selector_all("dialog:modal, [popover]:popover-open") else { return; };
+                if (0..layers.length()).any(|index| layers.item(index).is_some_and(|layer| layer != web_sys::Node::from(native.clone()))) { return; }
+                let Some(target) = document.get_element_by_id(target_id)
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
+                let Ok(Some(style)) = window.get_computed_style(&target) else { return; };
+                if !native.contains(Some(&target)) || !target.is_connected() || target.get_client_rects().length() == 0
+                    || target.closest("[hidden], [inert], :disabled, [aria-disabled='true']").ok().flatten().is_some()
+                    || !style.get_property_value("visibility").is_ok_and(|value| value == "visible") { return; }
+                if let Err(error) = target.focus() {
+                    tracing::warn!(error = ?error, "Unable to initialize changed dialog content focus");
+                }
+            }) {
+                scheduling_failed_cleanup();
+                tracing::warn!(error = ?error, "Unable to schedule dialog content focus");
+            }
+        }
+    }
+}
+
+/// Register once in the stable task owner when dialog views can be replaced.
+/// Ordinary dialogs register the same bookmark locally by default.
+pub fn use_brewery_dialog_return_focus(
+    task_open: RwSignal<bool>,
+    return_focus_allowed: Option<Signal<bool>>,
+    return_focus_fallback: Option<String>,
+) -> BreweryDialogReturnFocus {
+    let task_generation = StoredValue::new(0_u64);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (task_open, return_focus_allowed, return_focus_fallback);
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let was_open = StoredValue::new(false);
+        let opener = StoredValue::new_local(None::<web_sys::HtmlElement>);
+        Effect::new(move |_| {
+            let logical = task_open.get();
+            let previous = was_open.get_value();
+            was_open.set_value(logical);
+            if logical && !previous {
+                task_generation.update_value(|value| *value = value.checked_add(1).expect("dialog task generation exhausted"));
+                opener.set_value(web_sys::window().and_then(|window| window.document())
+                    .and_then(|document| document.active_element())
+                    .filter(|element| element.tag_name() != "BODY" && element.tag_name() != "HTML")
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()));
+            } else if !logical && previous {
+                let target = opener.get_value();
+                opener.set_value(None);
+                let generation = task_generation.get_value();
+                let fallback = return_focus_fallback.clone();
+                request_animation_frame(move || {
+                    if task_open.try_get_untracked() != Some(false)
+                        || task_generation.try_get_value() != Some(generation)
+                        || return_focus_allowed.is_some_and(|allowed| allowed.try_get_untracked() != Some(true)) {
+                        return;
+                    }
+                    let Some(window) = web_sys::window() else { return; };
+                    let Some(document) = window.document() else { return; };
+                    let Ok(active_layer) = document.query_selector("dialog:modal, [popover]:popover-open") else { return; };
+                    if !document.has_focus().unwrap_or(false) || active_layer.is_some() { return; }
+                    // Native return or newer deliberate focus takes priority. A
+                    // stale scroll-container focus reference inside a now-closed
+                    // shared dialog with no layout is neither of those.
+                    if document.active_element().is_some_and(|element| {
+                        let stale_closed_dialog = element.get_client_rects().length() == 0
+                            && element.closest("dialog.k-dialog:not([open])").is_ok_and(|dialog| dialog.is_some());
+                        element.tag_name() != "BODY" && element.tag_name() != "HTML" && !stale_closed_dialog
+                    }) { return; }
+                    let try_focus = |target: &web_sys::HtmlElement| {
+                        let Ok(Some(style)) = window.get_computed_style(target) else { return false; };
+                        if !target.is_connected() || target.get_client_rects().length() == 0
+                            || target.closest("[hidden], [inert], :disabled, [aria-disabled='true']").ok().flatten().is_some()
+                            || !style.get_property_value("visibility").is_ok_and(|value| value == "visible") { return false; }
+                        target.focus().is_ok() && document.active_element().is_some_and(|active| active == web_sys::Element::from(target.clone()))
+                    };
+                    if target.as_ref().is_some_and(try_focus) { return; }
+                    if let Some(successor) = fallback.and_then(|id| document.get_element_by_id(&id))
+                        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()) {
+                        if !try_focus(&successor) { tracing::warn!("Unable to return focus to the dialog successor"); }
+                    }
+                });
+            }
+        });
+    }
+    BreweryDialogReturnFocus { _generation: task_generation, content_generation: StoredValue::new(0_u64) }
+}
+
 /// A native modal dialog supplies focus containment, Escape and focus return.
 #[component]
 pub fn BreweryDialog(
@@ -249,29 +416,46 @@ pub fn BreweryDialog(
     /// Custom action row; the default is a single Close button.
     #[prop(optional)]
     actions: Option<ChildrenFn>,
+    /// Logical task lifetime when native visibility may be temporarily hidden.
+    #[prop(optional)]
+    logical_open: Option<RwSignal<bool>>,
+    /// Caller authority gate; a hidden/denied task must not focus protected UI.
+    #[prop(optional)]
+    return_focus_allowed: Option<Signal<bool>>,
+    /// Visible task-owned successor if the original opener was removed.
+    #[prop(optional)]
+    return_focus_fallback: Option<String>,
+    /// Reuse a bookmark registered in the caller's stable logical-task owner.
+    #[prop(optional)]
+    return_focus: Option<BreweryDialogReturnFocus>,
     children: Children,
 ) -> impl IntoView {
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let programmatic_closes = RwSignal::new(0_u32);
     let title_id = format!("{id}-title");
     let description_id = format!("{id}-description");
+    if return_focus.is_none() {
+        use_brewery_dialog_return_focus(logical_open.unwrap_or(open), return_focus_allowed, return_focus_fallback);
+    }
     #[cfg(target_arch = "wasm32")]
-    Effect::new(move |_| {
+    {
         use wasm_bindgen::JsCast;
-        let is_open = open.get();
-        if let Some(element) = dialog.get() {
-            let native: &web_sys::HtmlDialogElement = element.unchecked_ref();
-            if is_open && !native.open() {
-                if let Err(error) = native.show_modal() {
-                    tracing::warn!(error = ?error, "Unable to open dialog");
+        Effect::new(move |_| {
+            let is_open = open.get();
+            if let Some(element) = dialog.get() {
+                let native: &web_sys::HtmlDialogElement = element.unchecked_ref();
+                if is_open && !native.open() {
+                    if let Err(error) = native.show_modal() {
+                        tracing::warn!(error = ?error, "Unable to open dialog");
+                    }
+                }
+                if !is_open && native.open() {
+                    programmatic_closes.update(|count| *count += 1);
+                    native.close();
                 }
             }
-            if !is_open && native.open() {
-                programmatic_closes.update(|count| *count += 1);
-                native.close();
-            }
-        }
-    });
+        });
+    }
     let action_row = match actions {
         Some(actions) => actions(),
         None => view! {
@@ -387,6 +571,44 @@ pub fn BreweryBeerPortrait() -> impl IntoView {
 mod tests {
     use super::*;
     use leptos::tachys::view::RenderHtml;
+
+    #[test]
+    fn dialog_logical_lifetime_does_not_expose_native_closed_markup() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let native = RwSignal::new(false);
+            let logical = RwSignal::new(true);
+            let allowed = RwSignal::new(false);
+            let html = view! {
+                <BreweryDialog id="contract-dialog" title="Retained task" description="Checking its original context."
+                    open=native logical_open=logical return_focus_allowed=Signal::from(allowed)
+                    return_focus_fallback="task-successor".to_owned()>
+                    <p>"Caller-owned content"</p>
+                </BreweryDialog>
+            }.to_html();
+            assert!(html.contains("<dialog"));
+            assert!(html.contains("aria-labelledby=\"contract-dialog-title\""));
+            assert!(html.contains("aria-describedby=\"contract-dialog-description\""));
+            assert!(html.contains("k-dialog__body"));
+            assert!(html.contains("k-dialog__actions"));
+            assert!(!html.contains(" open"));
+            assert!(!html.contains("aria-modal"));
+            assert!(logical.get_untracked());
+            assert!(!native.get_untracked());
+            assert!(!allowed.get_untracked());
+            let focus_return = use_brewery_dialog_return_focus(logical, Some(Signal::from(allowed)), Some("task-successor".to_owned()));
+            let replacement = view! {
+                <BreweryDialog id="replacement-dialog" title="Same logical task" description="A replaceable view."
+                    open=native return_focus=focus_return>
+                    <p>"Same task-owned return bookmark"</p>
+                </BreweryDialog>
+            }.to_html();
+            assert!(replacement.contains("aria-labelledby=\"replacement-dialog-title\""));
+            assert!(!replacement.contains(" open"));
+            assert!(logical.get_untracked());
+            assert!(!native.get_untracked());
+        });
+    }
 
     #[test]
     fn panel_slots_and_field_states_are_shared_semantic_contracts() {

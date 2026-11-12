@@ -55,7 +55,7 @@ phosphor-leptos = "0.8"
 # Browser DOM access
 web-sys = { version = "0.3", features = [
     "Window", "Crypto", "Document", "HtmlElement", "HtmlInputElement", "HtmlDialogElement", "Blob", "File", "FileList",
-    "Element", "EventTarget", "Node",
+    "Element", "EventTarget", "Node", "NodeList",
     "KeyboardEvent", "MouseEvent", "BeforeUnloadEvent", "PopStateEvent", "HtmlAnchorElement", "DomTokenList", "MediaQueryList", "Location",
     "Navigator", "Storage", "StorageEvent", "History",
     "CredentialsContainer", "Credential", "PublicKeyCredential",

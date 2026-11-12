@@ -10,7 +10,7 @@
 use crate::{
     components::{
         BreweryDialog, BreweryDraftField, BreweryDraftSelect, BreweryNotice, Button, ButtonSize,
-        ButtonVariant, CatalogueItem, EmptyState,
+        ButtonVariant, CatalogueItem, EmptyState, brewery_kit::use_brewery_dialog_return_focus,
     },
     pages::recipe_editor::{EditorAccess, EditorAuthorityHold, current_context_matches},
     server_fns::catalogue::catalogue_command_shared,
@@ -185,6 +185,11 @@ pub fn CataloguePicker(
     on_add: Callback<FermentableAddition>,
 ) -> impl IntoView {
     let view = RwSignal::new(PickerView::Catalogue);
+    // The logical task outlives the reactive Catalogue/Create/Edit branches,
+    // including the reset that can replace a dialog while retaining its DOM.
+    let dialog_return_focus = use_brewery_dialog_return_focus(
+        open, Some(Signal::from(context_visible)), Some("recipe-editor-heading".to_owned()),
+    );
     let query = RwSignal::new(String::new());
     let filter = RwSignal::new(CatalogueFilter::All);
     let items = RwSignal::new(Vec::<IngredientEntry>::new());
@@ -205,6 +210,13 @@ pub fn CataloguePicker(
             && identity.try_with_untracked(|current| current == expected) == Some(true)
     };
     let authority = use_context::<EditorAuthorityHold>();
+    // Invalidate even a hide/reveal or identity/session change before a pending
+    // content handoff. View changes are separately checked by its issued intent.
+    Effect::new(move |_| {
+        let _ = (open.get(), context_visible.get(), identity.get(), session.get());
+        if let Some(authority) = authority { authority.generation.get(); }
+        dialog_return_focus.cancel_content_focus();
+    });
     let report_denial = Callback::new(move |(epoch, expected, outcome): (Option<u64>, OperationIntent, EditorAccess)| {
         if open.try_get_untracked() != Some(true)
             || context_visible.try_get_untracked() != Some(true)
@@ -498,6 +510,19 @@ pub fn CataloguePicker(
         request_id.set(Some(edit_request_id));
         retrying.set(false);
         edit_target.set(Some(entry));
+        let issued_session = session.get_untracked();
+        let expected = identity.get_untracked();
+        let expected_entry = entry_id.get_untracked();
+        let authority_epoch = authority.and_then(|hold| hold.generation.try_get_untracked());
+        dialog_return_focus.focus_after_content_change(
+            "ingredient-picker", "ingredient-edit", "library-name",
+            move || owns_session(issued_session, &expected)
+                && context_visible.try_get_untracked() == Some(true)
+                && dialog_open.try_get_untracked() == Some(true)
+                && view.try_get_untracked() == Some(PickerView::Edit)
+                && entry_id.try_get_untracked() == Some(expected_entry.clone())
+                && authority.and_then(|hold| hold.generation.try_get_untracked()) == authority_epoch,
+        );
         view.set(PickerView::Edit);
     });
 
@@ -1100,6 +1125,7 @@ pub fn CataloguePicker(
                 title="Build your grain bill"
                 description="Find a fermentable in the starter catalogue, or add one to your own library."
                 open=dialog_open
+                return_focus=dialog_return_focus
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| cancel.run(())>"Cancel"</Button>
@@ -1116,6 +1142,7 @@ pub fn CataloguePicker(
                 title="A fermentable of your own"
                 description="Save a malt or grain to your library, then use it in any recipe."
                 open=dialog_open
+                return_focus=dialog_return_focus
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| back_to_catalogue.run(())>"Back to catalogue"</Button>
@@ -1132,6 +1159,7 @@ pub fn CataloguePicker(
                 title="Edit your library entry"
                 description="Update the specification kept in your workspace library. Recipes keep their own copied specifications."
                 open=dialog_open
+                return_focus=dialog_return_focus
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| back_to_catalogue.run(())>"Back to catalogue"</Button>
