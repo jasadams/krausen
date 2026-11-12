@@ -2,8 +2,8 @@
 //! Explicit BeerXML import preview and commit.
 use crate::{
     components::{
-        BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryNotice, BreweryPanel,
-        Button, ButtonLink,
+        BreweryActionGroup, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryNotice,
+        BreweryPanel, Button, ButtonLink, ButtonVariant,
     },
     pages::recipe_editor::current_context_matches,
     server_fns::interchange::{commit_beerxml, preview_beerxml},
@@ -89,6 +89,30 @@ fn matches_import_context(request: &ImportRequest, result: &ImportPreview) -> bo
         }
         PreviewOutcome::UnresolvedProfile | PreviewOutcome::UnresolvedStyle => true,
         _ => false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn hand_off_import_action_focus(event: &leptos::ev::MouseEvent) {
+    use wasm_bindgen::JsCast;
+    // Native disabling blurs an owned action. Reuse the same existing task
+    // successor synchronously; focus alone neither activates Cancel nor navigates.
+    let active = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element());
+    let button = event.target().and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest("button").ok().flatten());
+    if let Some(button) = button.filter(|button| active.as_ref() == Some(button)) {
+        let cancel = button.closest("[role='group'][aria-label='Import actions']").ok().flatten()
+            .and_then(|group| group.query_selector("a[href='/recipes']").ok().flatten());
+        if let Some(cancel) = cancel.filter(|element| {
+            element.is_connected() && element.get_client_rects().length() > 0
+                && element.closest("[hidden], [inert], :disabled").ok().flatten().is_none()
+                && web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
+                    .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v != "hidden")
+        }) {
+            if let Some(cancel) = cancel.dyn_ref::<web_sys::HtmlElement>() {
+                if cancel.focus().is_err() { tracing::warn!("Unable to hand off import action focus"); }
+            }
+        }
     }
 }
 
@@ -220,7 +244,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             storage.remove();
         });
     }
-    let preview_action = move |_| {
+    let preview_action = move |_event: leptos::ev::MouseEvent| {
         if busy.get_untracked() {
             return;
         }
@@ -270,6 +294,9 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         };
         sequence.update(|n| *n = n.checked_add(1).expect("import generation exhausted"));
         let current = sequence.get_untracked();
+        // Rejected source/index/generation paths above never move focus.
+        #[cfg(target_arch = "wasm32")]
+        hand_off_import_action_focus(&_event);
         busy.set(true);
         leptos::task::spawn_local(async move {
             if !current_context_matches(&request.intent).await {
@@ -438,8 +465,79 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             }
         });
     };
+    let status_node = NodeRef::<leptos::html::P>::new();
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |_| {
+        let _ = status.get();
+        let Some(marker) = status_node.get() else { return; };
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else { return; };
+        let Some(active) = document.active_element() else { return; };
+        let Some(panel) = marker.closest(".k-panel").ok().flatten() else { return; };
+        if active.closest("[role='group'][aria-label='Import actions']").ok().flatten().is_none()
+            || active.closest(".k-panel").ok().flatten().as_ref() != Some(&panel) { return; }
+        // Status growth can move a retained focused action below the viewport.
+        // Wait for its real layout, then reveal only that same current task owner.
+        if request_animation_frame_with_handle(move || {
+            use wasm_bindgen::JsCast;
+            if visible.try_get_untracked() != Some(true) || !marker.is_connected() || !active.is_connected()
+                || document.active_element().as_ref() != Some(&active) || document.has_focus().ok() != Some(true)
+                || !panel.contains(Some(&active))
+                || marker.closest(".k-panel").ok().flatten().as_ref() != Some(&panel)
+                || active.closest(".k-panel").ok().flatten().as_ref() != Some(&panel)
+                || active.closest("[role='group'][aria-label='Import actions']").ok().flatten().is_none()
+                || !active.matches("button, a").unwrap_or(false)
+                || active.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
+                || active.get_client_rects().length() == 0 { return; }
+            let Some(window) = web_sys::window() else { return; };
+            if window.get_computed_style(&active).ok().flatten()
+                .and_then(|style| style.get_property_value("visibility").ok()).is_none_or(|v| v == "hidden" || v == "collapse") { return; }
+            let Some(width) = window.inner_width().ok().and_then(|v| v.as_f64()) else { return; };
+            let Some(height) = window.inner_height().ok().and_then(|v| v.as_f64()) else { return; };
+            let rect = active.get_bounding_client_rect();
+            if rect.top() >= 0.0 && rect.bottom() <= height && rect.left() >= 0.0 && rect.right() <= width { return; }
+            // Native element-scoped scrolling chooses the actual ancestor chain;
+            // no window offsets, focus call, global listener or smooth motion.
+            let reveal = js_sys::Reflect::get(active.as_ref(), &"scrollIntoView".into())
+                .and_then(|method| method.dyn_into::<js_sys::Function>())
+                .and_then(|method| {
+                    let options = js_sys::JSON::parse(r#"{"block":"center","inline":"nearest","behavior":"instant"}"#)?;
+                    method.call1(active.as_ref(), &options)
+                });
+            if reveal.is_err() { tracing::warn!("Unable to reveal focused import action"); }
+        }).is_err() { tracing::warn!("Unable to schedule import action reveal"); }
+    });
     view! { <Show when=move || visible.get() fallback=|| view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context to continue this import." warning=true/> }>
-        <BreweryPanel title="Import BeerXML" description="Preview before creating a recipe. The original file is retained separately.">
+        <BreweryPanel title="Import BeerXML" description="Preview before creating a recipe. The original file is retained separately."
+            footer=std::sync::Arc::new(move || view! {
+                {move || {
+                    let has_preview = preview.get().is_some();
+                    let imported = imported_id.get();
+                    view! {
+                        <BreweryActionGroup label="Import actions">
+                            <Button
+                                variant=if has_preview || imported.is_some() { ButtonVariant::Secondary } else { ButtonVariant::Default }
+                                disabled=Signal::derive(move || busy.get() || pending.get().is_some())
+                                pending=Signal::derive(move || busy.get() && pending.get().is_none())
+                                on:click=preview_action
+                            >"Preview"</Button>
+                            <Show when=move || preview.get().is_some()>
+                                <Button disabled=Signal::derive(move || busy.get()) pending=Signal::derive(move || busy.get() && pending.get().is_some()) on:click=move |event: leptos::ev::MouseEvent| {
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        if !busy.get_untracked() && preview.get_untracked().is_some() {
+                                            hand_off_import_action_focus(&event);
+                                        }
+                                    }
+                                    commit_action(event);
+                                }>"Import recipe"</Button>
+                            </Show>
+                            {imported.map(|id| view! { <ButtonLink variant=if has_preview { ButtonVariant::Secondary } else { ButtonVariant::Default } href=format!("/recipe-editor/{id}")>"Open imported recipe"</ButtonLink> })}
+                            <ButtonLink variant=ButtonVariant::Ghost href="/recipes">"Cancel"</ButtonLink>
+                        </BreweryActionGroup>
+                    }
+                }}
+            }.into_any())
+        >
             <fieldset disabled=move || pending.get().is_some()>
             <label for="beerxml-file">"Choose a UTF-8 BeerXML file"</label>
             <input id="beerxml-file" type="file" class=crate::components::INPUT_CLASS accept=".xml,.beerxml,text/xml,application/xml" on:change=move |event| {
@@ -474,9 +572,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             {move || { let mut options = vec![(String::new(), "No equipment profile".to_string())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id, p.name))); view! {
                 <BreweryDraftSelect id="beerxml-equipment" label="Equipment profile" value=Signal::from(selected_profile) on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { selected_profile.set(v); invalidate.run(()); } }) options=options/>
             } }}
-            <Show when=move || profile_cursor.get().is_some()><Button on:click=move |_| { if !profile_loading.get_untracked() { load_profiles.run(profile_cursor.get_untracked()); } }>"Load more equipment profiles"</Button></Show>
+            <Show when=move || profile_cursor.get().is_some()><Button variant=ButtonVariant::Secondary on:click=move |_| { if !profile_loading.get_untracked() { load_profiles.run(profile_cursor.get_untracked()); } }>"Load more equipment profiles"</Button></Show>
             </fieldset>
-            <Button on:click=preview_action>"Preview"</Button>
             {move || preview.get().map(|(_, result)| view! {
                 <section aria-label="Import preview"><h3>{result.document.title.clone()}</h3>
                     <p>{format!("Original source SHA-256: {}", result.source_sha256)}</p>
@@ -486,11 +583,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     <p>{calculation_summary(result.calculation)}</p>
                 </section>
             })}
-            <Show when=move || preview.get().is_some()><Button on:click=commit_action>"Import recipe"</Button></Show>
-            <p role="status">{move || status.get()}</p>
+            <p node_ref=status_node role="status">{move || status.get()}</p>
             <ul>{move || import_diagnostics.get().into_iter().map(|d| view! { <li>{d.message}</li> }).collect_view()}</ul>
-            {move || imported_id.get().map(|id| view! { <ButtonLink href=format!("/recipe-editor/{id}")>"Open imported recipe"</ButtonLink> })}
-            <ButtonLink href="/recipes">"Cancel"</ButtonLink>
         </BreweryPanel>
     </Show> }
 }
