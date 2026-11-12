@@ -455,10 +455,26 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let task_session = StoredValue::new(crate::utils::request_id::new_request_id());
     #[cfg(not(target_arch = "wasm32"))]
     let task_session = StoredValue::new(None::<String>);
-    let session_lock = StoredValue::new(evidence_recovery::SessionLock::acquire(
-        task_session.get_value().as_deref().unwrap_or_default(),
-    ));
-    on_cleanup(move || session_lock.update_value(|lock| lock.release()));
+    // The session lock marks only a held, in-flight write. When the response
+    // settles or is lost the lock is released, so the retained record becomes
+    // an ordinary recoverable (uncertain) record visible from any tab.
+    let session_lock = StoredValue::new(None::<evidence_recovery::SessionLock>);
+    Effect::new(move |_| {
+        if write_busy.get() {
+            if session_lock.with_value(|lock| lock.is_none()) {
+                session_lock.set_value(Some(evidence_recovery::SessionLock::acquire(
+                    task_session.get_value().as_deref().unwrap_or_default(),
+                )));
+            }
+        } else if let Some(mut lock) = session_lock.try_update_value(|lock| lock.take()).flatten() {
+            lock.release();
+        }
+    });
+    on_cleanup(move || {
+        if let Some(mut lock) = session_lock.try_update_value(|lock| lock.take()).flatten() {
+            lock.release();
+        }
+    });
     let recovery_blocked = RwSignal::new(false);
     let recovery_status = RwSignal::new(RecoveryStatus::Unknown);
     let reconciliation_ready = RwSignal::new(false);
@@ -477,6 +493,13 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let recovery_inventory = RwSignal::new(RecoveryInventory::Loading);
     let recovery_cleanup_error = RwSignal::new(String::new());
     let recovery_records = RwSignal::new(Vec::<(String, EvidenceRecovery)>::new());
+    // Records whose owning tab still holds its in-flight lock: visible and
+    // checkable here, but another tab's held write must not block this task.
+    let live_owned_keys = RwSignal::new(Vec::<String>::new());
+    let blocking_records = Signal::derive(move || {
+        let live = live_owned_keys.get();
+        recovery_records.get().iter().any(|(key, _)| !live.contains(key))
+    });
     let cleanup_debt = RwSignal::new(Vec::<(String, RecoveryStatus)>::new());
     let settled = Callback::new(
         move |(key, (accepted, summary)): (String, (bool, String))| {
@@ -599,21 +622,21 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 let loaded = match evidence_recovery::load(&scope.get_value()) {
                     Ok(records) => {
                         let own = task_session.get_value().unwrap_or_default();
-                        let mut owned_elsewhere = Vec::new();
-                        for (key, record) in &records {
-                            if evidence_recovery::owned_by_live_tab(record, &own).await {
-                                owned_elsewhere.push(key.clone());
+                        let mut live = Vec::new();
+                        let mut ordinary = Vec::new();
+                        for (key, record) in records {
+                            if evidence_recovery::owned_by_live_tab(&record, &own).await {
+                                live.push((key, record));
+                            } else {
+                                ordinary.push((key, record));
                             }
                         }
-                        Ok(records
-                            .into_iter()
-                            .filter(|(key, _)| !owned_elsewhere.contains(key))
-                            .collect::<Vec<_>>())
+                        Ok((ordinary, live))
                     }
                     Err(error) => Err(error),
                 };
                 match loaded {
-                    Ok(records) => {
+                    Ok((records, live_records)) => {
                         let mut unresolved = Vec::new();
                         // A failed durable marker cannot erase this mounted
                         // owner's stronger exact-key receipt knowledge.
@@ -652,7 +675,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                 && recovery_key.get_untracked().is_none_or(|current| {
                                     records.first().is_some_and(|(key, _)| key != &current)
                                 }));
-                        if records.len() == 1 && !preserves_other_original {
+                        if records.len() == 1 && live_records.is_empty() && !preserves_other_original {
                             let (key, record) = records.remove(0);
                             recovery_blocked.set(record.status != RecoveryStatus::Unknown);
                             recovery_status.set(record.status.clone());
@@ -665,6 +688,8 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         } else {
                             recovery_records.set(records);
                         }
+                        live_owned_keys.set(live_records.iter().map(|(key, _)| key.clone()).collect());
+                        recovery_records.update(|records| records.extend(live_records));
                         recovery_inventory.set(RecoveryInventory::Ready);
                     }
                     Err(error) => {
@@ -1007,7 +1032,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let blocked = Signal::derive(move || {
         write_busy.get()
             || pending.get().is_some()
-            || !recovery_records.get().is_empty()
+            || blocking_records.get()
             || !cleanup_debt.get().is_empty()
             || recovery_inventory.get() != RecoveryInventory::Ready
     });
@@ -1020,7 +1045,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             .is_some_and(|pending| same_original_evidence(pending, &action));
         if write_busy.get_untracked()
             || (retained && !pending_matches)
-            || (!retained && (original.is_some() || !recovery_records.get_untracked().is_empty()))
+            || (!retained && (original.is_some() || blocking_records.get_untracked()))
             || !cleanup_debt.get_untracked().is_empty()
             || recovery_inventory.get_untracked() != RecoveryInventory::Ready
         {
