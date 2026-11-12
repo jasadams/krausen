@@ -20,6 +20,24 @@ function sqliteExec(sql: string): string {
   }).trim();
 }
 
+// The legacy `switch_workspace` server function updates only the database; the
+// signed access token keeps its workspace claim until it is refreshed, so the
+// guard's post-switch verification cannot observe it (the account feature owns
+// that gap). Establish the new context the way editor.spec.ts does: change the
+// stored workspace, re-sign the session, announce it to other tabs, reload.
+async function switchTabContext(tab: import('@playwright/test').Page, workspaceId: string) {
+  sqliteExec(
+    `UPDATE users SET last_workspace_id = '${workspaceId}' WHERE user_id = '${getDefaultUserId()}'`,
+  );
+  walCheckpoint();
+  const refreshed = await tab.evaluate(
+    async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
+  );
+  expect(refreshed).toBe(200);
+  await tab.evaluate(() => localStorage.setItem('krausen-context-changed', String(Date.now())));
+  await tab.reload();
+}
+
 function commandFrom(request: import('@playwright/test').Request): any {
   const payload = new URLSearchParams(request.postData() ?? '').get('request_json');
   return payload ? JSON.parse(payload) : null;
@@ -330,7 +348,7 @@ test('hidden uncertain request can be discarded after another tab changes contex
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await page.locator('#brew-note').fill('hidden draft');
   const otherName = `Evidence context ${Date.now()}`;
-  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  const otherWorkspace = seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
   sqliteExec(
     `UPDATE users SET last_workspace_id = '${workspace}' WHERE user_id = '${getDefaultUserId()}'`,
   );
@@ -338,10 +356,7 @@ test('hidden uncertain request can be discarded after another tab changes contex
   const switcher = await context.newPage();
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
-  await switcher
-    .getByRole('button', { name: 'Switch workspace', exact: true })
-    .click();
-  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await switchTabContext(switcher, otherWorkspace);
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
@@ -425,7 +440,7 @@ test('retained uncertain request recovers after a real workspace round trip', as
   await page.getByRole('button', { name: 'Record reading' }).first().click();
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   const otherName = `Evidence recovery ${Date.now()}`;
-  seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
+  const otherWorkspace = seedWorkspace({ ownerId: getDefaultUserId(), name: otherName });
   sqliteExec(
     `UPDATE users SET last_workspace_id = '${originalWorkspace}' WHERE user_id = '${getDefaultUserId()}'`,
   );
@@ -433,19 +448,13 @@ test('retained uncertain request recovers after a real workspace round trip', as
   const switcher = await context.newPage();
   await switcher.goto(page.url());
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
-  await switcher
-    .getByRole('button', { name: 'Switch workspace', exact: true })
-    .click();
-  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await switchTabContext(switcher, otherWorkspace);
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   await expect(page.locator('#measurement-gravity-original-v1')).toHaveCount(0);
-  await switcher
-    .getByRole('button', { name: 'Switch workspace', exact: true })
-    .click();
-  await switcher.getByRole('button', { name: originalName, exact: true }).click();
+  await switchTabContext(switcher, originalWorkspace);
   await expect(switcher.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
@@ -535,6 +544,10 @@ test('failed retry context preflight retains the same uncertain request', async 
     expect(JSON.stringify(body)).toContain(otherWorkspace);
     await route.fulfill({ response });
   });
+  // The uncertain notice appears when the first write starts; wait until that
+  // write has fully settled so its own context check cannot consume the held
+  // preflight meant for the retry.
+  await expect(page.getByRole('button', { name: 'Retry same request' })).toBeEnabled();
   retryPreflight = true;
   await page.getByRole('button', { name: 'Retry same request' }).click();
   await preflightHeld;
@@ -643,10 +656,7 @@ test('out-of-order context success cannot restore hidden evidence', async ({
   });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await olderHeld;
-  await switcher
-    .getByRole('button', { name: 'Switch workspace', exact: true })
-    .click();
-  await switcher.getByRole('button', { name: otherName, exact: true }).click();
+  await switchTabContext(switcher, otherWorkspace);
   await expect(switcher.getByText('Brew not found in this workspace.')).toBeVisible();
   await newerHeld;
   await expect

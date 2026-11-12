@@ -835,7 +835,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                         in_flight: write_busy.get_untracked(),
                         uncertain: pending.get_untracked().is_some()
                             || !recovery_records.get_untracked().is_empty()
-                            || recovery_inventory.get_untracked() != RecoveryInventory::Ready,
+                            || matches!(recovery_inventory.get_untracked(), RecoveryInventory::Failed(_)),
                         recovery_retained: recovery_key.get_untracked().is_some()
                             || !recovery_records.get_untracked().is_empty(),
                         context_visible: context_valid.get_untracked(),
@@ -854,7 +854,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             in_flight: write_busy.get(),
             uncertain: pending.get().is_some()
                 || !recovery_records.get().is_empty()
-                || recovery_inventory.get() != RecoveryInventory::Ready,
+                || matches!(recovery_inventory.get(), RecoveryInventory::Failed(_)),
             recovery_retained: recovery_key.get().is_some() || !recovery_records.get().is_empty(),
             context_visible: context_valid.get(),
         })
