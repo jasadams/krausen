@@ -1,2395 +1,2413 @@
 {
   ".github/workflows/foundation.yml": {
-    "mtime": 1794474160.1571665,
-    "seen": 1794476654.3055518,
+    "mtime": 1794476612.4570658,
+    "seen": 1794502493.3065941,
     "ast_hash": "8ae5b26b8f853edf2446edecb366be5a",
     "semantic_hash": ""
   },
   ".github/workflows/release.yml": {
-    "mtime": 1793647853.1169298,
-    "seen": 1794476654.3055606,
+    "mtime": 1793623921.2167227,
+    "seen": 1794502493.3066027,
     "ast_hash": "9d0af3ae6cdc6eab90f4c61a7fc8a2ab",
     "semantic_hash": ""
   },
   "Cargo.toml": {
-    "mtime": 1793647853.1176765,
-    "seen": 1794476654.305565,
+    "mtime": 1793623921.217328,
+    "seen": 1794502493.3066068,
     "ast_hash": "faafa9220921eb88425a73a82c831e04",
     "semantic_hash": ""
   },
   "apps/server/Cargo.toml": {
-    "mtime": 1793647853.1185985,
-    "seen": 1794476654.3055682,
+    "mtime": 1793623921.219381,
+    "seen": 1794502493.3066096,
     "ast_hash": "bf02c887a87a20c1e37315cd1567ca1a",
     "semantic_hash": ""
   },
   "apps/server/src/leptos_frontend.rs": {
-    "mtime": 1793647853.1194372,
-    "seen": 1794476654.3055708,
+    "mtime": 1793623921.2202966,
+    "seen": 1794502493.306612,
     "ast_hash": "26e58beff90b8662e63154ce91fb18d3",
     "semantic_hash": ""
   },
   "apps/server/src/lib.rs": {
-    "mtime": 1793647853.120018,
-    "seen": 1794476654.3055732,
+    "mtime": 1793623921.2208881,
+    "seen": 1794502493.306614,
     "ast_hash": "331f3346e8092b833eeb1639ecb60131",
     "semantic_hash": ""
   },
   "apps/server/src/main.rs": {
-    "mtime": 1793647853.120018,
-    "seen": 1794476654.305575,
+    "mtime": 1793623921.2208881,
+    "seen": 1794502493.3066158,
     "ast_hash": "c8476b76cea7d329730c38c0e41a3610",
     "semantic_hash": ""
   },
   "apps/server/src/middleware/mod.rs": {
-    "mtime": 1793647853.120018,
-    "seen": 1794476654.3055768,
+    "mtime": 1793623921.2208881,
+    "seen": 1794502493.3066185,
     "ast_hash": "d7abd75e0195a5b95c14698546ff0ba0",
     "semantic_hash": ""
   },
   "apps/server/src/routes/auth_google_oauth.rs": {
-    "mtime": 1793647853.120018,
-    "seen": 1794476654.3055785,
+    "mtime": 1793623921.2208881,
+    "seen": 1794502493.3066201,
     "ast_hash": "bff8d937285fca506d456a4f61edbcb1",
     "semantic_hash": ""
   },
   "apps/server/src/routes/auth_token.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.3055806,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066223,
     "ast_hash": "c793f42b5cb1a8aaae1e04ec4b2db47c",
     "semantic_hash": ""
   },
   "apps/server/src/routes/mcp.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.3055823,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.306624,
     "ast_hash": "299726995ec61b38252b4e420f82f0ce",
     "semantic_hash": ""
   },
   "apps/server/src/routes/mod.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.3055842,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066258,
     "ast_hash": "2992288b87d70df75ef5f1fd9d283d32",
     "semantic_hash": ""
   },
   "apps/server/src/routes/oauth.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.305586,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066278,
     "ast_hash": "b256695883cbf2e7c8acd26460b51c55",
     "semantic_hash": ""
   },
   "apps/server/src/routes/websocket.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.3055885,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066297,
     "ast_hash": "d0e15b291acbbde187ef587b5343a6c9",
     "semantic_hash": ""
   },
   "apps/server/src/state.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.30559,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066313,
     "ast_hash": "4b49b0f289fc1076b4dd6bee8700ae19",
     "semantic_hash": ""
   },
   "apps/server/tests/bootstrap.rs": {
-    "mtime": 1793647853.1203232,
-    "seen": 1794476654.305592,
+    "mtime": 1793623921.2212381,
+    "seen": 1794502493.3066337,
     "ast_hash": "4751ae3ac8d1dc109f91b3afe50ebc79",
     "semantic_hash": ""
   },
   "apps/server/tests/browser_refresh.py": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.305594,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.3066354,
     "ast_hash": "7d0c7f927ee182a621bd8765a79d18fd",
     "semantic_hash": ""
   },
   "apps/server/tests/browser_refresh.rs": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.3055956,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.306637,
     "ast_hash": "783ede30f8f77e149a71741ef1666e56",
     "semantic_hash": ""
   },
   "apps/server/tests/https_proxy.rs": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.3055975,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.3066385,
     "ast_hash": "f1e1b3243a477dd366d61e96007bbaf3",
     "semantic_hash": ""
   },
   "apps/server/tests/mcp_auth.rs": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.3055992,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.3066404,
     "ast_hash": "0c1542f85ca01a1f0d69f82a0d5ae44c",
     "semantic_hash": ""
   },
   "apps/server/tests/migration_orders.rs": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.3056011,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.3066423,
     "ast_hash": "35ef021158f4c7a392b57e0bd476b4e2",
     "semantic_hash": ""
   },
   "crates/krausen-app/Cargo.toml": {
-    "mtime": 1793647853.1214454,
-    "seen": 1794476654.3056026,
+    "mtime": 1793623921.2223358,
+    "seen": 1794502493.3066437,
     "ast_hash": "19698274e832d6a591b7cf16563f2842",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/brew_evidence.rs": {
-    "mtime": 1793647853.1215212,
-    "seen": 1794476654.3056045,
+    "mtime": 1793623921.2224057,
+    "seen": 1794502493.3066454,
     "ast_hash": "be0a3269a786494736edc20d0fb3bb6d",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/brew_history.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056061,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.306647,
     "ast_hash": "0c99a166399d71cec6279275d4429ba1",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/brew_start.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.305608,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066485,
     "ast_hash": "a9e82097956413b6c587c03af9eda2df",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/catalogue.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056097,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066502,
     "ast_hash": "0cd5b6b8f8c6980e9efe22c45f55bce5",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/equipment.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056116,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066516,
     "ast_hash": "476e8100475e7544f4016787663e5ba5",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/formulation.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056133,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066535,
     "ast_hash": "8ee0e76dd9e48a26e32906c9e9110805",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/formulation_kernel.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.305615,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.306655,
     "ast_hash": "800ce7d492b4be01d42565bed3677ea3",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/interchange.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056166,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066566,
     "ast_hash": "046145ffef5435444c171eb9cfd132df",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/lib.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056188,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066583,
     "ast_hash": "ab5c5b0ae6baf087d446df729cdcb7ba",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/process_summary.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056202,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066597,
     "ast_hash": "1fa0f8dbd5efa927e705cd1727e11942",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/recipe_editor.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056219,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066614,
     "ast_hash": "688f916b82b8ee0b58a34419d315d1f2",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/recipe_library.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056235,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066635,
     "ast_hash": "1eee79d6cdcbdc4ee9013145d5b1dfb9",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/recipe_migration.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056252,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.306665,
     "ast_hash": "d7bd5e3e775c57b6785274c21ac7414f",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/scaling.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056269,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066666,
     "ast_hash": "72f62909a67ed1aacd164ed4a534e9de",
     "semantic_hash": ""
   },
   "crates/krausen-app/src/style_reference.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056288,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.306668,
     "ast_hash": "a7fab5daaa19f51bd97e51ff1e5ddfd6",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/baseline_golden.rs": {
-    "mtime": 1793647853.1217349,
-    "seen": 1794476654.3056307,
+    "mtime": 1793623921.2226012,
+    "seen": 1794502493.3066695,
     "ast_hash": "26aee1a22f46356b437306e096653132",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/brew_evidence.rs": {
-    "mtime": 1793647853.1230445,
-    "seen": 1794476654.3056326,
+    "mtime": 1793623921.2238972,
+    "seen": 1794502493.3066716,
     "ast_hash": "df18aa7e2cf8da9b65fad395e12574f2",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/brew_history.rs": {
-    "mtime": 1793647853.1230445,
-    "seen": 1794476654.305634,
+    "mtime": 1793623921.2238972,
+    "seen": 1794502493.3066735,
     "ast_hash": "a338d2b539955eb5136b8f20143ccd4e",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/brew_start.rs": {
-    "mtime": 1793647853.1230445,
-    "seen": 1794476654.305636,
+    "mtime": 1793623921.2238972,
+    "seen": 1794502493.3066752,
     "ast_hash": "446c6ab81185ff538f195f1dbde3b23e",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/equipment_profiles.rs": {
-    "mtime": 1793647853.1230445,
-    "seen": 1794476654.3056376,
+    "mtime": 1793623921.2238972,
+    "seen": 1794502493.3066773,
     "ast_hash": "9e26a6c399de6d321d3d505ba85348e6",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_context.pretty.json": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3056395,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066792,
     "ast_hash": "f5f1f4bedd8986900e7f27eea2a9f5e8",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_fixture.json": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3056412,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066812,
     "ast_hash": "45fa366971398d8e0553063e11ac6b16",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_style_comparison.json": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.305643,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066828,
     "ast_hash": "bf23463a070e9732cfc533f741abebad",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_targets.json": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3056448,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066847,
     "ast_hash": "89d84ea898c4216c13e0b7e3485b20a2",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_validation.json": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3056464,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066866,
     "ast_hash": "fd3526dd44296dbe6094c39f21b16477",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/formulation_preview.rs": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.305648,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066883,
     "ast_hash": "4a65cb8267f2a01a72d94a5af8dd5d92",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/foundation.rs": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3056498,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066897,
     "ast_hash": "c50694930a2c0cff1df18533c87f2710",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/ingredient_catalogue.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056514,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066916,
     "ast_hash": "6c3814a7fb6ef628266147b279744281",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/interchange.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056533,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.306693,
     "ast_hash": "2bd6ba2187f8145bef208a639bec3383",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/process_summary.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056548,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066947,
     "ast_hash": "e118b839c45006814ddc3b75d7264a35",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/recipe_editor.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.305657,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066962,
     "ast_hash": "15426ae921ff99d8c3d8442a9d16ce5a",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/recipe_library.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056583,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066978,
     "ast_hash": "653830df14b386218aa511cacc76b6f3",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/recipe_migration.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.30566,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3066995,
     "ast_hash": "a1d0a8a71c8d3c5c1606dae9e8aea72e",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/scaling.rs": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056614,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3067014,
     "ast_hash": "9ab9244c799ba2a2fc0a43767892f293",
     "semantic_hash": ""
   },
   "crates/krausen-auth/Cargo.toml": {
-    "mtime": 1793647853.1236765,
-    "seen": 1794476654.3056633,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3067029,
     "ast_hash": "d420944c7779db79ba21832f19645b8a",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/auth_service.rs": {
-    "mtime": 1793647853.1247625,
-    "seen": 1794476654.305665,
+    "mtime": 1793623921.2256765,
+    "seen": 1794502493.3067045,
     "ast_hash": "5df1f2605c5f82305963404522b802b6",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/cookies.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056664,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067064,
     "ast_hash": "42d44ba8aea4a3c3fd54c0996b5f1e52",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/email_service.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056684,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067076,
     "ast_hash": "e8bc0cc40b9952b9b95b5915e0f0b53f",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/encryption.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056698,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067093,
     "ast_hash": "2b2e9b3e9644f035bee9057d4b120531",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/google_oauth.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056717,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067105,
     "ast_hash": "827aa18fea1d75ca9028429d2839a69e",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/jwt.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056731,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067124,
     "ast_hash": "90867478d9538e80c12b5247e1e2236f",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/lib.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056748,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067136,
     "ast_hash": "e6ae1302fe8734558136a25ea734c014",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/mcp_session_manager.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056767,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067155,
     "ast_hash": "94aebef0e975ac7dac103be72f833441",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/middleware.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056784,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.306717,
     "ast_hash": "d86c954b7ce8e213dadbfc3bc7e92127",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/notifications.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056798,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067183,
     "ast_hash": "88f1a6b4d562f529842f28a9f671344e",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/oauth_service.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056815,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.30672,
     "ast_hash": "45edd2c334dc6898f8cae45eab3aa7fc",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/onboarding_service.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056831,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.3067217,
     "ast_hash": "73d79b5279e327cfd8f5f89610e428cf",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/password.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056848,
+    "mtime": 1793623921.2259374,
+    "seen": 1794502493.306723,
     "ast_hash": "22627314c1d1a10dd3b6dc845f549a23",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/rate_limiter.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056867,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067248,
     "ast_hash": "251e7273ae78d79cab330bf4fe8ded90",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/redis_ops.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.3056884,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067265,
     "ast_hash": "24b7b2fdd7977061ac2e1a42bf9c5401",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/security_service.rs": {
-    "mtime": 1793647853.1250155,
-    "seen": 1794476654.30569,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.306728,
     "ast_hash": "a5e6c9811aaa145852063248521a14ba",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/session.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3056917,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067296,
     "ast_hash": "d7d1b62e56482717982e829ed0bd80ca",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/sync_log_service.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3056934,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.306731,
     "ast_hash": "37743b05c5223caa5da7ab9e8f953fb6",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/token_refresh.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.305695,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067327,
     "ast_hash": "b8dcfdb661c3f9f5b1fe1c758b24791f",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/token_service.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3056965,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067343,
     "ast_hash": "1beb8a03b3636f6720fd98e8d725ceb8",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/totp.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3056982,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067358,
     "ast_hash": "de9358d2a8e722ecf7fa59de43129c08",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/user_service.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3056998,
+    "mtime": 1793623921.2263284,
+    "seen": 1794502493.3067374,
     "ast_hash": "06330e2d5ffe29622d2861b5f95ec693",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/webauthn.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3057022,
+    "mtime": 1793623921.2273283,
+    "seen": 1794502493.306739,
     "ast_hash": "fed33020f545206483692ee95c34b522",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/websocket/helpers.rs": {
-    "mtime": 1793647853.1256764,
-    "seen": 1794476654.3057036,
+    "mtime": 1793623921.2273283,
+    "seen": 1794502493.306741,
     "ast_hash": "ef61e929b28729775b174bf91bbd5b19",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/websocket/manager.rs": {
-    "mtime": 1793647853.1266763,
-    "seen": 1794476654.3057053,
+    "mtime": 1793623921.2283971,
+    "seen": 1794502493.3067427,
     "ast_hash": "fe3fe0c71b1b50d1debf6b7dc63ef340",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/websocket/mod.rs": {
-    "mtime": 1793647853.1266763,
-    "seen": 1794476654.305707,
+    "mtime": 1793623921.2283971,
+    "seen": 1794502493.3067443,
     "ast_hash": "8765f165f9fdcf0e796b6a07775f0e26",
     "semantic_hash": ""
   },
   "crates/krausen-auth/src/workspace_service.rs": {
-    "mtime": 1793647853.1266763,
-    "seen": 1794476654.3057086,
+    "mtime": 1793623921.2283971,
+    "seen": 1794502493.306746,
     "ast_hash": "238384826d7eb0c834ec53b2dc150c8d",
     "semantic_hash": ""
   },
   "crates/krausen-auth/tests/credential_lifecycle.rs": {
-    "mtime": 1793647853.1266763,
-    "seen": 1794476654.30571,
+    "mtime": 1793623921.2283971,
+    "seen": 1794502493.3067477,
     "ast_hash": "b5b888dc81eeb37367cbc84e79611859",
     "semantic_hash": ""
   },
   "crates/krausen-auth/tests/email_brand_source.py": {
-    "mtime": 1793647853.1269922,
-    "seen": 1794476654.305712,
+    "mtime": 1793623921.2292933,
+    "seen": 1794502493.306749,
     "ast_hash": "ff42407d4d47e76c20dc3afbeb530159",
     "semantic_hash": ""
   },
   "crates/krausen-auth/tests/secure_cookie.rs": {
-    "mtime": 1793647853.1269922,
-    "seen": 1794476654.3057134,
+    "mtime": 1793623921.2292933,
+    "seen": 1794502493.3067508,
     "ast_hash": "f1c8a9de106209fa9e18f8346bd5426c",
     "semantic_hash": ""
   },
   "crates/krausen-auth/tests/signup_flow.rs": {
-    "mtime": 1793647853.1269922,
-    "seen": 1794476654.3057148,
+    "mtime": 1793623921.2292933,
+    "seen": 1794502493.306752,
     "ast_hash": "5187455bcf587702b51c030734f1d7af",
     "semantic_hash": ""
   },
   "crates/krausen-auth/tests/workspace_naming.rs": {
-    "mtime": 1793647853.1269922,
-    "seen": 1794476654.3057172,
+    "mtime": 1793623921.2292933,
+    "seen": 1794502493.3067539,
     "ast_hash": "87123885a8642b3779cb125685da9456",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/Cargo.toml": {
-    "mtime": 1793647853.1269922,
-    "seen": 1794476654.305719,
+    "mtime": 1793623921.2292933,
+    "seen": 1794502493.3067553,
     "ast_hash": "ca142b4beeef23b129642481de1345d0",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/examples/import_report.rs": {
-    "mtime": 1793647853.12729,
-    "seen": 1794476654.3057206,
+    "mtime": 1793623921.2296925,
+    "seen": 1794502493.306757,
     "ast_hash": "0f63bbf864196d674a1bd944267b49e1",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/convert.rs": {
-    "mtime": 1793647853.12729,
-    "seen": 1794476654.3057225,
+    "mtime": 1793623921.2296925,
+    "seen": 1794502493.3067584,
     "ast_hash": "70790f8ed404235f74e0d8d65f3e5cb8",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/document.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.305724,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067603,
     "ast_hash": "41e626b84f11e067c5060876c1b8ffd1",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/error.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.305726,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067617,
     "ast_hash": "ad20f60b665937d1c75b1148b6f22b5e",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/lib.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057277,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067632,
     "ast_hash": "7c76b03820bfa92328b811e6fc347404",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/native.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057296,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067648,
     "ast_hash": "7d057aa2782cc0336946f8c28cb9c2d3",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/parse.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.305731,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.306766,
     "ast_hash": "3fbe78825a039ab497a957e351cc1348",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/raw.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057327,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067677,
     "ast_hash": "73cea4e31c85a1c4cb85061d80b37991",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/record.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057344,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067694,
     "ast_hash": "f7db48dbc389fad5fb6a1dbcd0e4c99a",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/records.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057363,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067708,
     "ast_hash": "21848462d2ff0efaaaf3bdf4ee25124e",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/src/write.rs": {
-    "mtime": 1793647853.1274533,
-    "seen": 1794476654.3057377,
+    "mtime": 1793623921.2299566,
+    "seen": 1794502493.3067722,
     "ast_hash": "e312d439d10ab61bf3da75666bb20fbb",
     "semantic_hash": ""
   },
   "crates/krausen-beerxml/tests/round_trip.rs": {
-    "mtime": 1793647853.1280892,
-    "seen": 1794476654.3057392,
+    "mtime": 1793623921.230969,
+    "seen": 1794502493.3067737,
     "ast_hash": "ac2cac78ef5afe3db2bea28c52cee668",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/Cargo.toml": {
-    "mtime": 1793647853.1280892,
-    "seen": 1794476654.3057408,
+    "mtime": 1793623921.230969,
+    "seen": 1794502493.3067756,
     "ast_hash": "b73c2d19d514f0d0ca309ddaeeb80df5",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/brew_evidence_store.rs": {
-    "mtime": 1793647853.128328,
-    "seen": 1794476654.3057425,
+    "mtime": 1793623921.2313116,
+    "seen": 1794502493.306777,
     "ast_hash": "48838411e47bd9b4c95a5b775e3f662b",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/brew_store.rs": {
-    "mtime": 1793647853.1284492,
-    "seen": 1794476654.3057444,
+    "mtime": 1793623921.2314794,
+    "seen": 1794502493.3067787,
     "ast_hash": "483b2e60382d664c7aebb308d6bb25e2",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/catalogue_store.rs": {
-    "mtime": 1793647853.1284492,
-    "seen": 1794476654.3057458,
+    "mtime": 1793623921.2314794,
+    "seen": 1794502493.30678,
     "ast_hash": "3cca12bd7886bee75945ce4fcfd8bf3b",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/equipment_store.rs": {
-    "mtime": 1793647853.1284492,
-    "seen": 1794476654.3057475,
+    "mtime": 1793623921.2314794,
+    "seen": 1794502493.3067818,
     "ast_hash": "f521ad0b0a7c040f2f3951774ae59bc1",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/lib.rs": {
-    "mtime": 1793647853.1284492,
-    "seen": 1794476654.305749,
+    "mtime": 1793623921.2314794,
+    "seen": 1794502493.3067834,
     "ast_hash": "27a0db9bc902f60d691e2bc0d893e40e",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/mapping/calculation.rs": {
-    "mtime": 1793647853.1284492,
-    "seen": 1794476654.3057508,
+    "mtime": 1793623921.2314794,
+    "seen": 1794502493.3067856,
     "ast_hash": "0f3899292ea6e5608fede2aed15aae15",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/mapping/mod.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.3057523,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.306787,
     "ast_hash": "28268e4c3ae52d923064e7a6384f1e6b",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/native_recipe.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.305754,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.3067884,
     "ast_hash": "73fb212a3290f507ec6602fdfeb9f660",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/native_store.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.3057556,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.30679,
     "ast_hash": "d470a690d0c5ff282503afb3cceeea1e",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/recipe_service.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.3057573,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.3067913,
     "ast_hash": "e915dd69e21602d1ca6644b7484bbcc4",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/src/validation.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.3057587,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.3067932,
     "ast_hash": "6e7ced250311a147cf41165f8bd95dd9",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/tests/brew_schema.rs": {
-    "mtime": 1793647853.1287975,
-    "seen": 1794476654.3057601,
+    "mtime": 1793623921.2319689,
+    "seen": 1794502493.3067944,
     "ast_hash": "9dcc4c190c60938a5657917f96d6e222",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/tests/draft_validation.rs": {
-    "mtime": 1793647853.1291935,
-    "seen": 1794476654.305762,
+    "mtime": 1793623921.232564,
+    "seen": 1794502493.306796,
     "ast_hash": "07b8cfa7876a9e56a39e26e755e94a20",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/tests/native_schema.rs": {
-    "mtime": 1793647853.1291935,
-    "seen": 1794476654.3057635,
+    "mtime": 1793623921.232564,
+    "seen": 1794502493.3067975,
     "ast_hash": "4e7bb0765982d3073528c051d106d35a",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/tests/native_transactions.rs": {
-    "mtime": 1793647853.1291935,
-    "seen": 1794476654.3057652,
+    "mtime": 1793623921.232564,
+    "seen": 1794502493.3067992,
     "ast_hash": "f4048e2f9d56befa8e7d94ee21afb62e",
     "semantic_hash": ""
   },
   "crates/krausen-brewery/tests/recipe_crud.rs": {
-    "mtime": 1793647853.1291935,
-    "seen": 1794476654.3057666,
+    "mtime": 1793623921.232564,
+    "seen": 1794502493.3068004,
     "ast_hash": "3b977a94519b59ba634c5ae9a2b60f48",
     "semantic_hash": ""
   },
   "crates/krausen-calc/Cargo.toml": {
-    "mtime": 1793647853.1291935,
-    "seen": 1794476654.3057687,
+    "mtime": 1793623921.232564,
+    "seen": 1794502493.306802,
     "ast_hash": "c3c9a47f65dc0ae8d16a4882e23f7475",
     "semantic_hash": ""
   },
   "crates/krausen-calc/build.rs": {
-    "mtime": 1793647853.1295075,
-    "seen": 1794476654.3057704,
+    "mtime": 1793623921.2329848,
+    "seen": 1794502493.3068035,
     "ast_hash": "b3cc2c4a608ea41f532144d026f8c829",
     "semantic_hash": ""
   },
   "crates/krausen-calc/examples/brewfather_comparison.rs": {
-    "mtime": 1793647853.1295075,
-    "seen": 1794476654.3057723,
+    "mtime": 1793623921.2329848,
+    "seen": 1794502493.3068051,
     "ast_hash": "9c82ad632932a9dbf44349c12a4e23d7",
     "semantic_hash": ""
   },
   "crates/krausen-calc/examples/mash_water_sensitivity.rs": {
-    "mtime": 1793647853.1296358,
-    "seen": 1794476654.305774,
+    "mtime": 1793623921.2331872,
+    "seen": 1794502493.3068068,
     "ast_hash": "50d4d6a13a053f3cd10c98ee75972234",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/colour.rs": {
-    "mtime": 1793647853.1296358,
-    "seen": 1794476654.3057756,
+    "mtime": 1793623921.2331872,
+    "seen": 1794502493.3068085,
     "ast_hash": "9dd698035aa687ce27b4fbe34cb796e2",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/derived.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.305777,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068101,
     "ast_hash": "fb9c39d68a244404cc0418747d5c8ee2",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/equipment.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.305779,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068116,
     "ast_hash": "671a95d7d4769fdea6c1d08bd588b065",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/error.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057804,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068132,
     "ast_hash": "562fbfe42a81983d0878b8cb578e07cd",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/extract.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.305782,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068147,
     "ast_hash": "d6b3f3921f6d194e74fb30534fa502dc",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/formulation.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057835,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068163,
     "ast_hash": "0e3dfdff896049d31b2b55c6afcfbc6b",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/ibu.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057852,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068178,
     "ast_hash": "464f876a80f604c988e203324d5ae920",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/lib.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057866,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068194,
     "ast_hash": "0a4bbb87959e2047e2b8a248f1688d1a",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/mibu.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057883,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068209,
     "ast_hash": "dae81ea0e32e6ff343234523803d5fb7",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/presets.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057897,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.306822,
     "ast_hash": "8ef6a28b9a4f740134075740ff031d65",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/recipe.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057914,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068237,
     "ast_hash": "cbb22a9cfe0e2d5053111f3a7032eae1",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/units.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057935,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.306825,
     "ast_hash": "13e76e1d44abf8ac6f11ae0c202bb516",
     "semantic_hash": ""
   },
   "crates/krausen-calc/src/volumes.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.305795,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.3068266,
     "ast_hash": "3f67ed839221e62fb453f28efcf78607",
     "semantic_hash": ""
   },
   "crates/krausen-calc/tests/formulation_v1.rs": {
-    "mtime": 1793647853.1297557,
-    "seen": 1794476654.3057969,
+    "mtime": 1793623921.2333462,
+    "seen": 1794502493.306828,
     "ast_hash": "9fe94a1f4b625663c07592286da11cae",
     "semantic_hash": ""
   },
   "crates/krausen-calc/tests/input_boundaries.rs": {
-    "mtime": 1793647853.130582,
-    "seen": 1794476654.3057983,
+    "mtime": 1793623921.2346044,
+    "seen": 1794502493.3068295,
     "ast_hash": "5b186882e5f8058becadae56393002d7",
     "semantic_hash": ""
   },
   "crates/krausen-calc/tests/preset_plugin.rs": {
-    "mtime": 1793647853.130582,
-    "seen": 1794476654.3058002,
+    "mtime": 1793623921.2346044,
+    "seen": 1794502493.3068311,
     "ast_hash": "a7dc436aadfa472d4efff276fc8d6cbc",
     "semantic_hash": ""
   },
   "crates/krausen-calc/tests/reference_recipe.rs": {
-    "mtime": 1793647853.130582,
-    "seen": 1794476654.3058016,
+    "mtime": 1793623921.2346044,
+    "seen": 1794502493.3068326,
     "ast_hash": "67f5b19feaf7071e8378c8f823b10965",
     "semantic_hash": ""
   },
   "crates/krausen-core/Cargo.toml": {
-    "mtime": 1793647853.130582,
-    "seen": 1794476654.3058035,
+    "mtime": 1793623921.2346044,
+    "seen": 1794502493.3068342,
     "ast_hash": "0ef551b3ee91a889bfb37ee62c7db0d1",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/canonical_json.rs": {
-    "mtime": 1793647853.130824,
-    "seen": 1794476654.305805,
+    "mtime": 1793623921.2349694,
+    "seen": 1794502493.3068357,
     "ast_hash": "e14994357f825d9b8d107707564d3f30",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/config.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058069,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068373,
     "ast_hash": "d93ad607bb41ef1dc6cf2b3aa8aa3566",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/constants.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058083,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068385,
     "ast_hash": "50db1efb6bb575ecb31e56d0fe4f6d86",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/db.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.30581,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068402,
     "ast_hash": "8ecfdfdcd2f6d287c3dd0fe4c172e4b0",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/enums.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058116,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068416,
     "ast_hash": "441ae97c858fdf1653ef4751b974e91a",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/error.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058133,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.306843,
     "ast_hash": "b157f10421f6f9a9acbc022e175c4d65",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/kv_store.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058147,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068445,
     "ast_hash": "6100fe3551734c49b4fad4aafa745fa8",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/kv_store_memory.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058167,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.306846,
     "ast_hash": "eb1fd9b6434d5e5eb197144454169db1",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/kv_store_redis.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.305818,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068473,
     "ast_hash": "8d615690ef52e0274be9933199e24b5f",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/lib.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.30582,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068488,
     "ast_hash": "7b0fbe39ab54631477a406f6ece1bac3",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/models.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058217,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068502,
     "ast_hash": "5875e89ffb08e27002c0e5364aa543a9",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/redis.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058236,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.3068519,
     "ast_hash": "7d5847e9bd18c44ca7590918a3733938",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/retry.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.305825,
+    "mtime": 1793623921.2350802,
+    "seen": 1794502493.306853,
     "ast_hash": "14529a90727747bfac8e364df72228dd",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/sql_compat.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.305827,
+    "mtime": 1793623921.2353284,
+    "seen": 1794502493.3068547,
     "ast_hash": "055961485a1cd810e6195ba638c13cbc",
     "semantic_hash": ""
   },
   "crates/krausen-core/src/websocket_types.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058286,
+    "mtime": 1793623921.2353284,
+    "seen": 1794502493.3068562,
     "ast_hash": "bf63173444084be17e8671f77d734c94",
     "semantic_hash": ""
   },
   "crates/krausen-core/tests/expiry_comparison.rs": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.3058305,
+    "mtime": 1793623921.2353284,
+    "seen": 1794502493.3068578,
     "ast_hash": "53ae8fadf6cdfdd8717090ebb5ae3d71",
     "semantic_hash": ""
   },
   "crates/krausen-types/Cargo.toml": {
-    "mtime": 1793647853.1308968,
-    "seen": 1794476654.305832,
+    "mtime": 1793623921.2353284,
+    "seen": 1794502493.3068593,
     "ast_hash": "52dafbb4de5e763ec764ac726d85c644",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/brew.rs": {
-    "mtime": 1793647853.1317916,
-    "seen": 1794476654.3058336,
+    "mtime": 1793623921.23655,
+    "seen": 1794502493.3068607,
     "ast_hash": "a364b53e4d7ff65a59883c8251a0f003",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/brew_history.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058352,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068624,
     "ast_hash": "731f938fecbe6aaab8c9b5acca065a3a",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/brewery.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.305837,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.306864,
     "ast_hash": "3301c9221a26b602df14e1177de619ed",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/catalogue.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058388,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068657,
     "ast_hash": "0324165cdb4d7fa4c2f4aa0feb98d965",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/equipment.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058407,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068671,
     "ast_hash": "03e4920c090bab613eef69ae512e0104",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/formulation.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058422,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068688,
     "ast_hash": "dd9051dc60c7c71b915f6126012a0834",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/interchange.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058438,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.30687,
     "ast_hash": "201c35bdb99e382a3f1b8f22e7da2d1d",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/lib.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058453,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068717,
     "ast_hash": "1d8991e63228973f16ff918661d79c60",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/operations.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058467,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.306873,
     "ast_hash": "88d208c987c884380367db6996962afd",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/process_summary.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058484,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068745,
     "ast_hash": "bfdfff98f8b748ebb072599f2ac19562",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/recipe_editor.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.30585,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068762,
     "ast_hash": "2dc8ea65e7f16810f06f81ff2b669f23",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/recipe_library.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058517,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068776,
     "ast_hash": "ef5f68af563bc67c072ba075b94d631e",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/request_context.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058531,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068793,
     "ast_hash": "223a707edd07bfe5c6d75a518411a752",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/scaling.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058548,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068805,
     "ast_hash": "a4607a4c4f8bd9f3319e1d94fc561cd5",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/sync.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058562,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068821,
     "ast_hash": "b3d690eb1e7d6198628f9b1d4768eca3",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/validation.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.305858,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.3068836,
     "ast_hash": "cf4fc946f0901e480ebfdb9a90fc7362",
     "semantic_hash": ""
   },
   "crates/krausen-types/src/workspace.rs": {
-    "mtime": 1793647853.1318755,
-    "seen": 1794476654.3058596,
+    "mtime": 1793623921.236672,
+    "seen": 1794502493.306885,
     "ast_hash": "40a0aeae3917d85f41a27f52d661f1bd",
     "semantic_hash": ""
   },
   "crates/krausen-ui/Cargo.toml": {
-    "mtime": 1794476618.2951374,
-    "seen": 1794476654.3058612,
+    "mtime": 1794476612.4570658,
+    "seen": 1794502493.3068867,
     "ast_hash": "61e08e9d8171fd0ce8fbeef316dc3bcb",
     "semantic_hash": ""
   },
   "crates/krausen-ui/package.json": {
-    "mtime": 1793647853.1329696,
-    "seen": 1794476654.3058627,
+    "mtime": 1793623921.23825,
+    "seen": 1794502493.306888,
     "ast_hash": "b51a8b6408c22d4c7d040c8cd06a7b8c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/app.rs": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3058643,
+    "mtime": 1793623921.2413285,
+    "seen": 1794502493.3068898,
     "ast_hash": "4ff9fed628a6d2447c7a17b9851edb1c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/action_status.rs": {
-    "mtime": 1793647853.1358519,
-    "seen": 1794476654.305866,
+    "mtime": 1793623921.2422884,
+    "seen": 1794502493.3068912,
     "ast_hash": "92545f4a073d704a78ed05060a5916e7",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/alert.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058674,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3068929,
     "ast_hash": "e2f4d1a8fc8104dd2fb970d8604ada12",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/badge.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305871,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3068962,
     "ast_hash": "41ab1ec31439a86e68f9d8ee3f3f5be3",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/brew_evidence_rows.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305873,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3068976,
     "ast_hash": "f4985f379ef9f988b54c276b0d26620f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/brewery_kit.rs": {
-    "mtime": 1794476618.2951374,
-    "seen": 1794476654.3058746,
+    "mtime": 1794476612.4570658,
+    "seen": 1794502493.3068993,
     "ast_hash": "a9edc5682fce23c453679924e9bc92e1",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/button.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058763,
+    "mtime": 1793647833.4064226,
+    "seen": 1794502493.3069007,
     "ast_hash": "24d18c03f02c63c004684801b32ad00e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/card.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058777,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069022,
     "ast_hash": "cd588b2f900821d0cdc75d221e2589fd",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/checkbox.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058794,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.306904,
     "ast_hash": "8937b2a2944a9bf32ed9b402a8a3dc09",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/confirm_dialog.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305881,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069055,
     "ast_hash": "f2c1e2a102137c09fe59e16807c42a27",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/empty_state.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305883,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069074,
     "ast_hash": "fb1f7f83b399d54b00b6aa40e3714a33",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/input.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058844,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069134,
     "ast_hash": "f31b62a6ddd83ad66b705ab13753a2a5",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/label.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305886,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069148,
     "ast_hash": "2ed2ea7635004365b2499c77fb2a6aed",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/layout.rs": {
-    "mtime": 1794476618.2961373,
-    "seen": 1794476654.3058877,
-    "ast_hash": "fc146326e779def0401b49f25468e10d",
+    "mtime": 1794502443.6311681,
+    "seen": 1794502493.3069167,
+    "ast_hash": "6ae860ab4e250ce276d207cfbb25b45e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/mod.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058894,
+    "mtime": 1793647833.4064226,
+    "seen": 1794502493.3069181,
     "ast_hash": "3eea981770ae5fe0e22779a64563af9b",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/modal.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058908,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069196,
     "ast_hash": "f1d89de0536169416b9adc6fe33ec82c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/navigation_progress.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058925,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.3069215,
     "ast_hash": "06d781b0229e193754494fab64dba32d",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/popover.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305894,
+    "mtime": 1793623921.242396,
+    "seen": 1794502493.306923,
     "ast_hash": "5bc781e3e48d4f0c755da97534b537fb",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/printable_recipe.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058953,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069246,
     "ast_hash": "4ac355a3767bf5786ac3f59a092862e1",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/recipe_revision_history.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.305897,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.306926,
     "ast_hash": "08becc3c26aaba352f08988ff47fd565",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/search_input.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.305899,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.306928,
     "ast_hash": "dca1c8e2d4ef074cecd06c82a76ac382",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/select.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059006,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069293,
     "ast_hash": "3a7e4e1abe3ea1fd668028ac2aff5db9",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/skeleton.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.305902,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.306931,
     "ast_hash": "53ad016901e09e140484383c0cd39f4f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/spinner.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059037,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069322,
     "ast_hash": "2fcea921ab0ff03d8c3fb857c0560375",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/status_badge.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.305905,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.306934,
     "ast_hash": "f585dbc2eab22538a9a0b1d360c9e485",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/switch.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059072,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069355,
     "ast_hash": "bea542fb022ec5b3ae80e027ffc653b6",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/theme.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059087,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.306937,
     "ast_hash": "f1480ab2b6b47d5cb143a0611596f58b",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/toast.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059106,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069386,
     "ast_hash": "3336dc3b9707be37f3ce8d7226983916",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/tooltip.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.305912,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069398,
     "ast_hash": "709e4567f0638dfdf5b569a6055803ac",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/lib.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059137,
+    "mtime": 1793623921.2433286,
+    "seen": 1794502493.3069415,
     "ast_hash": "ff38220a00f3413542c578e184471f67",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/main.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059154,
+    "mtime": 1793623921.2443285,
+    "seen": 1794502493.306943,
     "ast_hash": "532b57bc0821217ebee702a6e64f3706",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/accept_ownership.rs": {
-    "mtime": 1793647853.1366765,
-    "seen": 1794476654.3059173,
+    "mtime": 1793623921.2443285,
+    "seen": 1794502493.306945,
     "ast_hash": "008f07eb07f717bb4d3b798b2f98aee5",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/account_recovery.rs": {
-    "mtime": 1793647853.1377919,
-    "seen": 1794476654.305919,
+    "mtime": 1793623921.2453957,
+    "seen": 1794502493.3069468,
     "ast_hash": "e633c1b59616c1dc5c45b7eaea36d349",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/account_recovery_complete.rs": {
-    "mtime": 1793647853.1378772,
-    "seen": 1794476654.3059208,
+    "mtime": 1793623921.2455294,
+    "seen": 1794502493.3069487,
     "ast_hash": "8a0ed84425aaf8b461ffaa8eb0f4127b",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/auth_layout.rs": {
-    "mtime": 1793647853.1378772,
-    "seen": 1794476654.3059227,
+    "mtime": 1793623921.2455294,
+    "seen": 1794502493.30695,
     "ast_hash": "667bcccf800f4f7efd5b81c809960d4f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/components/divider.rs": {
-    "mtime": 1793647853.1378772,
-    "seen": 1794476654.3059247,
+    "mtime": 1793623921.2455294,
+    "seen": 1794502493.3069515,
     "ast_hash": "4b5678afc057b5c424ab9be2d39054e3",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/components/google_button.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059263,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069532,
     "ast_hash": "b71f21a6a1646f7d4ee8a2cf32c0a862",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/components/mod.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.305928,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069549,
     "ast_hash": "6f19a5b71cb0da46bb595f5109ced3df",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/components/passkey_button.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.30593,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069563,
     "ast_hash": "f0c90d718ebd4cd22dd92502c4b4e982",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/components/recovery_request_card.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059318,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069577,
     "ast_hash": "69ab5021b5b675506903bf4124aba5e5",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/google_callback.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059332,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069594,
     "ast_hash": "2ab1e50b6a182069da3c1640b8df69b1",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/login.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059354,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069608,
     "ast_hash": "d82b5acb1af959efd078380f337903d7",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/mod.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059373,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069623,
     "ast_hash": "fc5897e9de172b60b6b4b03989ae6985",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/oauth_complete.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059392,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069637,
     "ast_hash": "47b575c70736e63386912b176a4a7d3c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/passkey_recovery.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059406,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069654,
     "ast_hash": "ec79edb1b5156ab83e9c1dda58be1777",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/passkey_recovery_complete.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059425,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069668,
     "ast_hash": "66fd8a1b5c11af26ebbe10ba7a942d78",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/passkey_signup_complete.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.305944,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.3069687,
     "ast_hash": "84517d04c7aa0003f83653f5bffd5dc4",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/auth/signup_complete.rs": {
-    "mtime": 1793647853.1380837,
-    "seen": 1794476654.3059456,
+    "mtime": 1793623921.2458644,
+    "seen": 1794502493.30697,
     "ast_hash": "d84364ee8b9847b562acb39bb5d70f84",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/beerxml.rs": {
-    "mtime": 1794476618.51014,
-    "seen": 1794476654.3059473,
+    "mtime": 1794502443.6119783,
+    "seen": 1794502493.3069713,
     "ast_hash": "ffaf2ff86f05211678d8d78f99334150",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/brew_evidence.rs": {
-    "mtime": 1793647853.1386766,
-    "seen": 1794476654.305949,
-    "ast_hash": "804c05317816090696248cec185ca1ef",
+    "mtime": 1794502448.4472294,
+    "seen": 1794502493.306973,
+    "ast_hash": "94a6f3fd7187a049c6d39f198d115d07",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/brew_history.rs": {
-    "mtime": 1793647853.1386766,
-    "seen": 1794476654.3059504,
+    "mtime": 1793623921.2463286,
+    "seen": 1794502493.3069744,
     "ast_hash": "93de413b1395c5251edc33a2bec2d40c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/brew_history_presentation.rs": {
-    "mtime": 1793647853.1386766,
-    "seen": 1794476654.305952,
+    "mtime": 1793623921.2463286,
+    "seen": 1794502493.306976,
     "ast_hash": "3ccc8a734cce23e60be771c3cd4326a6",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/brew_start.rs": {
-    "mtime": 1793647853.1386766,
-    "seen": 1794476654.3059537,
+    "mtime": 1793623921.2463286,
+    "seen": 1794502493.3069777,
     "ast_hash": "664cbd7bd0a15e75cd356e4c5ae36d4d",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/catalogue_picker.rs": {
-    "mtime": 1794476618.2961373,
-    "seen": 1794476654.3059556,
+    "mtime": 1794476612.458066,
+    "seen": 1794502493.3069792,
     "ast_hash": "4535d12f77f40bc25a99a49fb3b56bb4",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/design_system.rs": {
-    "mtime": 1793647853.1386766,
-    "seen": 1794476654.305957,
+    "mtime": 1793647833.4064226,
+    "seen": 1794502493.3069806,
     "ast_hash": "1df0c3d98a1446ca8d25984e8d65d313",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/equipment_profiles.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059587,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.306982,
     "ast_hash": "367775506c84422559f84f8ce2f6edc5",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/mod.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.305961,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.3069856,
     "ast_hash": "242346c4f145d329df492db2ef5fc3c6",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/onboarding.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059626,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.3069873,
     "ast_hash": "e79d71bde6db319e2319c1639e016e81",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_draft.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059661,
+    "mtime": 1793647833.4074228,
+    "seen": 1794502493.3069901,
     "ast_hash": "1974c5fb61887cf7d72ec7f1149e04c0",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_editor.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059678,
-    "ast_hash": "bd152629f37f66db4f7018cc89eae9c9",
+    "mtime": 1794502443.632168,
+    "seen": 1794502493.3069916,
+    "ast_hash": "f6a2c2dbf44c5ce937d8881fc744c7cd",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_preview_gate.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059697,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.3069932,
     "ast_hash": "93c924b88f32d392a49ef7cda579b9a1",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_recovery.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059711,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.3069947,
     "ast_hash": "db92cb2e074b482cc300b5c6e4bc0610",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_scaling.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.305973,
+    "mtime": 1793623921.2473285,
+    "seen": 1794502493.3069959,
     "ast_hash": "eae854504b1288c434910ed1e627f2eb",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipes.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059745,
+    "mtime": 1793623921.2483287,
+    "seen": 1794502493.3069975,
     "ast_hash": "307132e17ec90576914716a1d2f8108f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/mod.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059762,
+    "mtime": 1793623921.2483287,
+    "seen": 1794502493.306999,
     "ast_hash": "86c5ed531b8d6e1bf8540f920397c663",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/profile.rs": {
-    "mtime": 1793647853.1410758,
-    "seen": 1794476654.3059778,
+    "mtime": 1793623921.2493043,
+    "seen": 1794502493.3070006,
     "ast_hash": "e81fc8543c41afd51352e2765e227b99",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/mod.rs": {
-    "mtime": 1793647853.1410758,
-    "seen": 1794476654.3059795,
+    "mtime": 1793623921.2493043,
+    "seen": 1794502493.307002,
     "ast_hash": "0f5454e98813eb716def5f40818c723f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/passkey_manager.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.3059814,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070035,
     "ast_hash": "f1b5dd8561771ab870bfd7aab8696fc9",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/password_manager.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.3059833,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.307005,
     "ast_hash": "1f9c0743edd913f39f2ff823c8a8d827",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/security_tab.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.305985,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070064,
     "ast_hash": "998130a3c4af30058de46fe6496f669e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/session_management.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.305987,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070078,
     "ast_hash": "0990deb2f2a3f2cb89cc62eae45f7b2d",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/security/two_factor_auth.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.3059886,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070095,
     "ast_hash": "019a229ad0e9dc6c541feefd8f5d92f0",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/settings_shell.rs": {
-    "mtime": 1793647853.1412926,
-    "seen": 1794476654.3059907,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070111,
     "ast_hash": "6c2c120d4ac18e8e68c6609d821acb44",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/team.rs": {
-    "mtime": 1793647853.1416767,
-    "seen": 1794476654.3059924,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070123,
     "ast_hash": "622ed21ee411b7d41c92b18d478aedfc",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/settings/workspace.rs": {
-    "mtime": 1793647853.1416767,
-    "seen": 1794476654.305994,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070142,
     "ast_hash": "e5bb83c9d419f00548cea5e5abf2d30b",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/welcome.rs": {
-    "mtime": 1793647853.1416767,
-    "seen": 1794476654.3059955,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070157,
     "ast_hash": "609d665021cbe71f5d03c92b0117be77",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/auth.rs": {
-    "mtime": 1793647853.1416767,
-    "seen": 1794476654.3059971,
+    "mtime": 1793623921.2494743,
+    "seen": 1794502493.3070176,
     "ast_hash": "f2c3bff1871690b30b70cee844ff3f22",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/brew.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3059988,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307019,
     "ast_hash": "4091ed2d12b2b116236f3715efb38f13",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/brew_history.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060005,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070204,
     "ast_hash": "67dcb2c02abd0f09376b9e8ebcc70226",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/catalogue.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.306002,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307022,
     "ast_hash": "6ce92372c8a9202d4f330c2aed545f5f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/context.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060038,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070235,
     "ast_hash": "82c8b9e10e5684ea643253b9e754445e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/equipment.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060055,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070252,
     "ast_hash": "51ab97f0cd943e03eabae99c9a08653c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/formulation.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060071,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070266,
     "ast_hash": "a2aee43d6d89f5898342716bab939396",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/interchange.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060086,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070283,
     "ast_hash": "3c3d7099e7f1197e73bdab867609cf94",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/mod.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060105,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070295,
     "ast_hash": "cc63d5034a9b20208f7c9898a60751c2",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/onboarding.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.306012,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070312,
     "ast_hash": "fb1527f465a8c901187b09d385efad74",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/ownership.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060133,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070326,
     "ast_hash": "73a3cd02fa61f779f5ab7075f5d7aafd",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/process_summary.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060153,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307034,
     "ast_hash": "736c05924c1698a6d6e29dda88ba8be7",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/profile.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060167,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307036,
     "ast_hash": "67d19822cc9eb9c475292380eba8ddaf",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/recipe_editor.rs": {
-    "mtime": 1793647853.1424372,
-    "seen": 1794476654.3060186,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307037,
     "ast_hash": "c496898c47cef174faad12c7541982ac",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/recipe_library.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.30602,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070388,
     "ast_hash": "458f427df963e586bf475947836cc9ad",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/recipes.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060217,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070402,
     "ast_hash": "8750e0d737d19408767e5b9c36f7d68f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/scaling.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060234,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307042,
     "ast_hash": "9b73a60773db5be7a518e8e9446797ff",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/security.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.306025,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070438,
     "ast_hash": "d20a214d9b041d77e67114c08f43cc3b",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/sidebar.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060265,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070455,
     "ast_hash": "aacd2dab4f4c0aa4a8f5e7abcc405d23",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/team.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060281,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.307047,
     "ast_hash": "2c63957bbdb3313d7488ba435c997d4f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/server_fns/workspace.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060298,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.3070486,
     "ast_hash": "5efbbe9f06f98e604dbd41ab516a04ca",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/types.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.3060315,
+    "mtime": 1793623921.2506614,
+    "seen": 1794502493.30705,
     "ast_hash": "671c92bfca83710ead5095a69f351061",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/utils/auth_refresh.rs": {
-    "mtime": 1793647853.1426768,
-    "seen": 1794476654.306033,
+    "mtime": 1793623921.2513287,
+    "seen": 1794502493.3070512,
     "ast_hash": "e1565f4a7b252b58f415e1b3c9a27779",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/utils/mod.rs": {
-    "mtime": 1793647853.1438315,
-    "seen": 1794476654.3060343,
+    "mtime": 1793623921.2522228,
+    "seen": 1794502493.307053,
     "ast_hash": "b82082451989be6632ff6551171bc1b3",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/utils/request_id.rs": {
-    "mtime": 1793647853.1438315,
-    "seen": 1794476654.306036,
+    "mtime": 1793623921.2522228,
+    "seen": 1794502493.3070545,
     "ast_hash": "40aa5ebf7287c299a78a6d9c2395bb34",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/utils/webauthn.rs": {
-    "mtime": 1793647853.1438315,
-    "seen": 1794476654.3060377,
+    "mtime": 1793623921.2522228,
+    "seen": 1794502493.3070562,
     "ast_hash": "5c4d17ad0aa435ba747bd7e67a05922f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/tests/login-page.spec.js": {
-    "mtime": 1793647853.1442604,
-    "seen": 1794476654.3060393,
+    "mtime": 1793623921.2525933,
+    "seen": 1794502493.3070574,
     "ast_hash": "fb778643b83d8b41d4daab5563a81751",
     "semantic_hash": ""
   },
   "crates/krausen-ui/tests/recipe_composition_source.py": {
-    "mtime": 1793647853.144987,
-    "seen": 1794476654.3060408,
+    "mtime": 1793623921.2530785,
+    "seen": 1794502493.307059,
     "ast_hash": "e52f13c86c9adb19314046f9229ad067",
     "semantic_hash": ""
   },
   "docs/design/prototype/app.js": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.3060427,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3070605,
     "ast_hash": "43677846a550705e4076cf22fecdcb17",
     "semantic_hash": ""
   },
   "docs/design/prototype/build.sh": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.306044,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3070617,
     "ast_hash": "64752618052bb19d61b06023979140af",
     "semantic_hash": ""
   },
   "docs/design/prototype/catalogue.js": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.3060458,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3070633,
     "ast_hash": "cc487ca64de98246c46231fe3fdd1da1",
     "semantic_hash": ""
   },
   "docs/design/prototype/components.js": {
-    "mtime": 1793647853.1586769,
-    "seen": 1794476654.3060474,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3070648,
     "ast_hash": "f1099039d5bc54c083b20333752ed523",
     "semantic_hash": ""
   },
   "docs/design/prototype/engine/Cargo.toml": {
-    "mtime": 1793647853.1592505,
-    "seen": 1794476654.306049,
+    "mtime": 1793623921.2712524,
+    "seen": 1794502493.307067,
     "ast_hash": "2e764eeb913df9ec3dbb32223a918e4a",
     "semantic_hash": ""
   },
   "docs/design/prototype/engine/src/lib.rs": {
-    "mtime": 1793647853.1592505,
-    "seen": 1794476654.3060508,
+    "mtime": 1793623921.2712524,
+    "seen": 1794502493.3070683,
     "ast_hash": "b666c78d5d0310d8f023bf9405447288",
     "semantic_hash": ""
   },
   "docs/design/prototype/package.py": {
-    "mtime": 1793647853.160677,
-    "seen": 1794476654.3060527,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3070698,
     "ast_hash": "8b993f8f0421add1816fc982f77724d9",
     "semantic_hash": ""
   },
   "docs/design/prototype/styles.js": {
-    "mtime": 1793647853.160677,
-    "seen": 1794476654.306054,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3070712,
     "ast_hash": "0b0a9a7002996414278d6386cdadb1a1",
     "semantic_hash": ""
   },
   "docs/design/prototype/verify.cjs": {
-    "mtime": 1793647853.161677,
-    "seen": 1794476654.3060558,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3070729,
     "ast_hash": "3adcef4319ce73a456fda9da7da8ae27",
     "semantic_hash": ""
   },
   "e2e/global-setup.ts": {
-    "mtime": 1793647853.161677,
-    "seen": 1794476654.3060575,
+    "mtime": 1793623921.273329,
+    "seen": 1794502493.3070743,
     "ast_hash": "b96307628310ac83ea1775a0b9718b8f",
     "semantic_hash": ""
   },
   "e2e/helpers/test-helpers.ts": {
-    "mtime": 1793647853.1625102,
-    "seen": 1794476654.3060594,
+    "mtime": 1793623921.274275,
+    "seen": 1794502493.307076,
     "ast_hash": "3306622c58dc015e667f6f5f0d88ebb0",
     "semantic_hash": ""
   },
   "e2e/package.json": {
-    "mtime": 1793647853.1625102,
-    "seen": 1794476654.3060608,
+    "mtime": 1793623921.274275,
+    "seen": 1794502493.3070776,
     "ast_hash": "253ed0aa153d5446dfcad19fe2872c7d",
     "semantic_hash": ""
   },
   "e2e/playwright.config.ts": {
-    "mtime": 1793647853.1625102,
-    "seen": 1794476654.3060627,
+    "mtime": 1793623921.274275,
+    "seen": 1794502493.307079,
     "ast_hash": "69e21d7272b9d6cff44567b6c6f5fab0",
     "semantic_hash": ""
   },
   "e2e/scripts/auth-branding.test.mjs": {
-    "mtime": 1793647853.1625102,
-    "seen": 1794476654.3060644,
+    "mtime": 1793623921.274275,
+    "seen": 1794502493.3070807,
     "ast_hash": "b2f28b97749b2cd113e3bef162bcc7ee",
     "semantic_hash": ""
   },
   "e2e/scripts/profile-browser.sh": {
-    "mtime": 1793647853.1628408,
-    "seen": 1794476654.306066,
+    "mtime": 1793647833.4084227,
+    "seen": 1794502493.3070822,
     "ast_hash": "b31919109033d132a48d04d314a37d4a",
     "semantic_hash": ""
   },
   "e2e/tests/auth/account-recovery.spec.ts": {
-    "mtime": 1793647853.1629083,
-    "seen": 1794476654.3060677,
+    "mtime": 1793623921.2747018,
+    "seen": 1794502493.3070838,
     "ast_hash": "c7eabd0775b504aef8a3c8e8d93c49fe",
     "semantic_hash": ""
   },
   "e2e/tests/auth/auth-flows.spec.ts": {
-    "mtime": 1793647853.1629992,
-    "seen": 1794476654.3060691,
+    "mtime": 1793623921.2747793,
+    "seen": 1794502493.3070855,
     "ast_hash": "54fa6ce35a19010bd802d68d2907f3d1",
     "semantic_hash": ""
   },
   "e2e/tests/design/compact-density.spec.ts": {
-    "mtime": 1793647853.1629992,
-    "seen": 1794476654.306071,
+    "mtime": 1793623921.2747793,
+    "seen": 1794502493.3070872,
     "ast_hash": "c53dfef72acaa64379e120caaaa0f8bf",
     "semantic_hash": ""
   },
   "e2e/tests/library/shell-source-check.cjs": {
-    "mtime": 1793647853.1629992,
-    "seen": 1794476654.3060725,
+    "mtime": 1793623921.2747793,
+    "seen": 1794502493.3070886,
     "ast_hash": "e72473d9e920be66ef67558f39d5bb6d",
     "semantic_hash": ""
   },
   "e2e/tests/library/shell.spec.ts": {
-    "mtime": 1793647853.1632924,
-    "seen": 1794476654.3060741,
+    "mtime": 1793623921.2750413,
+    "seen": 1794502493.3070905,
     "ast_hash": "6f857224d38b3fdc404ae859a0e697f9",
     "semantic_hash": ""
   },
   "e2e/tests/mcp/mcp-endpoint.spec.ts": {
-    "mtime": 1793647853.1632924,
-    "seen": 1794476654.3060756,
+    "mtime": 1793623921.2750413,
+    "seen": 1794502493.307092,
     "ast_hash": "7c42964dc25c88c229e0e49130b10d84",
     "semantic_hash": ""
   },
   "e2e/tests/modes/onboarding.spec.ts": {
-    "mtime": 1793647853.1632924,
-    "seen": 1794476654.3060775,
+    "mtime": 1793623921.2750413,
+    "seen": 1794502493.3070936,
     "ast_hash": "10f75f9628d6f1c54ace30ea7e9dfae6",
     "semantic_hash": ""
   },
   "e2e/tests/modes/personal-mode.spec.ts": {
-    "mtime": 1793647853.1635036,
-    "seen": 1794476654.3060787,
+    "mtime": 1793623921.2759478,
+    "seen": 1794502493.3070953,
     "ast_hash": "972751f42209244cd49d2b133685706b",
     "semantic_hash": ""
   },
   "e2e/tests/modes/self-hosted-mode.spec.ts": {
-    "mtime": 1793647853.1635036,
-    "seen": 1794476654.3060803,
+    "mtime": 1793623921.2759478,
+    "seen": 1794502493.3070967,
     "ast_hash": "3d0f7ef93ec8be73e6412eba85b6d87a",
     "semantic_hash": ""
   },
   "e2e/tests/rate-limiting/login-rate-limit.spec.ts": {
-    "mtime": 1793647853.1635036,
-    "seen": 1794476654.306082,
+    "mtime": 1793623921.2759478,
+    "seen": 1794502493.3070984,
     "ast_hash": "7b402982e4b11f06eb6e4a5aedf08921",
     "semantic_hash": ""
   },
   "e2e/tests/rate-limiting/signup-rate-limit.spec.ts": {
-    "mtime": 1793647853.1636896,
-    "seen": 1794476654.3060834,
+    "mtime": 1793623921.276192,
+    "seen": 1794502493.3070998,
     "ast_hash": "3aaa886c3bf67c7d415774cc76728ddb",
     "semantic_hash": ""
   },
   "e2e/tests/rate-limiting/token-refresh.spec.ts": {
-    "mtime": 1793647853.1636896,
-    "seen": 1794476654.306085,
+    "mtime": 1793623921.276192,
+    "seen": 1794502493.3071015,
     "ast_hash": "e85fb764bad21e679ac8b9296d183ce7",
     "semantic_hash": ""
   },
   "e2e/tests/rate-limiting/token-rotation.spec.ts": {
-    "mtime": 1793647853.1636896,
-    "seen": 1794476654.306087,
+    "mtime": 1793623921.276192,
+    "seen": 1794502493.3071027,
     "ast_hash": "a3ce816ea27f287388290693289ffa6c",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/beerxml.spec.ts": {
-    "mtime": 1794476618.51014,
-    "seen": 1794476654.3060884,
+    "mtime": 1794502443.6121678,
+    "seen": 1794502493.3071122,
     "ast_hash": "ce47fdb7b403ab28a87ca5fba0e8c92b",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/brew-start.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3060899,
-    "ast_hash": "55171a82a214768b1512b19c08e521e6",
+    "mtime": 1794502448.4472294,
+    "seen": 1794502493.307114,
+    "ast_hash": "fcf2591e6cca418cb5a6ec1b91a31ebf",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/catalogue.spec.ts": {
-    "mtime": 1794476618.2971373,
-    "seen": 1794476654.306092,
+    "mtime": 1794476612.459066,
+    "seen": 1794502493.3071158,
     "ast_hash": "39649e7947b1fcec1587709155005e43",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/design-fidelity.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3060935,
+    "mtime": 1793623921.2764544,
+    "seen": 1794502493.307117,
     "ast_hash": "ecbe45cfa58020e174cad83b41772156",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/editor.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3060951,
-    "ast_hash": "d0a93a92d37c52abb0f73fafa828a448",
+    "mtime": 1794502447.71622,
+    "seen": 1794502493.307119,
+    "ast_hash": "bf31aa0ee4d56dc2b560e9aaeba39e9e",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/library.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3060968,
+    "mtime": 1793623921.2764544,
+    "seen": 1794502493.3071203,
     "ast_hash": "0e61b870d1ba9863d08cf018bd1f22e8",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/print.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3060987,
+    "mtime": 1793647833.4094229,
+    "seen": 1794502493.307122,
     "ast_hash": "d5f27522483a01ba18f4eaff6f89801b",
     "semantic_hash": ""
   },
   "e2e/tests/recipes/scaling.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.3061004,
+    "mtime": 1793623921.2764544,
+    "seen": 1794502493.3071234,
     "ast_hash": "c919440da04ddc8db682568be81a82e4",
     "semantic_hash": ""
   },
   "e2e/tests/settings/profile.spec.ts": {
-    "mtime": 1793647853.163915,
-    "seen": 1794476654.306102,
+    "mtime": 1793623921.2764544,
+    "seen": 1794502493.307125,
     "ast_hash": "1e2d236ddcfb4b729d9a64d2c1772665",
     "semantic_hash": ""
   },
   "e2e/tests/settings/security-passkeys.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061037,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071265,
     "ast_hash": "b0e0540b6d4187a0c72eaecea519a631",
     "semantic_hash": ""
   },
   "e2e/tests/settings/security-password.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061125,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071284,
     "ast_hash": "550641c5a9bcbbf6e6f24b9c3fb84caf",
     "semantic_hash": ""
   },
   "e2e/tests/settings/security-sessions.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061147,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.30713,
     "ast_hash": "7a52d6dbe7a7f1a6e6de9d2a5dc6aea9",
     "semantic_hash": ""
   },
   "e2e/tests/settings/security-totp.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.306116,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071315,
     "ast_hash": "0071b2612cd79e4910eed8610245012b",
     "semantic_hash": ""
   },
   "e2e/tests/settings/session-persistence.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061175,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071332,
     "ast_hash": "c74c7c46e7f64c4cc09f518d09eb0a19",
     "semantic_hash": ""
   },
   "e2e/tests/settings/settings-navigation.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.30612,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071349,
     "ast_hash": "0c09afeb4134d16b425b0bfe02233fb6",
     "semantic_hash": ""
   },
   "e2e/tests/settings/theme.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061216,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071363,
     "ast_hash": "d29bad1c99137d921fb77c2ec0738a9b",
     "semantic_hash": ""
   },
   "e2e/tests/team/cancel-invitation.spec.ts": {
-    "mtime": 1793647853.1647334,
-    "seen": 1794476654.3061233,
+    "mtime": 1793623921.277214,
+    "seen": 1794502493.3071377,
     "ast_hash": "11d424bf6b8731f0c5ad21e037fbba29",
     "semantic_hash": ""
   },
   "e2e/tests/team/change-role.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061252,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071394,
     "ast_hash": "53e03e36eb65795bb72b8b302536e5c8",
     "semantic_hash": ""
   },
   "e2e/tests/team/duplicate-invitation.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061268,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071408,
     "ast_hash": "fe2a8ee2cea0a78995dc5f924d8b92aa",
     "semantic_hash": ""
   },
   "e2e/tests/team/invitation-expiry.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061287,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071427,
     "ast_hash": "96046cec69925c5b277f9534a46ef15e",
     "semantic_hash": ""
   },
   "e2e/tests/team/invite-existing-member.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061302,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071444,
     "ast_hash": "992c7908e1ad9cd6c842517b51b5ee34",
     "semantic_hash": ""
   },
   "e2e/tests/team/invite-member.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.306132,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071463,
     "ast_hash": "7a34ed1f7db0ae6837aad83223123de4",
     "semantic_hash": ""
   },
   "e2e/tests/team/rbac-admin.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.306134,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.307148,
     "ast_hash": "3b4b024aaf4f77fdfdffdbae288098e3",
     "semantic_hash": ""
   },
   "e2e/tests/team/rbac-member.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061361,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071494,
     "ast_hash": "4c00717a77cd4ec2af331645151162a9",
     "semantic_hash": ""
   },
   "e2e/tests/team/remove-member.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061378,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.307151,
     "ast_hash": "20b3cde384686ba895f98abc4f59cd59",
     "semantic_hash": ""
   },
   "e2e/tests/team/transfer-cancel.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061395,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071527,
     "ast_hash": "f80692d1c73df009b9293f6d80e2693a",
     "semantic_hash": ""
   },
   "e2e/tests/team/transfer-decline.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.306141,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071542,
     "ast_hash": "c759d489f5a18d83253f7559a01bf6f8",
     "semantic_hash": ""
   },
   "e2e/tests/team/transfer-expiry.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061428,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071556,
     "ast_hash": "3bbb863f5ed1f9abdc9d9f415ad21a10",
     "semantic_hash": ""
   },
   "e2e/tests/team/transfer-ownership.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061445,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071578,
     "ast_hash": "87ab880772a2b734c16b11d6fb3a73c9",
     "semantic_hash": ""
   },
   "e2e/tests/team/workspace-isolation.spec.ts": {
-    "mtime": 1793647853.1652904,
-    "seen": 1794476654.3061464,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071592,
     "ast_hash": "b200c8737e8fc2249c333d8502be93cb",
     "semantic_hash": ""
   },
   "e2e/tests/team/workspace-settings.spec.ts": {
-    "mtime": 1793647853.165677,
-    "seen": 1794476654.3061478,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071609,
     "ast_hash": "e3ea5fbc91cdbe42c34d035609dc5d9b",
     "semantic_hash": ""
   },
   "e2e/tests/team/workspace-switcher.spec.ts": {
-    "mtime": 1793647853.165677,
-    "seen": 1794476654.3061497,
+    "mtime": 1793623921.277721,
+    "seen": 1794502493.3071625,
     "ast_hash": "6b37264917d02ae8b2c2b33ff209d0e4",
     "semantic_hash": ""
   },
   ".claude/team.md": {
-    "mtime": 1793647853.1156764,
-    "seen": 1794476654.3061516,
+    "mtime": 1793623921.2153282,
+    "seen": 1794502493.307164,
     "ast_hash": "2a07c624c03d0157060d731377375a53",
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1793647853.1169298,
-    "seen": 1794476654.3061535,
+    "mtime": 1793623921.2167227,
+    "seen": 1794502493.3071659,
     "ast_hash": "d28af9557686011aed2d3792ac4e845c",
     "semantic_hash": ""
   },
   "DESIGN.md": {
-    "mtime": 1793647853.1176765,
-    "seen": 1794476654.3061552,
+    "mtime": 1793623921.217328,
+    "seen": 1794502493.3071678,
     "ast_hash": "8ceb46d593282b221b1a60653064eeb9",
     "semantic_hash": ""
   },
   "KRAUSEN.md": {
-    "mtime": 1793647853.1176765,
-    "seen": 1794476654.3061574,
+    "mtime": 1793623921.2183282,
+    "seen": 1794502493.307169,
     "ast_hash": "4565f539666224ef558137379168368f",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793647853.1176765,
-    "seen": 1794476654.306159,
+    "mtime": 1793623921.2183282,
+    "seen": 1794502493.3071709,
     "ast_hash": "d7ea96a6b7892d80d90cdf7159226bf2",
     "semantic_hash": ""
   },
   "crates/krausen-app/README.md": {
-    "mtime": 1793647853.1215212,
-    "seen": 1794476654.306161,
+    "mtime": 1793623921.2224057,
+    "seen": 1794502493.3071723,
     "ast_hash": "c995f0654c37eaa67b80d5e3815b8739",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/README.md": {
-    "mtime": 1793647853.1235497,
-    "seen": 1794476654.3061626,
+    "mtime": 1793623921.2243614,
+    "seen": 1794502493.3071742,
     "ast_hash": "1e9fb1982c68459f7ac6d1a25b1bd675",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/baseline_4fc8313_digest.txt": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3061645,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3071756,
     "ast_hash": "df330134e7b01ecfce4e352e0734e4e7",
     "semantic_hash": ""
   },
   "crates/krausen-app/tests/fixtures/kra20_baseline_4fc8313/generator.rs.txt": {
-    "mtime": 1793647853.1236262,
-    "seen": 1794476654.3061662,
+    "mtime": 1793623921.2244303,
+    "seen": 1794502493.3071775,
     "ast_hash": "3b6a22d4843bb6682e286d1ff1d3601e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/index.html": {
-    "mtime": 1793647853.1329696,
-    "seen": 1794476654.3061678,
+    "mtime": 1793623921.23825,
+    "seen": 1794502493.307179,
     "ast_hash": "9994baad010b5d7f54103d7e0ccd834f",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/fonts/dmsans-OFL.txt": {
-    "mtime": 1793647853.1334083,
-    "seen": 1794476654.3061695,
+    "mtime": 1793623921.238743,
+    "seen": 1794502493.3071806,
     "ast_hash": "9e348984ed392c6d8fad88dea34456cb",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/fonts/geistmono-OFL.txt": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3061714,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3071823,
     "ast_hash": "c8c23c432b256d956f16fdf608970e0c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/fonts/instrumentserif-OFL.txt": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.306173,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3071842,
     "ast_hash": "b423e4d25ab8593c7caae40c5065a878",
     "semantic_hash": ""
   },
   "docs/ADOPTION.md": {
-    "mtime": 1793647853.1453292,
-    "seen": 1794476654.306175,
+    "mtime": 1793623921.253397,
+    "seen": 1794502493.307186,
     "ast_hash": "a1df4b343cca6072fb39229ee0cae53a",
     "semantic_hash": ""
   },
   "docs/ARCHITECTURE.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061767,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071873,
     "ast_hash": "87d026d87cb11839b431dfda45726cb5",
     "semantic_hash": ""
   },
   "docs/AUTHENTICATION.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061786,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071887,
     "ast_hash": "b880dae3aa76b942401e0239c19baadb",
     "semantic_hash": ""
   },
   "docs/CALCULATIONS.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.30618,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071902,
     "ast_hash": "b90c1e9ac7dcd9ff33f0655369a3da43",
     "semantic_hash": ""
   },
   "docs/CODING_STANDARDS.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.306182,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071918,
     "ast_hash": "0b890384d76f38ec733d5684682ce4b1",
     "semantic_hash": ""
   },
   "docs/DATA_MODEL.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061836,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071933,
     "ast_hash": "c7148f7d068e75ef7d0061e32fddb652",
     "semantic_hash": ""
   },
   "docs/E2E_TEST_PLAN.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061852,
+    "mtime": 1793623921.254785,
+    "seen": 1794502493.3071952,
     "ast_hash": "aa9bc63b677d210849f661d1739cb596",
     "semantic_hash": ""
   },
   "docs/README.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061893,
+    "mtime": 1793623921.2563286,
+    "seen": 1794502493.3071988,
     "ast_hash": "911dc78a64ea1209bf51c990a3ef39ad",
     "semantic_hash": ""
   },
   "docs/design/prototype/AGENTS.md": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.306193,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3072016,
     "ast_hash": "f8aea1116a9cd93b14c0c10f6b2eda4a",
     "semantic_hash": ""
   },
   "docs/design/prototype/README.md": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.3061948,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3072033,
     "ast_hash": "8c739bbed20ad666cc629a91baceb348",
     "semantic_hash": ""
   },
   "docs/design/prototype/fonts/README.md": {
-    "mtime": 1793647853.1592505,
-    "seen": 1794476654.3061962,
+    "mtime": 1793623921.2712524,
+    "seen": 1794502493.307205,
     "ast_hash": "1c60093a203da4fa2d0aa868c9b78410",
     "semantic_hash": ""
   },
   "docs/design/prototype/fonts/dmsans-OFL.txt": {
-    "mtime": 1793647853.1595292,
-    "seen": 1794476654.3061984,
+    "mtime": 1793623921.2714622,
+    "seen": 1794502493.3072062,
     "ast_hash": "5d80d8b71643fc638d4b8b1f3ded7c6f",
     "semantic_hash": ""
   },
   "docs/design/prototype/fonts/geistmono-OFL.txt": {
-    "mtime": 1793647853.160677,
-    "seen": 1794476654.3062,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3072078,
     "ast_hash": "fe4cc681382eff30e91c042d87f245aa",
     "semantic_hash": ""
   },
   "docs/design/prototype/fonts/instrumentserif-OFL.txt": {
-    "mtime": 1793647853.160677,
-    "seen": 1794476654.3062017,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3072093,
     "ast_hash": "768c3f0d6166414610edb8aab3eebfb3",
     "semantic_hash": ""
   },
   "docs/design/prototype/index.html": {
-    "mtime": 1793647853.160677,
-    "seen": 1794476654.3062036,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3072107,
     "ast_hash": "d82092a2a47ca4c7c7cbcd9cdaa95a54",
     "semantic_hash": ""
   },
   "docs/plans/2026-05-02-app-starter-skeleton.md": {
-    "mtime": 1793647853.161677,
-    "seen": 1794476654.3062053,
+    "mtime": 1793623921.2723289,
+    "seen": 1794502493.3072124,
     "ast_hash": "f3d1c6e6d3936ee589f04d105fcab48c",
     "semantic_hash": ""
   },
   "docs/reviews/2026-10-31-boundaries.md": {
-    "mtime": 1793647853.161677,
-    "seen": 1794476654.306207,
+    "mtime": 1793623921.273329,
+    "seen": 1794502493.3072138,
     "ast_hash": "a312c68ad9e113b68e33738b2285af83",
     "semantic_hash": ""
   },
   "assets/krausen_email_logo.png": {
-    "mtime": 1793647853.1209455,
-    "seen": 1794476654.3062086,
+    "mtime": 1793623921.221815,
+    "seen": 1794502493.3072155,
     "ast_hash": "0a7ebf87e4498cc48d3f0060f39391ac",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/brewery-mark.svg": {
-    "mtime": 1793647853.1329696,
-    "seen": 1794476654.3062103,
+    "mtime": 1793623921.23825,
+    "seen": 1794502493.307217,
     "ast_hash": "cf8da241d904574d3791f8ccdc24b310",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/krausen_animated_logo.svg": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3062122,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3072183,
     "ast_hash": "1c05eb559f7155fc202cd40e4caf1d82",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/krausen_full_logo.svg": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3062139,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3072202,
     "ast_hash": "30dde6c1fe521bc6b78053c50d339d0c",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/krausen_full_logo_white.svg": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3062158,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3072217,
     "ast_hash": "99355fc2a1284fdfac9c71949f3b954e",
     "semantic_hash": ""
   },
   "crates/krausen-ui/public/krausen_small_logo.svg": {
-    "mtime": 1793647853.1346767,
-    "seen": 1794476654.3062172,
+    "mtime": 1793623921.2403286,
+    "seen": 1794502493.3072233,
     "ast_hash": "f2f0ad49b130d8e58e55f33a539d5650",
     "semantic_hash": ""
   },
   "crates/krausen-ui/tests/screenshots/01-login-page.png": {
-    "mtime": 1793647853.144987,
-    "seen": 1794476654.306219,
+    "mtime": 1793623921.2530785,
+    "seen": 1794502493.3072248,
     "ast_hash": "522da9d6015d945b75262508cb4fb647",
     "semantic_hash": ""
   },
   "crates/krausen-ui/tests/screenshots/02-settings-profile.png": {
-    "mtime": 1793647853.1453292,
-    "seen": 1794476654.3062205,
+    "mtime": 1793623921.253397,
+    "seen": 1794502493.3072264,
     "ast_hash": "aca70741927e52db9ac43ad76ac040c3",
     "semantic_hash": ""
   },
   "crates/krausen-ui/tests/screenshots/03-signup-page.png": {
-    "mtime": 1793647853.1453292,
-    "seen": 1794476654.3062224,
+    "mtime": 1793623921.253397,
+    "seen": 1794502493.307228,
     "ast_hash": "b9c991aa6568d676f8b7ac5ce785b008",
     "semantic_hash": ""
   },
   "docs/design/previews/create-fermentable.png": {
-    "mtime": 1793647853.1476767,
-    "seen": 1794476654.3062243,
+    "mtime": 1793623921.2583287,
+    "seen": 1794502493.3072298,
     "ast_hash": "f964788c9fc423db542693bcd015de01",
     "semantic_hash": ""
   },
   "docs/design/previews/design-system-dark.png": {
-    "mtime": 1793647853.1486769,
-    "seen": 1794476654.3062263,
+    "mtime": 1793623921.2593286,
+    "seen": 1794502493.3072312,
     "ast_hash": "b86d3ab2dcae217457a013504382f3c3",
     "semantic_hash": ""
   },
   "docs/design/previews/design-system-viewport.png": {
-    "mtime": 1793647853.1496768,
-    "seen": 1794476654.3062282,
+    "mtime": 1793623921.2603288,
+    "seen": 1794502493.307233,
     "ast_hash": "5f78ceeee38b5a690b76be5545ad22d6",
     "semantic_hash": ""
   },
   "docs/design/previews/design-system.png": {
-    "mtime": 1793647853.1506767,
-    "seen": 1794476654.30623,
+    "mtime": 1793623921.2613287,
+    "seen": 1794502493.3072345,
     "ast_hash": "eb8e440fd458899d07ce507c75822e5f",
     "semantic_hash": ""
   },
   "docs/design/previews/fermentable-catalogue-mobile.png": {
-    "mtime": 1793647853.151677,
-    "seen": 1794476654.3062317,
+    "mtime": 1793623921.2623289,
+    "seen": 1794502493.3072362,
     "ast_hash": "3f320144ec7c147fac58058263f0762b",
     "semantic_hash": ""
   },
   "docs/design/previews/fermentable-catalogue.png": {
-    "mtime": 1793647853.1526768,
-    "seen": 1794476654.306234,
+    "mtime": 1793623921.2633288,
+    "seen": 1794502493.3072376,
     "ast_hash": "8ba37892795dfbece182eeb24cc4fb7b",
     "semantic_hash": ""
   },
   "docs/design/previews/recipe-desktop-viewport.png": {
-    "mtime": 1793647853.1536767,
-    "seen": 1794476654.3062356,
+    "mtime": 1793623921.2643287,
+    "seen": 1794502493.3072395,
     "ast_hash": "f0bc2e20b19f51e3d6c674aeacb9c783",
     "semantic_hash": ""
   },
   "docs/design/previews/recipe-desktop.png": {
-    "mtime": 1793647853.154677,
-    "seen": 1794476654.3062372,
+    "mtime": 1793623921.265329,
+    "seen": 1794502493.3072414,
     "ast_hash": "fad7850a1a87a6c8cb76a2dedf78697e",
     "semantic_hash": ""
   },
   "docs/design/previews/recipe-mobile-viewport.png": {
-    "mtime": 1793647853.154677,
-    "seen": 1794476654.3062387,
+    "mtime": 1793623921.265329,
+    "seen": 1794502493.307243,
     "ast_hash": "133b419a090f72978f5774eef10d71c2",
     "semantic_hash": ""
   },
   "docs/design/previews/recipe-mobile.png": {
-    "mtime": 1793647853.1556768,
-    "seen": 1794476654.3062403,
+    "mtime": 1793623921.2673287,
+    "seen": 1794502493.3072445,
     "ast_hash": "913f244d75233d6cd06a8ae6eeb6a05e",
     "semantic_hash": ""
   },
   "docs/design/previews/style-ranges.png": {
-    "mtime": 1793647853.1556768,
-    "seen": 1794476654.3062418,
+    "mtime": 1793623921.2673287,
+    "seen": 1794502493.3072464,
     "ast_hash": "6ea8a9ea628e01842a49b8cd581a78d9",
     "semantic_hash": ""
   },
   "docs/design/previews/unsaved-warning.png": {
-    "mtime": 1793647853.157677,
-    "seen": 1794476654.3062437,
+    "mtime": 1793623921.2693288,
+    "seen": 1794502493.3072479,
     "ast_hash": "016a1b1c6669109649e6e6fd97c827be",
     "semantic_hash": ""
   },
   "docs/design/prototype/assets/mark.svg": {
-    "mtime": 1793647853.1584556,
-    "seen": 1794476654.306245,
+    "mtime": 1793623921.2704709,
+    "seen": 1794502493.3072493,
     "ast_hash": "cf8da241d904574d3791f8ccdc24b310",
     "semantic_hash": ""
   },
   "docs/INFORMATION_ARCHITECTURE.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061879,
+    "mtime": 1793623921.2553287,
+    "seen": 1794502493.3071969,
     "ast_hash": "e79ffa6f359923a618ef035cb5768988",
     "semantic_hash": ""
   },
   "docs/UX_DESIGN.md": {
-    "mtime": 1793647853.1456888,
-    "seen": 1794476654.3061912,
+    "mtime": 1793623921.2563286,
+    "seen": 1794502493.3072002,
     "ast_hash": "b82d1148b650154e636c7a21973eb290",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/components/anchored_popover.rs": {
-    "mtime": 1793647853.1359324,
-    "seen": 1794476654.3058696,
+    "mtime": 1793647833.4054227,
+    "seen": 1794502493.3068945,
     "ast_hash": "dc6e12c6aef805b07b6b91d8c8de8d29",
     "semantic_hash": ""
   },
   "crates/krausen-ui/src/pages/recipe_comparison.rs": {
-    "mtime": 1793647853.1396766,
-    "seen": 1794476654.3059642,
+    "mtime": 1793647833.4074228,
+    "seen": 1794502493.3069887,
     "ast_hash": "842e42787bcbd52b79278c552d6eb683",
     "semantic_hash": ""
   },
+  "crates/krausen-ui/src/components/guard_history.rs": {
+    "mtime": 1794502443.6311681,
+    "seen": 1794502493.3069093,
+    "ast_hash": "95dea98374726b07ca1f73f8bea31358",
+    "semantic_hash": ""
+  },
+  "crates/krausen-ui/src/components/guard_tasks.rs": {
+    "mtime": 1794502443.6311681,
+    "seen": 1794502493.3069115,
+    "ast_hash": "471d2ce8727450bf981d024a127c60e8",
+    "semantic_hash": ""
+  },
+  "crates/krausen-ui/src/pages/evidence_recovery.rs": {
+    "mtime": 1794502447.7672207,
+    "seen": 1794502493.306984,
+    "ast_hash": "220a082a5cc8d66862d926149a5e208e",
+    "semantic_hash": ""
+  },
   "crates/krausen-ui/package-lock.json": {
-    "mtime": 1793647853.1329696,
-    "seen": 1794476654.306247,
+    "mtime": 1793623921.23825,
+    "seen": 1794502493.3072512,
     "ast_hash": "7bc3a0fb59357cf374a30437dcc346c7",
     "semantic_hash": ""
   },
   "e2e/package-lock.json": {
-    "mtime": 1793647853.1625102,
-    "seen": 1794476654.3062484,
+    "mtime": 1793623921.274275,
+    "seen": 1794502493.3072526,
     "ast_hash": "52c4bd39f6e7e874504fd53cc46d1b26",
     "semantic_hash": ""
   }
