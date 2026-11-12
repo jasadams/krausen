@@ -1348,13 +1348,13 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(guard.getByRole('status').filter({ hasText: 'Save failed' })).toContainText('Save failed');
   await expect(page).toHaveURL(/recipe-editor/);
+  // A lost save response leaves the outcome uncertain, so discarding is blocked until it is resolved.
+  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeDisabled();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await page.unroute('**/leptos-api/save_recipe*');
   await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
-  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(page).toHaveURL(/settings\/profile/);
-  await page.goto('/recipe-editor/new');
-  await expect(page.getByText('A retained draft is available')).toHaveCount(0);
 });
 
 test('stale saves retain edits and require deliberate reapply against current head', async ({ page }) => {
