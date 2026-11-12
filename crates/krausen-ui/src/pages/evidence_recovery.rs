@@ -224,6 +224,95 @@ pub(super) fn load(scope: &GuardScope) -> Result<Vec<(String, EvidenceRecovery)>
     Ok(records)
 }
 
+/// Keeps a Web Lock named for this tab's task session while the page is
+/// mounted, so another tab can tell a live owner from an orphaned record.
+/// Without Web Locks support every record is treated as orphaned (fail closed).
+pub(super) struct SessionLock {
+    #[cfg(target_arch = "wasm32")]
+    release: Option<js_sys::Function>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn lock_name(session: &str) -> String {
+    format!("krausen-evidence-session:{session}")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn lock_manager() -> Option<wasm_bindgen::JsValue> {
+    let navigator = web_sys::window()?.navigator();
+    let locks = js_sys::Reflect::get(&navigator, &"locks".into()).ok()?;
+    (!locks.is_undefined() && !locks.is_null()).then_some(locks)
+}
+
+impl SessionLock {
+    pub(super) fn acquire(session: &str) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            let release = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+            let captured = release.clone();
+            let held = js_sys::Promise::new(&mut |resolve, _| {
+                *captured.borrow_mut() = Some(resolve);
+            });
+            if let Some(locks) = lock_manager() {
+                let callback = wasm_bindgen::closure::Closure::once_into_js(move |_lock: wasm_bindgen::JsValue| held);
+                if let Ok(request) = js_sys::Reflect::get(&locks, &"request".into())
+                    .and_then(|f| f.dyn_into::<js_sys::Function>())
+                {
+                    let _ = request.call2(&locks, &lock_name(session).into(), &callback);
+                }
+            }
+            let release = release.borrow_mut().take();
+            return Self { release };
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = session;
+            Self {}
+        }
+    }
+    pub(super) fn release(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(release) = self.release.take() {
+            let _ = release.call0(&wasm_bindgen::JsValue::NULL);
+        }
+    }
+}
+
+/// True when another mounted tab currently owns this record's task session.
+/// Such a record is that tab's in-flight request, not an orphan to recover.
+pub(super) async fn owned_by_live_tab(record: &EvidenceRecovery, own_session: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if record.task_session == own_session {
+            return false;
+        }
+        let Some(locks) = lock_manager() else { return false };
+        let Ok(query) = js_sys::Reflect::get(&locks, &"query".into())
+            .and_then(|f| wasm_bindgen::JsCast::dyn_into::<js_sys::Function>(f))
+            .and_then(|f| f.call0(&locks))
+        else {
+            return false;
+        };
+        let Ok(state) = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(query)).await else {
+            return false;
+        };
+        let Ok(held) = js_sys::Reflect::get(&state, &"held".into()) else { return false };
+        let name = lock_name(&record.task_session);
+        return js_sys::Array::from(&held).iter().any(|entry| {
+            js_sys::Reflect::get(&entry, &"name".into())
+                .ok()
+                .and_then(|n| n.as_string())
+                .is_some_and(|n| n == name)
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (record, own_session);
+        false
+    }
+}
+
 pub(super) fn remove(key: &str) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     storage()?

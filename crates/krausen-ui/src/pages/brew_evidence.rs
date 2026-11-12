@@ -455,6 +455,10 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let task_session = StoredValue::new(crate::utils::request_id::new_request_id());
     #[cfg(not(target_arch = "wasm32"))]
     let task_session = StoredValue::new(None::<String>);
+    let session_lock = StoredValue::new(evidence_recovery::SessionLock::acquire(
+        task_session.get_value().as_deref().unwrap_or_default(),
+    ));
+    on_cleanup(move || session_lock.update_value(|lock| lock.release()));
     let recovery_blocked = RwSignal::new(false);
     let recovery_status = RwSignal::new(RecoveryStatus::Unknown);
     let reconciliation_ready = RwSignal::new(false);
@@ -592,7 +596,23 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             }
             context_valid.set(true);
             if recovery_inventory.get_untracked() != RecoveryInventory::Ready {
-                match evidence_recovery::load(&scope.get_value()) {
+                let loaded = match evidence_recovery::load(&scope.get_value()) {
+                    Ok(records) => {
+                        let own = task_session.get_value().unwrap_or_default();
+                        let mut owned_elsewhere = Vec::new();
+                        for (key, record) in &records {
+                            if evidence_recovery::owned_by_live_tab(record, &own).await {
+                                owned_elsewhere.push(key.clone());
+                            }
+                        }
+                        Ok(records
+                            .into_iter()
+                            .filter(|(key, _)| !owned_elsewhere.contains(key))
+                            .collect::<Vec<_>>())
+                    }
+                    Err(error) => Err(error),
+                };
+                match loaded {
                     Ok(records) => {
                         let mut unresolved = Vec::new();
                         // A failed durable marker cannot erase this mounted
