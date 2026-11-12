@@ -153,15 +153,18 @@
 .save-state--error, .k-save-status--error { color: var(--k-color-danger); }
 .k-save-status__dot { width: 6px; height: 6px; border-radius: var(--k-radius-pill); background: currentColor; }
 .k-save-status--conflict { color: var(--k-color-warning); }
-.k-dialog { border: 1px solid var(--k-color-border); border-radius: var(--k-radius-lg); padding: var(--k-space-7); max-width: min(480px, calc(100vw - 32px)); width: 100%; background: var(--k-color-surface); color: var(--k-color-foreground); box-shadow: var(--k-shadow-overlay); }
+.k-dialog { margin: auto; border: 1px solid var(--k-color-border); border-radius: var(--k-radius-lg); padding: var(--k-space-7); max-width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; width: 100%; background: var(--k-color-surface); color: var(--k-color-foreground); box-shadow: var(--k-shadow-overlay); }
+.k-dialog[open] { display: flex; flex-direction: column; }
 .k-dialog--wide { max-width: min(680px, calc(100vw - 32px)); }
 .k-dialog::backdrop { background: var(--k-color-overlay); backdrop-filter: blur(3px); }
-.k-dialog__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--k-space-4); margin-bottom: var(--k-space-5); }
+.k-dialog__header { display: flex; flex-shrink: 0; align-items: flex-start; justify-content: space-between; gap: var(--k-space-4); margin-bottom: var(--k-space-5); }
 .k-dialog__header h2 { font-family: var(--k-font-display); font-size: 2rem; line-height: 1.15; font-weight: 400; margin-bottom: var(--k-space-3); letter-spacing: -0.025em; }
 .k-dialog__header p { color: var(--k-color-muted); font-size: var(--k-font-body); line-height: 1.6; }
 .k-dialog__title { font-family: var(--k-font-display); font-size: 2rem; line-height: 1.15; font-weight: 400; margin-bottom: var(--k-space-3); letter-spacing: -0.025em; }
 .k-dialog__description { color: var(--k-color-muted); font-size: var(--k-font-body); margin-bottom: var(--k-space-5); line-height: 1.6; }
-.k-dialog__body { margin-bottom: var(--k-space-5); }
+.k-dialog__body { min-height: max(var(--k-control-height), 44px); overflow-y: auto; margin-bottom: var(--k-space-5); }
+.k-dialog__actions { flex-shrink: 0; }
+.k-dialog__actions > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .dialog-actions, .k-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--k-space-2); margin-top: var(--k-space-6); }
 .k-style-range { margin-top: var(--k-space-3); min-width: 0; }
 .k-style-range__track { position: relative; height: 0.4rem; background: var(--k-color-surface-subtle); border-radius: var(--k-radius-pill); }
@@ -180,6 +183,14 @@
 .k-style-range--compact .k-style-range__limits { margin-top: var(--k-space-2); }
 
 .k-field input:focus-visible, .k-field textarea:focus-visible, .k-field select:focus-visible { outline: 2px solid var(--k-color-ring); outline-offset: 2px; }
+/* Keep ordinary dialog focus paint inside the control's clipped keyboard slice.
+   Title/quiet fields retain their own focus recipes; normal elevation is retained. */
+.k-dialog > .k-dialog__body .k-field:not(.k-field--title):not(.k-field--quiet):not(.k-field--mobile-title) > .k-field__control > :is(input, select, textarea):focus-visible:not(:disabled),
+.k-dialog > .k-dialog__actions > :is(button, a):focus-visible:not(:disabled):not([aria-disabled="true"]) {
+  outline: 2px solid var(--k-color-ring);
+  outline-offset: -4px;
+  box-shadow: inset 0 0 0 2px var(--k-color-surface), var(--tw-shadow, 0 0 #0000);
+}
 @media (max-width: 600px) { .k-ingredient-row { grid-template-columns: minmax(0, 1fr) 5rem 44px; } .k-ingredient-row__percent { display: none; } }
 @media (prefers-reduced-motion: reduce) { .k-style-range__marker { transition: none; } }
 
@@ -261,6 +272,7 @@
 .app-shell__workspace { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--k-color-muted); font-size: var(--k-font-sm); }
 .app-shell__content, .app-shell__main { min-width: 0; }
 .brewery-sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; background: var(--k-color-sidebar); border-right: 1px solid var(--k-color-border); }
+.brewery-sidebar--mobile { position: static; height: auto; }
 .brewery-sidebar__brand { padding: var(--k-space-5); }
 .brewery-sidebar__workspace { margin: var(--k-space-2) var(--k-space-4) var(--k-space-7); min-height: 60px; border: 1px solid var(--k-color-border-strong); border-radius: var(--k-radius-sm); padding: var(--k-space-2); }
 .brewery-sidebar__nav, .brewery-sidebar__footer { display: grid; gap: var(--k-space-3); padding: 0 var(--k-space-4); }

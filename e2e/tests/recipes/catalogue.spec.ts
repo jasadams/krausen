@@ -18,6 +18,29 @@ test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
+test('short Navigation keeps naturally tabbed Account wholly visible', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 360 });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Toggle menu', exact: true }).click();
+  const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
+  await expect(navigation).toBeVisible();
+  const account = navigation.getByRole('button', { name: 'Account menu', exact: true });
+  for (let tab = 0; tab < 12 && !(await account.evaluate(element => element === document.activeElement)); tab++) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(account).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath('account-focused.png') });
+  await expect(account).toBeInViewport({ ratio: 1 });
+  expect(await account.evaluate(element => {
+    const action = element.getBoundingClientRect();
+    const body = element.closest('.k-dialog__body')!.getBoundingClientRect();
+    return action.top >= Math.max(0, body.top)
+      && action.bottom <= Math.min(innerHeight, body.bottom)
+      && action.left >= 0 && action.right <= innerWidth;
+  })).toBe(true);
+});
+
 // These gates delay actual production continuations; no picker state is copied
 // into a test reducer. Only the transport outcome and delivery order are varied.
 function catalogueGate() {
@@ -777,4 +800,665 @@ test('a delayed catalogue save response cannot copy data into a disposed editor'
     db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(`Disposed recipe ${unique}`)}`),
   ).toBe('0');
   expect(errors).toEqual([]);
+});
+
+// KRA-37 shared dialog regressions, appended after the accepted lifecycle tests.
+// Reuses that file's existing test/expect/Page imports and loginUser beforeEach.
+// No editor.spec.ts/recipe_editor.rs edits or new harness/config/fixture model.
+
+async function kra37DialogSnapshot(page: Page, id: string) {
+  return page.locator(`#${id}`).evaluate(element => {
+    const dialog = element as HTMLDialogElement;
+    const style = getComputedStyle(dialog);
+    const body = dialog.querySelector('.k-dialog__body') as HTMLElement;
+    const footer = dialog.querySelector('.k-dialog__actions') as HTMLElement;
+    return {
+      rect: dialog.getBoundingClientRect().toJSON(),
+      body: { rect: body.getBoundingClientRect().toJSON(), scrollTop: body.scrollTop, scrollHeight: body.scrollHeight, clientHeight: body.clientHeight, overflowY: getComputedStyle(body).overflowY },
+      footer: footer.getBoundingClientRect().toJSON(),
+      margin: [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft],
+      position: style.position, inset: [style.top, style.right, style.bottom, style.left],
+      maxHeight: style.maxHeight, overflowY: style.overflowY,
+      native: { open: dialog.open, modal: dialog.matches(':modal') },
+      focus: { active: document.activeElement?.outerHTML, inside: dialog.contains(document.activeElement) },
+      main: (() => {
+        const main = document.querySelector('.app-shell__main') as HTMLElement;
+        return { scrollTop: main.scrollTop, scrollHeight: main.scrollHeight, clientHeight: main.clientHeight };
+      })(),
+      viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY, documentWidth: document.documentElement.scrollWidth,
+        visual: window.visualViewport && { width: visualViewport!.width, height: visualViewport!.height, top: visualViewport!.offsetTop, left: visualViewport!.offsetLeft } },
+    };
+  });
+}
+
+test('shared dialogs center the real fermentable picker after open scroll and resize', async ({ page }, testInfo) => {
+  for (const theme of ['light', 'dark']) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
+    await page.goto('/recipe-editor/new');
+    // Existing login isolation can set Light. Use the actual appearance control.
+    if (await page.locator('html').evaluate(e => e.classList.contains('dark')) !== (theme === 'dark')) {
+      await page.getByRole('button', { name: theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
+    }
+    await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+    await opener.click();
+    const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('.k-catalogue-item').first()).toBeVisible();
+    for (const phase of ['open', 'scrolled-open', 'resize'] as const) {
+      if (phase === 'scrolled-open') {
+        await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await expect(picker).toBeHidden();
+        await expect(opener).toBeFocused();
+        const main = page.locator('.app-shell__main');
+        await main.evaluate(element => { element.scrollTop = Math.min(120, element.scrollHeight - element.clientHeight); });
+        await expect.poll(() => main.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+        await testInfo.attach(`main-${theme}-before-open`, {
+          body: JSON.stringify(await main.evaluate(element => ({ scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }))),
+          contentType: 'application/json',
+        });
+        await opener.click();
+        await expect(picker).toBeVisible();
+      }
+      if (phase === 'resize') await page.setViewportSize({ width: 1920, height: 1080 });
+      await page.evaluate(async () => { for (let i = 0; i < 3; i++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+      const snapshot = await kra37DialogSnapshot(page, 'ingredient-picker');
+      await testInfo.attach(`dialog-${theme}-${phase}`, { body: JSON.stringify(snapshot), contentType: 'application/json' });
+      if (phase === 'scrolled-open') expect(snapshot.main.scrollTop).toBeGreaterThan(0);
+      expect(snapshot.native.modal).toBe(true);
+      expect.soft(snapshot.rect.left).toBeGreaterThanOrEqual(16);
+      expect.soft(snapshot.rect.right).toBeLessThanOrEqual(snapshot.viewport.width - 16);
+      expect.soft(snapshot.rect.top).toBeGreaterThanOrEqual(16);
+      expect.soft(snapshot.rect.bottom).toBeLessThanOrEqual(snapshot.viewport.height - 16);
+      expect.soft(Math.abs(snapshot.rect.left + snapshot.rect.width / 2 - snapshot.viewport.width / 2)).toBeLessThanOrEqual(2);
+      expect.soft(Math.abs(snapshot.rect.top + snapshot.rect.height / 2 - snapshot.viewport.height / 2)).toBeLessThanOrEqual(2);
+      expect(snapshot.viewport.documentWidth).toBeLessThanOrEqual(snapshot.viewport.width);
+    }
+    await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(picker).toBeHidden();
+    await expect(opener).toBeFocused();
+  }
+});
+
+test('shared dialogs keep real catalogue and library footer controls reachable in a short viewport', async ({ page }, testInfo) => {
+  for (const viewport of [{ width: 320, height: 360 }, { width: 390, height: 320 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/recipe-editor/new');
+    await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('.k-catalogue-item').first()).toBeVisible();
+    await picker.getByRole('button', { name: /Weyermann Vienna/ }).click();
+    await picker.getByLabel('Amount in recipe (kg)').fill('4.2500001');
+    for (const label of ['Cancel', 'Add ingredient']) {
+      const action = picker.getByRole('button', { name: label, exact: true });
+      await action.scrollIntoViewIfNeeded();
+      await action.focus();
+      const bounds = await action.boundingBox();
+      await testInfo.attach(`picker-footer-${viewport.width}-${label}`, { body: JSON.stringify({ action: bounds, dialog: await kra37DialogSnapshot(page, 'ingredient-picker') }), contentType: 'application/json' });
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+      expect(bounds!.y).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+      await expect(action).toBeFocused();
+    }
+    await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+    const create = page.getByRole('dialog', { name: 'A fermentable of your own', exact: true });
+    await expect(create).toBeVisible();
+    await create.getByLabel('Fermentable name').fill('Unsaved long-form example');
+    await create.getByLabel('Colour (EBC)').fill('4.5000001');
+    await create.getByLabel('Potential yield (%)').fill('80.123456');
+    for (const label of ['Back to catalogue', 'Save to library']) {
+      const action = create.getByRole('button', { name: label, exact: true });
+      await action.scrollIntoViewIfNeeded(); await action.focus();
+      const bounds = await action.boundingBox();
+      await testInfo.attach(`create-footer-${viewport.width}-${label}`, { body: JSON.stringify({ action: bounds, dialog: await kra37DialogSnapshot(page, 'ingredient-create') }), contentType: 'application/json' });
+      expect(bounds!.y).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+      await expect(action).toBeFocused();
+    }
+    await create.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+    await expect(picker).toBeVisible();
+    await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  }
+});
+
+test('shared dialogs preserve raw recipe input and native modal focus on cancel', async ({ page }, testInfo) => {
+  await page.goto('/recipe-editor/new');
+  await page.waitForLoadState('networkidle');
+  const raw = page.getByLabel('Batch volume (L)', { exact: true });
+  // Malformed 1e- prevents the existing recipe/catalogue boundary from opening;
+  // that separate KRA-42 case is recorded externally, not a dialog focus failure.
+  await raw.fill('20.1234500');
+  await raw.evaluate(element => { (window as any).__kra37Raw = element; });
+  const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+  await opener.click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  const search = picker.getByLabel('Search fermentables', { exact: true });
+  await expect(picker).toBeVisible();
+  await expect(search).toBeFocused();
+  const title = await picker.getAttribute('aria-labelledby');
+  const description = await picker.getAttribute('aria-describedby');
+  expect(title).toBeTruthy(); expect(description).toBeTruthy();
+  await expect(page.locator(`[id="${title}"]`)).toHaveText('Build your grain bill');
+  await expect(page.locator(`[id="${description}"]`)).not.toBeEmpty();
+  const focusState = () => page.locator('#ingredient-picker').evaluate(element => {
+    const dialog = element as HTMLDialogElement;
+    return {
+      documentFocused: document.hasFocus(), nativeOpen: dialog.open, modal: dialog.matches(':modal'),
+      inside: dialog.contains(document.activeElement), active: document.activeElement?.outerHTML.slice(0, 800),
+      checking: document.body.innerText.includes('Checking access…'),
+    };
+  });
+  let containedChecks = 0;
+  for (const key of ['Tab', 'Shift+Tab']) for (let step = 0; step < 12; step++) {
+    await page.keyboard.press(key);
+    const state = await focusState();
+    await testInfo.attach(`focus-${key}-${step}`, { body: JSON.stringify(state), contentType: 'application/json' });
+    if (!state.documentFocused) {
+      // Native Tab may leave the document for browser chrome. Return by actual
+      // keyboard traversal, not by forcing a search/native-open/focus operation.
+      for (let back = 0; back < 4 && !(await focusState()).documentFocused; back++) {
+        await page.keyboard.press(key);
+        await testInfo.attach(`return-${key}-${step}-${back}`, { body: JSON.stringify(await focusState()), contentType: 'application/json' });
+      }
+      await expect.poll(async () => (await focusState()).documentFocused).toBe(true);
+      // Window focus legitimately starts Checking and temporarily hides native
+      // visibility. This unchanged authorized fixture must settle Verified and
+      // reopen the retained logical task before traversal continues.
+      await expect.poll(async () => {
+        const settled = await focusState();
+        return settled.documentFocused && settled.nativeOpen && settled.modal && settled.inside && !settled.checking;
+      }).toBe(true);
+      await testInfo.attach(`settled-${key}-${step}`, { body: JSON.stringify(await focusState()), contentType: 'application/json' });
+    } else {
+      expect(state.nativeOpen).toBe(true);
+      expect(state.modal).toBe(true);
+      expect(state.inside).toBe(true);
+    }
+    containedChecks++;
+  }
+  expect(containedChecks).toBe(24);
+  // Native focus attempt on an inert background control must not move focus out.
+  await raw.evaluate(element => element.focus());
+  expect(await picker.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await testInfo.attach('native-modal-focus', { body: JSON.stringify(await kra37DialogSnapshot(page, 'ingredient-picker')), contentType: 'application/json' });
+  await page.keyboard.press('Escape');
+  await expect(picker).toBeHidden();
+  await testInfo.attach('after-context-escape', { body: JSON.stringify(await focusState()), contentType: 'application/json' });
+  await expect.soft(opener).toBeFocused();
+  await expect(raw).toHaveValue('20.1234500');
+  expect(await raw.evaluate(element => element === (window as any).__kra37Raw)).toBe(true);
+  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+});
+
+test('shared dialogs scroll the real long form and dispatch wrapped footer actions', async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/public/fonts/**', route => route.abort());
+  await page.setViewportSize({ width: 390, height: 640 });
+  await page.goto('/recipe-editor/new');
+  await page.waitForLoadState('networkidle');
+  const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+  await opener.click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  const form = page.getByRole('dialog', { name: 'A fermentable of your own', exact: true });
+  await expect(form).toBeVisible();
+  const body = form.locator('.k-dialog__body');
+  const before = await body.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight }));
+  expect(before.height).toBeGreaterThan(before.client);
+  expect(before.client).toBeGreaterThan(0);
+  const bounds = (await body.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(before.top);
+  await testInfo.attach('actual-form-body-scroll', { body: JSON.stringify({ before, after: await kra37DialogSnapshot(page, 'ingredient-create') }), contentType: 'application/json' });
+  const name = `KRA37 footer ${Date.now()}`;
+  await form.getByLabel('Fermentable name').fill(name);
+  await form.getByLabel('Colour (EBC)').fill('4.5');
+  await form.getByLabel('Potential yield (%)').fill('80.123456');
+  await page.setViewportSize({ width: 320, height: 360 });
+  // CSS text enlargement, explicitly NOT native OS/browser zoom evidence.
+  await page.addStyleTag({ content: 'html { font-size: 200%; }' });
+  const actions = form.locator('.k-dialog__actions button');
+  const wraps = await actions.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
+  expect(new Set(wraps).size).toBeGreaterThan(1);
+  for (const label of ['Back to catalogue', 'Save to library']) {
+    const action = form.getByRole('button', { name: label, exact: true });
+    await action.scrollIntoViewIfNeeded();
+    await action.focus();
+    await expect(action).toBeFocused();
+    const box = (await action.boundingBox())!;
+    await testInfo.attach(`wrapped-before-check-${label}`, { body: JSON.stringify(await action.evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        button: element.getBoundingClientRect().toJSON(), whiteSpace: style.whiteSpace, minWidth: style.minWidth,
+        maxWidth: style.maxWidth, fontSize: style.fontSize, scrollWidth: element.scrollWidth,
+        actions: element.parentElement!.getBoundingClientRect().toJSON(),
+        dialog: element.closest('dialog')!.getBoundingClientRect().toJSON(),
+      };
+    })), contentType: 'application/json' });
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(360);
+    expect(await action.evaluate(element => {
+      const r = element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+    })).toBe(true);
+    await testInfo.attach(`wrapped-${label}`, { body: JSON.stringify({ box, modal: await kra37DialogSnapshot(page, 'ingredient-create') }), contentType: 'application/json' });
+  }
+  await form.getByRole('button', { name: 'Save to library', exact: true }).press('Enter');
+  await expect(picker).toBeVisible();
+  expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(name)}`)).toBe('1');
+  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  const createAgain = picker.getByRole('button', { name: 'Create fermentable', exact: true }).first();
+  try {
+    await createAgain.click();
+  } finally {
+    if (await picker.isVisible()) await testInfo.attach('post-save-body-reachability', { body: JSON.stringify(await createAgain.evaluate(element => {
+      const body = element.closest('.k-dialog__body') as HTMLElement;
+      const dialog = element.closest('dialog') as HTMLDialogElement;
+      const r = element.getBoundingClientRect();
+      return {
+        target: r.toJSON(), hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.outerHTML.slice(0, 500),
+        body: { rect: body.getBoundingClientRect().toJSON(), client: body.clientHeight, scroll: body.scrollHeight, top: body.scrollTop,
+          minHeight: getComputedStyle(body).minHeight, flexShrink: getComputedStyle(body).flexShrink, overflowY: getComputedStyle(body).overflowY },
+        header: dialog.querySelector('.k-dialog__header')!.getBoundingClientRect().toJSON(),
+        actions: dialog.querySelector('.k-dialog__actions')!.getBoundingClientRect().toJSON(),
+        dialog: { rect: dialog.getBoundingClientRect().toJSON(), client: dialog.clientHeight, scroll: dialog.scrollHeight, top: dialog.scrollTop,
+          maxHeight: getComputedStyle(dialog).maxHeight, overflowY: getComputedStyle(dialog).overflowY,
+          paddingTop: getComputedStyle(dialog).paddingTop, paddingBottom: getComputedStyle(dialog).paddingBottom },
+      };
+    })), contentType: 'application/json' });
+  }
+  await expect(form).toBeVisible();
+  await form.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(picker).toBeHidden();
+  await expect.poll(async () => page.evaluate(() => {
+    const active = document.activeElement;
+    return active?.textContent === 'Add fermentable' || active?.id === 'recipe-editor-heading';
+  })).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('shared dialogs retain omitted-prop shell returns and mobile nested layers', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/recipes');
+  await page.waitForLoadState('networkidle');
+  for (const [openerName, title] of [['Switch workspace', 'Your workspaces'], ['Account menu', 'Your account']]) {
+    const opener = page.getByRole('button', { name: openerName, exact: true });
+    await opener.click();
+    const dialog = page.getByRole('dialog', { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+  }
+  await page.goto('/recipe-editor/new');
+  await page.waitForLoadState('networkidle');
+  const rawTitle = `KRA37 retained ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(rawTitle);
+  const recipes = page.getByRole('link', { name: 'Recipes', exact: true }).first();
+  await recipes.click();
+  const warning = page.getByRole('dialog', { name: 'Unsaved recipe changes', exact: true });
+  await expect(warning).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(warning).toBeHidden();
+  await expect(recipes).toBeFocused();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(rawTitle);
+  await page.setViewportSize({ width: 390, height: 800 });
+  const menu = page.getByRole('button', { name: 'Toggle menu', exact: true });
+  await menu.click();
+  const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
+  await expect(navigation).toBeVisible();
+  const switcherTrigger = navigation.getByRole('button', { name: 'Switch workspace', exact: true });
+  await switcherTrigger.click();
+  const switcher = page.getByRole('dialog', { name: 'Your workspaces', exact: true });
+  await expect(switcher).toBeVisible();
+  expect(await switcher.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+  await testInfo.attach('mobile-default-layer', { body: JSON.stringify(await page.evaluate(() => ({
+    modals: [...document.querySelectorAll('dialog:modal')].map(element => element.id), active: document.activeElement?.outerHTML,
+  }))), contentType: 'application/json' });
+  await page.keyboard.press('Escape');
+  await expect(switcher).toBeHidden();
+  await expect(navigation).toBeVisible();
+  await expect(switcherTrigger).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(navigation).toBeHidden();
+  await expect(menu).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('shared dialogs preserve a rapid successor task across the previous close', async ({ page }, testInfo) => {
+  await page.goto('/recipe-editor/new');
+  await page.waitForLoadState('networkidle');
+  const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+  await opener.click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await expect(picker).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__kra37RapidCloseEvents = [];
+    document.addEventListener('close', event => {
+      const element = event.target as HTMLDialogElement;
+      if (element.id === 'ingredient-picker') (window as any).__kra37RapidCloseEvents.push({
+        time: performance.now(), nativeOpenAtDelivery: element.open,
+        modalAtDelivery: element.matches(':modal'), active: document.activeElement?.outerHTML.slice(0, 500),
+      });
+    }, true);
+  });
+  const cancel = picker.getByRole('button', { name: 'Cancel', exact: true });
+  await cancel.evaluate(element => {
+    const originalOpener = [...document.querySelectorAll('button')].find(button => button.textContent === 'Add fermentable')!;
+    element.addEventListener('click', () => requestAnimationFrame(() => originalOpener.click()), { once: true });
+  });
+  await cancel.click();
+  await expect(picker).toBeVisible();
+  await page.evaluate(async () => { for (let frame = 0; frame < 4; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+  expect(await picker.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(picker).toBeHidden();
+  await expect(opener).toBeFocused();
+  await expect.poll(() => page.evaluate(() => (window as any).__kra37RapidCloseEvents.length)).toBeGreaterThanOrEqual(2);
+  const events = await page.evaluate(() => (window as any).__kra37RapidCloseEvents);
+  await testInfo.attach('rapid-successor-native-close-delivery', { body: JSON.stringify(events), contentType: 'application/json' });
+  expect(events.length).toBeGreaterThanOrEqual(2);
+  // Only a recorded open-at-delivery event certifies delayed close-after-reopen.
+});
+
+for (const invalidTrigger of ['removed', 'disabled'] as const) {
+  test(`shared dialogs use a safe successor when the actual opener is ${invalidTrigger}`, async ({ page }, testInfo) => {
+    await page.goto('/recipe-editor/new');
+    await page.waitForLoadState('networkidle');
+    const raw = page.getByLabel('Batch volume (L)', { exact: true });
+    await raw.fill('20.1234500');
+    const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+    await opener.click();
+    const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+    await expect(picker).toBeVisible();
+    // Controlled actual-trigger disposal/disable, not a copied controller or
+    // claim that navigation removed it; no new production fixture is installed.
+    await opener.evaluate((element, state) => {
+      (window as any).__kra37RemovedOpener = element;
+      if (state === 'removed') element.remove();
+      else (element as HTMLButtonElement).disabled = true;
+    }, invalidTrigger);
+    expect(await page.evaluate(state => state === 'removed'
+      ? !(window as any).__kra37RemovedOpener.isConnected
+      : (window as any).__kra37RemovedOpener.matches(':disabled'), invalidTrigger)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(picker).toBeHidden();
+    await expect(page.locator('#recipe-editor-heading')).toBeFocused();
+    await expect(raw).toHaveValue('20.1234500');
+    await testInfo.attach(`${invalidTrigger}-trigger-successor`, { body: JSON.stringify(await page.evaluate(() => ({
+      removedConnected: (window as any).__kra37RemovedOpener.isConnected, active: document.activeElement?.outerHTML,
+      focused: document.hasFocus(), nativeModals: [...document.querySelectorAll('dialog:modal')].map(element => element.id),
+    }))), contentType: 'application/json' });
+  });
+}
+
+test('shared dialogs respect deliberate newer focus and a successor native layer', async ({ page }, testInfo) => {
+  await page.goto('/recipe-editor/new');
+  await page.waitForLoadState('networkidle');
+  const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  for (const successor of ['heading', 'account']) {
+    await opener.click();
+    await expect(picker).toBeVisible();
+    const cancel = picker.getByRole('button', { name: 'Cancel', exact: true });
+    // Real Cancel plus a deliberate next action before delayed return. Does not
+    // suppress production close handlers or force search/native open state.
+    await cancel.evaluate((element, destination) => {
+      element.addEventListener('click', () => requestAnimationFrame(() => {
+        if (destination === 'heading') (document.getElementById('recipe-editor-heading') as HTMLElement).focus();
+        else {
+          (window as any).__kra37ForeignReturn = document.activeElement;
+          (document.querySelector('[aria-label="Account menu"]') as HTMLButtonElement).click();
+        }
+      }), { once: true });
+    }, successor);
+    await cancel.click();
+    await expect(picker).toBeHidden();
+    if (successor === 'heading') await expect(page.locator('#recipe-editor-heading')).toBeFocused();
+    else {
+      const account = page.getByRole('dialog', { name: 'Your account', exact: true });
+      await expect(account).toBeVisible();
+      expect(await account.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+    }
+    await page.evaluate(async () => { for (let frame = 0; frame < 3; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    if (successor === 'heading') await expect(page.locator('#recipe-editor-heading')).toBeFocused();
+    else {
+      const account = page.getByRole('dialog', { name: 'Your account', exact: true });
+      expect(await account.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(account).toBeHidden();
+      // Programmatic activation does not focus its trigger. Require the actual
+      // pre-layer focused element, not an invented Account-trigger bookmark.
+      await expect.poll(() => page.evaluate(() => document.activeElement === (window as any).__kra37ForeignReturn)).toBe(true);
+    }
+    await testInfo.attach(`newer-${successor}`, { body: JSON.stringify(await page.evaluate(() => ({ active: document.activeElement?.outerHTML, modals: [...document.querySelectorAll('dialog:modal')].map(element => element.id) }))), contentType: 'application/json' });
+  }
+});
+
+test('shared dialogs never restore a protected opener after current context denial', async ({ page }, testInfo) => {
+  const action = await catalogueAction(page, 'Search');
+  await page.evaluate(() => {
+    (window as any).__kra37DeniedOpener = [...document.querySelectorAll('button')].find(element => element.textContent === 'Add fermentable');
+    (window as any).__kra37DeniedFallback = document.getElementById('recipe-editor-heading');
+  });
+  const requests: unknown[] = [];
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const command = ingredientCommand(route);
+    if (!command?.Search) return route.continue();
+    requests.push(command.Search);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+  });
+  await action.fire();
+  await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+  await expect(action.picker).toBeHidden();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+  await page.evaluate(async () => { for (let frame = 0; frame < 3; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+  const state = await page.evaluate(() => ({
+    active: document.activeElement?.outerHTML,
+    protectedFocus: document.activeElement === (window as any).__kra37DeniedOpener || document.activeElement === (window as any).__kra37DeniedFallback,
+    modals: [...document.querySelectorAll('dialog:modal')].map(element => element.id),
+  }));
+  await testInfo.attach('denied-context-focus', { body: JSON.stringify(state), contentType: 'application/json' });
+  expect(state.protectedFocus).toBe(false);
+  expect(state.modals).not.toContain('ingredient-picker');
+  expect(requests).toHaveLength(1);
+  expect(action.errors).toEqual([]);
+});
+
+// Proposed append to the existing catalogue spec. NOT APPLIED / NOT RUN.
+// ACC-006: distinguish a working centre hit from readable horizontal access.
+test('shared dialogs expose the complete enlarged Create label through the real body scrollport', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/public/fonts/**', route => route.abort());
+  await page.setViewportSize({ width: 320, height: 360 });
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('.k-catalogue-item').first()).toBeVisible();
+  await page.addStyleTag({ content: 'html { font-size: 200%; }' }); // NOT native zoom.
+  const create = picker.getByRole('button', { name: 'Create fermentable', exact: true }).first();
+  const body = picker.locator('.k-dialog__body');
+  await create.scrollIntoViewIfNeeded();
+  const measure = () => create.evaluate(element => {
+    const body = element.closest('.k-dialog__body') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const r = element.getBoundingClientRect();
+    return {
+      target: r.toJSON(), text: range.getBoundingClientRect().toJSON(),
+      body: body.getBoundingClientRect().toJSON(), clientWidth: body.clientWidth,
+      clientHeight: body.clientHeight, scrollWidth: body.scrollWidth,
+      scrollLeft: body.scrollLeft, scrollTop: body.scrollTop,
+      overflowX: getComputedStyle(body).overflowX, direction: getComputedStyle(body).direction,
+      whiteSpace: getComputedStyle(element).whiteSpace,
+      hit: element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
+      nativeOpen: (element.closest('dialog') as HTMLDialogElement).open,
+      documentWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth,
+    };
+  });
+  // Zero is the LTR start boundary, not a force click or a substituted layout.
+  await body.evaluate(element => { element.scrollLeft = 0; });
+  const start = await measure();
+  await testInfo.attach('create-label-start-boundary', { body: JSON.stringify(start), contentType: 'application/json' });
+  expect(start.direction).toBe('ltr');
+  expect(start.clientHeight).toBeGreaterThan(0);
+  if (start.scrollWidth > start.clientWidth) {
+    const b = start.body;
+    const top = Math.max(0, b.top), bottom = Math.min(360, b.bottom);
+    expect(bottom - top).toBeGreaterThan(0);
+    await page.mouse.move(b.x + b.width / 2, (top + bottom) / 2);
+    await page.mouse.wheel(start.scrollWidth * 2, 0);
+    await expect.poll(() => body.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+    await expect.poll(() => body.evaluate(element => element.scrollWidth - element.clientWidth - element.scrollLeft)).toBeLessThanOrEqual(1);
+  }
+  const end = await measure();
+  await testInfo.attach('create-label-end-boundary', { body: JSON.stringify(end), contentType: 'application/json' });
+  await testInfo.attach('create-label-visible-state', { body: await picker.screenshot(), contentType: 'image/png' });
+  // Safe internal scrolling is allowed: both text ends must be reachable.
+  // Soft assertions retain both measured boundary failures if the label is clipped.
+  expect.soft(start.text.left).toBeGreaterThanOrEqual(start.body.left - 1);
+  expect.soft(end.text.right).toBeLessThanOrEqual(end.body.right + 1);
+  expect(start.nativeOpen && end.nativeOpen).toBe(true);
+  expect(end.documentWidth).toBeLessThanOrEqual(end.viewportWidth);
+});
+
+// Proposed append to existing catalogue spec. NOT APPLIED / NOT RUN.
+// This is new short-edit acceptance, not replay of the lost-response edit case.
+test('shared dialogs keep real edit form labels and short footer actions readable', async ({ page }, testInfo) => {
+  const name = `KRA37 short edit ${Date.now()}`;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'A fermentable of your own', exact: true });
+  await create.getByLabel('Fermentable name').fill(name);
+  await create.getByLabel('Colour (EBC)').fill('4.5');
+  await create.getByLabel('Potential yield (%)').fill('80.123456');
+  const createdResponse = page.waitForResponse(response => {
+    if (!response.url().includes('execute_ingredient_command')) return false;
+    const payload = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+    return payload ? JSON.parse(payload)?.Save?.document?.specification?.name === name : false;
+  });
+  await create.getByRole('button', { name: 'Save to library', exact: true }).click();
+  const created = (await (await createdResponse).json()).Entry;
+  expect(created).toBeTruthy();
+  await expect(picker).toBeVisible();
+  const entryButton = picker.getByRole('button').filter({ has: page.getByText(name, { exact: true }) });
+  await expect(entryButton).toHaveCount(1);
+  await entryButton.click();
+  const edit = page.getByRole('dialog', { name: 'Edit your library entry', exact: true });
+  const cases = [{ width: 320, height: 360, theme: 'light' }, { width: 390, height: 320, theme: 'dark' }];
+  for (const state of cases) {
+    // Change appearance through the real control outside the modal.
+    await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(picker).toBeHidden();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    if (await page.locator('html').evaluate(e => e.classList.contains('dark')) !== (state.theme === 'dark')) {
+      await page.getByRole('button', { name: state.theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
+    }
+    await expect(page.locator('html')).toHaveClass(state.theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    await page.setViewportSize({ width: state.width, height: state.height });
+    await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+    await expect(entryButton).toHaveCount(1);
+    await entryButton.click();
+    await picker.getByRole('button', { name: 'Edit library entry', exact: true }).click();
+    await expect(edit).toBeVisible();
+    // Regression: assert arrival BEFORE fill/scroll/focus helpers can hide the
+    // reproduced retained-native-dialog / removed-focused-child BODY failure.
+    await expect(edit.getByLabel('Fermentable name', { exact: true })).toBeFocused();
+    expect(await edit.evaluate(element => document.hasFocus()
+      && element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+    await expect(edit.getByLabel('Colour (EBC)')).toHaveValue('4.5');
+    await page.evaluate(() => document.fonts.ready);
+    const labels = ['Fermentable name', 'Producer', 'Type', 'Colour (EBC)', 'Potential yield (%)'];
+    for (const label of labels) {
+      const field = edit.getByLabel(label, { exact: true });
+      await expect(field).toBeEnabled();
+      await field.scrollIntoViewIfNeeded();
+      const association = await field.evaluate(element => {
+        const input = element as HTMLInputElement;
+        const ids = (input.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+        return {
+          id: input.id, idCount: [...document.querySelectorAll('[id]')].filter(e => e.id === input.id).length,
+          labels: [...(input.labels ?? [])].map(l => l.textContent),
+          descriptions: ids.map(id => ({ id, text: document.getElementById(id)?.textContent ?? null })),
+          rect: input.getBoundingClientRect().toJSON(),
+        };
+      });
+      await testInfo.attach(`edit-${state.theme}-${label}`, { body: JSON.stringify(association), contentType: 'application/json' });
+      expect(association.id).not.toBe(''); expect(association.idCount).toBe(1);
+      expect(association.labels.length).toBeGreaterThan(0);
+      for (const description of association.descriptions) expect(description.text).toBeTruthy();
+    }
+    for (const label of ['Back to catalogue', 'Save changes']) {
+      const action = edit.getByRole('button', { name: label, exact: true });
+      await action.scrollIntoViewIfNeeded();
+      await action.focus();
+      await expect(action).toBeFocused();
+      const result = await action.evaluate(element => {
+        const r = element.getBoundingClientRect(), s = getComputedStyle(element);
+        return { rect: r.toJSON(), hit: element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
+          outline: s.outline, boxShadow: s.boxShadow, color: s.color, background: s.backgroundColor };
+      });
+      await testInfo.attach(`edit-footer-${state.theme}-${label}`, { body: JSON.stringify(result), contentType: 'application/json' });
+      expect(result.rect.width).toBeGreaterThanOrEqual(44); expect(result.rect.height).toBeGreaterThanOrEqual(44);
+      expect(result.rect.left).toBeGreaterThanOrEqual(0); expect(result.rect.right).toBeLessThanOrEqual(state.width);
+      expect(result.rect.top).toBeGreaterThanOrEqual(0); expect(result.rect.bottom).toBeLessThanOrEqual(state.height);
+      expect(result.hit).toBe(true);
+      // Outline/shadow values are recorded for actual focus-paint review, not
+      // equated to a visible ring merely because an arbitrary CSS value exists.
+    }
+    await testInfo.attach(`edit-${state.theme}-readability`, { body: JSON.stringify(await edit.evaluate(element => ({
+      fontFaces: [...document.fonts].map(f => ({ family: f.family, status: f.status, weight: f.weight })),
+      samples: [...element.querySelectorAll('label,input,select,button,h2,p')].map(node => ({
+        text: node.textContent?.slice(0, 120), tag: node.tagName,
+        styles: [node, ...function* () { let p = node.parentElement; while (p) { yield p; p = p.parentElement; } }()].map(e => {
+          const s = getComputedStyle(e); return { color: s.color, background: s.backgroundColor, opacity: s.opacity,
+            fontFamily: s.fontFamily, fontSize: s.fontSize, fontWeight: s.fontWeight };
+        }),
+      })),
+    }))), contentType: 'application/json' });
+    await testInfo.attach(`edit-${state.theme}-viewport`, { body: await page.screenshot(), contentType: 'image/png' });
+    await edit.getByLabel('Colour (EBC)').fill('9.5');
+    await edit.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+    await expect(picker).toBeVisible();
+    await picker.getByRole('button', { name: 'Edit library entry', exact: true }).click();
+    await expect(edit.getByLabel('Colour (EBC)')).toHaveValue('4.5');
+    await edit.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+  }
+  await picker.getByRole('button', { name: 'Edit library entry', exact: true }).click();
+  await edit.getByLabel('Colour (EBC)').fill('9.5');
+  const savedResponse = page.waitForResponse(response => {
+    if (!response.url().includes('execute_ingredient_command')) return false;
+    const payload = new URLSearchParams(response.request().postData() ?? '').get('command_json');
+    return payload ? JSON.parse(payload)?.Save?.entry_id === created.entry_id : false;
+  });
+  await edit.getByRole('button', { name: 'Save changes', exact: true }).click();
+  const saved = (await (await savedResponse).json()).Entry;
+  expect(saved.entry_id).toBe(created.entry_id);
+  expect(saved.revision).toBe(created.revision + 1);
+  await expect(picker).toBeVisible();
+  expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(name)}`)).toBe('1');
+  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(picker).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.textContent === 'Add fermentable' || document.activeElement?.id === 'recipe-editor-heading')).toBe(true);
 });

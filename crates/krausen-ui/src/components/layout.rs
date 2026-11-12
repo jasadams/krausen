@@ -373,7 +373,7 @@ fn Sidebar(
     });
 
     view! {
-        <div class="brewery-sidebar">
+        <div class=if mobile { "brewery-sidebar brewery-sidebar--mobile" } else { "brewery-sidebar" }>
             // Logo
             <div class="brewery-sidebar__brand">
                 <crate::components::BreweryBrand/>
