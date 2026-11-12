@@ -3,8 +3,9 @@
 use crate::{
     components::{
         BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryMetric, BreweryNotice,
-        BreweryPanel, Button, ButtonVariant, brew_evidence_rows::BrewProvenanceFact,
-        layout::EditorGuard,
+        BreweryPanel, Button, ButtonVariant,
+        brew_evidence_rows::BrewProvenanceFact,
+        layout::{EditorGuard, GuardScope, GuardTaskCallbacks, GuardTaskKind, GuardTaskState},
     },
     pages::brew_history_presentation::{
         actor_text, format_measurement_value, format_timestamp, status_label,
@@ -29,12 +30,23 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use std::collections::BTreeMap;
 
-#[derive(Clone)]
+#[path = "evidence_recovery.rs"]
+mod evidence_recovery;
+use evidence_recovery::{EvidenceReceipt, EvidenceRecovery, RecoveryStatus};
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum PendingEvidence {
     Measurement(MeasurementCommand),
     Note(NoteCommand),
     Lifecycle(TransitionBrewRequest),
     Archive(ArchiveBrewRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RecoveryInventory {
+    Loading,
+    Ready,
+    Failed(String),
 }
 
 fn measurement_is_uncertain(outcome: &MeasurementOutcome) -> bool {
@@ -81,6 +93,71 @@ fn archive_needs_refresh(outcome: &BrewArchiveOutcome) -> bool {
     matches!(outcome, BrewArchiveOutcome::Conflict { .. })
 }
 
+fn measurement_recovery_status(outcome: &MeasurementOutcome) -> RecoveryStatus {
+    match outcome {
+        MeasurementOutcome::ResultExpired { resource_id } => RecoveryStatus::Expired {
+            resource_id: resource_id.clone(),
+        },
+        MeasurementOutcome::RequestIdentityConflict => RecoveryStatus::IdentityConflict,
+        MeasurementOutcome::Forbidden
+        | MeasurementOutcome::ContextChanged
+        | MeasurementOutcome::Retryable
+        | MeasurementOutcome::Unavailable => RecoveryStatus::Unknown,
+        _ => {
+            let (accepted, message) = measurement_message(outcome);
+            RecoveryStatus::Confirmed { accepted, message }
+        }
+    }
+}
+fn note_recovery_status(outcome: &NoteOutcome) -> RecoveryStatus {
+    match outcome {
+        NoteOutcome::ResultExpired { resource_id } => RecoveryStatus::Expired {
+            resource_id: resource_id.clone(),
+        },
+        NoteOutcome::RequestIdentityConflict => RecoveryStatus::IdentityConflict,
+        NoteOutcome::Forbidden
+        | NoteOutcome::ContextChanged
+        | NoteOutcome::Retryable
+        | NoteOutcome::Unavailable => RecoveryStatus::Unknown,
+        _ => {
+            let (accepted, message) = note_message(outcome);
+            RecoveryStatus::Confirmed { accepted, message }
+        }
+    }
+}
+fn lifecycle_recovery_status(outcome: &BrewLifecycleOutcome) -> RecoveryStatus {
+    match outcome {
+        BrewLifecycleOutcome::ResultExpired { resource_id } => RecoveryStatus::Expired {
+            resource_id: resource_id.clone(),
+        },
+        BrewLifecycleOutcome::RequestIdentityConflict => RecoveryStatus::IdentityConflict,
+        BrewLifecycleOutcome::Forbidden
+        | BrewLifecycleOutcome::ContextChanged
+        | BrewLifecycleOutcome::Retryable
+        | BrewLifecycleOutcome::Unavailable => RecoveryStatus::Unknown,
+        _ => {
+            let (accepted, message) = lifecycle_message(outcome);
+            RecoveryStatus::Confirmed { accepted, message }
+        }
+    }
+}
+fn archive_recovery_status(outcome: &BrewArchiveOutcome) -> RecoveryStatus {
+    match outcome {
+        BrewArchiveOutcome::ResultExpired { resource_id } => RecoveryStatus::Expired {
+            resource_id: resource_id.clone(),
+        },
+        BrewArchiveOutcome::RequestIdentityConflict => RecoveryStatus::IdentityConflict,
+        BrewArchiveOutcome::Forbidden
+        | BrewArchiveOutcome::ContextChanged
+        | BrewArchiveOutcome::Retryable
+        | BrewArchiveOutcome::Unavailable => RecoveryStatus::Unknown,
+        _ => {
+            let (accepted, message) = archive_message(outcome);
+            RecoveryStatus::Confirmed { accepted, message }
+        }
+    }
+}
+
 fn evidence_dirty(
     inputs: &BTreeMap<String, String>,
     note_text: &str,
@@ -113,6 +190,26 @@ fn retry_action(pending: Option<&PendingEvidence>) -> Option<PendingEvidence> {
     pending.cloned()
 }
 
+fn same_original_evidence(left: &PendingEvidence, right: &PendingEvidence) -> bool {
+    match (
+        krausen_types::request_context::checked_json(left),
+        krausen_types::request_context::checked_json(right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn expired_result_message(resource_id: &Option<String>) -> String {
+    format!(
+        "The previous result expired{}. This does not prove the write was absent. Review the existing evidence; the original command remains retained and must not be re-executed or automatically replaced.",
+        resource_id
+            .as_ref()
+            .map(|id| format!(" for resource {id}"))
+            .unwrap_or_default()
+    )
+}
+
 fn measurement_message(outcome: &MeasurementOutcome) -> (bool, String) {
     match outcome {
         MeasurementOutcome::Recorded(_) => (true, "Measurement recorded.".into()),
@@ -139,10 +236,9 @@ fn measurement_message(outcome: &MeasurementOutcome) -> (bool, String) {
             false,
             "That request identity was already used for different content.".into(),
         ),
-        MeasurementOutcome::ResultExpired { .. } => (
-            false,
-            "The previous result expired. Start a new request.".into(),
-        ),
+        MeasurementOutcome::ResultExpired { resource_id } => {
+            (false, expired_result_message(resource_id))
+        }
         MeasurementOutcome::ContextChanged => (
             false,
             "Account or workspace changed. Reopen the brew.".into(),
@@ -180,10 +276,7 @@ fn note_message(outcome: &NoteOutcome) -> (bool, String) {
             false,
             "That request identity was already used for different content.".into(),
         ),
-        NoteOutcome::ResultExpired { .. } => (
-            false,
-            "The previous result expired. Start a new request.".into(),
-        ),
+        NoteOutcome::ResultExpired { resource_id } => (false, expired_result_message(resource_id)),
         NoteOutcome::ContextChanged => (
             false,
             "Account or workspace changed. Reopen the brew.".into(),
@@ -230,8 +323,8 @@ fn lifecycle_message(outcome: &BrewLifecycleOutcome) -> (bool, String) {
             false,
             "That request identity was already used for different content.".into(),
         ),
-        BrewLifecycleOutcome::ResultExpired { .. } => {
-            (false, "The previous result expired.".into())
+        BrewLifecycleOutcome::ResultExpired { resource_id } => {
+            (false, expired_result_message(resource_id))
         }
         BrewLifecycleOutcome::ContextChanged => (
             false,
@@ -273,7 +366,9 @@ fn archive_message(outcome: &BrewArchiveOutcome) -> (bool, String) {
             false,
             "That request identity was already used for different content.".into(),
         ),
-        BrewArchiveOutcome::ResultExpired { .. } => (false, "The previous result expired.".into()),
+        BrewArchiveOutcome::ResultExpired { resource_id } => {
+            (false, expired_result_message(resource_id))
+        }
         BrewArchiveOutcome::ContextChanged => (
             false,
             "Account or workspace changed. Reopen the brew.".into(),
@@ -339,12 +434,117 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
     let pending = RwSignal::new(None::<PendingEvidence>);
     let generation = RwSignal::new(0_u64);
     let inputs = RwSignal::new(BTreeMap::<String, String>::new());
+    let input_generation = RwSignal::new(0_u64);
     let note_text = RwSignal::new(String::new());
     let reason = RwSignal::new(String::new());
+    let last_field = StoredValue::new("brew-note".to_owned());
     let lifecycle_extra = RwSignal::new(Vec::new());
     let lifecycle_cursor = RwSignal::new(None::<String>);
     let continuation_busy = RwSignal::new(false);
     let continuation_attempt = RwSignal::new(0_u64);
+    let original = intent.get_value();
+    let scope = StoredValue::new(GuardScope {
+        installation: GuardScope::installation(),
+        account_id: original.account_id,
+        workspace_id: original.workspace_id,
+        resource_id: Some(brew_id.get_value()),
+        base_revision: None,
+    });
+    let recovery_key = RwSignal::new(None::<String>);
+    #[cfg(target_arch = "wasm32")]
+    let task_session = StoredValue::new(crate::utils::request_id::new_request_id());
+    #[cfg(not(target_arch = "wasm32"))]
+    let task_session = StoredValue::new(None::<String>);
+    let recovery_blocked = RwSignal::new(false);
+    let recovery_status = RwSignal::new(RecoveryStatus::Unknown);
+    let reconciliation_ready = RwSignal::new(false);
+    let reviewed_records = RwSignal::new(Vec::<(String, RecoveryStatus)>::new());
+    let lock_recovery = Callback::new(move |status: RecoveryStatus| {
+        recovery_blocked.set(true);
+        reconciliation_ready.set(false);
+        recovery_status.set(status.clone());
+        if let Some(key) = recovery_key.get_untracked() {
+            if let Err(error) = evidence_recovery::set_status(&key, status.clone()) {
+                warning.set(true);
+                message.set(format!("{} Local blocker retention failed: {error}. Keep the original request; do not create a replacement.", status.message()));
+            }
+        }
+    });
+    let recovery_inventory = RwSignal::new(RecoveryInventory::Loading);
+    let recovery_cleanup_error = RwSignal::new(String::new());
+    let recovery_records = RwSignal::new(Vec::<(String, EvidenceRecovery)>::new());
+    let cleanup_debt = RwSignal::new(Vec::<(String, RecoveryStatus)>::new());
+    let settled = Callback::new(
+        move |(key, (accepted, summary)): (String, (bool, String))| {
+            let status = RecoveryStatus::Confirmed {
+                accepted,
+                message: summary,
+            };
+            if let Err(error) =
+                evidence_recovery::cleanup_confirmed(&scope.get_value(), &key, status.clone())
+            {
+                let notice = format!(
+                    "Result confirmed, but local recovery cleanup failed: {error}. Do not send a new request to compensate."
+                );
+                recovery_cleanup_error.set(notice);
+                cleanup_debt.update(|debts| {
+                    debts.retain(|(existing, _)| existing != &key);
+                    debts.push((key.clone(), status));
+                });
+            } else {
+                cleanup_debt.update(|debts| debts.retain(|(candidate, _)| candidate != &key));
+                recovery_records
+                    .update(|records| records.retain(|(candidate, _)| candidate != &key));
+            }
+            if recovery_key.get_untracked().as_deref() == Some(&key) {
+                recovery_key.set(None);
+                pending.set(None);
+            }
+        },
+    );
+
+    let adopt_selected_status = Callback::new(move |(key, record): (String, EvidenceRecovery)| {
+        if !context_valid.get_untracked()
+            || !record.matches(&scope.get_value())
+            || recovery_key.get_untracked().as_deref() != Some(&key)
+            || !pending
+                .get_untracked()
+                .as_ref()
+                .is_some_and(|original| same_original_evidence(original, &record.command))
+            || record.status == RecoveryStatus::Unknown
+        {
+            return false;
+        }
+        recovery_records.update(|records| records.retain(|(candidate, _)| candidate != &key));
+        reconciliation_ready.set(false);
+        recovery_status.set(record.status.clone());
+        message.set(record.status.message());
+        match &record.status {
+            RecoveryStatus::Confirmed { .. } => {
+                cleanup_debt.update(|debts| {
+                    debts.retain(|(candidate, _)| candidate != &key);
+                    debts.push((key.clone(), record.status.clone()));
+                });
+                pending.set(None);
+                recovery_key.set(None);
+                recovery_blocked.set(false);
+            }
+            RecoveryStatus::ReviewedExpired { .. } | RecoveryStatus::ReviewedIdentityConflict => {
+                reviewed_records.update(|records| {
+                    records.retain(|(candidate, _)| candidate != &key);
+                    records.push((key.clone(), record.status.clone()));
+                });
+                pending.set(None);
+                recovery_key.set(None);
+                recovery_blocked.set(false);
+            }
+            RecoveryStatus::Expired { .. } | RecoveryStatus::IdentityConflict => {
+                recovery_blocked.set(true);
+            }
+            RecoveryStatus::Unknown => unreachable!(),
+        }
+        true
+    });
 
     let load = Callback::new(move |_| {
         let sequence = generation.get_untracked() + 1;
@@ -391,9 +591,73 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 return;
             }
             context_valid.set(true);
+            if recovery_inventory.get_untracked() != RecoveryInventory::Ready {
+                match evidence_recovery::load(&scope.get_value()) {
+                    Ok(records) => {
+                        let mut unresolved = Vec::new();
+                        // A failed durable marker cannot erase this mounted
+                        // owner's stronger exact-key receipt knowledge.
+                        let mut debts = cleanup_debt.get_untracked();
+                        let mut reviewed = Vec::new();
+                        for (key, record) in records {
+                            if debts.iter().any(|(known, _)| known == &key) {
+                                continue;
+                            }
+                            if matches!(
+                                &record.status,
+                                RecoveryStatus::ReviewedExpired { .. }
+                                    | RecoveryStatus::ReviewedIdentityConflict
+                            ) {
+                                reviewed.push((key, record.status));
+                            } else if matches!(&record.status, RecoveryStatus::Confirmed { .. }) {
+                                debts.push((key, record.status));
+                            } else {
+                                unresolved.push((key, record));
+                            }
+                        }
+                        if !write_busy.get_untracked()
+                            && recovery_key
+                                .get_untracked()
+                                .is_some_and(|current| debts.iter().any(|(key, _)| key == &current))
+                        {
+                            pending.set(None);
+                            recovery_key.set(None);
+                        }
+                        cleanup_debt.set(debts);
+                        reviewed_records.set(reviewed);
+                        let mut records = unresolved;
+                        recovery_records.set(Vec::new());
+                        let preserves_other_original = write_busy.get_untracked()
+                            || (pending.get_untracked().is_some()
+                                && recovery_key.get_untracked().is_none_or(|current| {
+                                    records.first().is_some_and(|(key, _)| key != &current)
+                                }));
+                        if records.len() == 1 && !preserves_other_original {
+                            let (key, record) = records.remove(0);
+                            recovery_blocked.set(record.status != RecoveryStatus::Unknown);
+                            recovery_status.set(record.status.clone());
+                            if record.status != RecoveryStatus::Unknown {
+                                warning.set(true);
+                                message.set(record.status.message());
+                            }
+                            recovery_key.set(Some(key));
+                            pending.set(Some(record.command));
+                        } else {
+                            recovery_records.set(records);
+                        }
+                        recovery_inventory.set(RecoveryInventory::Ready);
+                    }
+                    Err(error) => {
+                        recovery_inventory.set(RecoveryInventory::Failed(error.clone()));
+                        warning.set(true);
+                        message.set(error);
+                    }
+                }
+            }
             read_busy.set(false);
             match view_outcome {
                 Ok(BrewEvidenceViewOutcome::View(data)) => {
+                    reconciliation_ready.set(recovery_blocked.get_untracked());
                     lifecycle_extra.set(Vec::new());
                     lifecycle_cursor.set(data.lifecycle_next_cursor.clone());
                     view.set(Some(data));
@@ -436,38 +700,121 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
     });
     Effect::new(move |_| load.run(()));
+    let return_owner = StoredValue::new(None::<crate::components::layout::GuardTaskHandle>);
+    let task = editor_guard.register_task(
+        GuardTaskKind::Evidence,
+        scope.get_value(),
+        GuardTaskCallbacks {
+            save_and_leave: None,
+            return_to_actions: Some(Callback::new(move |()| {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let Some(owner) = return_owner.get_value() else {
+                        return;
+                    };
+                    let Some((original_scope, original_state)) = owner.current() else {
+                        return;
+                    };
+                    let field_id = last_field.get_value();
+                    let interaction = editor_guard.interaction_epoch();
+                    let navigation = editor_guard.navigation_epoch();
+                    let origin = send_wrapper::SendWrapper::new(editor_guard.focus_origin());
+                    request_animation_frame(move || {
+                        use wasm_bindgen::JsCast;
+                        let Some((current_scope, current_state)) = owner.current() else {
+                            return;
+                        };
+                        if current_scope != original_scope
+                            || current_state.generation != original_state.generation
+                            || editor_guard.interaction_epoch() != interaction
+                            || editor_guard.navigation_epoch() != navigation
+                        {
+                            return;
+                        }
+                        let Some(window) = web_sys::window() else {
+                            return;
+                        };
+                        let Some(document) = window.document() else {
+                            return;
+                        };
+                        if !document.has_focus().unwrap_or(false)
+                            || document.query_selector("dialog[open]").ok().flatten().is_some()
+                            || document.query_selector("[popover]:popover-open").ok().flatten().is_some() { return; }
+                        let usable = |element: &web_sys::Element| {
+                            element
+                                .closest("[hidden], [inert], :disabled")
+                                .ok()
+                                .flatten()
+                                .is_none()
+                                && element.get_client_rects().length() > 0
+                                && window
+                                    .get_computed_style(element)
+                                    .ok()
+                                    .flatten()
+                                    .is_none_or(|style| {
+                                        style.get_property_value("visibility").ok().as_deref()
+                                            != Some("hidden")
+                                    })
+                        };
+                        let field = current_state
+                            .context_visible
+                            .then(|| document.get_element_by_id(&field_id))
+                            .flatten()
+                            .filter(|field| usable(field));
+                        let allowed_focus = || document.active_element().is_none_or(|active| {
+                            matches!(active.tag_name().as_str(), "BODY" | "HTML")
+                                || origin.as_ref().is_some_and(|original| active == *original)
+                                || field.as_ref().is_some_and(|original| active == *original)
+                                || active.closest("#workspace-draft-warning").ok().flatten().is_some()
+                        });
+                        if !allowed_focus() { return; }
+                        let try_focus = |element: &web_sys::Element| element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
+                            && document.active_element().is_some_and(|active| active == *element);
+                        if field.as_ref().is_some_and(|field| try_focus(field)) { return; }
+                        if !allowed_focus() { return; }
+                        if !document.get_element_by_id("evidence-return-anchor").filter(|anchor| usable(anchor)).as_ref().is_some_and(|anchor| try_focus(anchor)) {
+                            warning.set(true); message.set("Could not focus an available evidence action. Your inputs and original request remain retained.".into());
+                        }
+                    });
+                }
+            })),
+            discard_unsent: Callback::new(move |()| {
+                inputs.set(BTreeMap::new());
+                note_text.set(String::new());
+                reason.set(String::new());
+                input_generation.update(|generation| *generation += 1);
+                if let Some(owner) = return_owner.get_value() {
+                    owner.update(GuardTaskState {
+                        dirty: !cleanup_debt.get_untracked().is_empty(),
+                        generation: input_generation.get_untracked(),
+                        in_flight: write_busy.get_untracked(),
+                        uncertain: pending.get_untracked().is_some()
+                            || !recovery_records.get_untracked().is_empty()
+                            || recovery_inventory.get_untracked() != RecoveryInventory::Ready,
+                        recovery_retained: recovery_key.get_untracked().is_some()
+                            || !recovery_records.get_untracked().is_empty(),
+                        context_visible: context_valid.get_untracked(),
+                    });
+                }
+                true
+            }),
+        },
+    );
+    return_owner.set_value(Some(task));
     Effect::new(move |_| {
-        editor_guard.dirty.set(
-            inputs.get().values().any(|value| !value.trim().is_empty())
-                || !note_text.get().trim().is_empty()
-                || !reason.get().trim().is_empty()
-                || pending.get().is_some(),
-        );
+        task.update(GuardTaskState {
+            dirty: evidence_dirty(&inputs.get(), &note_text.get(), &reason.get(), false)
+                || !cleanup_debt.get().is_empty(),
+            generation: input_generation.get(),
+            in_flight: write_busy.get(),
+            uncertain: pending.get().is_some()
+                || !recovery_records.get().is_empty()
+                || recovery_inventory.get() != RecoveryInventory::Ready,
+            recovery_retained: recovery_key.get().is_some() || !recovery_records.get().is_empty(),
+            context_visible: context_valid.get(),
+        })
     });
-    Effect::new(move |_| {
-        editor_guard.pending.set(write_busy.get());
-    });
-    editor_guard.discard.set_value(Some(Callback::new(move |_| {
-        inputs.set(BTreeMap::new());
-        note_text.set(String::new());
-        reason.set(String::new());
-        pending.set(None);
-        true
-    })));
-    editor_guard.save.set_value(Some(Callback::new(move |_| {
-        warning.set(true);
-        message.set(
-            "Evidence writes are explicit. Use the action buttons to save, or choose Discard and leave."
-                .into(),
-        );
-        editor_guard.saving_to_leave.set(false);
-    })));
-    on_cleanup(move || {
-        editor_guard.dirty.set(false);
-        editor_guard.pending.set(false);
-        editor_guard.discard.set_value(None);
-        editor_guard.save.set_value(None);
-    });
+    on_cleanup(move || task.unregister());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -487,7 +834,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         let window = web_sys::window().expect("browser window");
         let unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
             move |event: web_sys::BeforeUnloadEvent| {
-                if editor_guard.dirty.get_untracked() {
+                if editor_guard.should_warn_unload(&event) {
                     event.prevent_default();
                     event.set_return_value("");
                 }
@@ -517,6 +864,8 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
 
         let recheck = Callback::new(move |_| {
+            reconciliation_ready.set(false);
+            recovery_inventory.set(RecoveryInventory::Loading);
             context_generation.update(|generation| *generation += 1);
             let sequence = context_generation.get_untracked();
             context_valid.set(false);
@@ -635,17 +984,35 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         });
     });
 
-    let blocked = Signal::derive(move || write_busy.get() || pending.get().is_some());
+    let blocked = Signal::derive(move || {
+        write_busy.get()
+            || pending.get().is_some()
+            || !recovery_records.get().is_empty()
+            || !cleanup_debt.get().is_empty()
+            || recovery_inventory.get() != RecoveryInventory::Ready
+    });
     let continuation_blocked = Signal::derive(move || blocked.get() || continuation_busy.get());
 
     let dispatch = Callback::new(move |(action, retained): (PendingEvidence, bool)| {
-        if write_busy.get_untracked() || pending.get_untracked().is_some() {
+        let original = pending.get_untracked();
+        let pending_matches = original
+            .as_ref()
+            .is_some_and(|pending| same_original_evidence(pending, &action));
+        if write_busy.get_untracked()
+            || (retained && !pending_matches)
+            || (!retained && (original.is_some() || !recovery_records.get_untracked().is_empty()))
+            || !cleanup_debt.get_untracked().is_empty()
+            || recovery_inventory.get_untracked() != RecoveryInventory::Ready
+        {
             return;
         }
         let expected = intent.get_value();
         write_attempt.update(|attempt| *attempt += 1);
         let attempt_id = write_attempt.get_untracked();
+        let preflight_epoch = context_generation.get_untracked();
+        recovery_status.set(RecoveryStatus::Unknown);
         pending.set(Some(action.clone()));
+        let preflight_key = recovery_key.get_untracked();
         write_busy.set(true);
         leptos::task::spawn_local(async move {
             macro_rules! finish_write {
@@ -656,7 +1023,27 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     write_busy.set(false);
                 };
             }
-            if !current_context_matches(&expected).await {
+            let verified = current_context_matches(&expected).await;
+            if write_attempt.try_get_untracked() != Some(attempt_id) {
+                return;
+            }
+            // A keyless preflight is still an owned command. Never clear or
+            // reclassify a successor selected while its authority read waited.
+            if recovery_key.get_untracked() != preflight_key
+                || !pending
+                    .get_untracked()
+                    .as_ref()
+                    .is_some_and(|current| same_original_evidence(current, &action))
+            {
+                finish_write!();
+                return;
+            }
+            if context_generation.try_get_untracked() != Some(preflight_epoch) {
+                finish_write!();
+                pending.set(pending_after_preflight_failure(action, retained));
+                return;
+            }
+            if !verified {
                 finish_write!();
                 // A retained command may already have committed. Keep its
                 // exact identity for recovery in the original context.
@@ -671,15 +1058,118 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 );
                 return;
             }
+            let Some(session) = task_session.get_value() else {
+                finish_write!();
+                pending.set(pending_after_preflight_failure(action, retained));
+                warning.set(true);
+                message.set(
+                    "Request not sent: a secure recovery session could not be created.".into(),
+                );
+                return;
+            };
+            match evidence_recovery::retain(
+                &scope.get_value(),
+                &action,
+                &session,
+                input_generation.get_untracked(),
+            ) {
+                Ok(key) => recovery_key.set(Some(key)),
+                Err(error) => {
+                    finish_write!();
+                    if retained {
+                        if let Some(key) = recovery_key.get_untracked() {
+                            if let Ok(Some(record)) =
+                                evidence_recovery::load_selected(&scope.get_value(), &key)
+                            {
+                                if adopt_selected_status.run((key, record)) {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    pending.set(pending_after_preflight_failure(action, retained));
+                    warning.set(true);
+                    message.set(if retained { format!("Original request was not resent: {error}. Its identity remains retained; review the recovery status before leaving.") } else { format!("Request not sent: {error}. No new server operation was started.") });
+                    return;
+                }
+            }
+            let sent_epoch = context_generation.get_untracked();
+            let original_recovery_key = recovery_key.get_untracked();
+            macro_rules! confirm_response_scope {
+                ($status:expr, $denial:expr, $receipt:expr) => {
+                    let original_status = $status;
+                    let original_receipt = $receipt;
+                    // This receipt belongs to the captured original command, not
+                    // to whichever panel is currently mounted. Preserve it even
+                    // if UI publication is no longer owned by this continuation.
+                    let receipt_error = if original_status != RecoveryStatus::Unknown {
+                        original_recovery_key.as_ref().zip(original_receipt).and_then(|(key, receipt)| evidence_recovery::set_receipt(key, receipt, original_status.clone()).err())
+                    } else { None };
+                    if write_attempt.try_get_untracked() != Some(attempt_id) { return; }
+                    if recovery_key.get_untracked().as_deref() != original_recovery_key.as_deref() { finish_write!(); return; }
+                    let response_context_generation = context_generation.get_untracked();
+                    if $denial && response_context_generation != sent_epoch { finish_write!(); return; }
+                    let verified = current_context_matches(&expected).await;
+                    if write_attempt.try_get_untracked() != Some(attempt_id) { return; }
+                    if recovery_key.get_untracked().as_deref() != original_recovery_key.as_deref() { finish_write!(); return; }
+                    if context_generation.try_get_untracked() != Some(response_context_generation) { finish_write!(); return; }
+                    if !verified {
+                        finish_write!();
+                        context_valid.set(false); view.set(None); readings.set(Vec::new());
+                        warning.set(true);
+                        message.set("The account or workspace context changed while the original request was sent. Its identity remains retained; return to the original context to check the result.".into());
+                        return;
+                    }
+                    if let Some(error) = receipt_error { recovery_cleanup_error.set(format!("The original result was received but its recovery status could not be retained: {error}. The original request identity remains pinned.")); }
+                };
+            }
             match action {
                 PendingEvidence::Measurement(command) => {
                     let outcome = brew_measurement_shared(command).await;
+                    confirm_response_scope!(
+                        outcome
+                            .as_ref()
+                            .map(measurement_recovery_status)
+                            .unwrap_or(RecoveryStatus::Unknown),
+                        matches!(
+                            &outcome,
+                            Ok(MeasurementOutcome::Forbidden | MeasurementOutcome::ContextChanged)
+                        ),
+                        outcome
+                            .as_ref()
+                            .ok()
+                            .cloned()
+                            .map(EvidenceReceipt::Measurement)
+                    );
                     finish_write!();
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !measurement_is_uncertain(&outcome);
+                            if matches!(
+                                &outcome,
+                                MeasurementOutcome::RequestIdentityConflict
+                                    | MeasurementOutcome::ResultExpired { .. }
+                            ) {
+                                lock_recovery.run(match &outcome {
+                                    MeasurementOutcome::ResultExpired { resource_id } => {
+                                        RecoveryStatus::Expired {
+                                            resource_id: resource_id.clone(),
+                                        }
+                                    }
+                                    _ => RecoveryStatus::IdentityConflict,
+                                });
+                            }
+                            let definitive = !measurement_is_uncertain(&outcome)
+                                && !matches!(
+                                    &outcome,
+                                    MeasurementOutcome::Forbidden
+                                        | MeasurementOutcome::ContextChanged
+                                        | MeasurementOutcome::RequestIdentityConflict
+                                        | MeasurementOutcome::ResultExpired { .. }
+                                );
                             if definitive {
-                                pending.set(None);
+                                if let Some(key) = original_recovery_key.clone() {
+                                    settled.run((key, measurement_message(&outcome)));
+                                }
                             }
                             match outcome {
                                 MeasurementOutcome::Conflict { .. }
@@ -730,12 +1220,46 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Note(command) => {
                     let outcome = brew_note_shared(command).await;
+                    confirm_response_scope!(
+                        outcome
+                            .as_ref()
+                            .map(note_recovery_status)
+                            .unwrap_or(RecoveryStatus::Unknown),
+                        matches!(
+                            &outcome,
+                            Ok(NoteOutcome::Forbidden | NoteOutcome::ContextChanged)
+                        ),
+                        outcome.as_ref().ok().cloned().map(EvidenceReceipt::Note)
+                    );
                     finish_write!();
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !note_is_uncertain(&outcome);
+                            if matches!(
+                                &outcome,
+                                NoteOutcome::RequestIdentityConflict
+                                    | NoteOutcome::ResultExpired { .. }
+                            ) {
+                                lock_recovery.run(match &outcome {
+                                    NoteOutcome::ResultExpired { resource_id } => {
+                                        RecoveryStatus::Expired {
+                                            resource_id: resource_id.clone(),
+                                        }
+                                    }
+                                    _ => RecoveryStatus::IdentityConflict,
+                                });
+                            }
+                            let definitive = !note_is_uncertain(&outcome)
+                                && !matches!(
+                                    &outcome,
+                                    NoteOutcome::Forbidden
+                                        | NoteOutcome::ContextChanged
+                                        | NoteOutcome::RequestIdentityConflict
+                                        | NoteOutcome::ResultExpired { .. }
+                                );
                             if definitive {
-                                pending.set(None);
+                                if let Some(key) = original_recovery_key.clone() {
+                                    settled.run((key, note_message(&outcome)));
+                                }
                             }
                             match outcome {
                                 NoteOutcome::Conflict { .. } => {
@@ -784,15 +1308,52 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Lifecycle(request) => {
                     let outcome = crate::server_fns::brew::brew_lifecycle_shared(request).await;
+                    confirm_response_scope!(
+                        outcome
+                            .as_ref()
+                            .map(lifecycle_recovery_status)
+                            .unwrap_or(RecoveryStatus::Unknown),
+                        matches!(
+                            &outcome,
+                            Ok(BrewLifecycleOutcome::Forbidden
+                                | BrewLifecycleOutcome::ContextChanged)
+                        ),
+                        outcome
+                            .as_ref()
+                            .ok()
+                            .cloned()
+                            .map(EvidenceReceipt::Lifecycle)
+                    );
                     finish_write!();
                     match outcome {
                         Ok(outcome) => {
+                            if matches!(
+                                &outcome,
+                                BrewLifecycleOutcome::RequestIdentityConflict
+                                    | BrewLifecycleOutcome::ResultExpired { .. }
+                            ) {
+                                lock_recovery.run(match &outcome {
+                                    BrewLifecycleOutcome::ResultExpired { resource_id } => {
+                                        RecoveryStatus::Expired {
+                                            resource_id: resource_id.clone(),
+                                        }
+                                    }
+                                    _ => RecoveryStatus::IdentityConflict,
+                                });
+                            }
                             let definitive = !matches!(
                                 &outcome,
-                                BrewLifecycleOutcome::Retryable | BrewLifecycleOutcome::Unavailable
+                                BrewLifecycleOutcome::Retryable
+                                    | BrewLifecycleOutcome::Unavailable
+                                    | BrewLifecycleOutcome::Forbidden
+                                    | BrewLifecycleOutcome::ContextChanged
+                                    | BrewLifecycleOutcome::RequestIdentityConflict
+                                    | BrewLifecycleOutcome::ResultExpired { .. }
                             );
                             if definitive {
-                                pending.set(None);
+                                if let Some(key) = original_recovery_key.clone() {
+                                    settled.run((key, lifecycle_message(&outcome)));
+                                }
                             }
                             match outcome {
                                 BrewLifecycleOutcome::Conflict { .. } => {
@@ -841,12 +1402,46 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 }
                 PendingEvidence::Archive(request) => {
                     let outcome = brew_archive_shared(request).await;
+                    confirm_response_scope!(
+                        outcome
+                            .as_ref()
+                            .map(archive_recovery_status)
+                            .unwrap_or(RecoveryStatus::Unknown),
+                        matches!(
+                            &outcome,
+                            Ok(BrewArchiveOutcome::Forbidden | BrewArchiveOutcome::ContextChanged)
+                        ),
+                        outcome.as_ref().ok().cloned().map(EvidenceReceipt::Archive)
+                    );
                     finish_write!();
                     match outcome {
                         Ok(outcome) => {
-                            let definitive = !archive_is_uncertain(&outcome);
+                            if matches!(
+                                &outcome,
+                                BrewArchiveOutcome::RequestIdentityConflict
+                                    | BrewArchiveOutcome::ResultExpired { .. }
+                            ) {
+                                lock_recovery.run(match &outcome {
+                                    BrewArchiveOutcome::ResultExpired { resource_id } => {
+                                        RecoveryStatus::Expired {
+                                            resource_id: resource_id.clone(),
+                                        }
+                                    }
+                                    _ => RecoveryStatus::IdentityConflict,
+                                });
+                            }
+                            let definitive = !archive_is_uncertain(&outcome)
+                                && !matches!(
+                                    &outcome,
+                                    BrewArchiveOutcome::Forbidden
+                                        | BrewArchiveOutcome::ContextChanged
+                                        | BrewArchiveOutcome::RequestIdentityConflict
+                                        | BrewArchiveOutcome::ResultExpired { .. }
+                                );
                             if definitive {
-                                pending.set(None);
+                                if let Some(key) = original_recovery_key.clone() {
+                                    settled.run((key, archive_message(&outcome)));
+                                }
                             }
                             match outcome {
                                 BrewArchiveOutcome::Conflict { .. } => {
@@ -956,11 +1551,29 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         ));
     });
     let retry_pending = Callback::new(move |_| {
-        if write_busy.get_untracked() {
+        if write_busy.get_untracked()
+            || !cleanup_debt.get_untracked().is_empty()
+            || !context_valid.get_untracked()
+            || recovery_blocked.get_untracked()
+            || recovery_inventory.get_untracked() != RecoveryInventory::Ready
+        {
             return;
         }
         if let Some(action) = retry_action(pending.get_untracked().as_ref()) {
-            pending.set(None);
+            if let Some(key) = recovery_key.get_untracked() {
+                match evidence_recovery::load_selected(&scope.get_value(), &key) {
+                    Ok(Some(record)) => {
+                        if adopt_selected_status.run((key, record)) {
+                            return;
+                        }
+                    }
+                    Ok(None) => {} // retain the SAME command before any resend
+                    Err(error) => {
+                        recovery_inventory.set(RecoveryInventory::Failed(error));
+                        return;
+                    }
+                }
+            }
             dispatch.run((action, true));
         }
     });
@@ -968,17 +1581,80 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
         if write_busy.get_untracked() {
             return;
         }
-        pending.set(None);
         warning.set(true);
         message.set(
-            "Uncertain request abandoned. Verify the current evidence before recording new content."
+            "The previous request may already have committed. Its original identity remains retained; retry it to check the result, or leave with recovery preserved."
                 .into(),
         );
         load.run(());
     });
 
+    let finish_recovery_review = Callback::new(move |()| {
+        if !reconciliation_ready.get_untracked()
+            || !context_valid.get_untracked()
+            || write_busy.get_untracked()
+        {
+            return;
+        }
+        let Some(key) = recovery_key.get_untracked() else {
+            return;
+        };
+        let reviewed = match recovery_status.get_untracked() {
+            RecoveryStatus::Expired { resource_id } => {
+                RecoveryStatus::ReviewedExpired { resource_id }
+            }
+            RecoveryStatus::IdentityConflict => RecoveryStatus::ReviewedIdentityConflict,
+            _ => return,
+        };
+        let epoch = context_generation.get_untracked();
+        let attempt = write_attempt.get_untracked();
+        let expected = intent.get_value();
+        leptos::task::spawn_local(async move {
+            let verified = current_context_matches(&expected).await;
+            if !verified
+                || context_generation.try_get_untracked() != Some(epoch)
+                || write_attempt.try_get_untracked() != Some(attempt)
+            {
+                return;
+            }
+            if !reconciliation_ready.get_untracked()
+                || !context_valid.get_untracked()
+                || recovery_key.get_untracked().as_deref() != Some(&key)
+            {
+                return;
+            }
+            match evidence_recovery::load_selected(&scope.get_value(), &key) {
+                Ok(Some(current)) if current.status != recovery_status.get_untracked() => {
+                    adopt_selected_status.run((key, current));
+                    return;
+                }
+                Err(error) => {
+                    warning.set(true);
+                    message.set(error);
+                    return;
+                }
+                _ => {}
+            }
+            match evidence_recovery::set_status(&key, reviewed.clone()) {
+                Ok(()) => {
+                    reviewed_records.update(|records| records.push((key, reviewed.clone())));
+                    pending.set(None);
+                    recovery_key.set(None);
+                    recovery_blocked.set(false);
+                    reconciliation_ready.set(false);
+                    message.set(reviewed.message());
+                    warning.set(true);
+                }
+                Err(error) => {
+                    warning.set(true);
+                    message.set(error);
+                }
+            }
+        });
+    });
+
     view! {
-        <div class="recipe-editor">
+        <div class="recipe-editor" id="evidence-return-anchor" tabindex="-1" aria-label="Brew evidence task">
             <Show
                 when=move || context_valid.get()
                 fallback=|| view! {
@@ -995,15 +1671,54 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
             >
                 {move || pending.get().map(|_| view! {
                     <BreweryNotice
-                        title="Outcome uncertain"
+                        title=if recovery_status.get() == RecoveryStatus::Unknown { "Outcome uncertain" } else { "Original request retained" }
                         body="The last write may have committed. Retry the same request or abandon it before changing content."
                         warning=true
                         announcement=crate::components::NoticeAnnouncement::Settled
                     />
                     <div class="recipe-editor__actions">
-                        <Button disabled=write_busy on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
-                        <Button variant=ButtonVariant::Secondary disabled=write_busy on:click=move |_| abandon_pending.run(())>"Abandon uncertain request"</Button>
+                        <Button disabled=Signal::derive(move || write_busy.get() || recovery_blocked.get() || !cleanup_debt.get().is_empty() || recovery_inventory.get() != RecoveryInventory::Ready) on:click=move |_| retry_pending.run(())>"Retry same request"</Button>
+                        <Button variant=ButtonVariant::Secondary disabled=write_busy on:click=move |_| abandon_pending.run(())>"Keep original request"</Button>
                     </div>
+                })}
+                {move || match recovery_inventory.get() {
+                    RecoveryInventory::Failed(error) => view! {
+                        <BreweryNotice title="Recovery discovery unavailable" body=format!("{error}. New evidence writes are blocked until original requests can be discovered.") warning=true announcement=crate::components::NoticeAnnouncement::Settled/>
+                        <Button disabled=read_busy on:click=move |_| load.run(())>"Retry recovery discovery"</Button>
+                    }.into_any(),
+                    _ => ().into_any(),
+                }}
+                <For each=move || recovery_records.get() key=|(key, _)| key.clone() children=move |(key, record)| {
+                    let label = format!("Check retained evidence request {}", record.command.identity().map(|(_, _, id)| id).unwrap_or("unknown"));
+                    view! { <Button disabled=Signal::derive(move || pending.get().is_some() || write_busy.get()) on:click=move |_| {
+                        if pending.get_untracked().is_none() && !write_busy.get_untracked() {
+                            recovery_blocked.set(record.status != RecoveryStatus::Unknown);
+                            recovery_status.set(record.status.clone());
+                            if record.status != RecoveryStatus::Unknown { warning.set(true); message.set(record.status.message()); }
+                            recovery_key.set(Some(key.clone())); pending.set(Some(record.command.clone()));
+                            recovery_records.update(|records| records.retain(|(candidate, _)| candidate != &key));
+                        }
+                    }>{label}</Button> }
+                }/>
+                <Show when=move || recovery_blocked.get()>
+                    {move || view! { <BreweryNotice title="Original request requires review" body=recovery_status.get().message() warning=true/> }}
+                    <Button disabled=read_busy on:click=move |_| { reconciliation_ready.set(false); load.run(()); }>"Verify current evidence"</Button>
+                    <Button disabled=Signal::derive(move || !reconciliation_ready.get() || !context_valid.get() || write_busy.get()) on:click=move |_| finish_recovery_review.run(())>"Keep original identity and finish review"</Button>
+                    <p>"A missing item in the loaded evidence is not proof that the earlier write was absent. Finishing review does not send or replace that command."</p>
+                </Show>
+                <For each=move || reviewed_records.get() key=|(key, _)| key.clone() children=move |(_, status)| view! { <BreweryNotice title="Original identity retained after review" body=status.message()/> }/>
+                <For each=move || cleanup_debt.get() key=|(key, _)| key.clone() children=move |(key, status)| {
+                    view! { <BreweryNotice title="Confirmed result — local cleanup pending" body=status.message() warning=true announcement=crate::components::NoticeAnnouncement::Settled/>
+                        <Button disabled=write_busy on:click=move |_| {
+                            match evidence_recovery::cleanup_confirmed(&scope.get_value(), &key, status.clone()) {
+                                Ok(()) => { cleanup_debt.update(|debts| debts.retain(|(candidate, _)| candidate != &key)); recovery_records.update(|records| records.retain(|(candidate, _)| candidate != &key)); recovery_cleanup_error.set(String::new()); }
+                                Err(error) => recovery_cleanup_error.set(error),
+                            }
+                        }>"Retry local cleanup only"</Button>
+                    }
+                }/>
+                {move || (!recovery_cleanup_error.get().is_empty()).then(|| view! {
+                    <BreweryNotice title="Local recovery cleanup" body=recovery_cleanup_error.get() warning=true announcement=crate::components::NoticeAnnouncement::Settled/>
                 })}
                 {move || (!message.get().is_empty()).then(|| view! {
                     <BreweryNotice title="Brew evidence" body=message.get() warning=warning.get() announcement=crate::components::NoticeAnnouncement::Settled/>
@@ -1076,7 +1791,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                             id="brew-transition-reason"
                             label="Reason for reopen or terminal correction"
                             value=Signal::from(reason)
-                            on_change=Callback::new(move |text: String| reason.set(text))
+                             on_change=Callback::new(move |text: String| { last_field.set_value("brew-transition-reason".into()); input_generation.update(|generation| *generation += 1); reason.set(text); })
                             hint="Required for reopen and for changing one terminal status to another."
                         />
 
@@ -1091,11 +1806,12 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                                 let quantity_id = quantity_id.clone();
                                 move || inputs.get().get(&quantity_id).cloned().unwrap_or_default()
                             });
-                            let input_change = Callback::new({
-                                let quantity_id = quantity_id.clone();
-                                move |text: String| inputs.update(|values| {
-                                    values.insert(quantity_id.clone(), text);
-                                })
+                             let input_change = Callback::new({
+                                 let quantity_id = quantity_id.clone();
+                                 let field_id = field_id.clone();
+                                 move |text: String| { last_field.set_value(field_id.clone()); input_generation.update(|generation| *generation += 1); inputs.update(|values| {
+                                     values.insert(quantity_id.clone(), text);
+                                 }); }
                             });
                             let record_quantity = quantity_id.clone();
                             let record = move |_| {
@@ -1260,7 +1976,7 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                             id="brew-note"
                             label="New note"
                             value=Signal::from(note_text)
-                            on_change=Callback::new(move |text: String| note_text.set(text))
+                             on_change=Callback::new(move |text: String| { last_field.set_value("brew-note".into()); input_generation.update(|generation| *generation += 1); note_text.set(text); })
                         />
                         <div class="recipe-editor__actions">
                             <Button
@@ -1383,6 +2099,87 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
 #[cfg(test)]
 mod evidence_ui_state_tests {
     use super::*;
+
+    #[test]
+    fn every_real_write_family_distinguishes_terminal_blockers_known_rejection_and_transport_unknown()
+     {
+        let id = Some("original-resource".to_owned());
+        for status in [
+            measurement_recovery_status(&MeasurementOutcome::ResultExpired {
+                resource_id: id.clone(),
+            }),
+            note_recovery_status(&NoteOutcome::ResultExpired {
+                resource_id: id.clone(),
+            }),
+            lifecycle_recovery_status(&BrewLifecycleOutcome::ResultExpired {
+                resource_id: id.clone(),
+            }),
+            archive_recovery_status(&BrewArchiveOutcome::ResultExpired {
+                resource_id: id.clone(),
+            }),
+        ] {
+            assert_eq!(
+                status,
+                RecoveryStatus::Expired {
+                    resource_id: id.clone()
+                }
+            );
+        }
+        for status in [
+            measurement_recovery_status(&MeasurementOutcome::RequestIdentityConflict),
+            note_recovery_status(&NoteOutcome::RequestIdentityConflict),
+            lifecycle_recovery_status(&BrewLifecycleOutcome::RequestIdentityConflict),
+            archive_recovery_status(&BrewArchiveOutcome::RequestIdentityConflict),
+        ] {
+            assert_eq!(status, RecoveryStatus::IdentityConflict);
+        }
+        for status in [
+            measurement_recovery_status(&MeasurementOutcome::Retryable),
+            note_recovery_status(&NoteOutcome::Unavailable),
+            lifecycle_recovery_status(&BrewLifecycleOutcome::Forbidden),
+            archive_recovery_status(&BrewArchiveOutcome::ContextChanged),
+        ] {
+            assert_eq!(status, RecoveryStatus::Unknown);
+        }
+        for status in [
+            measurement_recovery_status(&MeasurementOutcome::Invalid),
+            note_recovery_status(&NoteOutcome::Invalid),
+            lifecycle_recovery_status(&BrewLifecycleOutcome::Invalid),
+            archive_recovery_status(&BrewArchiveOutcome::Invalid),
+        ] {
+            assert!(matches!(
+                status,
+                RecoveryStatus::Confirmed {
+                    accepted: false,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn expired_results_name_the_original_resource_without_claiming_absence_or_minting_a_retry() {
+        let resource_id = Some("original-resource".into());
+        let messages = [
+            measurement_message(&MeasurementOutcome::ResultExpired {
+                resource_id: resource_id.clone(),
+            }),
+            note_message(&NoteOutcome::ResultExpired {
+                resource_id: resource_id.clone(),
+            }),
+            lifecycle_message(&BrewLifecycleOutcome::ResultExpired {
+                resource_id: resource_id.clone(),
+            }),
+            archive_message(&BrewArchiveOutcome::ResultExpired { resource_id }),
+        ];
+        for (success, message) in messages {
+            assert!(!success);
+            assert!(message.contains("original-resource"));
+            assert!(message.contains("does not prove the write was absent"));
+            assert!(message.contains("must not be re-executed"));
+            assert!(!message.contains("Start a new request"));
+        }
+    }
 
     #[test]
     fn uncertain_outcomes_keep_pending_and_definitive_outcomes_clear_it() {

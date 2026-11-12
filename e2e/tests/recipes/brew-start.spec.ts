@@ -192,7 +192,7 @@ test('held Record stays locked while a real focus overview completes', async ({
   await expect(page.getByText('Outcome uncertain')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry same request' })).toBeDisabled();
   await expect(
-    page.getByRole('button', { name: 'Abandon uncertain request' }),
+    page.getByRole('button', { name: 'Keep original request' }),
   ).toBeDisabled();
   expect(recordCommands).toHaveLength(1);
   releaseRecord();
@@ -348,9 +348,9 @@ test('hidden uncertain request can be discarded after another tab changes contex
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   await expect(page.locator('#brew-note')).toHaveCount(0);
   await page.getByRole('link', { name: 'Recipes' }).first().click();
-  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
-  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeEnabled();
-  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard.getByRole('button', { name: 'Discard local inputs and leave' })).toBeEnabled();
+  await guard.getByRole('button', { name: 'Discard local inputs and leave' }).click();
   await expect(page).toHaveURL(/\/recipes/);
   expect(
     sqliteExec(
@@ -549,8 +549,8 @@ test('failed retry context preflight retains the same uncertain request', async 
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
   expect(recordCommands).toHaveLength(1);
   await page.getByRole('link', { name: 'Recipes' }).first().click();
-  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
-  await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeEnabled();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard.getByRole('button', { name: 'Discard local inputs and leave' })).toBeEnabled();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(page.getByText('Account or workspace changed')).toBeVisible();
   expect(recordCommands).toHaveLength(1);
@@ -1221,4 +1221,603 @@ test('feedback apply keeps one request through a lost response and ignores selec
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
+});
+
+test('evidence leave returns to explicit actions instead of offering an impossible batch save', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Evidence explicit leave ${Date.now()}`);
+  const writes: any[] = [];
+  page.on('request', request => {
+    if (!/\/leptos-api\/brew_(measurement|note)/.test(request.url())) return;
+    const command = commandFrom(request);
+    if (command && !['list', 'history'].includes(command.action)) writes.push(command);
+  });
+  const note = page.locator('#brew-note');
+  await note.fill('Keep this unsent note for its explicit Record action');
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await expect(guard.getByRole('button', { name: 'Return to save evidence', exact: true })).toBeVisible();
+  await expect(guard.getByRole('button', { name: 'Save and leave', exact: true })).toHaveCount(0);
+  await guard.getByRole('button', { name: 'Return to save evidence', exact: true }).click();
+  await expect(guard).not.toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/brews/${brewId}$`));
+  await expect(note).toHaveValue('Keep this unsent note for its explicit Record action');
+  await expect(note).toBeFocused();
+  expect(writes).toHaveLength(0);
+});
+
+for (const focusCase of ['newer successor', 'no-op target'] as const) {
+  test(`evidence Return respects ${focusCase} before its owned focus frame`, async ({ page }) => {
+    await startBrewAndOpenEvidence(page, `Evidence focus arbitration ${focusCase} ${Date.now()}`);
+    const writes: any[] = [];
+    page.on('request', request => {
+      if (/\/leptos-api\/brew_(measurement|note|lifecycle|archive)/.test(request.url())) {
+        const command = commandFrom(request);
+        if (command && !['list', 'history'].includes(command.action)) writes.push(command);
+      }
+    });
+    await page.locator('#brew-note').fill('Preserve this raw note and its native editing state');
+    await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+    const guard = page.locator('#workspace-draft-warning');
+    await expect(guard).toBeVisible();
+    await page.evaluate(focusCase => {
+      if (focusCase === 'no-op target') {
+        (document.querySelector('#brew-note') as HTMLElement).focus = () => {};
+        return;
+      }
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = callback => raf(time => {
+        if (!document.querySelector('#workspace-draft-warning[open]')) {
+          window.requestAnimationFrame = raf;
+          const successor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find(link => link.pathname === '/settings/profile');
+          successor!.focus(); // newer real focus, no pointer/key epoch change
+          (window as any).__evidenceSuccessorFocused = true;
+        }
+        callback(time);
+      });
+    }, focusCase);
+    await guard.getByRole('button', { name: 'Return to save evidence', exact: true }).click();
+    await expect(guard).not.toBeVisible();
+    if (focusCase === 'newer successor') {
+      await expect.poll(() => page.evaluate(() => (window as any).__evidenceSuccessorFocused === true)).toBe(true);
+      await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeFocused();
+    } else await expect(page.locator('#evidence-return-anchor')).toBeFocused();
+    await expect(page.locator('#brew-note')).toHaveValue('Preserve this raw note and its native editing state');
+    expect(writes).toHaveLength(0);
+  });
+}
+
+for (const action of [
+  { name: 'measurement', selector: '#measurement-gravity-original-v1', value: '1.050' },
+  { name: 'reason', selector: '#brew-transition-reason', value: 'Keep this explicit lifecycle reason' },
+]) {
+  test(`evidence Return restores the authorized explicit ${action.name} field without writing`, async ({ page }) => {
+    const brewId = await startBrewAndOpenEvidence(page, `Evidence Return ${action.name} ${Date.now()}`);
+    const writes: any[] = [];
+    page.on('request', request => {
+      if (!/\/leptos-api\/brew_(measurement|note|lifecycle|archive)/.test(request.url())) return;
+      const command = commandFrom(request);
+      if (command && !['list', 'history'].includes(command.action)) writes.push(command);
+    });
+    const field = page.locator(action.selector);
+    await field.fill(action.value);
+    await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+    const guard = page.locator('#workspace-draft-warning');
+    await expect(guard).toBeVisible();
+    await expect(guard.getByRole('button', { name: 'Save and leave', exact: true })).toHaveCount(0);
+    await guard.getByRole('button', { name: 'Return to save evidence', exact: true }).click();
+    await expect(guard).not.toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/brews/${brewId}$`));
+    await expect(field).toHaveValue(action.value);
+    await expect(field).toBeFocused();
+    expect(writes).toHaveLength(0);
+  });
+}
+
+test('evidence recovery storage failure refuses dispatch and preserves unsent inputs', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Evidence storage failure ${Date.now()}`);
+  let writes = 0;
+  page.on('request', request => {
+    if (/\/leptos-api\/brew_measurement/.test(request.url()) && commandFrom(request)?.action === 'record') writes++;
+  });
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('krausen-evidence-v1:')) throw new DOMException('Controlled storage failure', 'QuotaExceededError');
+      return setItem.call(this, key, value);
+    };
+  });
+  const reading = page.locator('#measurement-gravity-original-v1');
+  await reading.fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(page.getByText(/^Request not sent:/)).toBeVisible();
+  await expect(reading).toHaveValue('1.050');
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeEnabled();
+  expect(writes).toBe(0);
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Return to save evidence', exact: true }).click();
+  await expect(reading).toBeFocused();
+  await expect(reading).toHaveValue('1.050');
+  expect(writes).toBe(0);
+});
+
+for (const blocker of ['expired', 'identity conflict'] as const) {
+  test(`controlled ${blocker} retains the original evidence envelope across reload and explicit review`, async ({ page }) => {
+    const brewId = await startBrewAndOpenEvidence(page, `Evidence terminal ${blocker} ${Date.now()}`);
+    const commands: any[] = [];
+    let resourceId = '';
+    await page.route('**/leptos-api/brew_measurement*', async route => {
+      const command = commandFrom(route.request());
+      if (command?.action !== 'record') return route.continue();
+      commands.push(command);
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      const body = await response.json();
+      const recorded = outcomeOf(body).Recorded;
+      expect(recorded.brew_id).toBe(brewId);
+      resourceId = recorded.entry_id;
+      expect(resourceId).not.toBe('');
+      // Exercise the production typed-outcome UI after a real native write.
+      // This is controlled transport coverage, not a claim that the unchanged
+      // backend ledger actually expired or conflicted during this test.
+      const outcome = blocker === 'expired' ? { ResultExpired: { resource_id: resourceId } } : 'RequestIdentityConflict';
+      const replacement = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'Ok') ? { Ok: outcome } : outcome;
+      await route.fulfill({ response, body: JSON.stringify(replacement) });
+    });
+    await page.locator('#measurement-gravity-original-v1').fill('1.050');
+    await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+    await expect(page.getByText('Original request requires review', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry same request', exact: true })).toBeDisabled();
+    expect(commands).toHaveLength(1);
+    page.once('dialog', dialog => dialog.accept());
+    await page.reload();
+    await expect(page.getByText('Original request requires review', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry same request', exact: true })).toBeDisabled();
+    if (blocker === 'expired') await expect(page.getByText(new RegExp(resourceId)).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Verify current evidence', exact: true }).click();
+    const finish = page.getByRole('button', { name: 'Keep original identity and finish review', exact: true });
+    await expect(finish).toBeEnabled();
+    await finish.click();
+    await expect(page.getByText('Original identity retained after review', { exact: true })).toBeVisible();
+    const records = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-evidence-v1:')).map(key => JSON.parse(localStorage.getItem(key)!)));
+    expect(records).toHaveLength(1);
+    expect(records[0].command.Measurement).toEqual(commands[0]);
+    expect(records[0].receipt.Measurement).toEqual(blocker === 'expired' ? { ResultExpired: { resource_id: resourceId } } : 'RequestIdentityConflict');
+    expect(commands).toHaveLength(1);
+    expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+  });
+}
+
+test('keyless held evidence preflight cannot replace or clear another discovered original', async ({ page, context }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Keyless evidence ownership ${Date.now()}`);
+  const other = await context.newPage();
+  await other.goto(`/brews/${brewId}`);
+  await expect(other.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeEnabled();
+  await page.bringToFront();
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeEnabled();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let reached!: () => void;
+  const preflightHeld = new Promise<void>(resolve => { reached = resolve; });
+  let firstContext = true;
+  const originalB: any[] = [];
+  const sentFromA: any[] = [];
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    if (!firstContext) return route.continue();
+    firstContext = false;
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    reached();
+    await held;
+    await route.fulfill({ response });
+  });
+  page.on('request', request => {
+    if (/\/leptos-api\/brew_measurement/.test(request.url()) && commandFrom(request)?.action === 'record') sentFromA.push(commandFrom(request));
+  });
+  await other.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    originalB.push(command);
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    await route.abort('failed');
+  });
+  try {
+    await page.locator('#measurement-gravity-original-v1').fill('1.050');
+    await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+    await preflightHeld;
+    expect(sentFromA).toHaveLength(0);
+    await other.locator('#measurement-gravity-original-v1').fill('1.052');
+    await other.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+    await expect(other.getByText(/^Reading request uncertain:/)).toBeVisible();
+    expect(originalB).toHaveLength(1);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    const choiceB = page.getByRole('button', { name: `Check retained evidence request ${originalB[0].request_id}`, exact: true });
+    await expect(choiceB).toBeVisible();
+    await expect(choiceB).toBeDisabled(); // A still owns preflight, before retain
+    release();
+    await expect(choiceB).toBeEnabled(); // the old A continuation has settled
+    await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+    expect(sentFromA).toHaveLength(0);
+    await choiceB.click();
+    await page.getByRole('button', { name: 'Retry same request', exact: true }).click();
+    await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+    expect(sentFromA).toHaveLength(1);
+    expect(sentFromA[0]).toEqual(originalB[0]);
+    expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+  } finally { release(); await other.close(); }
+});
+
+test('mixed confirmed cleanup and unknown evidence retain the original retry lock', async ({ page, context }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Mixed evidence recovery ${Date.now()}`);
+  const workspace = sqliteExec(`SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`);
+  // Both real owners finish their empty inventory before either write begins.
+  const other = await context.newPage();
+  await other.goto(`/brews/${brewId}`);
+  await expect(other.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeEnabled();
+  let releaseA!: () => void;
+  const heldA = new Promise<void>(resolve => { releaseA = resolve; });
+  let committedA!: () => void;
+  const aCommitted = new Promise<void>(resolve => { committedA = resolve; });
+  const commandsA: any[] = [];
+  const commandsB: any[] = [];
+  await page.evaluate(() => {
+    const removeItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function (key) {
+      if (key.startsWith('krausen-evidence-v1:')) throw new DOMException('Controlled cleanup fault', 'SecurityError');
+      return removeItem.call(this, key);
+    };
+  });
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    commandsA.push(command);
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    committedA();
+    await heldA;
+    await route.fulfill({ response });
+  });
+  await other.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    commandsB.push(command);
+    if (commandsB.length === 1) {
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await aCommitted;
+  await other.locator('#measurement-gravity-original-v1').fill('1.052');
+  await other.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(other.getByText(/^Reading request uncertain:/)).toBeVisible();
+  const inventoryOwner = await context.newPage();
+  const inventoryWrites: any[] = [];
+  inventoryOwner.on('request', request => {
+    if (/\/leptos-api\/brew_measurement/.test(request.url()) && commandFrom(request)?.action === 'record') inventoryWrites.push(commandFrom(request));
+  });
+  await inventoryOwner.goto(`/brews/${brewId}`);
+  await expect(inventoryOwner.getByRole('button', { name: /^Check retained evidence request / })).toHaveCount(2);
+  await inventoryOwner.getByRole('button', { name: `Check retained evidence request ${commandsA[0].request_id}`, exact: true }).click();
+  await expect(inventoryOwner.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  releaseA();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  // This owner selected A while it was Unknown. A different owner then recorded
+  // the known receipt; Retry must adopt that status, not send or repeatedly refuse.
+  const staleRetry = inventoryOwner.getByRole('button', { name: 'Retry same request', exact: true });
+  if (await staleRetry.isVisible()) await staleRetry.click();
+  await expect(inventoryOwner.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  expect(inventoryWrites).toHaveLength(0);
+  // A real rescan goes from two Unknown choices to Confirmed A + Unknown B.
+  // The old choice list must be replaced, not left behind after auto-adopting B.
+  await inventoryOwner.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(inventoryOwner.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  await expect(inventoryOwner.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  await expect(inventoryOwner.getByRole('button', { name: /^Check retained evidence request / })).toHaveCount(0);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  // Exercise the broken enabled path where present; corrected gating must also
+  // keep B visible/locked rather than hiding the defect behind disabled markup.
+  const retryB = page.getByRole('button', { name: 'Retry same request', exact: true });
+  if (await retryB.isEnabled()) await retryB.click();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+  expect(commandsA).toHaveLength(1);
+  expect(commandsB).toHaveLength(1);
+  await page.getByRole('button', { name: 'Retry local cleanup only', exact: true }).click();
+  await expect(retryB).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+  // The recovering owner is this page now; inspect its next actual request.
+  await page.unroute('**/leptos-api/brew_measurement*');
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action === 'record') commandsB.push(command);
+    await route.continue();
+  });
+  await retryB.click();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  expect(commandsB).toHaveLength(2);
+  expect(commandsB[1]).toEqual(commandsB[0]);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('2');
+  await other.close();
+  await inventoryOwner.close();
+});
+
+test('retained evidence fragment arrival cannot exempt a later independent native reload', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Evidence native fragment ${Date.now()}`);
+  const commands: any[] = [];
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    commands.push(command);
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    await route.abort('failed');
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(page.getByText(/^Reading request uncertain:/)).toBeVisible();
+  const original = page.url();
+  await page.evaluate(() => {
+    // Only a native fragment-link fixture: production owns the actual click,
+    // guard, permitted departure and native unload decisions.
+    const link = document.createElement('a');
+    link.href = `${location.href}#retained-evidence-fixture`;
+    link.textContent = 'Native fragment recovery fixture';
+    document.querySelector('.app-shell__main')!.append(link);
+  });
+  await page.getByRole('link', { name: 'Native fragment recovery fixture', exact: true }).click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard local inputs and leave', exact: true }).click();
+  await expect(page).toHaveURL(`${original}#retained-evidence-fixture`);
+  await expect(guard).not.toBeVisible();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  const retainedEntry = await page.evaluate(() => ({
+    document: performance.timeOrigin,
+    key: (window as any).navigation.currentEntry.key,
+    length: history.length,
+  }));
+  const warning = page.waitForEvent('dialog');
+  // Trigger the real native reload, but do not wait for a load event that Stay
+  // deliberately prevents. Unexpected document destruction remains an error.
+  const reload = page.evaluate(() => window.location.reload());
+  const dialog = await warning;
+  expect(dialog.type()).toBe('beforeunload');
+  await dialog.dismiss();
+  await reload;
+  await expect(page).toHaveURL(`${original}#retained-evidence-fixture`);
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => ({ document: performance.timeOrigin, key: (window as any).navigation.currentEntry.key, length: history.length }))).toEqual(retainedEntry);
+  // A different native listener can still require confirmation. Cancel the real
+  // owned document departure and require the matching native abort disposition.
+  await page.evaluate(() => window.addEventListener('beforeunload', event => {
+    event.preventDefault(); event.returnValue = '';
+  }, { once: true }));
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  await expect(guard).toBeVisible();
+  const ownedWarning = page.waitForEvent('dialog');
+  const leave = guard.getByRole('button', { name: 'Discard local inputs and leave', exact: true }).click().catch(() => null);
+  const ownedDialog = await ownedWarning;
+  expect(ownedDialog.type()).toBe('beforeunload');
+  await ownedDialog.dismiss();
+  await leave;
+  await expect(page.getByText(/^Document navigation was canceled\./)).toBeVisible();
+  await expect(page).toHaveURL(`${original}#retained-evidence-fixture`);
+  expect(await page.evaluate(() => ({ document: performance.timeOrigin, key: (window as any).navigation.currentEntry.key, length: history.length }))).toEqual(retainedEntry);
+  const independentWarning = page.waitForEvent('dialog');
+  const independentReload = page.evaluate(() => window.location.reload());
+  const independentDialog = await independentWarning;
+  expect(independentDialog.type()).toBe('beforeunload');
+  await independentDialog.dismiss();
+  await independentReload;
+  await expect(page).toHaveURL(`${original}#retained-evidence-fixture`);
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => ({ document: performance.timeOrigin, key: (window as any).navigation.currentEntry.key, length: history.length }))).toEqual(retainedEntry);
+  expect(commands).toHaveLength(1);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+});
+
+test('same-owner rescan cannot downgrade a known evidence receipt when marker persistence failed', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Local known evidence ${Date.now()}`);
+  const commands: any[] = [];
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    commands.push(command);
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    // Initial Unknown capture already succeeded. Fault only subsequent marker/
+    // receipt writes before releasing the real successful server response.
+    await page.evaluate(() => {
+      const setItem = Storage.prototype.setItem;
+      (window as any).__restoreEvidenceMarkers = () => { Storage.prototype.setItem = setItem; };
+      Storage.prototype.setItem = function (key, value) {
+        if (key.startsWith('krausen-evidence-v1:')) throw new DOMException('Controlled marker failure after capture', 'QuotaExceededError');
+        return setItem.call(this, key, value);
+      };
+    });
+    await route.fulfill({ response });
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  const durable = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-evidence-v1:')).map(key => JSON.parse(localStorage.getItem(key)!)));
+  expect(durable).toHaveLength(1);
+  expect(durable[0].status).toBe('Unknown');
+  expect(durable[0].command.Measurement).toEqual(commands[0]);
+  let contextReads = 0;
+  const finalContext = page.waitForResponse(response => response.url().includes('/leptos-api/get_user_context') && ++contextReads === 2);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await (await finalContext).finished();
+  // Drain the actual final authority response and the owner's settled frame,
+  // not a wall-clock sleep or a copied recovery state machine.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry same request', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+  expect(commands).toHaveLength(1);
+  await page.evaluate(() => (window as any).__restoreEvidenceMarkers());
+  await page.getByRole('button', { name: 'Retry local cleanup only', exact: true }).click();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toHaveCount(0);
+  expect(commands).toHaveLength(1);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+});
+
+test('confirmed evidence cleanup failure survives reload and retries removal without resending', async ({ page, context }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Evidence cleanup debt ${Date.now()}`);
+  const workspace = sqliteExec(`SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`);
+  const commands: any[] = [];
+  page.on('request', request => {
+    if (!/\/leptos-api\/brew_measurement/.test(request.url())) return;
+    const command = commandFrom(request);
+    if (command?.action === 'record') commands.push(command);
+  });
+  await page.evaluate(() => {
+    const removeItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function (key) {
+      if (key.startsWith('krausen-evidence-v1:')) throw new DOMException('Controlled cleanup failure', 'SecurityError');
+      return removeItem.call(this, key);
+    };
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+  expect(commands).toHaveLength(1);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toBeVisible();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry same request', exact: true })).toHaveCount(0);
+  expect(commands).toHaveLength(1);
+  // A second real owner may complete this exact cleanup first. The original
+  // owner's known receipt/debt must reconcile idempotently, never resend.
+  const cleanupOwner = await context.newPage();
+  const cleanupWrites: any[] = [];
+  cleanupOwner.on('request', request => {
+    if (/\/leptos-api\/brew_measurement/.test(request.url()) && commandFrom(request)?.action === 'record') cleanupWrites.push(commandFrom(request));
+  });
+  await cleanupOwner.goto(`/brews/${brewId}`);
+  await cleanupOwner.getByRole('button', { name: 'Retry local cleanup only', exact: true }).click();
+  await expect.poll(() => cleanupOwner.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-evidence-v1:')).length)).toBe(0);
+  await page.getByRole('button', { name: 'Retry local cleanup only', exact: true }).click();
+  await expect(page.getByText('Confirmed result — local cleanup pending', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-evidence-v1:')).length)).toBe(0);
+  expect(commands).toHaveLength(1);
+  expect(cleanupWrites).toHaveLength(0);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+  await cleanupOwner.close();
+});
+
+test('failed recovery discovery blocks fresh evidence until the exact original request is found', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Evidence scan failure ${Date.now()}`);
+  const workspace = sqliteExec(`SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`);
+  const commands: any[] = [];
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') return route.continue();
+    commands.push(command);
+    if (commands.length === 1) {
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByText(/^Reading request uncertain:/)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-evidence-v1:')).length)).toBe(1);
+  await page.addInitScript(() => {
+    const key = Storage.prototype.key;
+    Storage.prototype.key = function (index) {
+      if ((window as any).__restoreEvidenceDiscovery !== true) throw new DOMException('Controlled enumeration fault', 'SecurityError');
+      return key.call(this, index);
+    };
+  });
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await expect(page.getByText('Recovery discovery unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record reading', exact: true }).first()).toBeDisabled();
+  expect(commands).toHaveLength(1);
+  await page.evaluate(() => { (window as any).__restoreEvidenceDiscovery = true; });
+  await page.getByRole('button', { name: 'Retry recovery discovery', exact: true }).click();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  expect(commands).toHaveLength(1);
+  await page.getByRole('button', { name: 'Retry same request', exact: true }).click();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  expect(commands).toHaveLength(2);
+  expect(commands[1]).toEqual(commands[0]);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+});
+
+test('discarding unsent evidence preserves a committed uncertain request through navigation and reload', async ({ page }) => {
+  const brewId = await startBrewAndOpenEvidence(page, `Evidence retained leave ${Date.now()}`);
+  const workspace = sqliteExec(`SELECT workspace_id FROM brews WHERE brew_id = '${brewId}'`);
+  const recordCommands: any[] = [];
+  await page.route('**/leptos-api/brew_measurement*', async route => {
+    const command = commandFrom(route.request());
+    if (command?.action !== 'record') {
+      await route.continue();
+      return;
+    }
+    recordCommands.push(command);
+    if (recordCommands.length === 1) {
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator('#measurement-gravity-original-v1').fill('1.050');
+  await page.getByRole('button', { name: 'Record reading', exact: true }).first().click();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  // Pending is rendered before preflight/transport finishes. Wait for the real
+  // committed-and-lost response, not merely that early pending announcement.
+  await expect.poll(() => recordCommands.length).toBe(1);
+  await expect(page.getByText(/^Reading request uncertain:/)).toBeVisible();
+  await page.locator('#brew-note').fill('Discard only this separate unsent note');
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  // Reach the actual discard transition on both the legacy and corrected guard;
+  // retention, not a renamed button alone, is the regression under test.
+  await guard.getByRole('button', { name: /^(Discard local inputs and leave|Discard and leave)$/ }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  expect(recordCommands).toHaveLength(1);
+  await page.goto(`/brews/${brewId}`);
+  await expect(page.getByRole('heading', { name: 'Brew evidence', exact: true })).toBeVisible();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  await expect(page.locator('#brew-note')).toHaveValue('');
+  expect(recordCommands).toHaveLength(1);
+  page.once('dialog', dialog => dialog.accept());
+  await page.reload();
+  await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();
+  await expect(page.locator('#brew-note')).toHaveValue('');
+  expect(recordCommands).toHaveLength(1);
+  await page.getByRole('button', { name: 'Retry same request', exact: true }).click();
+  await expect(page.getByText('Measurement recorded.', { exact: true })).toBeVisible();
+  expect(recordCommands).toHaveLength(2);
+  expect(recordCommands[1]).toEqual(recordCommands[0]);
+  expect(recordCommands[1].request_id).toBe(recordCommands[0].request_id);
+  expect(recordCommands[1].intent.workspace_id).toBe(workspace);
+  expect(recordCommands[1].brew_id).toBe(brewId);
+  expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('1');
 });
