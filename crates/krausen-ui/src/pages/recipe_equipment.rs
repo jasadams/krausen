@@ -75,17 +75,13 @@ impl EquipmentSummary {
     }
 }
 
-/// Number of settings this recipe overrides, including a chilling mode.
+/// Number of settings this recipe overrides; the chilling mode and its values count once.
 pub fn override_count(overrides: &EquipmentSettingsV1) -> usize {
     SPECS
         .iter()
         .filter(|spec| (spec.read)(overrides).is_some())
         .count()
         + usize::from(overrides.chilling.is_some())
-        + CHILLING_SPECS
-            .iter()
-            .filter(|spec| (spec.read)(overrides).is_some())
-            .count()
 }
 
 struct Spec {
@@ -256,13 +252,12 @@ pub fn RecipeEquipment(
         draft.update(|d| d.edit(|doc| doc.equipment_profile_id = (!id.is_empty()).then_some(id)));
     });
     let manage_href = Signal::derive(move || {
-        let back = match recipe_id.get() {
-            Some(id) => format!("/recipe-editor/{id}"),
-            None => "/recipe-editor/new".to_owned(),
-        };
+        // An unsaved recipe has no address to return to; it stays protected by its own guard.
+        let back = recipe_id.get().map(|id| format!("return=/recipe-editor/{id}"));
         let id = selection.get();
-        let profile = if id.is_empty() { String::new() } else { format!("profile={id}&") };
-        format!("/equipment?{profile}return={back}")
+        let profile = (!id.is_empty()).then(|| format!("profile={id}"));
+        let query = [profile, back].into_iter().flatten().collect::<Vec<_>>().join("&");
+        if query.is_empty() { "/equipment".to_owned() } else { format!("/equipment?{query}") }
     });
     let chilling = Signal::derive(move || draft.with(|d| chilling_mode(&d.document().equipment_overrides.chilling).to_owned()));
     let chilling_change = Callback::new(move |value: String| {
@@ -290,7 +285,8 @@ pub fn RecipeEquipment(
         <BrewerySection title="Equipment for this recipe">
             <div class="recipe-editor__fields">
                 {move || {
-                    let selected = selection.get();
+                    // Track only the list: rebuilding on each choice would drop keyboard focus.
+                    let selected = selection.get_untracked();
                     let mut options = vec![(String::new(), "Recipe-only equipment".to_owned())];
                     options.extend(library.profiles.get().into_iter().filter(|p| !p.archived || p.profile_id == selected).map(|p| {
                         let label = if p.archived { format!("{} (archived, unavailable)", p.name) } else { p.name };
@@ -367,7 +363,7 @@ mod tests {
         overrides.kettle_opening_cm = Some(30.0);
         assert_eq!(override_count(&overrides), 3);
         overrides.chilling = Some(ChillingV1::Forced { rate_per_minute: Some(0.5), plateau_c: None });
-        assert_eq!(override_count(&overrides), 5);
+        assert_eq!(override_count(&overrides), 4);
     }
 
     #[test]

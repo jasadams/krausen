@@ -19,7 +19,8 @@ use crate::{
 use krausen_types::{
     brewery::{ChillingV1, EquipmentProfile, EquipmentProvenance, EquipmentSettingsV1},
     equipment::{
-        ArchiveEquipment, EquipmentCommand, EquipmentListQuery, EquipmentOutcome, SaveEquipment,
+        ArchiveEquipment, EquipmentCommand, EquipmentListQuery, EquipmentOutcome, EquipmentQuery,
+        SaveEquipment,
     },
     request_context::OperationIntent,
 };
@@ -194,7 +195,18 @@ impl ProfileForm {
         }
     }
     /// Per-field validation message, or `None` when the raw text is empty or numeric.
+    /// Chilling-mode values apply only while their mode is selected.
+    fn relevant(&self, index: usize) -> bool {
+        match index {
+            11 | 12 => self.chilling == "forced",
+            13 => self.chilling == "counterflow",
+            _ => true,
+        }
+    }
     pub fn field_error(&self, index: usize) -> Option<&'static str> {
+        if !self.relevant(index) {
+            return None;
+        }
         let text = self.raw.get(index)?.trim();
         if text.is_empty() {
             return None;
@@ -338,6 +350,7 @@ pub fn EquipmentManager(
     let blocked = RwSignal::new(false);
     let status = RwSignal::new(String::new());
     let switch_target = RwSignal::new(None::<String>);
+    let conflict = RwSignal::new(false);
     let initial = StoredValue::new((!initial_profile.is_empty()).then_some(initial_profile));
     let after_save = StoredValue::new(AfterSave::Stay);
     let submitted_generation = StoredValue::new(0_u64);
@@ -379,6 +392,9 @@ pub fn EquipmentManager(
             let next = ProfileForm::from_profile(Some(&profile));
             baseline.set(next.clone());
             form.set(next);
+            if save.expected_revision > 0 {
+                editing.set(Some(profile));
+            }
         }
         status.set("A previous profile request was not confirmed. Retry it to check the result.".into());
         pending.set(Some(command));
@@ -423,7 +439,7 @@ pub fn EquipmentManager(
         generation: form_generation.get_untracked(),
         in_flight: busy.get_untracked(),
         uncertain: pending.get_untracked().is_some(),
-        recovery_retained: pending.get_untracked().is_some(),
+        recovery_retained: pending.get_untracked().is_some() && !blocked.get_untracked(),
         context_visible: context_visible.get_untracked(),
     };
     Effect::new(move |_| {
@@ -432,6 +448,7 @@ pub fn EquipmentManager(
             form_generation.get(),
             busy.get(),
             pending.get(),
+            blocked.get(),
             context_visible.get(),
         );
         task.update(guard_state());
@@ -466,7 +483,7 @@ pub fn EquipmentManager(
             if !dirty.get_untracked() && pending.get_untracked().is_none() {
                 apply.run(Some(profile));
             }
-        } else if library.loaded.get() && !library.loading.get() && library.next_cursor.get().is_some() {
+        } else if library.loaded.get() && !library.loading.get() && library.error.get().is_empty() && library.next_cursor.get().is_some() {
             library.load_more();
         } else if library.loaded.get() && !library.loading.get() {
             initial.set_value(None);
@@ -497,7 +514,12 @@ pub fn EquipmentManager(
                 return;
             }
             if !current_context_matches(&expected).await {
-                context_visible.set(false);
+                if context_visible.try_set(false).is_none() {
+                    return;
+                }
+                return;
+            }
+            if form_generation.try_get_untracked().is_none() {
                 return;
             }
             let clear = || {
@@ -513,6 +535,11 @@ pub fn EquipmentManager(
                     let unchanged = form_generation.get_untracked() == submitted_generation.get_value();
                     let action = after_save.get_value();
                     after_save.set_value(AfterSave::Stay);
+                    library.profiles.update(|list| match list.iter_mut().find(|p| p.profile_id == profile.profile_id) {
+                        Some(item) => *item = profile.clone(),
+                        None => list.push(profile.clone()),
+                    });
+                    conflict.set(false);
                     let message = if archived { "Profile archived." } else { "Profile saved." };
                     if unchanged {
                         apply.run(Some(profile.clone()));
@@ -536,6 +563,8 @@ pub fn EquipmentManager(
                             focus_element("equipment-profile-edit");
                         }
                         AfterSave::Leave(attempt) => {
+                            // `apply` advanced the generation; the saved state is the current one.
+                            submitted_generation.set_value(form_generation.get_untracked());
                             task.update(guard_state());
                             task.complete_save(
                                 attempt,
@@ -566,8 +595,9 @@ pub fn EquipmentManager(
                     clear();
                     pending.set(None);
                     after_save.set_value(AfterSave::Stay);
+                    conflict.set(true);
                     status.set(
-                        "Profile changed elsewhere. Your edits are kept; copy them, then reload the latest version.".into(),
+                        "Profile changed elsewhere. Your edits are kept; load the latest version to review them against it.".into(),
                     );
                     library.reload();
                 }
@@ -588,6 +618,7 @@ pub fn EquipmentManager(
         if blocked.get_untracked() || busy.get_untracked() {
             return;
         }
+        after_save.set_value(after.clone());
         if let Some(command) = pending.get_untracked() {
             execute.run(command);
             return;
@@ -619,7 +650,6 @@ pub fn EquipmentManager(
                 }
             },
         };
-        after_save.set_value(after);
         execute.run(EquipmentCommand::Save(SaveEquipment {
             intent: identity.get_untracked(),
             profile_id,
@@ -664,6 +694,36 @@ pub fn EquipmentManager(
         }));
     };
 
+    let load_latest = move |_| {
+        let Some(current) = editing.get_untracked() else {
+            return;
+        };
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        let expected = identity.get_untracked();
+        leptos::task::spawn_local(async move {
+            let outcome = equipment_command_shared(EquipmentCommand::Get(EquipmentQuery {
+                intent: expected,
+                profile_id: current.profile_id,
+            }))
+            .await;
+            if busy.try_set(false).is_none() {
+                return;
+            }
+            match outcome {
+                Ok(EquipmentOutcome::Profile(latest)) => {
+                    // Keep the raw edits; they are now measured against the latest revision.
+                    baseline.set(ProfileForm::from_profile(Some(&latest)));
+                    editing.set(Some(latest));
+                    conflict.set(false);
+                    status.set("Loaded the latest profile. Your edits are kept; review and save them.".into());
+                }
+                _ => status.set("Unable to load the latest profile. Try again.".into()),
+            }
+        });
+    };
     let change_profile = Callback::new(move |id: String| {
         let current = editing.get_untracked().map(|p| p.profile_id).unwrap_or_default();
         if id == current {
@@ -752,7 +812,7 @@ pub fn EquipmentManager(
                     }.into_any())/>
                 </div>
             </Show>
-            <fieldset class="recipe-editor__fieldset" disabled=move || locked.get()>
+            <fieldset disabled=move || locked.get()>
                 <BrewerySection title="Name">
                     <BreweryDraftField id="equipment-profile-name" label="Profile name" value=Signal::derive(move || form.with(|f| f.name.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.name = v.clone()))/>
                 </BrewerySection>
@@ -780,6 +840,14 @@ pub fn EquipmentManager(
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || blocked.get() || pending.get().is_some() || dirty.get()) on:click=archive>{move || if editing.with(|p| p.as_ref().is_some_and(|p| p.archived)) { "Unarchive" } else { "Archive" }}</Button>
                 </Show>
             </BreweryActionGroup>
+            <Show when=move || blocked.get()><Button variant=ButtonVariant::Secondary on:click=move |_| {
+                pending.set(None);
+                blocked.set(false);
+                after_save.set_value(AfterSave::Stay);
+                library.reload();
+                status.set("Profiles reloaded. Review the list before saving again.".into());
+            }>"Reload profiles"</Button></Show>
+            <Show when=move || conflict.get()><Button variant=ButtonVariant::Secondary disabled=busy on:click=load_latest>"Load latest and keep my edits"</Button></Show>
             <Show when=move || dirty.get()><p class="k-field__hint">"Unsaved profile changes. Save or discard them before archiving."</p></Show>
             <p role="status">{move || status.get()}</p>
         </BreweryPanel>

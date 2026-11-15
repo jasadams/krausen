@@ -275,7 +275,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     provide_context(ContextCheckGeneration(check_generation));
     let context_visible = RwSignal::new(true);
     let context_lost = RwSignal::new(false);
-    let profile_generation = RwSignal::new(0_u64);
     let equipment_summary = RwSignal::new(crate::pages::recipe_equipment::EquipmentSummary::default());
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let history_authority_failure = Callback::new(move |()| {
@@ -1320,7 +1319,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
         }>"Start brew"</Button></Show></div>
         <div role="tabpanel" id="editor-panel-recipe" aria-labelledby="editor-tab-recipe" hidden=move || active_tab.get() != "recipe">
-        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate profile_generation=profile_generation><div class="recipe-editor__sections">
+        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate><div class="recipe-editor__sections">
             <IngredientEditor draft=draft identity=identity context_visible=context_visible/>
             <AdditionalIngredients draft=draft/>
             <ProcessSteps draft=draft/>
@@ -2360,7 +2359,6 @@ fn FormulationPreview(
     identity: RwSignal<EditorIdentity>,
     context_visible: RwSignal<bool>,
     gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
-    profile_generation: RwSignal<u64>,
     children: Children,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
@@ -2375,12 +2373,11 @@ fn FormulationPreview(
         (
             draft.with(|d| d.generation),
             context_visible.get(),
-            profile_generation.get(),
             retry_generation.get(),
         )
     });
     Effect::new(move |_| {
-        let (draft_generation, visible, _, _) = trigger.get();
+        let (draft_generation, visible, _) = trigger.get();
         retry_available.set(false);
         let mut generation = 0;
         gate.update_value(|g| generation = g.invalidate());

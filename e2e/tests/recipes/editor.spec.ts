@@ -1250,6 +1250,7 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await page.goto(recipeUrl);
   await page.getByText('Equipment settings', { exact: true }).click();
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toBeVisible();
+  await expect.poll(() => previews.includes('UnresolvedProfile')).toBe(true);
   await page.goto(`/equipment?profile=${profileId}`);
   await page.getByRole('button', { name: 'Unarchive' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
