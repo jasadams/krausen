@@ -28,6 +28,21 @@ impl DraftContents {
     }
 }
 
+/// Raw entry state removed together with a row, retained for a scoped Undo.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RemovedInputs {
+    raw_numbers: BTreeMap<String, String>,
+    malformed: BTreeMap<String, String>,
+    settled_numbers: Vec<String>,
+}
+
+fn take_prefixed(map: &mut BTreeMap<String, String>, prefix: &str) -> BTreeMap<String, String> {
+    let keys: Vec<String> = map.keys().filter(|path| path.starts_with(prefix)).cloned().collect();
+    keys.into_iter()
+        .filter_map(|key| map.remove(&key).map(|value| (key, value)))
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct RecipeDraft {
     document: RecipeDocumentV1,
@@ -39,6 +54,9 @@ pub struct RecipeDraft {
     undo: Vec<DraftContents>,
     pub dirty: bool,
     pub generation: u64,
+    /// Advances only when the whole document is replaced (reload/remote
+    /// revision), so a scoped Undo can never re-insert into a foreign document.
+    epoch: u64,
 }
 
 impl RecipeDraft {
@@ -59,6 +77,17 @@ impl RecipeDraft {
             undo: Vec::new(),
             dirty: false,
             generation: 0,
+            epoch: 0,
+        }
+    }
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// Keeps the exact text a brewer typed for values committed with a new row
+    /// (INT-001): native storage is numeric, the entry text is not lost on Add.
+    pub fn retain_raw_numbers(&mut self, entries: Vec<(String, String)>) {
+        for (path, text) in entries {
+            self.raw_numbers.insert(path, text);
         }
     }
     pub fn document(&self) -> &RecipeDocumentV1 {
@@ -79,6 +108,58 @@ impl RecipeDraft {
         self.raw_numbers.retain(|path, _| !path.starts_with(prefix));
         self.malformed.retain(|path, _| !path.starts_with(prefix));
         self.settled_numbers.retain(|path| !path.starts_with(prefix));
+        change(&mut self.document);
+        self.diagnostics.clear();
+        self.dirty = true;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("draft generation exhausted");
+    }
+    /// Like `edit_clearing`, but hands back the exact transient strings of the
+    /// removed row so a scoped Undo can restore them byte for byte.
+    pub fn edit_removing(
+        &mut self,
+        prefix: &str,
+        change: impl FnOnce(&mut RecipeDocumentV1),
+    ) -> RemovedInputs {
+        self.remember();
+        let removed = RemovedInputs {
+            raw_numbers: take_prefixed(&mut self.raw_numbers, prefix),
+            malformed: take_prefixed(&mut self.malformed, prefix),
+            settled_numbers: {
+                let paths: Vec<String> = self
+                    .settled_numbers
+                    .iter()
+                    .filter(|path| path.starts_with(prefix))
+                    .cloned()
+                    .collect();
+                for path in &paths {
+                    self.settled_numbers.remove(path);
+                }
+                paths
+            },
+        };
+        change(&mut self.document);
+        self.diagnostics.clear();
+        self.dirty = true;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("draft generation exhausted");
+        removed
+    }
+    /// Reinstates a row together with the transient strings captured by
+    /// `edit_removing`; the draft's ordinary Undo history remains untouched.
+    pub fn edit_restoring(
+        &mut self,
+        inputs: RemovedInputs,
+        change: impl FnOnce(&mut RecipeDocumentV1),
+    ) {
+        self.remember();
+        self.raw_numbers.extend(inputs.raw_numbers);
+        self.malformed.extend(inputs.malformed);
+        self.settled_numbers.extend(inputs.settled_numbers);
         change(&mut self.document);
         self.diagnostics.clear();
         self.dirty = true;
@@ -201,6 +282,7 @@ impl RecipeDraft {
     }
     pub fn restore(&mut self, contents: DraftContents) {
         self.remember();
+        self.epoch = self.epoch.checked_add(1).expect("draft epoch exhausted");
         self.document = contents.document;
         self.raw_numbers = contents.raw_numbers;
         self.malformed = contents.malformed;
@@ -218,8 +300,10 @@ impl RecipeDraft {
     }
     pub fn replace_saved(&mut self, document: RecipeDocumentV1) {
         let next = self.generation.checked_add(1).expect("draft generation exhausted");
+        let epoch = self.epoch.checked_add(1).expect("draft epoch exhausted");
         *self = Self::new(document);
         self.generation = next;
+        self.epoch = epoch;
     }
     pub fn mark_earlier_document_saved(&mut self, document: RecipeDocumentV1) {
         self.baseline = DraftContents {

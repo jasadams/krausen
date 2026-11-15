@@ -10,6 +10,7 @@ pub mod settings;
 pub mod welcome;
 
 pub mod recipe_draft;
+mod library_recovery;
 mod recipe_recovery;
 
 pub mod beerxml;
@@ -20,6 +21,7 @@ pub mod brew_history_presentation;
 pub mod brew_start;
 pub mod catalogue_picker;
 pub mod equipment;
+pub mod ingredient_addition;
 pub mod equipment_profiles;
 pub mod recipe_equipment;
 pub mod recipe_editor;

@@ -130,10 +130,9 @@ for (const kind of ['Save', 'Archive'] as const) {
 }
 
 for (const kind of ['Search', 'Save', 'Archive'] as const) {
-  test(`CAT-L2 old ${kind} cannot redact or unlock a reopened successor command`, async ({ page }) => {
+  test(`CAT-L2 an old ${kind} stays the only library command: reopening cannot mint a successor`, async ({ page }) => {
     const action = await catalogueAction(page, kind);
     const old = catalogueGate();
-    const successor = catalogueGate();
     const requests: any[] = [];
     let capturedOld = false;
     await page.route('**/leptos-api/execute_ingredient_command*', async route => {
@@ -142,61 +141,46 @@ for (const kind of ['Search', 'Save', 'Archive'] as const) {
         capturedOld = true;
         requests.push({ old: command });
         await old.hold();
-        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
-      }
-      if (command?.Save) {
-        const retry = requests.some(request => request.successor);
-        requests.push({ successor: command.Save });
-        if (retry) return route.continue();
-        await successor.hold();
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Unavailable') });
       }
+      if (command?.Save || command?.Archive) requests.push({ other: command });
       await route.continue();
     });
     try {
       await action.fire();
       await old.ready;
-      // Search keeps focus in its input; use the actual task Cancel control
-      // rather than treating native Escape readiness as ownership evidence.
+      // Search keeps focus in its input; use the actual task Cancel control.
       if (kind === 'Search') await action.picker.getByRole('button', { name: 'Cancel', exact: true }).click();
       else await page.keyboard.press('Escape');
       if (action.create) await expect(action.create).toBeHidden();
       await expect(action.picker).toBeHidden();
       await page.getByRole('button', { name: 'Add fermentable' }).click();
       await expect(action.picker).toBeVisible();
-      const name = `E2E successor ${kind} ${Date.now()}`;
-      const create = await catalogueCreateForm(page, name);
-      await create.getByRole('button', { name: 'Save to library' }).click();
-      await successor.ready;
-      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
-      await expect(create.getByRole('button', { name: 'Save to library' })).toBeDisabled();
-      const oldResponse = page.waitForResponse(response => {
-        const raw = new URLSearchParams(response.request().postData() ?? '').get('command_json');
-        return response.url().includes('execute_ingredient_command') && !!raw && JSON.stringify(JSON.parse(raw)) === JSON.stringify(requests[0].old);
-      });
-      old.release();
-      await (await oldResponse).finished();
-      successor.release();
-      // Both held transports have now completed. Drain any real postflights,
-      // then verify the successor's observable retained state and full replay.
-      await page.waitForLoadState('networkidle');
-      await expect(create).toBeVisible();
-      await expect(create.getByLabel('Fermentable name')).toHaveValue(name);
-      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
-      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
-      await expect(create.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
-      await expect(create.getByLabel('Fermentable name')).toBeDisabled();
-      await create.getByRole('button', { name: 'Retry previous request' }).click();
-      await expect.poll(() => requests.length).toBe(3);
-      expect(requests[2].successor).toEqual(requests[1].successor);
-      await expect(action.picker).toBeVisible();
-      await page.waitForLoadState('networkidle');
-      expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(name)}`)).toBe('1');
+      if (kind === 'Search') {
+        // A search is a read, never a pinned library command.
+        await expect(action.picker.getByText('Previous library change not confirmed')).toHaveCount(0);
+        old.release();
+        await page.waitForLoadState('networkidle');
+        await expect(action.picker.getByRole('button', { name: 'Create fermentable', exact: true }).first()).toBeEnabled();
+      } else {
+        await expect(action.picker.getByText('Previous library change not confirmed')).toBeVisible();
+        await expect(action.picker.getByRole('button', { name: 'Create fermentable', exact: true }).first()).toBeDisabled();
+        old.release();
+        await expect(action.picker.getByRole('button', { name: 'Check previous result', exact: true })).toBeEnabled();
+        await action.picker.getByRole('button', { name: 'Check previous result', exact: true }).click();
+        await expect(action.picker.getByText('Previous library change not confirmed')).toBeHidden();
+        // Only the original identity was ever replayed; no successor was minted.
+        const replays = requests.filter(r => r.other);
+        expect(replays).toHaveLength(1);
+        expect(replays[0].other).toEqual(requests[0].old);
+        if (kind === 'Save') {
+          expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(action.name)}`)).toBe('1');
+        }
+      }
       expect(action.errors).toEqual([]);
     } finally {
       old.release();
-      successor.release();
-      await test.info().attach('originating-and-successor-commands', { body: JSON.stringify(requests), contentType: 'application/json' });
+      await test.info().attach('originating-and-replayed-commands', { body: JSON.stringify(requests), contentType: 'application/json' });
     }
   });
 }
@@ -343,7 +327,7 @@ test('the starter catalogue search copies a resolved specification into the reci
   await picker.getByRole('button', { name: /Weyermann Vienna/ }).click();
   await expect(picker.locator('.k-catalogue-selection strong')).toHaveText('Weyermann Vienna');
   await page.getByLabel('Amount in recipe (kg)').fill('4.5');
-  await picker.getByRole('button', { name: 'Add ingredient' }).click();
+  await picker.getByRole('button', { name: 'Add to recipe' }).click();
   await expect(picker).toBeHidden();
 
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Weyermann Vienna');
@@ -391,8 +375,8 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   ).toBeVisible();
   await picker.getByRole('button', { name: entryName }).click();
   await expect(picker.locator('.k-catalogue-selection strong')).toHaveText(entryName);
-  await expect(picker.getByRole('button', { name: 'Add ingredient' })).toBeEnabled();
-  await picker.getByRole('button', { name: 'Add ingredient' }).click();
+  await expect(picker.getByRole('button', { name: 'Add to recipe' })).toBeEnabled();
+  await picker.getByRole('button', { name: 'Add to recipe' }).click();
   await expect(picker).toBeHidden();
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue(entryName);
 
@@ -409,6 +393,7 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await expect(create.getByRole('status').filter({ hasText: 'That fermentable and producer are already in your library.' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Back to catalogue' }).click();
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(picker).toBeVisible();
   const libraryFilter = picker.getByRole('button', { name: 'Your library', exact: true });
   await libraryFilter.click();
@@ -539,7 +524,7 @@ test('library entries support edit, archive, restore and lost-response retry', a
   await expect(
     picker.locator('.k-catalogue-item', { hasText: entryName }).getByText('Archived'),
   ).toBeVisible();
-  await expect(picker.getByRole('button', { name: 'Add ingredient' })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: 'Add to recipe' })).toBeDisabled();
   await expect(picker.getByRole('button', { name: 'Edit library entry' })).toBeDisabled();
   expect(archiveRequests).toHaveLength(2);
   expect(archiveRequests[1].request_id).toBe(archiveRequests[0].request_id);
@@ -889,7 +874,7 @@ test('shared dialogs keep real catalogue and library footer controls reachable i
     await expect(picker.locator('.k-catalogue-item').first()).toBeVisible();
     await picker.getByRole('button', { name: /Weyermann Vienna/ }).click();
     await picker.getByLabel('Amount in recipe (kg)').fill('4.2500001');
-    for (const label of ['Cancel', 'Add ingredient']) {
+    for (const label of ['Cancel', 'Add to recipe']) {
       const action = picker.getByRole('button', { name: label, exact: true });
       await action.scrollIntoViewIfNeeded();
       await action.focus();
@@ -919,6 +904,7 @@ test('shared dialogs keep real catalogue and library footer controls reachable i
       await expect(action).toBeFocused();
     }
     await create.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+    await create.getByRole('button', { name: 'Discard changes', exact: true }).click();
     await expect(picker).toBeVisible();
     await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
@@ -1435,6 +1421,7 @@ test('shared dialogs keep real edit form labels and short footer actions readabl
     await testInfo.attach(`edit-${state.theme}-viewport`, { body: await page.screenshot(), contentType: 'image/png' });
     await edit.getByLabel('Colour (EBC)').fill('9.5');
     await edit.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+    await edit.getByRole('button', { name: 'Discard changes', exact: true }).click();
     await expect(picker).toBeVisible();
     await picker.getByRole('button', { name: 'Edit library entry', exact: true }).click();
     await expect(edit.getByLabel('Colour (EBC)')).toHaveValue('4.5');
@@ -1457,4 +1444,237 @@ test('shared dialogs keep real edit form labels and short footer actions readabl
   await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(picker).toBeHidden();
   await expect.poll(() => page.evaluate(() => document.activeElement?.textContent === 'Add fermentable' || document.activeElement?.id === 'recipe-editor-heading')).toBe(true);
+});
+
+// KRA-42: one Add grammar for all four ingredient groups (UX-002/003, ACC-004).
+const manualGroups = [
+  { opener: 'Add hop', dialog: 'Add hop', name: 'Cascade', amount: 'Amount (g)', rowName: /^Cascade, hop/ },
+  { opener: 'Add yeast', dialog: 'Add yeast', name: 'Safale US-05', amount: 'Amount', rowName: /^Safale US-05, yeast/ },
+  { opener: 'Add other ingredient', dialog: 'Add other ingredient', name: 'Irish moss', amount: 'Amount', rowName: /^Irish moss, other ingredient/ },
+] as const;
+
+for (const group of manualGroups) {
+  test(`KRA42-A1 ${group.dialog} cancels without a row and commits exactly one focused row`, async ({ page }) => {
+    await page.goto('/recipe-editor/new');
+    const rows = page.getByRole('group', { name: group.rowName });
+    const dialog = page.getByRole('dialog', { name: group.dialog, exact: true });
+    await page.getByRole('button', { name: group.opener, exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Name', { exact: true })).toBeFocused();
+    await dialog.getByLabel('Name', { exact: true }).fill(group.name);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByRole('button', { name: group.opener, exact: true })).toBeFocused();
+
+    await page.getByRole('button', { name: group.opener, exact: true }).click();
+    await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('');
+    await dialog.getByLabel('Name', { exact: true }).fill(group.name);
+    await dialog.getByLabel(group.amount, { exact: true }).fill('0.1000000000000000001');
+    await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.getByLabel(group.amount, { exact: true })).toBeFocused();
+    // Exact entry survives Add (INT-001): the typed text, not a re-rendered number.
+    await expect(rows.getByLabel(group.amount, { exact: true })).toHaveValue('0.1000000000000000001');
+    await expect(page.getByRole('status').filter({ hasText: `Added ${group.name}` })).toHaveCount(1);
+  });
+}
+
+test('KRA42-A2 a committed hop shows use, contact time and human-percent alpha without opening details', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add hop', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add hop', exact: true });
+  await dialog.getByLabel('Name', { exact: true }).fill('Cascade');
+  await dialog.getByLabel('Amount (g)', { exact: true }).fill('20');
+  await dialog.getByLabel('Use', { exact: true }).selectOption('whirlpool');
+  await dialog.getByLabel('Contact time (min)', { exact: true }).fill('15');
+  await dialog.getByLabel('Alpha acid (%)', { exact: true }).fill('5.5');
+  await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+  const row = page.getByRole('group', { name: /^Cascade, hop/ });
+  await expect(row.getByLabel('Use', { exact: true })).toBeVisible();
+  await expect(row.getByLabel('Use', { exact: true })).toHaveValue('whirlpool');
+  await expect(row.getByLabel('Contact time (min)', { exact: true })).toHaveValue('15');
+  expect(await row.getByLabel('Contact time (min)', { exact: true }).evaluate(element => element.closest('details'))).toBeNull();
+  await expect(row.getByText(/Alpha 5\.5%/)).toBeVisible();
+  await expect(row.getByText(/\(fraction\)/)).toHaveCount(0);
+});
+
+test('KRA42-A3 removing first, middle, last and only rows keeps focus and Undo restores order and raw text', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  for (const [name, minutes] of [['Alpha', '60'], ['Beta', '30.123456789012345'], ['Gamma', '5']]) {
+    await page.getByRole('button', { name: 'Add hop', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add hop', exact: true });
+    await dialog.getByLabel('Name', { exact: true }).fill(name);
+    await dialog.getByLabel('Contact time (min)', { exact: true }).fill(minutes);
+    await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+  }
+  const names = () => page.locator('[id^="hops-"][id$="-name"]').evaluateAll(inputs => inputs.map(input => (input as HTMLInputElement).value));
+  expect(await names()).toEqual(['Alpha', 'Beta', 'Gamma']);
+  await page.getByRole('button', { name: /^Remove Beta, hop/ }).click();
+  expect(await names()).toEqual(['Alpha', 'Gamma']);
+  await expect(page.getByRole('button', { name: /^Remove Gamma, hop/ })).toBeFocused();
+  await expect(page.getByRole('status').filter({ hasText: 'Removed Beta' })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Undo removal of Beta', exact: true }).click();
+  expect(await names()).toEqual(['Alpha', 'Beta', 'Gamma']);
+  await expect(page.locator('[id^="hops-"][id$="-contact-minutes"], [id^="hops-"][id$="-colour-time"]').nth(1)).toHaveValue('30.123456789012345');
+  await page.getByRole('button', { name: /^Remove Gamma, hop/ }).click();
+  await expect(page.getByRole('button', { name: /^Remove Beta, hop/ })).toBeFocused();
+  await page.getByRole('button', { name: /^Remove Beta, hop/ }).click();
+  await page.getByRole('button', { name: /^Remove Alpha, hop/ }).click();
+  await expect(page.getByRole('button', { name: 'Add hop', exact: true })).toBeFocused();
+});
+
+test('KRA42-L1 closing the picker during a sent library Save pins one original command and blocks a fresh create', async ({ page }) => {
+  const entryName = `E2E pinned malt ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  const saves: any[] = [];
+  const gate = catalogueGate();
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const command = ingredientCommand(route);
+    if (command?.Save) {
+      saves.push(command.Save);
+      if (saves.length === 1) {
+        await route.fetch();
+        await gate.hold();
+        await route.fulfill({ status: 503, body: 'response lost' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const create = await catalogueCreateForm(page, entryName);
+  await create.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await gate.ready;
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker.getByText('Previous library change not confirmed')).toBeVisible();
+  await expect(picker.getByRole('button', { name: 'Create fermentable', exact: true }).first()).toBeDisabled();
+  gate.release();
+  await expect(picker.getByRole('button', { name: 'Check previous result', exact: true })).toBeEnabled();
+  await picker.getByRole('button', { name: 'Check previous result', exact: true }).click();
+  await expect(picker.getByText('Previous library change not confirmed')).toBeHidden();
+  expect(saves).toHaveLength(2);
+  expect(saves[1].request_id).toBe(saves[0].request_id);
+  expect(saves[1].entry_id).toBe(saves[0].entry_id);
+  expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(entryName)}`)).toBe('1');
+});
+
+test('KRA42-L2 Escape on an edited library form means Stay and keeps every value', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const create = await catalogueCreateForm(page, 'Unsaved library malt');
+  await page.keyboard.press('Escape');
+  await expect(create).toBeVisible();
+  await expect(create.getByLabel('Fermentable name')).toHaveValue('Unsaved library malt');
+  await expect(create.getByText('Discard unsaved library entry?')).toBeVisible();
+  await create.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(create.getByLabel('Fermentable name')).toBeFocused();
+  await create.getByRole('button', { name: 'Back to catalogue', exact: true }).click();
+  await create.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toBeVisible();
+});
+
+test('KRA42-L3 an unknown library Save survives reload and is replayed verbatim before any new command', async ({ page }) => {
+  const entryName = `E2E reload malt ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  const saves: any[] = [];
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    const command = ingredientCommand(route);
+    if (command?.Save) {
+      saves.push(command.Save);
+      if (saves.length === 1) {
+        await route.fetch();
+        await route.fulfill({ status: 503, body: 'response lost' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const create = await catalogueCreateForm(page, entryName);
+  await create.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await expect(create.getByText('Save may not have completed')).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker.getByText('Previous library change not confirmed')).toBeVisible();
+  await expect(picker.getByRole('button', { name: 'Create fermentable', exact: true }).first()).toBeDisabled();
+  await picker.getByRole('button', { name: 'Check previous result', exact: true }).click();
+  await expect(picker.getByText('Previous library change not confirmed')).toBeHidden();
+  expect(saves).toHaveLength(2);
+  expect(saves[1]).toEqual(saves[0]);
+  expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(entryName)}`)).toBe('1');
+  await picker.getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
+  await expect(page.getByRole('dialog', { name: 'A fermentable of your own' })).toBeVisible();
+});
+
+for (const kind of ['Save', 'Archive'] as const) {
+  // A real denial of the pinned original is authoritative for the whole editor:
+  // it is published (not swallowed because the dialog was dismissed), releases
+  // the retained record, and no successor command was ever minted.
+  test(`KRA42-L4 a late denial of the dismissed ${kind} is published once and no successor is sent`, async ({ page }) => {
+    const action = await catalogueAction(page, kind);
+    const held = catalogueGate();
+    const requests: any[] = [];
+    await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+      const command = ingredientCommand(route);
+      if (command?.[kind]) {
+        requests.push(command[kind]);
+        if (requests.length === 1) {
+          await held.hold();
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('Forbidden') });
+        }
+      }
+      await route.continue();
+    });
+    await action.fire();
+    await held.ready;
+    await page.keyboard.press('Escape');
+    await expect(action.picker).toBeHidden();
+    await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+    await expect(action.picker.getByText('Previous library change not confirmed')).toBeVisible();
+    held.release();
+    await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(action.errors).toEqual([]);
+  });
+}
+
+test('KRA42-L5 a known Save result arriving after in-app navigation releases the retained record', async ({ page }) => {
+  const entryName = `E2E released malt ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  const held = catalogueGate();
+  let delivered!: () => void;
+  const deliveredPromise = new Promise<void>(resolve => { delivered = resolve; });
+  await page.route('**/leptos-api/execute_ingredient_command*', async route => {
+    if (ingredientCommand(route)?.Save) {
+      const response = await route.fetch();
+      await held.hold();
+      await route.fulfill({ response });
+      delivered();
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const create = await catalogueCreateForm(page, entryName);
+  await create.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await held.ready;
+  await page.keyboard.press('Escape');
+  // The sent command pins the library but never blocks leaving a clean recipe.
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  held.release();
+  await deliveredPromise;
+  await page.waitForTimeout(300);
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Build your grain bill' });
+  await expect(picker).toBeVisible();
+  await expect(picker.getByText('Previous library change not confirmed')).toHaveCount(0);
+  await expect(picker.getByRole('button', { name: 'Create fermentable', exact: true }).first()).toBeEnabled();
+  expect(db.exec(`SELECT COUNT(*) FROM ingredient_entries WHERE name = ${sqlText(entryName)}`)).toBe('1');
 });

@@ -495,10 +495,10 @@ test('raw formatting settles on blur and correction preserves precision and care
 test('all numeric caller families settle format feedback on real blur without rewriting raw text', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
-  const check = async (field: ReturnType<typeof page.getByLabel>, alreadySettled = false) => {
+  const check = async (field: ReturnType<typeof page.getByLabel>) => {
     await field.fill('-');
     await expect(field).toHaveValue('-');
-    await expect(field).toHaveAttribute('aria-invalid', alreadySettled ? 'true' : 'false');
+    await expect(field).toHaveAttribute('aria-invalid', 'false');
     await field.press('Tab');
     await expect(field).toHaveAttribute('aria-invalid', 'true');
     const description = await field.getAttribute('aria-describedby');
@@ -513,14 +513,16 @@ test('all numeric caller families settle format feedback on real blur without re
   await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
   await picker.locator('.k-catalogue-item').first().click();
-  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await picker.getByRole('button', { name: 'Add to recipe', exact: true }).click();
   await check(page.getByLabel('Amount (kg)', { exact: true }));
   const yeast = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Yeast', exact: true }) });
-  await yeast.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await yeast.getByRole('button', { name: 'Add yeast', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Add yeast', exact: true }).getByRole('button', { name: 'Add to recipe', exact: true }).click();
   await check(yeast.getByLabel('Amount', { exact: true }));
-  // The amount check's Tab lands here; refocusing amount to correct it already
-  // blurs attenuation. Its feedback must now remain current while correcting.
-  await check(yeast.getByLabel('Yeast attenuation (informational) (%)', { exact: true }), true);
+  await yeast.getByText('Addition details', { exact: true }).click();
+  // Attenuation now sits in the row's details, so the amount check's Tab no
+  // longer pre-settles it: it settles on its own real blur like every family.
+  await check(yeast.getByLabel('Yeast attenuation (informational) (%)', { exact: true }));
   const mash = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Mash steps', exact: true }) });
   await mash.getByRole('button', { name: 'Add step', exact: true }).click();
   await check(mash.getByLabel('Time (min)', { exact: true }));
@@ -581,7 +583,7 @@ test('native input undo stays local while application undo restores removed raw 
   await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
   await picker.locator('.k-catalogue-item').first().click();
-  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await picker.getByRole('button', { name: 'Add to recipe', exact: true }).click();
   const amount = page.getByLabel('Amount (kg)', { exact: true });
   const id = await amount.getAttribute('id');
   await amount.fill('1.230000000000000');
@@ -824,7 +826,7 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(picker).toBeVisible();
   await expect(page.getByLabel('Search fermentables')).toBeVisible();
   await picker.locator('.k-catalogue-item').first().click();
-  await picker.getByRole('button', { name: 'Add ingredient', exact: true }).click();
+  await picker.getByRole('button', { name: 'Add to recipe', exact: true }).click();
   await expect(picker).toBeHidden();
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
   await page.getByText('Addition details', { exact: true }).click();
