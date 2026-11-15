@@ -880,7 +880,11 @@ pub fn Layout() -> impl IntoView {
                     }>"Return to save evidence"</crate::components::Button>
                     </Show>
                     <crate::components::Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || editor_guard.pending.get() || editor_guard.destination.get().is_none() || editor_guard.active_task().is_none_or(|task| !task.state.may_discard(task.kind))) on:click=move |_| editor_guard.discard_active()>
-                        {move || if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Evidence) { "Discard local inputs and leave" } else { "Discard and leave" }}
+                        {move || match editor_guard.active_task().map(|task| (task.kind, task.state.uncertain)) {
+                            Some((GuardTaskKind::Evidence, _)) => "Discard local inputs and leave",
+                            Some((GuardTaskKind::Import, true)) => "Leave and keep the retained request",
+                            _ => "Discard and leave",
+                        }}
                     </crate::components::Button>
                     <crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| editor_guard.cancel_leave()>"Stay"</crate::components::Button>
                 </crate::components::BreweryDialog> }
