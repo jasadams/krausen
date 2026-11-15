@@ -1,4 +1,4 @@
-import { type Page, type BrowserContext, expect } from '@playwright/test';
+import { type Page, type BrowserContext, type Locator, expect } from '@playwright/test';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
@@ -753,4 +753,40 @@ export async function createEquipmentProfile(
   await page.getByRole('button', { name: 'Save profile' }).click();
   await page.getByRole('status').filter({ hasText: 'Profile saved.' }).waitFor();
   return await page.locator('#equipment-profile-edit').inputValue();
+}
+
+/**
+ * Open the compact account popup in `scope` (a page or navigation container)
+ * and return the one open native popup. The trigger name is "Account menu, <name>".
+ */
+export async function openAccount(page: Page, scope: Page | Locator = page): Promise<Locator> {
+  await scope.getByRole('button', { name: /^Account menu/ }).click();
+  const popup = page.locator('[popover]:popover-open');
+  await expect(popup).toHaveCount(1);
+  return popup;
+}
+
+/**
+ * Choose the full Light/Dark appearance through the real Profile control, then
+ * return to the page by browser Back (client-side). The shell has no binary
+ * theme shortcut. Only call on a clean page: leaving is guarded.
+ */
+export async function setAppearance(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  const html = page.locator('html');
+  const isDark = await html.evaluate(element => element.classList.contains('dark'));
+  if (isDark === (theme === 'dark')) return;
+  const origin = page.url();
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await popup.getByRole('link', { name: 'Appearance', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/profile/);
+  await page.getByRole('button', { name: theme === 'dark' ? 'Dark' : 'Light', exact: true }).click();
+  await expect(html).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+  await page.goBack();
+  await expect(page).toHaveURL(origin);
+}
+
+/** Activate the shell Settings link through the account popup (desktop shell). */
+export async function openSettings(page: Page): Promise<void> {
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await popup.getByRole('link', { name: 'Settings', exact: true }).click();
 }

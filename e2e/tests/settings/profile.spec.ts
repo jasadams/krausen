@@ -17,7 +17,7 @@ test.describe('TC-009: Profile Settings', () => {
   test('Appearance card is visible on profile page', async ({ page }) => {
     await gotoAuthenticated(page, '/settings/profile');
 
-    const appearanceTitle = page.locator('text=Appearance');
+    const appearanceTitle = page.locator('#appearance').getByText('Appearance', { exact: true });
     await expect(appearanceTitle).toBeVisible();
 
     const description = page.locator('text=Choose how Krausen looks to you.');
