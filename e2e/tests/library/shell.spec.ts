@@ -395,6 +395,20 @@ test.describe('mobile navigation drawer', () => {
     await expect(navigation).toBeHidden();
   });
 
+  test('every drawer destination closes the drawer when it is already the current route', async ({ page }) => {
+    const menu = page.getByRole('button', { name: 'Toggle menu' });
+    const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
+    for (const [path, link] of [['/recipes', 'Recipes'], ['/equipment', 'Equipment']]) {
+      await page.goto(path);
+      await menu.click();
+      await expect(navigation).toBeVisible();
+      await navigation.getByRole('link', { name: link, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`${path}$`));
+      await expect(navigation).toBeHidden();
+      await expect(page.locator('dialog:modal')).toHaveCount(0);
+    }
+  });
+
   test('a dirty draft turns the drawer into the single guard, and Stay never navigates behind it', async ({ page }) => {
     await page.goto('/recipe-editor/new');
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();

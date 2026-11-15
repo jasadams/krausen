@@ -1074,13 +1074,19 @@ fn Sidebar(
         _ => None,
     };
     let suffix = if mobile { "mobile-" } else { "" };
-    let arrived = Callback::new(move |()| {
-        account_open.set(false);
+    // One path for every destination: a same-route arrival commits no route
+    // change, so the transient drawer would otherwise stay open. A guarded click
+    // never reaches link handlers; real route changes close it in Layout.
+    let close_if_current = move |target: &'static str| {
         if let Some(drawer) = drawer {
-            if location.pathname.get_untracked() == "/settings/profile" {
+            if location.pathname.get_untracked() == target {
                 drawer.set(false);
             }
         }
+    };
+    let arrived = Callback::new(move |()| {
+        account_open.set(false);
+        close_if_current("/settings/profile");
     });
 
     view! {
@@ -1092,15 +1098,7 @@ fn Sidebar(
             <nav class="brewery-sidebar__nav" aria-label="Your brewery">
                 <p class="brewery-sidebar__label">"Your brewery"</p>
                 <a href="/recipes" id=format!("{suffix}sidebar-recipes-link") class="brewery-sidebar__link"
-                    on:click=move |_| {
-                        // Same-route arrival commits no route change; close here.
-                        // A guarded click never reaches this handler.
-                        if let Some(drawer) = drawer {
-                            if location.pathname.get_untracked() == "/recipes" {
-                                drawer.set(false);
-                            }
-                        }
-                    }
+                    on:click=move |_| close_if_current("/recipes")
                     aria-current=move || {
                     let path = location.pathname.get();
                     (path == "/recipes" || path.starts_with("/recipes/") || path.starts_with("/recipe-editor/") || path.starts_with("/brews/")).then_some("page")
@@ -1108,7 +1106,7 @@ fn Sidebar(
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h5"/></svg>
                     "Recipes"
                 </a>
-                <a href="/equipment" class="brewery-sidebar__link" aria-current=move || location.pathname.get().starts_with("/equipment").then_some("page")>
+                <a href="/equipment" class="brewery-sidebar__link" on:click=move |_| close_if_current("/equipment") aria-current=move || location.pathname.get().starts_with("/equipment").then_some("page")>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3h10M9 3v4l-4 11a2 2 0 002 2h10a2 2 0 002-2L15 7V3M8 14h8"/></svg>
                     "Equipment"
                 </a>
