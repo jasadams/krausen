@@ -178,11 +178,7 @@ pub(super) fn retain(
 
 #[cfg(target_arch = "wasm32")]
 fn storage() -> Result<web_sys::Storage, String> {
-    web_sys::window()
-        .ok_or("Browser unavailable")?
-        .local_storage()
-        .map_err(|_| "Evidence recovery storage unavailable")?
-        .ok_or_else(|| "Evidence recovery storage unavailable".into())
+    crate::utils::storage::local_storage("Evidence recovery")
 }
 
 pub(super) fn load(scope: &GuardScope) -> Result<Vec<(String, EvidenceRecovery)>, String> {

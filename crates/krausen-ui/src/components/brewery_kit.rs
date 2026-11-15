@@ -487,9 +487,16 @@ pub fn BreweryCompactIngredientRow(
     #[prop(optional)] schedule: Option<AnyView>,
     details: AnyView,
     on_remove: Callback<()>,
+    /// Stable id of the remove action, so removal can move focus deterministically.
+    #[prop(optional, into)] remove_id: Option<String>,
 ) -> impl IntoView {
+    let remove_label = Signal::derive(move || format!("Remove {}", label.get()));
+    let remove_button = match remove_id {
+        Some(id) => view! { <crate::components::Button id=id variant=crate::components::ButtonVariant::GhostDestructive aria_label=remove_label on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button> }.into_any(),
+        None => view! { <crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=remove_label on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button> }.into_any(),
+    };
     view! { <div class="k-compact-ingredient" role="group" aria-label=move || label.get()>
-        <div class="k-compact-ingredient__main">{name_field}{amount_field}{schedule.map(|slot| view! { <div class="k-compact-ingredient__schedule">{slot}</div> })}<crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=Signal::derive(move || format!("Remove {}", label.get())) on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button></div>
+        <div class="k-compact-ingredient__main">{name_field}{amount_field}{schedule.map(|slot| view! { <div class="k-compact-ingredient__schedule">{slot}</div> })}{remove_button}</div>
         {move || { let text = description.get(); (!text.is_empty()).then(|| view! { <p class="k-compact-ingredient__description">{text}</p> }) }}
         <BreweryDisclosure title="Addition details" compact=true aria_label=Signal::derive(move || format!("Addition details for {}", label.get()))>{details}</BreweryDisclosure>
     </div> }

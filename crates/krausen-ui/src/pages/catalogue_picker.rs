@@ -9,9 +9,11 @@
 //! uncertain outcomes so a retry can never mint a second command.
 use crate::{
     components::{
-        BreweryDialog, BreweryDraftField, BreweryDraftSelect, BreweryNotice, Button, ButtonSize,
+        BreweryActionGroup, BreweryDialog, BreweryDraftField, BreweryDraftSelect, BreweryNotice, Button, ButtonSize,
         ButtonVariant, CatalogueItem, EmptyState, brewery_kit::use_brewery_dialog_return_focus,
     },
+    components::layout::{EditorGuard, GuardScope, GuardTaskCallbacks, GuardTaskKind, GuardTaskState},
+    pages::library_recovery::{self, LibraryCommand},
     pages::recipe_editor::{EditorAccess, EditorAuthorityHold, current_context_matches},
     server_fns::catalogue::catalogue_command_shared,
 };
@@ -62,6 +64,23 @@ fn entry_source_label(entry: &IngredientEntry) -> &'static str {
 fn amount_kg(text: &str) -> Option<f64> {
     let value = text.trim().parse::<f64>().ok()?;
     (value.is_finite() && value > 0.0).then_some(value)
+}
+
+/// A result that settles the command for good. Unknown outcomes (lost response,
+/// Unavailable) and authority denials never release the retained original.
+fn outcome_settles(outcome: &Result<IngredientOutcome, leptos::server_fn::ServerFnError>) -> bool {
+    !matches!(
+        outcome,
+        Err(_) | Ok(IngredientOutcome::Unavailable | IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)
+    )
+}
+
+fn identity_unavailable_notice() -> (String, String, bool) {
+    (
+        "Request identity unavailable".to_owned(),
+        "A stable request identity could not be created, so nothing was started. Try again.".to_owned(),
+        true,
+    )
 }
 
 /// Distinct terminal outcomes so expired/conflict/identity failures are never
@@ -121,6 +140,14 @@ enum PickerView {
     Catalogue,
     Create,
     Edit,
+}
+
+/// What an edited library form was about to do when the brewer was asked to
+/// Stay or Discard (INT-003: Escape and Back mean Stay until chosen).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiscardTarget {
+    Back,
+    Close,
 }
 
 /// Selected-fermentable summary and the guarded library management actions.
@@ -233,11 +260,6 @@ pub fn CataloguePicker(
     // Hide the native top-layer dialog without cancelling an uncertain command.
     let dialog_open = RwSignal::new(false);
     Effect::new(move |_| dialog_open.set(open.get() && context_visible.get()));
-    Effect::new(move |_| {
-        if !dialog_open.get() && context_visible.get_untracked() && open.get_untracked() {
-            open.set(false);
-        }
-    });
 
     // Form state. entry_id/request_id are allocated once per form session and
     // retained across uncertain outcomes; they rotate only after a committed
@@ -258,6 +280,54 @@ pub fn CataloguePicker(
     // Archive/restore identity, stable for one selected-entry action session.
     let pending_archive = RwSignal::new(None::<ArchiveIngredientEntry>);
     let archive_retrying = RwSignal::new(false);
+
+    // A sent library command outlives the dialog task that issued it (INT-004):
+    // closing, Back, navigation and reload never clear it, and while it has no
+    // known result no second command may be minted.
+    let installation = StoredValue::new(GuardScope::installation());
+    let recovery_blocker = RwSignal::new(None::<String>);
+    match library_recovery::load(&installation.get_value(), &identity.get_untracked()) {
+        Ok(Some(LibraryCommand::Save(save))) => {
+            pending_save.set(Some(save));
+            retrying.set(true);
+        }
+        Ok(Some(LibraryCommand::Archive(archive))) => {
+            pending_archive.set(Some(archive));
+            archive_retrying.set(true);
+        }
+        Ok(None) => {}
+        Err(message) => recovery_blocker.set(Some(message)),
+    }
+    let command_pending = Signal::derive(move || {
+        pending_save.with(Option::is_some)
+            || pending_archive.with(Option::is_some)
+            || recovery_blocker.with(Option::is_some)
+    });
+    // Independent library form: edits are "unsent" only while no command owns them.
+    let initial_form = RwSignal::new(Vec::<String>::new());
+    let current_form = move || {
+        vec![name.get(), producer.get(), category.get(), colour.get(), yield_percent.get()]
+    };
+    let form_dirty = Signal::derive(move || {
+        view.get() != PickerView::Catalogue
+            && !command_pending.get()
+            && current_form() != initial_form.get()
+    });
+    let discard_prompt = RwSignal::new(None::<DiscardTarget>);
+
+    Effect::new(move |_| {
+        if !dialog_open.get() && context_visible.get_untracked() && open.get_untracked() {
+            if form_dirty.get_untracked() {
+                // Escape/close means Stay (INT-003): keep the edited library
+                // form open and ask before discarding it.
+                discard_prompt.set(Some(DiscardTarget::Close));
+                dialog_open.set(true);
+                crate::utils::focus::focus_first_available(vec!["library-discard-keep".to_owned()]);
+                return;
+            }
+            open.set(false);
+        }
+    });
 
     let load_page = Callback::new(move |cursor: Option<String>| {
         let expected = identity.get_untracked();
@@ -384,8 +454,6 @@ pub fn CataloguePicker(
         edit_target.set(None);
         entry_id.set(None);
         request_id.set(None);
-        pending_save.set(None);
-        retrying.set(false);
     };
 
     let reset = move || {
@@ -396,12 +464,16 @@ pub fn CataloguePicker(
         selected.set(None);
         amount.set("0.25".to_owned());
         notice.set(None);
-        busy.set(false);
+        // Closing the task is not cancellation of a sent command: only the
+        // command's own result settles `busy` and its retained record.
+        if !command_pending.get_untracked() {
+            busy.set(false);
+        }
         loading.set(false);
         next_cursor.set(None);
         items.set(Vec::new());
-        pending_archive.set(None);
-        archive_retrying.set(false);
+        discard_prompt.set(None);
+        initial_form.set(Vec::new());
         clear_form();
     };
 
@@ -448,31 +520,30 @@ pub fn CataloguePicker(
             return;
         }
         selected.set(Some(entry));
-        pending_archive.set(None);
-        archive_retrying.set(false);
         notice.set(None);
     });
 
     let begin_create = Callback::new(move |()| {
-        if busy.get_untracked() || archive_retrying.get_untracked() {
+        if busy.get_untracked() || command_pending.get_untracked() {
             return;
         }
+        let (Some(new_entry_id), Some(new_save_request_id)) = (
+            crate::utils::request_id::new_request_id(),
+            crate::utils::request_id::new_request_id(),
+        ) else {
+            notice.set(Some(identity_unavailable_notice()));
+            return;
+        };
         notice.set(None);
         clear_form();
-        pending_archive.set(None);
-        let Some(new_entry_id) = crate::utils::request_id::new_request_id() else {
-            return;
-        };
-        let Some(new_save_request_id) = crate::utils::request_id::new_request_id() else {
-            return;
-        };
         entry_id.set(Some(new_entry_id));
         request_id.set(Some(new_save_request_id));
+        initial_form.set(current_form());
         view.set(PickerView::Create);
     });
 
     let begin_edit = Callback::new(move |()| {
-        if busy.get_untracked() || archive_retrying.get_untracked() {
+        if busy.get_untracked() || command_pending.get_untracked() {
             return;
         }
         let Some(entry) = selected.get_untracked() else {
@@ -481,9 +552,11 @@ pub fn CataloguePicker(
         if entry.scope != CatalogueScope::Workspace {
             return;
         }
+        let Some(edit_request_id) = crate::utils::request_id::new_request_id() else {
+            notice.set(Some(identity_unavailable_notice()));
+            return;
+        };
         notice.set(None);
-        pending_save.set(None);
-        pending_archive.set(None);
         name.set(entry.name().to_owned());
         producer.set(entry.producer().to_owned());
         category.set(entry.document.category.clone());
@@ -500,16 +573,13 @@ pub fn CataloguePicker(
                 .document
                 .specification
                 .yield_fraction
-                .map(|value| format!("{}", value * 100.0))
+                .map(|value| crate::pages::ingredient_addition::fraction_to_percent(value).to_string())
                 .unwrap_or_default(),
         );
-        let Some(edit_request_id) = crate::utils::request_id::new_request_id() else {
-            return;
-        };
         entry_id.set(Some(entry.entry_id.clone()));
         request_id.set(Some(edit_request_id));
-        retrying.set(false);
         edit_target.set(Some(entry));
+        initial_form.set(current_form());
         let issued_session = session.get_untracked();
         let expected = identity.get_untracked();
         let expected_entry = entry_id.get_untracked();
@@ -526,12 +596,32 @@ pub fn CataloguePicker(
         view.set(PickerView::Edit);
     });
 
-    let back_to_catalogue = Callback::new(move |()| {
+    let leave_form = Callback::new(move |()| {
         notice.set(None);
+        discard_prompt.set(None);
         clear_form();
-        pending_archive.set(None);
-        archive_retrying.set(false);
         view.set(PickerView::Catalogue);
+    });
+    // Back from an edited library form means Stay until Discard is chosen.
+    let back_to_catalogue = Callback::new(move |()| {
+        if form_dirty.get_untracked() {
+            discard_prompt.set(Some(DiscardTarget::Back));
+            crate::utils::focus::focus_first_available(vec!["library-discard-keep".to_owned()]);
+        } else {
+            leave_form.run(());
+        }
+    });
+    let keep_editing = Callback::new(move |()| {
+        discard_prompt.set(None);
+        crate::utils::focus::focus_first_available(vec!["library-name".to_owned()]);
+    });
+    let confirm_discard = Callback::new(move |()| match discard_prompt.get_untracked() {
+        Some(DiscardTarget::Back) => leave_form.run(()),
+        Some(DiscardTarget::Close) => {
+            discard_prompt.set(None);
+            open.set(false);
+        }
+        None => {}
     });
 
     let add_ingredient = Callback::new(move |()| {
@@ -563,6 +653,7 @@ pub fn CataloguePicker(
             return;
         };
         let Some(row_id) = crate::utils::request_id::new_request_id() else {
+            notice.set(Some(identity_unavailable_notice()));
             return;
         };
         let stage = match entry.document.specification.kind.as_deref() {
@@ -600,6 +691,11 @@ pub fn CataloguePicker(
             };
             pending
         } else {
+            // One unresolved library command at a time: never mint a second
+            // request while an earlier sent one has no known result.
+            if command_pending.get_untracked() {
+                return;
+            }
             let editing = edit_target.get_untracked();
             let session_entry_id = entry_id.get_untracked();
             let session_request_id = request_id.get_untracked();
@@ -660,11 +756,11 @@ pub fn CataloguePicker(
                         (!producer_value.is_empty()).then_some(producer_value)
                     },
                     kind: Some("grain".to_owned()),
-                    yield_fraction: Some(yield_value / 100.0),
+                    yield_fraction: Some(crate::pages::ingredient_addition::percent_to_fraction(yield_value)),
                     colour_ebc: Some(colour_value),
                 },
             );
-            let save = SaveIngredientEntry {
+            SaveIngredientEntry {
                 intent: identity.get_untracked(),
                 entry_id: target_entry_id,
                 document,
@@ -674,39 +770,69 @@ pub fn CataloguePicker(
                     .map(|entry| entry.metadata_revision)
                     .unwrap_or(0),
                 request_id: target_request_id,
-            };
-            pending_save.set(Some(save.clone()));
-            save
+            }
         };
+        // The exact command is retained (surviving close, navigation and reload)
+        // before it can be sent; if it cannot be retained, nothing is sent.
+        let retained = LibraryCommand::Save(save.clone());
+        if let Err(message) = library_recovery::retain(&installation.get_value(), &retained) {
+            notice.set(Some((
+                "Nothing was sent".to_owned(),
+                format!("{message}. Keep this page open and try again."),
+                true,
+            )));
+            return;
+        }
+        pending_save.set(Some(save.clone()));
         let is_edit = save.expected_revision > 0;
         let expected = save.intent.clone();
         let issued_session = session.get_untracked();
-        let owns_command = {
+        let pending_matches = {
             let expected = expected.clone();
             let original_request = save.request_id.clone();
             let original_entry = save.entry_id.clone();
-            move || owns_session(issued_session, &expected)
+            move || identity.try_with_untracked(|current| *current == expected) == Some(true)
                 && pending_save.try_with_untracked(|pending| pending.as_ref().is_some_and(|pending|
                     pending.request_id == original_request && pending.entry_id == original_entry)) == Some(true)
         };
+        // Only the dialog task that issued the command may mutate its visible
+        // state. A completion after close/reopen settles the pending record and
+        // nothing else: it never selects, adds or notifies an unrelated session.
+        let dialog_current = {
+            let expected = expected.clone();
+            move || owns_session(issued_session, &expected)
+        };
         let command = IngredientCommand::Save(save);
         let authority_epoch = authority.and_then(|authority| authority.generation.try_get_untracked());
+        let installation = installation.get_value();
         busy.set(true);
         leptos::task::spawn_local(async move {
             let retain_unresolved = || {
                 // Called only by this still-owned request, never a successor.
                 retrying.set(true);
                 busy.set(false);
-                notice.set(Some((
-                    "Save response held".to_owned(),
-                    "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
-                    true,
-                )));
+                if dialog_current() {
+                    notice.set(Some((
+                        "Save response held".to_owned(),
+                        "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
+                        true,
+                    )));
+                }
+            };
+            let discard_unsent = |retained: &LibraryCommand| {
+                library_recovery::remove(&installation, retained);
+                pending_save.set(None);
+                retrying.set(false);
+                busy.set(false);
             };
             let context_matches = current_context_matches(&expected).await;
-            if !owns_command() { return; }
+            if !pending_matches() { return; }
+            // Nothing has been dispatched yet: a changed authority epoch is an
+            // unsent cancellation, not an unknown result.
             if authority.and_then(|hold| hold.generation.try_get_untracked()) != authority_epoch {
-                retain_unresolved();
+                if busy.try_get_untracked().is_some() {
+                    discard_unsent(&retained);
+                }
                 return;
             }
             if !context_matches {
@@ -716,14 +842,28 @@ pub fn CataloguePicker(
                     return;
                 }
                 context_visible.set(false);
-                busy.set(false);
+                discard_unsent(&retained);
                 return;
             }
             if busy.try_get_untracked().is_none() {
                 return;
             }
+            // Dismissed before dispatch: an unsent local cancellation, which is
+            // the only case where "nothing was sent" is known.
+            if !dialog_current() {
+                discard_unsent(&retained);
+                return;
+            }
             let outcome = catalogue_command_shared(command).await;
-            if !owns_command() {
+            // The picker may be gone (navigation): a known result still releases
+            // the retained original; an unknown one stays for explicit replay.
+            if pending_save.try_with_untracked(|_| ()).is_none() {
+                if outcome_settles(&outcome) {
+                    library_recovery::remove(&installation, &retained);
+                }
+                return;
+            }
+            if !pending_matches() {
                 return;
             }
             // A known resource denial takes precedence over unrelated generic
@@ -731,6 +871,7 @@ pub fn CataloguePicker(
             if matches!(&outcome, Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)) {
                 let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
                 if report_denial.run((authority_epoch, expected.clone(), reason)) {
+                    library_recovery::remove(&installation, &retained);
                     busy.set(false);
                     retrying.set(false);
                     pending_save.set(None);
@@ -740,7 +881,7 @@ pub fn CataloguePicker(
                 return;
             }
             let context_matches = current_context_matches(&expected).await;
-            if !owns_command() { return; }
+            if !pending_matches() { return; }
             if !context_matches {
                 if busy.try_get_untracked().is_none() {
                     return;
@@ -755,11 +896,21 @@ pub fn CataloguePicker(
                 return;
             }
             busy.set(false);
+            let current = dialog_current();
+            // A known result releases the retained original command.
+            let resolved = || {
+                library_recovery::remove(&installation, &retained);
+                retrying.set(false);
+                pending_save.set(None);
+            };
             match &outcome {
                 Ok(IngredientOutcome::Entry(entry)) => {
+                    resolved();
+                    if !current {
+                        if open.try_get_untracked() == Some(true) { load_page.run(None); }
+                        return;
+                    }
                     notice.set(None);
-                    retrying.set(false);
-                    pending_save.set(None);
                     if is_edit {
                         // Committed: rotate the request identity, keep the
                         // edited entry current for a further guarded change.
@@ -779,21 +930,15 @@ pub fn CataloguePicker(
                         load_page.run(None);
                     }
                 }
-                Ok(IngredientOutcome::ResultExpired) => {
-                    // The command committed earlier; its confirmation is gone.
-                    // Discard the identity and show the fresh library state.
-                    retrying.set(false);
-                    pending_save.set(None);
-                    notice.set(terminal_notice(
-                        match &outcome { Ok(value) => value, Err(_) => unreachable!() },
-                    ));
-                    clear_form();
-                    view.set(PickerView::Catalogue);
-                    load_page.run(None);
-                }
-                Ok(IngredientOutcome::RequestIdentityConflict) => {
-                    retrying.set(false);
-                    pending_save.set(None);
+                Ok(IngredientOutcome::ResultExpired)
+                | Ok(IngredientOutcome::RequestIdentityConflict) => {
+                    // The command committed earlier (or its identity is spent);
+                    // its confirmation is gone. Show the fresh library state.
+                    resolved();
+                    if !current {
+                        if open.try_get_untracked() == Some(true) { load_page.run(None); }
+                        return;
+                    }
                     notice.set(terminal_notice(
                         match &outcome { Ok(value) => value, Err(_) => unreachable!() },
                     ));
@@ -808,26 +953,31 @@ pub fn CataloguePicker(
                     // Completion is unknown: retain the full command and keep
                     // the form locked so the retry replays it verbatim.
                     retrying.set(true);
-                    notice.set(Some((
-                        "Save may not have completed".to_owned(),
-                        "The server could not confirm whether the save completed. Retry the previous request; the same request cannot duplicate data.".to_owned(),
-                        true,
-                    )));
+                    if current {
+                        notice.set(Some((
+                            "Save may not have completed".to_owned(),
+                            "The server could not confirm whether the save completed. Retry the previous request; the same request cannot duplicate data.".to_owned(),
+                            true,
+                        )));
+                    }
                 }
                 Ok(other) => {
-                    retrying.set(false);
-                    pending_save.set(None);
-                    notice.set(terminal_notice(other));
+                    resolved();
+                    if current {
+                        notice.set(terminal_notice(other));
+                    }
                 }
                 Err(_) => {
                     // Uncertain outcome: retain the full command so the next
                     // click replays it verbatim, independent of form edits.
                     retrying.set(true);
-                    notice.set(Some((
-                        "Save may not have completed".to_owned(),
-                        "The response was lost before the result was confirmed. Retry the previous request; the same request cannot duplicate data.".to_owned(),
-                        true,
-                    )));
+                    if current {
+                        notice.set(Some((
+                            "Save may not have completed".to_owned(),
+                            "The response was lost before the result was confirmed. Retry the previous request; the same request cannot duplicate data.".to_owned(),
+                            true,
+                        )));
+                    }
                 }
             }
         });
@@ -848,6 +998,9 @@ pub fn CataloguePicker(
             };
             pending
         } else {
+            if command_pending.get_untracked() {
+                return;
+            }
             let Some(entry) = selected.get_untracked() else {
                 return;
             };
@@ -855,45 +1008,69 @@ pub fn CataloguePicker(
                 return;
             }
             let Some(request_id) = crate::utils::request_id::new_request_id() else {
+                notice.set(Some(identity_unavailable_notice()));
                 return;
             };
-            let archive = ArchiveIngredientEntry {
+            ArchiveIngredientEntry {
                 intent: identity.get_untracked(),
                 entry_id: entry.entry_id.clone(),
                 archived: target_archived,
                 expected_metadata_revision: entry.metadata_revision,
                 request_id,
-            };
-            pending_archive.set(Some(archive.clone()));
-            archive
+            }
         };
+        let retained = LibraryCommand::Archive(archive.clone());
+        if let Err(message) = library_recovery::retain(&installation.get_value(), &retained) {
+            notice.set(Some((
+                "Nothing was sent".to_owned(),
+                format!("{message}. Keep this page open and try again."),
+                true,
+            )));
+            return;
+        }
+        pending_archive.set(Some(archive.clone()));
         let expected = archive.intent.clone();
         let issued_session = session.get_untracked();
-        let owns_command = {
+        let pending_matches = {
             let expected = expected.clone();
             let original_request = archive.request_id.clone();
             let original_entry = archive.entry_id.clone();
-            move || owns_session(issued_session, &expected)
+            move || identity.try_with_untracked(|current| *current == expected) == Some(true)
                 && pending_archive.try_with_untracked(|pending| pending.as_ref().is_some_and(|pending|
                     pending.request_id == original_request && pending.entry_id == original_entry)) == Some(true)
         };
+        let dialog_current = {
+            let expected = expected.clone();
+            move || owns_session(issued_session, &expected)
+        };
         let command = IngredientCommand::Archive(archive);
         let authority_epoch = authority.and_then(|authority| authority.generation.try_get_untracked());
+        let installation = installation.get_value();
         busy.set(true);
         leptos::task::spawn_local(async move {
             let retain_unresolved = || {
                 archive_retrying.set(true);
                 busy.set(false);
-                notice.set(Some((
-                    "Change response held".to_owned(),
-                    "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
-                    true,
-                )));
+                if dialog_current() {
+                    notice.set(Some((
+                        "Change response held".to_owned(),
+                        "The context changed before this request could be confirmed. Retry the retained original request after the context is verified.".to_owned(),
+                        true,
+                    )));
+                }
+            };
+            let discard_unsent = |retained: &LibraryCommand| {
+                library_recovery::remove(&installation, retained);
+                pending_archive.set(None);
+                archive_retrying.set(false);
+                busy.set(false);
             };
             let context_matches = current_context_matches(&expected).await;
-            if !owns_command() { return; }
+            if !pending_matches() { return; }
             if authority.and_then(|hold| hold.generation.try_get_untracked()) != authority_epoch {
-                retain_unresolved();
+                if busy.try_get_untracked().is_some() {
+                    discard_unsent(&retained);
+                }
                 return;
             }
             if !context_matches {
@@ -903,19 +1080,32 @@ pub fn CataloguePicker(
                     return;
                 }
                 context_visible.set(false);
-                busy.set(false);
+                discard_unsent(&retained);
                 return;
             }
             if busy.try_get_untracked().is_none() {
                 return;
             }
+            if !dialog_current() {
+                discard_unsent(&retained);
+                return;
+            }
             let outcome = catalogue_command_shared(command).await;
-            if !owns_command() {
+            // The picker may be gone (navigation): a known result still releases
+            // the retained original; an unknown one stays for explicit replay.
+            if pending_archive.try_with_untracked(|_| ()).is_none() {
+                if outcome_settles(&outcome) {
+                    library_recovery::remove(&installation, &retained);
+                }
+                return;
+            }
+            if !pending_matches() {
                 return;
             }
             if matches!(&outcome, Ok(IngredientOutcome::ContextChanged | IngredientOutcome::Forbidden)) {
                 let reason = if matches!(&outcome, Ok(IngredientOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
                 if report_denial.run((authority_epoch, expected.clone(), reason)) {
+                    library_recovery::remove(&installation, &retained);
                     busy.set(false);
                     archive_retrying.set(false);
                     pending_archive.set(None);
@@ -925,7 +1115,7 @@ pub fn CataloguePicker(
                 return;
             }
             let context_matches = current_context_matches(&expected).await;
-            if !owns_command() { return; }
+            if !pending_matches() { return; }
             if !context_matches {
                 if busy.try_get_untracked().is_none() {
                     return;
@@ -940,18 +1130,31 @@ pub fn CataloguePicker(
                 return;
             }
             busy.set(false);
+            let current = dialog_current();
+            // A known result releases the retained original command.
+            let resolved = || {
+                library_recovery::remove(&installation, &retained);
+                archive_retrying.set(false);
+                pending_archive.set(None);
+            };
             match &outcome {
                 Ok(IngredientOutcome::Entry(entry)) => {
+                    resolved();
+                    if !current {
+                        if open.try_get_untracked() == Some(true) { load_page.run(None); }
+                        return;
+                    }
                     notice.set(None);
-                    archive_retrying.set(false);
-                    pending_archive.set(None);
                     selected.set(Some(entry.clone()));
                     load_page.run(None);
                 }
                 Ok(IngredientOutcome::ResultExpired)
                 | Ok(IngredientOutcome::RequestIdentityConflict) => {
-                    archive_retrying.set(false);
-                    pending_archive.set(None);
+                    resolved();
+                    if !current {
+                        if open.try_get_untracked() == Some(true) { load_page.run(None); }
+                        return;
+                    }
                     notice.set(terminal_notice(
                         match &outcome { Ok(value) => value, Err(_) => unreachable!() },
                     ));
@@ -964,24 +1167,29 @@ pub fn CataloguePicker(
                     // Completion is unknown: retain the full command and keep
                     // the retry enabled for a verbatim replay.
                     archive_retrying.set(true);
-                    notice.set(Some((
-                        "Change may not have completed".to_owned(),
-                        "The server could not confirm whether the change completed. Retry the previous request; the same request cannot apply twice.".to_owned(),
-                        true,
-                    )));
+                    if current {
+                        notice.set(Some((
+                            "Change may not have completed".to_owned(),
+                            "The server could not confirm whether the change completed. Retry the previous request; the same request cannot apply twice.".to_owned(),
+                            true,
+                        )));
+                    }
                 }
                 Ok(other) => {
-                    archive_retrying.set(false);
-                    pending_archive.set(None);
-                    notice.set(terminal_notice(other));
+                    resolved();
+                    if current {
+                        notice.set(terminal_notice(other));
+                    }
                 }
                 Err(_) => {
                     archive_retrying.set(true);
-                    notice.set(Some((
-                        "Change may not have completed".to_owned(),
-                        "The response was lost before the result was confirmed. Retry the previous request; the same request cannot apply twice.".to_owned(),
-                        true,
-                    )));
+                    if current {
+                        notice.set(Some((
+                            "Change may not have completed".to_owned(),
+                            "The response was lost before the result was confirmed. Retry the previous request; the same request cannot apply twice.".to_owned(),
+                            true,
+                        )));
+                    }
                 }
             }
         });
@@ -995,7 +1203,7 @@ pub fn CataloguePicker(
             .is_some_and(|entry| !entry.archived)
             && amount_kg(&text).is_some()
             && !busy.get()
-            && !archive_retrying.get()
+            && !command_pending.get()
     });
     let count_label = Signal::derive(move || {
         let count = items.with(|items| items.len());
@@ -1027,10 +1235,89 @@ pub fn CataloguePicker(
             .map(|(title, body, warning)| view! { <BreweryNotice title=title body=body warning=warning announcement=crate::components::NoticeAnnouncement::Settled/> })
     };
 
+    // The original sent command is named and recoverable in every dialog session.
+    let check_previous = Callback::new(move |()| {
+        if pending_save.get_untracked().is_some() {
+            retrying.set(true);
+            save_entry.run(());
+        } else if pending_archive.get_untracked().is_some() {
+            archive_retrying.set(true);
+            archive_entry.run(true);
+        }
+    });
+    let recovery_view = move || command_pending.get().then(|| {
+        let (body, can_check) = match recovery_blocker.get() {
+            Some(message) => (message, false),
+            None if busy.get() => ("A library change is still being confirmed. New library changes are paused until its result is known; closing this dialog does not cancel it.".to_owned(), false),
+            None => ("The result of your earlier library change is unknown. Check it before making another change; the same request cannot apply twice.".to_owned(), true),
+        };
+        view! {
+            <div class="k-catalogue-recovery">
+                <BreweryNotice title="Previous library change not confirmed" body=body warning=true/>
+                <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || !can_check || busy.get()) on:click=move |_| check_previous.run(())>"Check previous result"</Button>
+            </div>
+        }
+    });
+    let discard_view = move || discard_prompt.get().map(|_| view! {
+        <div class="k-catalogue-recovery" role="group" aria-label="Unsaved library entry">
+            <BreweryNotice title="Discard unsaved library entry?" body="These changes have not been saved to your library. Escape and Back keep them until you choose Discard." warning=true/>
+            <BreweryActionGroup>
+                <Button id="library-discard-keep" variant=ButtonVariant::Secondary on:click=move |_| keep_editing.run(())>"Keep editing"</Button>
+                <Button variant=ButtonVariant::GhostDestructive on:click=move |_| confirm_discard.run(())>"Discard changes"</Button>
+            </BreweryActionGroup>
+        </div>
+    });
+    let guard_task = use_context::<EditorGuard>().map(|guard| {
+        let source = identity.get_untracked();
+        guard.register_task(
+            GuardTaskKind::Library,
+            GuardScope {
+                installation: installation.get_value(),
+                account_id: source.account_id,
+                workspace_id: source.workspace_id,
+                resource_id: None,
+                base_revision: None,
+            },
+            GuardTaskCallbacks {
+                save_and_leave: None,
+                return_to_actions: None,
+                // Discarding only abandons the unsent form; a sent command keeps
+                // its own retained record and is never cancelled by leaving.
+                discard_unsent: Callback::new(move |()| {
+                    if busy.get_untracked() && command_pending.get_untracked() {
+                        return false;
+                    }
+                    discard_prompt.set(None);
+                    open.set(false);
+                    true
+                }),
+            },
+        )
+    });
+    Effect::new(move |_| {
+        if let Some(task) = guard_task {
+            task.update(GuardTaskState {
+                dirty: form_dirty.get(),
+                generation: 0,
+                // A sent command keeps its own retained record and finishes (or is
+                // replayed) independently of navigation; only an unsent edited form blocks.
+                in_flight: false,
+                uncertain: false,
+                recovery_retained: true,
+                context_visible: context_visible.get(),
+            });
+        }
+    });
+    on_cleanup(move || {
+        if let Some(task) = guard_task {
+            task.unregister();
+        }
+    });
+
     let catalogue_view = move || view! {
         <div class="k-catalogue-toolbar">
             <BreweryDraftField id="catalogue-search" label="Search fermentables" value=Signal::from(query) on_change=search_input input_type="search"/>
-            <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || archive_retrying.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button>
+            <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || command_pending.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button>
         </div>
         <div class="k-catalogue-filters">
             <Button variant=ButtonVariant::Secondary size=ButtonSize::Sm aria_pressed=Signal::derive(move || (filter.get() == CatalogueFilter::All).to_string()) on:click=move |_| filter.set(CatalogueFilter::All)>"All fermentables"</Button>
@@ -1038,6 +1325,7 @@ pub fn CataloguePicker(
             <span class="note-caption" role="status">{move || count_label.get()}</span>
         </div>
         {move || notice_view()}
+        {move || recovery_view()}
         <Show
             when=move || loading.get() || !items.with(|items| items.is_empty())
             fallback=move || view! {
@@ -1045,7 +1333,7 @@ pub fn CataloguePicker(
                     variant=crate::components::EmptyStateVariant::Default
                     title="Make this library your own"
                     description="No matching fermentables. Add the malt or grain you use."
-                    action=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || archive_retrying.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button> }.into_any())
+                    action=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || command_pending.get()) on:click=move |_| begin_create.run(())>"Create fermentable"</Button> }.into_any())
                 />
             }
         >
@@ -1102,6 +1390,7 @@ pub fn CataloguePicker(
     };
 
     let form_view = move || view! {
+        {move || discard_view()}
         {move || notice_view()}
         {move || {
             let disabled = busy.get() || retrying.get();
@@ -1129,7 +1418,7 @@ pub fn CataloguePicker(
                 wide=true
                 actions=std::sync::Arc::new(move || view! {
                     <Button variant=ButtonVariant::Ghost on:click=move |_| cancel.run(())>"Cancel"</Button>
-                    <Button variant=ButtonVariant::Default disabled=Signal::derive(move || !can_add.get()) on:click=move |_| add_ingredient.run(())>"Add ingredient"</Button>
+                    <Button variant=ButtonVariant::Default disabled=Signal::derive(move || !can_add.get()) on:click=move |_| add_ingredient.run(())>"Add to recipe"</Button>
                 }.into_any())
             >
                 {catalogue_view()}

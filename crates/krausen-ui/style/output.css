@@ -3435,6 +3435,15 @@
 .k-catalogue-toolbar > button {
   flex-shrink: 0;
 }
+.k-catalogue-recovery {
+  display: grid;
+  gap: var(--k-space-3);
+  justify-items: start;
+  margin-bottom: var(--k-space-4);
+}
+.k-catalogue-recovery > .k-notice {
+  justify-self: stretch;
+}
 .k-catalogue-filters {
   display: flex;
   flex-wrap: wrap;

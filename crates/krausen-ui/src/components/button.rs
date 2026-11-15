@@ -159,6 +159,9 @@ pub fn Button(
     aria_expanded: MaybeProp<bool>,
     #[prop(optional, into)]
     popover_target: Option<String>,
+    /// Stable DOM id for deterministic focus succession and diagnostics.
+    #[prop(optional, into)]
+    id: Option<String>,
     children: Children,
 ) -> impl IntoView {
     let classes = format!(
@@ -171,6 +174,7 @@ pub fn Button(
 
     view! {
         <button
+            id=id
             node_ref=node_ref
             r#type=button_type
             class=classes
