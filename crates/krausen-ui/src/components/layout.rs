@@ -862,8 +862,12 @@ pub fn Layout() -> impl IntoView {
                 <Show when=move || editor_guard.notice.get()>
                 {move || {
                 let recipe = editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Recipe);
-                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice>
-                    <p>"Your draft remains in this account and workspace until you choose what to do."</p>
+                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) { "Import result unconfirmed" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice>
+                    {move || if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) {
+                        view! { <p>"An import was sent and its result is unconfirmed. The original request is retained in this account and workspace; leaving does not cancel it, and you can check it later."</p> }.into_any()
+                    } else {
+                        view! { <p>"Your draft remains in this account and workspace until you choose what to do."</p> }.into_any()
+                    }}
                     <p role="status">{move || editor_guard.message.get()}</p>
                     <p role="status">{move || editor_guard.navigation_error.get()}</p>
                     <Show when=move || !editor_guard.navigation_error.get().is_empty() && editor_guard.history_restore_ready.get()>
@@ -880,7 +884,11 @@ pub fn Layout() -> impl IntoView {
                     }>"Return to save evidence"</crate::components::Button>
                     </Show>
                     <crate::components::Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || editor_guard.pending.get() || editor_guard.destination.get().is_none() || editor_guard.active_task().is_none_or(|task| !task.state.may_discard(task.kind))) on:click=move |_| editor_guard.discard_active()>
-                        {move || if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Evidence) { "Discard local inputs and leave" } else { "Discard and leave" }}
+                        {move || match editor_guard.active_task().map(|task| (task.kind, task.state.uncertain)) {
+                            Some((GuardTaskKind::Evidence, _)) => "Discard local inputs and leave",
+                            Some((GuardTaskKind::Import, true)) => "Leave and keep the retained request",
+                            _ => "Discard and leave",
+                        }}
                     </crate::components::Button>
                     <crate::components::Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| editor_guard.cancel_leave()>"Stay"</crate::components::Button>
                 </crate::components::BreweryDialog> }

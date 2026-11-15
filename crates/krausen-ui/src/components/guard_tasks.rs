@@ -54,7 +54,9 @@ impl GuardTaskState {
     }
     pub fn may_discard(self, kind: GuardTaskKind) -> bool {
         !self.in_flight
-            && (!self.uncertain || (kind == GuardTaskKind::Evidence && self.recovery_retained))
+            && (!self.uncertain
+                || (matches!(kind, GuardTaskKind::Evidence | GuardTaskKind::Import)
+                    && self.recovery_retained))
     }
 }
 
@@ -431,6 +433,21 @@ mod tests {
         assert!(!state.may_discard(GuardTaskKind::Recipe));
         state.in_flight = true;
         assert!(!state.may_discard(GuardTaskKind::Evidence));
+    }
+    #[test]
+    fn import_leaves_an_unknown_commit_only_when_its_exact_request_is_retained() {
+        let unknown = GuardTaskState {
+            uncertain: true,
+            ..Default::default()
+        };
+        assert!(!unknown.may_discard(GuardTaskKind::Import));
+        let retained = GuardTaskState {
+            recovery_retained: true,
+            ..unknown
+        };
+        assert!(retained.may_discard(GuardTaskKind::Import));
+        assert!(!GuardTaskState { in_flight: true, ..retained }.may_discard(GuardTaskKind::Import));
+        assert!(!retained.may_discard(GuardTaskKind::Library));
     }
     #[test]
     fn actual_navigation_keeps_first_destination_and_old_completion_cannot_satisfy_a_new_attempt() {

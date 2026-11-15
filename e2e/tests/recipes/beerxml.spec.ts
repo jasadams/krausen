@@ -12,10 +12,10 @@ test.beforeEach(async ({ page }) => {
 // state/raw-source/retry/native-count assertion run before geometry is reported,
 // rather than letting the first idle spacing defect hide the later outcomes.
 const importGeometryExpect = expect.configure({ soft: true, timeout: 1000 });
-async function measureImportActions(page: Page, state: string, primaryName: string, pending = false) {
+async function measureImportActions(page: Page, state: string, primaryName: string, pending = false, quietName = 'Cancel') {
   const expect = importGeometryExpect;
   const panel = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Import BeerXML', exact: true }) });
-  const snapshot = await panel.evaluate(element => {
+  const snapshot = await panel.evaluate((element, names) => {
     const root = getComputedStyle(document.documentElement);
     const rootSize = parseFloat(root.fontSize);
     const tokenPixels = (name: string) => {
@@ -27,7 +27,7 @@ async function measureImportActions(page: Page, state: string, primaryName: stri
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom };
     };
     const actions = [...element.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>('button, a')]
-      .filter(node => ['Preview', 'Import recipe', 'Open imported recipe', 'Cancel'].includes(node.textContent?.trim() ?? ''))
+      .filter(node => names.includes(node.textContent?.trim() ?? ''))
       .filter(node => node.getClientRects().length > 0)
       .map(node => {
         const style = getComputedStyle(node);
@@ -61,14 +61,14 @@ async function measureImportActions(page: Page, state: string, primaryName: stri
         vertical: action.rect.y - actions[index].rect.bottom,
       })),
     };
-  });
+  }, ['Preview', 'Import recipe', 'Check previous result', 'Acknowledge and clear retained request', 'Open imported recipe', quietName]);
   await test.info().attach(`import-${state}-geometry`, { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
   await test.info().attach(`import-${state}`, { body: await panel.screenshot(), contentType: 'image/png' });
   expect(snapshot.viewport.documentWidth, `${state}: document overflow`).toBeLessThanOrEqual(snapshot.viewport.width + 1);
   expect(Number.isFinite(snapshot.actionGapToken)).toBe(true);
   expect(Number.isFinite(snapshot.intrinsicPaddingToken)).toBe(true);
   const primary = snapshot.actions.find(action => action.name === primaryName)!;
-  const cancel = snapshot.actions.find(action => action.name === 'Cancel')!;
+  const cancel = snapshot.actions.find(action => action.name === quietName)!;
   expect(primary, `${state}: named stage action`).toBeDefined();
   expect(cancel, `${state}: retained Cancel`).toBeDefined();
   expect(new Set(snapshot.fields.map(field => field.id)).size).toBe(snapshot.fields.length);
@@ -121,7 +121,7 @@ async function measureImportActions(page: Page, state: string, primaryName: stri
     await expect(active).toBeFocused();
     await expect(active).toBeInViewport();
   }
-  const quietCancel = panel.getByRole('link', { name: 'Cancel', exact: true });
+  const quietCancel = panel.getByRole('link', { name: quietName, exact: true });
   await quietCancel.scrollIntoViewIfNeeded();
   await quietCancel.focus();
   await expect(quietCancel).toBeFocused();
@@ -203,7 +203,8 @@ for (const theme of ['light', 'dark'] as const) {
       await measureImportActions(page, 'preview', 'Import recipe');
       await source.fill('not valid BeerXML');
       await page.getByRole('button', { name: 'Preview', exact: true }).click();
-      await expect(page.getByRole('status').filter({ hasText: 'Unable to preview this BeerXML' })).toBeVisible();
+      await expect(source).toHaveAttribute('aria-invalid', 'true');
+      await expect(source).toHaveAccessibleDescription(/not a BeerXML recipe file/);
       await measureImportActions(page, 'error', 'Preview');
       await source.fill(`\n${xml}\n`);
       await page.getByRole('button', { name: 'Preview', exact: true }).click();
@@ -231,12 +232,15 @@ for (const theme of ['light', 'dark'] as const) {
         await measureImportActions(page, 'import-loading', 'Import recipe', true);
         await observeFocus('import-release-held-cancel');
       } finally { releaseImport(); }
-      await expect(page.getByRole('status').filter({ hasText: 'Retry to recover the same request' })).toBeVisible();
+      await expect(page.getByText('A recipe may already have been created')).toBeVisible();
+      // The sent source stays pinned and unchangeable; no fresh Import is offered.
       await expect(source).toHaveValue(`\n${xml}\n`);
+      await expect(source).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Import recipe', exact: true })).toHaveCount(0);
       await observeFocus('import-unknown-reenabled');
-      await importGeometryExpect(page.getByRole('link', { name: 'Cancel', exact: true })).toBeFocused();
-      await measureImportActions(page, 'uncertain-retry', 'Import recipe');
-      await page.getByRole('button', { name: 'Import recipe', exact: true }).focus();
+      await importGeometryExpect(page.getByRole('link', { name: 'Back to recipes', exact: true })).toBeFocused();
+      await measureImportActions(page, 'uncertain-retry', 'Check previous result', false, 'Back to recipes');
+      await page.getByRole('button', { name: 'Check previous result', exact: true }).focus();
       await observeFocus('retry-import-before-dispatch');
       await page.keyboard.press('Enter');
       await expect(page.getByRole('status').filter({ hasText: 'Recipe imported.' })).toBeVisible();
@@ -262,8 +266,182 @@ test('cancelling after preview creates no recipe', async ({ page }) => {
   await page.getByLabel('Paste BeerXML').fill(`<RECIPES><RECIPE><NAME>${title}</NAME></RECIPE></RECIPES>`);
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Import preview' })).toContainText(title);
+  // Edited uncommitted source is guarded (INT-003); the explicit choice leaves.
   await page.getByRole('link', { name: 'Cancel' }).click();
+  await page.locator('#workspace-draft-warning').getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}'`)).toBe('0');
+});
+
+const lostXml = (title: string) => `<RECIPES><RECIPE><NAME>${title}</NAME></RECIPE></RECIPES>`;
+async function previewAndLoseImportResponse(page: Page, title: string, checkOutcome?: unknown) {
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(lostXml(title));
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Import preview' })).toContainText(title);
+  const bodies: string[] = [];
+  await page.route('**/leptos-api/commit_beerxml*', async route => {
+    bodies.push(route.request().postData() ?? '');
+    const response = await route.fetch();
+    if (bodies.length === 1) await route.fulfill({ status: 503, body: 'response lost after real import' });
+    else if (checkOutcome !== undefined) await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(checkOutcome) });
+    else await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: 'Import recipe', exact: true }).click();
+  await expect(page.getByText('A recipe may already have been created')).toBeVisible();
+  return bodies;
+}
+const retainedKeys = (page: Page) => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('krausen-import-v1:')));
+
+test('leaving edited uncommitted source asks Discard or Stay and never imports', async ({ page }) => {
+  const title = `Guarded import ${Date.now()}`;
+  await page.goto('/beerxml');
+  const source = page.getByLabel('Paste BeerXML');
+  await source.fill(lostXml(title));
+  const guard = page.locator('#workspace-draft-warning');
+  await page.getByRole('link', { name: 'Cancel' }).click();
+  await expect(guard).toBeVisible();
+  await expect(guard.getByRole('button', { name: 'Save and leave' })).toHaveCount(0);
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(page).toHaveURL(/\/beerxml$/);
+  await expect(source).toHaveValue(lostXml(title));
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(title)}`)).toBe('0');
+});
+
+test('an untouched import page leaves without a guard', async ({ page }) => {
+  await page.goto('/beerxml');
+  await page.getByRole('link', { name: 'Cancel' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+});
+
+test('a lost import response is retained before sending and survives reload with the same request', async ({ page }) => {
+  const title = `Reload import ${Date.now()}`;
+  const bodies = await previewAndLoseImportResponse(page, title);
+  expect(await retainedKeys(page)).toHaveLength(1);
+  await page.reload();
+  const recovery = page.locator('#beerxml-recovery');
+  await expect(recovery).toContainText('may already have been created');
+  await expect(recovery).toContainText('Pinned source');
+  await expect(page.getByLabel('Paste BeerXML')).toHaveValue(lostXml(title));
+  await expect(page.getByLabel('Paste BeerXML')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Import recipe', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Check previous result', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Recipe imported.' })).toBeVisible();
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toBe(bodies[0]);
+  expect(JSON.parse(bodies[0]).request_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(title)}`)).toBe('1');
+  expect(await retainedKeys(page)).toHaveLength(0);
+  await expect(page.getByRole('link', { name: 'Open imported recipe' })).toBeFocused();
+});
+
+for (const scenario of [
+  { name: 'expired', outcome: { ResultExpired: { resource_id: null } }, copy: /no longer holds this import/ },
+  { name: 'identity conflict', outcome: 'RequestIdentityConflict', copy: /bound to different content/ },
+] as const) {
+  test(`a ${scenario.name} check keeps the retained request until it is acknowledged by name`, async ({ page }) => {
+    const title = `Retained ${scenario.name} ${Date.now()}`;
+    const bodies = await previewAndLoseImportResponse(page, title, scenario.outcome);
+    await page.getByRole('button', { name: 'Check previous result', exact: true }).click();
+    const recovery = page.locator('#beerxml-recovery');
+    await expect(recovery).toContainText(scenario.copy);
+    expect(bodies).toHaveLength(2);
+    expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
+    await expect(page.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(0);
+    // The status survives reload; no fresh import is offered until acknowledged.
+    await page.reload();
+    await expect(page.locator('#beerxml-recovery')).toContainText(scenario.copy);
+    await expect(page.getByRole('button', { name: 'Import recipe', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Acknowledge and clear retained request', exact: true }).click();
+    await expect(page.locator('#beerxml-recovery')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Preview', exact: true })).toBeEnabled();
+    expect(await retainedKeys(page)).toHaveLength(0);
+    await expect(page.getByLabel('Paste BeerXML')).toBeEnabled();
+  });
+}
+
+test('leaving after a lost response keeps the retained request and reopening checks the same one', async ({ page }) => {
+  const title = `Dismiss import ${Date.now()}`;
+  const bodies = await previewAndLoseImportResponse(page, title);
+  await page.getByRole('link', { name: 'Back to recipes' }).click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await expect(guard).toContainText('result is unconfirmed');
+  await expect(guard).toContainText('leaving does not cancel it');
+  await expect(guard).not.toContainText(/not created|cancelled by|nothing was/i);
+  await guard.getByRole('button', { name: 'Leave and keep the retained request' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  expect(await retainedKeys(page)).toHaveLength(1);
+  await page.goto('/beerxml');
+  await expect(page.locator('#beerxml-recovery')).toContainText('may already have been created');
+  await page.getByRole('button', { name: 'Check previous result', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Recipe imported.' })).toBeVisible();
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toBe(bodies[0]);
+  expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
+  expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(title)}`)).toBe('1');
+});
+
+test('a retained import is neither shown nor sent under a different account', async ({ page }) => {
+  const email = `beerxml-retained-${Date.now()}@example.test`;
+  const password = 'BeerXmlRetained1234';
+  await createSecondUser(null, { email, name: 'Other brewer', password, workspaceId: getDefaultWorkspaceId() });
+  walCheckpoint();
+  const title = `Scoped import ${Date.now()}`;
+  await previewAndLoseImportResponse(page, title);
+  const other = await page.context().newPage();
+  await loginUser(other, email, password);
+  const leaked: string[] = [];
+  other.on('request', request => { if (request.postData()?.includes(title)) leaked.push(request.url()); });
+  await other.goto('/beerxml');
+  await expect(other.getByLabel('Paste BeerXML')).toHaveValue('');
+  await expect(other.locator('#beerxml-recovery')).toHaveCount(0);
+  expect(leaked).toEqual([]);
+  await other.close();
+});
+
+test('source and interpretation errors are associated with their own controls', async ({ page }) => {
+  await page.goto('/beerxml');
+  let sent = 0;
+  await page.route('**/leptos-api/*_beerxml*', route => { sent++; return route.continue(); });
+  const source = page.getByLabel('Paste BeerXML', { exact: true });
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
+  await expect(source).toHaveAccessibleDescription(/Paste BeerXML or choose a file/);
+  await source.fill(lostXml('Number check'));
+  await page.getByLabel('Recipe number in file').fill('0');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.getByLabel('Recipe number in file')).toHaveAccessibleDescription(/starting at 1/);
+  expect(sent).toBe(0);
+  await page.getByLabel('Recipe number in file').fill('1');
+  await source.fill(`<RECIPES><RECIPE><NAME>Choices</NAME><EFFICIENCY>75</EFFICIENCY><FERMENTABLES><FERMENTABLE><NAME>Malt</NAME><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>`);
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Import preview' })).toContainText('Choices');
+  await expect(page.getByLabel('Source colour', { exact: true })).toHaveAccessibleDescription(/source colour/);
+  await expect(page.getByLabel('Source efficiency', { exact: true })).toHaveAccessibleDescription(/source efficiency/);
+});
+
+test('the preview leads with parsed content and keeps hashes in a disclosure', async ({ page }) => {
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(lostXml('Ordered preview'));
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  const region = page.getByRole('region', { name: 'Import preview' });
+  await expect(region).toContainText('Ordered preview');
+  await expect(region.getByRole('heading', { name: 'Missing or unsupported information' })).toBeVisible();
+  await expect(region.getByText('Original source SHA-256')).toBeHidden();
+  const order = await region.evaluate(node => {
+    const text = node.textContent ?? '';
+    return [text.indexOf('Readiness'), text.indexOf('Missing or unsupported'), text.indexOf('Source estimates'), text.indexOf('SHA-256')];
+  });
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  expect(order.every(index => index >= 0)).toBe(true);
+  await region.getByText('Source details').click();
+  await expect(region.getByText('Original source SHA-256')).toBeVisible();
 });
 
 test('an older preview cannot replace a changed source', async ({ page }) => {
@@ -302,8 +480,8 @@ test('an uncertain import retries the same request without creating another reci
     else await route.fulfill({ response });
   });
   await page.getByRole('button', { name: 'Import recipe' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Retry to recover' })).toBeVisible();
-  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await expect(page.getByText('A recipe may already have been created')).toBeVisible();
+  await page.getByRole('button', { name: 'Check previous result' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Recipe imported' })).toBeVisible();
   expect(requestIds).toHaveLength(2);
   expect(requestIds[1]).toBe(requestIds[0]);

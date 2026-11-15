@@ -13,6 +13,7 @@ pub mod recipe_draft;
 mod recipe_recovery;
 
 pub mod beerxml;
+mod beerxml_recovery;
 pub mod brew_evidence;
 pub mod brew_history;
 pub mod brew_history_presentation;
