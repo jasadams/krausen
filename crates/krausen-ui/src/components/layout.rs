@@ -974,6 +974,10 @@ fn Sidebar(
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h5"/></svg>
                     "Recipes"
                 </a>
+                <a href="/equipment" class="brewery-sidebar__link" aria-current=move || location.pathname.get().starts_with("/equipment").then_some("page")>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3h10M9 3v4l-4 11a2 2 0 002 2h10a2 2 0 002-2L15 7V3M8 14h8"/></svg>
+                    "Equipment"
+                </a>
             </nav>
             <div class="brewery-sidebar__detail" aria-hidden="true"><p>"A little curiosity."<br/>"A better next batch."</p></div>
             <div class="brewery-sidebar__footer">

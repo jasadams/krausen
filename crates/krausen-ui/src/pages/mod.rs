@@ -19,6 +19,8 @@ pub mod brew_history;
 pub mod brew_history_presentation;
 pub mod brew_start;
 pub mod catalogue_picker;
+pub mod equipment;
 pub mod equipment_profiles;
+pub mod recipe_equipment;
 pub mod recipe_editor;
 pub mod recipe_scaling;

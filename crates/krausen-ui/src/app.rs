@@ -22,6 +22,7 @@ use crate::pages::brew_history::{BrewAnalysisPage, RecipeBrewHistoryPage};
 use crate::pages::design_system::DesignSystemPage;
 use crate::pages::onboarding::OnboardingPage;
 use crate::pages::recipe_editor::RecipeEditorPage;
+use crate::pages::equipment::EquipmentPage;
 use crate::pages::recipes::RecipesPage;
 use crate::pages::settings::{
     profile::ProfilePage, security::security_tab::SecurityTab, settings_shell::SettingsShell,
@@ -100,6 +101,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=|| view! { <Redirect path="/recipes"/> }/>
                     <Route path=path!("/onboarding") view=OnboardingPage/>
                     <Route path=path!("/recipes") view=RecipesPage/>
+                    <Route path=path!("/equipment") view=EquipmentPage/>
                     <Route path=path!("/recipe-editor/:id") view=RecipeEditorPage/>
                     <Route path=path!("/brews/:id") view=BrewEvidencePage/>
                     <Route path=path!("/brews/:id/analysis") view=BrewAnalysisPage/>

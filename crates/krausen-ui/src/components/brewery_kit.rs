@@ -226,6 +226,8 @@ pub fn BreweryNotice(
     #[prop(default = false)] warning: bool,
     #[prop(optional)] announcement: NoticeAnnouncement,
     #[prop(optional)] tone: NoticeTone,
+    /// Task choices belonging to this notice; rendered in the shared action group.
+    #[prop(optional)] actions: Option<ChildrenFn>,
 ) -> impl IntoView {
     let class = match if warning { NoticeTone::Warning } else { tone } {
         NoticeTone::Info => "k-notice",
@@ -233,7 +235,7 @@ pub fn BreweryNotice(
         NoticeTone::Warning => "k-notice k-notice--warning",
         NoticeTone::Error => "k-notice k-notice--error",
     };
-    view! { <div class=class role=matches!(announcement, NoticeAnnouncement::Settled).then_some("status")><div><div class="k-notice__title">{title}</div><div class="k-notice__body">{body}</div></div></div> }
+    view! { <div class=class role=matches!(announcement, NoticeAnnouncement::Settled).then_some("status")><div><div class="k-notice__title">{title}</div><div class="k-notice__body">{body}</div>{actions.map(|slot| view! { <BreweryActionGroup>{slot()}</BreweryActionGroup> })}</div></div> }
 }
 
 /// A return bookmark owned by the logical task, not by a replaceable dialog view.
