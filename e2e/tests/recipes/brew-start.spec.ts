@@ -1308,7 +1308,7 @@ for (const focusCase of ['newer successor', 'no-op target'] as const) {
       window.requestAnimationFrame = callback => raf(time => {
         if (!document.querySelector('#workspace-draft-warning[open]')) {
           window.requestAnimationFrame = raf;
-          const successor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find(link => link.pathname === '/settings/profile');
+          const successor = document.querySelector<HTMLButtonElement>('[aria-controls="account-popover"]');
           successor!.focus(); // newer real focus, no pointer/key epoch change
           (window as any).__evidenceSuccessorFocused = true;
         }
@@ -1319,7 +1319,7 @@ for (const focusCase of ['newer successor', 'no-op target'] as const) {
     await expect(guard).not.toBeVisible();
     if (focusCase === 'newer successor') {
       await expect.poll(() => page.evaluate(() => (window as any).__evidenceSuccessorFocused === true)).toBe(true);
-      await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeFocused();
+      await expect(page.getByRole('button', { name: /^Account menu/ })).toBeFocused();
     } else await expect(page.locator('#evidence-return-anchor')).toBeFocused();
     await expect(page.locator('#brew-note')).toHaveValue('Preserve this raw note and its native editing state');
     expect(writes).toHaveLength(0);

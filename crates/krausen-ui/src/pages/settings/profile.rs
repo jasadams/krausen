@@ -47,7 +47,7 @@ pub fn ProfilePage() -> impl IntoView {
                                     <Show when=move || !is_personal>
                                         <ProfileInfoCard data=data_profile.clone()/>
                                     </Show>
-                                    <AppearanceCard data=data_appearance/>
+                                    <div id="appearance"><AppearanceCard data=data_appearance/></div>
                                     <McpConnectionCard is_personal=is_personal/>
                                     <Show when=move || !is_personal && has_invitations>
                                         <InvitationsCard invitations=inv_list.clone()/>

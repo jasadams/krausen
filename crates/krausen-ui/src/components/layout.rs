@@ -661,6 +661,18 @@ impl EditorGuard {
                             "Workspace change completed, but newer work prevents the old page reload. Your local work remains retained.",
                         )
                     } else {
+                        // The browser's access token still carries the old
+                        // workspace until the existing refresh endpoint re-mints
+                        // it from the server-side choice. Without this the new
+                        // context can never be verified.
+                        #[cfg(target_arch = "wasm32")]
+                        let refreshed = crate::utils::auth_refresh::try_refresh().await;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let refreshed = false;
+                        if !refreshed {
+                            self.transition_failed(navigation, "The workspace choice was saved, but this session could not be refreshed. The result is unconfirmed; check the current context before trying again. Your work remains retained.");
+                            return;
+                        }
                         let verified = if let Some(account_id) = original_account.clone() {
                             crate::pages::recipe_editor::current_context_matches(
                                 &krausen_types::request_context::OperationIntent {
@@ -673,23 +685,26 @@ impl EditorGuard {
                             false
                         };
                         if !verified || !self.lease_current(navigation) {
-                            self.transition_failed(navigation, "The resulting workspace context could not be confirmed for the original account. No old page reload was applied.");
+                            self.transition_failed(navigation, "The workspace choice was saved and this session was refreshed, but the new context could not be confirmed here. Reload to continue in the current workspace; your local work remains retained.");
                             return;
                         }
+                        // Land on the destination workspace's Recipes, never the
+                        // old workspace's entity URL (IA-003).
                         let target = web_sys::window()
-                            .and_then(|w| w.location().href().ok())
+                            .and_then(|w| w.location().origin().ok())
+                            .map(|origin| format!("{origin}/recipes"))
                             .unwrap_or_default();
                         if target.is_empty() {
                             self.transition_failed(
                                 navigation,
-                                "Could not identify the original reload destination.",
+                                "Could not identify the destination workspace's recipes.",
                             );
                             return;
                         }
-                        self.arm_document_departure(navigation, target);
+                        self.arm_document_departure(navigation, target.clone());
                         web_sys::window()
-                            .is_none_or(|w| w.location().reload().is_err())
-                            .then_some("Workspace changed, but the page could not reload.")
+                            .is_none_or(|w| w.location().set_href(&target).is_err())
+                            .then_some("Workspace changed, but the page could not open its recipes.")
                     }
                 }
                 EditorDestination::Logout => {
@@ -726,6 +741,93 @@ pub fn Layout() -> impl IntoView {
     let user_info = LocalResource::new(get_sidebar_user);
     let mobile_sidebar_open = RwSignal::new(false);
     let editor_guard = expect_context::<EditorGuard>();
+    let location = leptos_router::hooks::use_location();
+    // Close transient navigation only when a route has COMMITTED.
+    Effect::new(move |previous: Option<String>| {
+        let path = location.pathname.get();
+        if previous.as_ref().is_some_and(|previous| *previous != path) {
+            mobile_sidebar_open.set(false);
+        }
+        path
+    });
+    // A dirty-work guard replaces the drawer as the single modal; the exact
+    // destination stays captured by the guard, never navigated behind it.
+    let guard_was_open = StoredValue::new(false);
+    Effect::new(move |_| {
+        if editor_guard.notice.get() {
+            guard_was_open.set_value(true);
+            mobile_sidebar_open.set(false);
+        } else if guard_was_open.get_value() {
+            guard_was_open.set_value(false);
+            // The guard's opener may have been inside the closed drawer or popup,
+            // so nothing visible would receive focus on Stay. Restore the
+            // visible shell opener unless focus went somewhere deliberate.
+            #[cfg(target_arch = "wasm32")]
+            request_animation_frame(move || {
+                use wasm_bindgen::JsCast;
+                let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+                    return;
+                };
+                let lost = document
+                    .active_element()
+                    .is_none_or(|el| matches!(el.tag_name().as_str(), "BODY" | "HTML"));
+                if !lost {
+                    return;
+                }
+                for selector in ["#mobile-navigation-open", "[aria-controls=\"account-popover\"]"] {
+                    if let Some(opener) = document
+                        .query_selector(selector)
+                        .ok()
+                        .flatten()
+                        .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+                        && opener.get_client_rects().length() > 0
+                    {
+                        if let Err(error) = opener.focus() {
+                            tracing::warn!(?error, "Unable to restore shell opener focus");
+                        }
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::{JsCast, closure::Closure};
+        // Crossing to the desktop shell must not leave a modal drawer (a second
+        // interactive copy) open over it.
+        if let Some(query) = web_sys::window()
+            .and_then(|w| w.match_media("(min-width: 768px)").ok().flatten())
+        {
+            let change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                // The copy in the other layout becomes invisible; its popup must
+                // not stay logically open (and reappear) across the seam.
+                if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+                    for id in ["account-popover", "mobile-account-popover"] {
+                        if let Some(popup) = document.get_element_by_id(id) {
+                            if popup.matches(":popover-open").unwrap_or(false) {
+                                let _ = js_sys::Reflect::get(popup.as_ref(), &"hidePopover".into())
+                                    .and_then(|method| method.dyn_into::<js_sys::Function>())
+                                    .and_then(|method| method.call0(popup.as_ref()));
+                            }
+                        }
+                    }
+                }
+                if web_sys::window()
+                    .and_then(|w| w.match_media("(min-width: 768px)").ok().flatten())
+                    .is_some_and(|query| query.matches())
+                {
+                    mobile_sidebar_open.try_set(false);
+                }
+            });
+            let _ = query.add_event_listener_with_callback("change", change.as_ref().unchecked_ref());
+            let listener = send_wrapper::SendWrapper::new((query, change));
+            on_cleanup(move || {
+                let (query, change) = &*listener;
+                let _ = query.remove_event_listener_with_callback("change", change.as_ref().unchecked_ref());
+            });
+        }
+    }
     let notice_was_open = StoredValue::new(false);
     let notice_open_navigation = StoredValue::new(0_u64);
     Effect::new(move |_| {
@@ -862,7 +964,7 @@ pub fn Layout() -> impl IntoView {
                 <Show when=move || editor_guard.notice.get()>
                 {move || {
                 let recipe = editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Recipe);
-                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) { "Import result unconfirmed" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice>
+                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) { "Import result unconfirmed" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice return_focus_fallback="mobile-navigation-open".to_string()>
                     {move || if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) {
                         view! { <p>"An import was sent and its result is unconfirmed. The original request is retained in this account and workspace; leaving does not cancel it, and you can check it later."</p> }.into_any()
                     } else {
@@ -895,14 +997,15 @@ pub fn Layout() -> impl IntoView {
                 }}
                 </Show>
 
-                <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open>
-                    <Sidebar user_info=user_info mobile=true/>
+                <crate::components::BreweryDialog id="mobile-navigation" title="Navigation" description="Choose a destination in your workspace." open=mobile_sidebar_open return_focus_fallback="sidebar-recipes-link".to_string()>
+                    <Sidebar user_info=user_info drawer=mobile_sidebar_open/>
                 </crate::components::BreweryDialog>
 
                 <div class="app-shell__content flex-1 flex flex-col overflow-hidden">
                     // Mobile header bar
                     <div class="app-shell__mobile flex items-center gap-3 px-4 py-3 border-b border-border bg-background print-hide">
                         <Button variant=ButtonVariant::GhostMuted
+                            attr:id="mobile-navigation-open"
                             on:click=move |_| mobile_sidebar_open.set(true)
                             aria_label="Toggle menu"
                             attr:aria-controls="mobile-navigation"
@@ -913,7 +1016,6 @@ pub fn Layout() -> impl IntoView {
                             </svg>
                         </Button>
                         <crate::components::BreweryBrand/>
-                        <span class="app-shell__workspace">{move || user_info.get().and_then(Result::ok).and_then(|user| user.workspace_name).unwrap_or_default()}</span>
                     </div>
                     <main class="app-shell__main flex-1 overflow-y-auto">
                         <Show when=move || !editor_guard.navigation_error.get().is_empty()>
@@ -927,47 +1029,79 @@ pub fn Layout() -> impl IntoView {
     }
 }
 
-/// Sidebar component with navigation and user menu.
+/// Sidebar component: destinations and the compact account popover. Rendered
+/// once for desktop and once inside the mobile Navigation dialog; only one is
+/// ever interactive (the other is hidden or in a closed dialog).
 #[component]
 fn Sidebar(
     user_info: LocalResource<Result<SidebarUser, ServerFnError>>,
-    #[prop(default = false)] mobile: bool,
+    /// The mobile Navigation dialog's state; `None` on the desktop sidebar.
+    #[prop(optional)]
+    drawer: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let mobile = drawer.is_some();
     let editor_guard = expect_context::<EditorGuard>();
-    let workspace_dialog = RwSignal::new(false);
-    let account_dialog = RwSignal::new(false);
+    let account_open = RwSignal::new(false);
     let location = leptos_router::hooks::use_location();
-    let theme = crate::components::theme::use_theme();
     // Dismiss only after navigation commits; the document-capture draft guard
-    // can still intercept Settings and keep this dialog/draft intact on Stay.
+    // can still intercept Settings and keep this popup/draft intact on Stay.
     Effect::new(move |_| {
         location.pathname.get();
-        account_dialog.set(false);
+        account_open.set(false);
+    });
+    // A dirty-work guard becomes the single modal: the account popup yields to it.
+    Effect::new(move |_| {
+        if editor_guard.notice.get() {
+            account_open.set(false);
+        }
+    });
+    // A hidden drawer must not leave a popup open that reappears with it.
+    if let Some(drawer) = drawer {
+        Effect::new(move |_| {
+            if !drawer.get() {
+                account_open.set(false);
+            }
+        });
+    }
+    let pending_status = move || match (
+        editor_guard.transition.get(),
+        editor_guard.destination.get(),
+    ) {
+        (GuardTransition::Pending(_), Some(EditorDestination::Workspace(_))) => {
+            Some("Switching workspace…")
+        }
+        (GuardTransition::Pending(_), Some(EditorDestination::Logout)) => Some("Signing out…"),
+        _ => None,
+    };
+    let suffix = if mobile { "mobile-" } else { "" };
+    let arrived = Callback::new(move |()| {
+        account_open.set(false);
+        if let Some(drawer) = drawer {
+            if location.pathname.get_untracked() == "/settings/profile" {
+                drawer.set(false);
+            }
+        }
     });
 
     view! {
         <div class=if mobile { "brewery-sidebar brewery-sidebar--mobile" } else { "brewery-sidebar" }>
-            // Logo
             <div class="brewery-sidebar__brand">
                 <crate::components::BreweryBrand/>
             </div>
 
-            <div class="brewery-sidebar__workspace">
-                <Button variant=ButtonVariant::Secondary class="w-full" on:click=move |_| workspace_dialog.set(true) aria_label="Switch workspace">
-                    <span class="min-w-0 truncate">{move || user_info.get().and_then(Result::ok).and_then(|user| user.workspace_name).unwrap_or_else(|| "Your brewery".into())}</span>
-                    <span aria-hidden="true">"⌄"</span>
-                </Button>
-            </div>
-            <crate::components::BreweryDialog id=if mobile { "mobile-workspace-switcher" } else { "workspace-switcher" } title="Your workspaces" description="Choose a workspace. Unsaved recipe changes remain protected." open=workspace_dialog>
-                <Show when=move || workspace_dialog.get()>
-                    <WorkspaceSwitcher open=workspace_dialog/>
-                </Show>
-            </crate::components::BreweryDialog>
-
-            // Navigation
             <nav class="brewery-sidebar__nav" aria-label="Your brewery">
                 <p class="brewery-sidebar__label">"Your brewery"</p>
-                <a href="/recipes" class="brewery-sidebar__link" aria-current=move || {
+                <a href="/recipes" id=format!("{suffix}sidebar-recipes-link") class="brewery-sidebar__link"
+                    on:click=move |_| {
+                        // Same-route arrival commits no route change; close here.
+                        // A guarded click never reaches this handler.
+                        if let Some(drawer) = drawer {
+                            if location.pathname.get_untracked() == "/recipes" {
+                                drawer.set(false);
+                            }
+                        }
+                    }
+                    aria-current=move || {
                     let path = location.pathname.get();
                     (path == "/recipes" || path.starts_with("/recipes/") || path.starts_with("/recipe-editor/") || path.starts_with("/brews/")).then_some("page")
                 }>
@@ -980,133 +1114,189 @@ fn Sidebar(
                 </a>
             </nav>
             <div class="brewery-sidebar__detail" aria-hidden="true"><p>"A little curiosity."<br/>"A better next batch."</p></div>
+
             <div class="brewery-sidebar__footer">
-                <nav class="brewery-sidebar__group" aria-label="The details">
-                <p class="brewery-sidebar__label">"The details"</p>
-                <Button variant=ButtonVariant::GhostMuted on:click=move |_| {
-                    if let Some(theme) = theme {
-                        crate::components::theme::set_theme(if theme.effective.get_untracked() == "dark" { "light" } else { "dark" });
-                    }
-                }>{move || if theme.is_some_and(|theme| theme.effective.get() == "dark") { "Light appearance" } else { "Dark appearance" }}</Button>
-                <a href="/settings/profile" class="brewery-sidebar__link" aria-current=move || location.pathname.get().starts_with("/settings").then_some("page")>
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                    </svg>
-                    "Settings"
-                </a>
-            </nav>
-
-            // User menu at bottom
-            <div class="brewery-sidebar__account">
-                <Suspense fallback=|| view! {
-                    <div class="px-3 py-2 text-sm text-[var(--color-sidebar-foreground-muted)]">"Loading..."</div>
-                }>
-                    {move || user_info.get().map(|result| {
-                        match result {
-                            Ok(ref user) => {
-                            let display_name = user.name.clone().unwrap_or_else(|| user.email.clone());
-                            let avatar_char = user.name.as_ref().and_then(|n| n.chars().next()).unwrap_or('?').to_uppercase().to_string();
-                            let ws_name = user.workspace_name.clone().unwrap_or_default();
-                            view! {
-                                <Button variant=ButtonVariant::GhostMuted class="w-full"
-                                    on:click=move |_| account_dialog.set(true)
-                                    aria_label="Account menu"
-                                >
-                                    // Avatar
-                                    <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold flex-shrink-0">
-                                        {avatar_char.clone()}
-                                    </div>
-                                    <div class="flex-1 min-w-0">
-                                        <div class="text-[var(--color-sidebar-foreground)] font-medium truncate text-sm">
-                                            {display_name.clone()}
-                                        </div>
-                                        <div class="text-[var(--color-sidebar-foreground-muted)] text-xs truncate">
-                                            {ws_name.clone()}
-                                        </div>
-                                    </div>
-                                    // Chevron
-                                    <svg class="w-4 h-4 text-[var(--color-sidebar-foreground-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                    </svg>
-                                </Button>
-
-                                // Dropdown menu
-                                <crate::components::BreweryDialog id=if mobile { "mobile-account-menu" } else { "account-menu" } title="Your account" description="Manage your account or sign out." open=account_dialog>
-                                        // Workspace switcher (includes separator only when shown)
-                                        <a href="/settings/profile" class="brewery-sidebar__link">
-                                            "Settings"
-                                        </a>
-                                        <Button variant=ButtonVariant::GhostMuted
-                                            on:click=move |_| {
-                                                account_dialog.set(false);
-                                                editor_guard.request(EditorDestination::Logout);
-                                            }
-                                        >
-                                            "Sign Out"
-                                        </Button>
-                                </crate::components::BreweryDialog>
-                            }.into_any()
+                {move || pending_status().map(|text| view! { <p class="brewery-sidebar__pending" role="status">{text}</p> })}
+                <div class="brewery-sidebar__account">
+                    <Suspense fallback=|| view! {
+                        <div class="px-3 py-2 text-sm text-[var(--color-sidebar-foreground-muted)]">"Loading..."</div>
+                    }>
+                        {move || user_info.get().map(|result| match result {
+                            Ok(user) => match drawer {
+                                Some(drawer) => view! { <AccountPopover user=user open=account_open drawer=drawer arrived=arrived/> }.into_any(),
+                                None => view! { <AccountPopover user=user open=account_open arrived=arrived/> }.into_any(),
                             },
                             Err(_) => view! {
                                 <div class="px-3 py-2 text-sm text-[var(--color-sidebar-foreground-muted)]">"Not signed in"</div>
                             }.into_any(),
-                        }
-                    })}
-                </Suspense>
-            </div>
+                        })}
+                    </Suspense>
+                </div>
             </div>
         </div>
     }
 }
 
-/// Workspace switcher — shows list of workspaces, allows switching.
+/// Compact, nonmodal account popup (IA-002, ACC-002): ordinary links/buttons in
+/// normal Tab order. Workspace choices exist only for a verified >1 membership
+/// list (IA-003); every other state keeps the account actions available.
 #[component]
-fn WorkspaceSwitcher(open: RwSignal<bool>) -> impl IntoView {
+fn AccountPopover(
+    user: SidebarUser,
+    open: RwSignal<bool>,
+    #[prop(optional)] drawer: Option<RwSignal<bool>>,
+    /// Same-route arrival commits no route change, so nothing else would close
+    /// the popup/drawer. A guarded click never reaches the link handlers.
+    arrived: Callback<()>,
+) -> impl IntoView {
+    let mobile = drawer.is_some();
     let editor_guard = expect_context::<EditorGuard>();
+    let display_name = user.name.clone().unwrap_or_else(|| user.email.clone());
+    let avatar = display_name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "?".into());
+    let show_email = user.name.is_some();
+    let email = user.email.clone();
+    let accessible_name = format!("Account menu, {display_name}");
+    let identity_name = display_name.clone();
+    let trigger_name = display_name.clone();
+    let trigger = ViewFn::from(move || {
+        view! {
+            <span class="brewery-account__avatar" aria-hidden="true">{avatar.clone()}</span>
+            <span class="brewery-account__name">{trigger_name.clone()}</span>
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        }
+        .into_any()
+    });
+
+    view! {
+        <crate::components::BreweryPopover
+            id=if mobile { "mobile-account-popover" } else { "account-popover" }
+            label="Account menu"
+            open=open
+            placement=crate::components::popover::Placement::TOP_START
+            trigger_variant=ButtonVariant::GhostMuted
+            trigger_class="brewery-account__trigger"
+            trigger_aria_label=accessible_name
+            trigger_content=trigger
+        >
+            <div class="brewery-account__identity">
+                <p class="brewery-account__identity-name">{identity_name}</p>
+                {show_email.then(|| view! { <p class="brewery-account__identity-email">{email.clone()}</p> })}
+            </div>
+            <Show when=move || open.get()>
+                <WorkspaceChoices open=open mobile=mobile/>
+            </Show>
+            <a href="/settings/profile" class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Settings"</a>
+            <a href="/settings/profile#appearance" class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Appearance"</a>
+            <Button variant=ButtonVariant::GhostMuted class="w-full"
+                disabled=Signal::derive(move || editor_guard.pending.get())
+                on:click=move |_| {
+                    open.set(false);
+                    editor_guard.request(EditorDestination::Logout);
+                }
+            >
+                "Sign Out"
+            </Button>
+        </crate::components::BreweryPopover>
+    }
+}
+
+/// Workspace identity and choices inside the account popup. Mounted fresh each
+/// time the popup opens so choices are never stale. Only a successful list with
+/// more than one membership shows names; zero/loading/error never infer a choice.
+#[component]
+fn WorkspaceChoices(open: RwSignal<bool>, mobile: bool) -> impl IntoView {
+    let editor_guard = expect_context::<EditorGuard>();
+    let heading_id = if mobile { "mobile-account-workspaces-heading" } else { "account-workspaces-heading" };
     let workspaces = LocalResource::new(list_user_workspaces);
 
     view! {
-        <Suspense fallback=|| view! { <p role="status">"Loading workspaces…"</p> }>
-            {move || workspaces.get().map(|result| {
-                match result {
-                    Ok(ref ws_list) if !ws_list.is_empty() => {
-                        let items = ws_list.clone();
-                        view! {
-                            <div class="px-3 py-1 text-xs text-muted-foreground font-medium uppercase tracking-wider">
-                                "Workspaces"
-                            </div>
-                            {items.into_iter().map(|ws| {
-                                let ws_id = ws.workspace_id.clone();
-                                let name = ws.name.clone();
-                                let is_current = ws.is_current;
-                                view! {
-                                    <Button variant=ButtonVariant::GhostMuted class="w-full"
-                                        disabled=is_current
-                                        on:click=move |_| {
-                                            let ws_id = ws_id.clone();
-                                            open.set(false);
-                                            editor_guard.request(EditorDestination::Workspace(ws_id));
-                                        }
-                                    >
-                                        {if is_current {
-                                            view! { <span class="w-2 h-2 rounded-full bg-primary flex-shrink-0"/> }.into_any()
-                                        } else {
-                                            view! { <span class="w-2 h-2 flex-shrink-0"/> }.into_any()
-                                        }}
-                                        <span class="min-w-0 truncate">
-                                            {name}
-                                        </span>
-                                    </Button>
+        <Suspense fallback=|| view! { <p class="brewery-account__status" role="status">"Checking workspaces…"</p> }>
+            {move || workspaces.get().map(|result| match result {
+                Ok(list) if list.len() > 1 => view! {
+                    <section class="brewery-account__workspaces" aria-labelledby=heading_id>
+                        <h3 id=heading_id class="brewery-account__heading">"Workspaces"</h3>
+                        <ul class="brewery-account__list">
+                            {list.into_iter().map(|workspace| {
+                                let id = workspace.workspace_id.clone();
+                                if workspace.is_current {
+                                    view! { <li><span class="brewery-account__current" aria-current="true">{workspace.name}" (current)"</span></li> }.into_any()
+                                } else {
+                                    view! { <li>
+                                        <Button variant=ButtonVariant::GhostMuted class="w-full"
+                                            disabled=Signal::derive(move || editor_guard.pending.get())
+                                            on:click=move |_| {
+                                                open.set(false);
+                                                editor_guard.request(EditorDestination::Workspace(id.clone()));
+                                            }
+                                        >
+                                            <span class="min-w-0 truncate">{workspace.name}</span>
+                                        </Button>
+                                    </li> }.into_any()
                                 }
                             }).collect_view()}
-                            <div class="border-t border-border my-1"/>
-                        }.into_any()
-                    }
-                    Ok(_) => view! { <p>"No workspaces available."</p> }.into_any(),
-                    Err(_) => view! { <crate::components::BreweryNotice title="Unable to load workspaces" body="Close this dialog and reopen it to try again." warning=true announcement=crate::components::NoticeAnnouncement::Settled/> }.into_any(),
-                }
+                        </ul>
+                    </section>
+                }.into_any(),
+                Ok(list) if list.is_empty() => view! {
+                    <p class="brewery-account__status" role="status">"No workspace is available for this account."</p>
+                }.into_any(),
+                // Exactly one verified membership: no switching entry.
+                Ok(_) => ().into_any(),
+                Err(_) => view! {
+                    <crate::components::BreweryNotice title="Unable to load workspaces" body="Workspace choices could not be checked. Your account actions still work." warning=true announcement=crate::components::NoticeAnnouncement::Settled/>
+                    <Button variant=ButtonVariant::Secondary on:click=move |_| workspaces.refetch()>"Retry"</Button>
+                }.into_any(),
             })}
         </Suspense>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user(name: Option<&str>) -> SidebarUser {
+        SidebarUser {
+            user_id: "u".into(),
+            workspace_id: Some("w".into()),
+            name: name.map(str::to_owned),
+            email: "brewer@example.test".into(),
+            workspace_name: Some("Foreign workspace name".into()),
+            is_personal_mode: false,
+            is_self_hosted: true,
+            theme_preference: "system".into(),
+        }
+    }
+
+    // IA-002/ACC-002: ordinary native popover; no modal, menu roles or shell
+    // workspace furniture. Workspace names come only from a verified list.
+    #[test]
+    fn account_entry_is_an_ordinary_nonmodal_popover_without_workspace_furniture() {
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(EditorGuard::new());
+            let open = RwSignal::new(false);
+            let html = view! { <AccountPopover user=user(Some("Ada Brewer")) open=open arrived=Callback::new(|()| {})/> }.to_html();
+            assert!(html.contains("aria-label=\"Account menu, Ada Brewer\""));
+            assert!(html.contains("popovertarget=\"account-popover\""));
+            assert!(html.contains("popover=\"auto\""));
+            assert!(html.contains("href=\"/settings/profile\""));
+            assert!(html.contains("href=\"/settings/profile#appearance\""));
+            assert!(html.contains("Sign Out"));
+            assert!(html.contains("brewer@example.test"));
+            assert!(!html.contains("role=\"menu"));
+            assert!(!html.contains("<dialog"));
+            assert!(!html.contains("Foreign workspace name"));
+            assert!(!html.contains("Switch workspace"));
+            let mobile = view! { <AccountPopover user=user(None) open=open drawer=RwSignal::new(true) arrived=Callback::new(|()| {})/> }.to_html();
+            assert!(mobile.contains("id=\"mobile-account-popover\""));
+            assert!(mobile.contains("aria-label=\"Account menu, brewer@example.test\""));
+        });
     }
 }

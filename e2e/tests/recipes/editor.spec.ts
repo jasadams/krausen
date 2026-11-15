@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, seedWorkspace, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, openAccount, openSettings, seedWorkspace, setAppearance, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -102,7 +102,7 @@ test('disposed initial recovery authorization cannot write into the retired edit
   try {
     await page.goto('/recipe-editor/new');
     await started;
-    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await openSettings(page);
     await expect(page).toHaveURL(/settings\/profile/);
     release();
     await page.unrouteAll({ behavior: 'wait' });
@@ -203,7 +203,7 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
       await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       const conflict = page.getByRole('region', { name: 'Save conflict', exact: true });
       await expect(conflict).toContainText('the current saved revision is 3');
-      const account = page.getByRole('button', { name: 'Account menu', exact: true });
+      const account = page.getByRole('button', { name: /^Account menu/ });
       await account.focus();
       release();
       await page.unrouteAll({ behavior: 'wait' });
@@ -213,7 +213,8 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
       expect(errors).toEqual([]);
       return;
     }
-    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    const settingsPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+    await settingsPopup.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.getByRole('dialog', { name: 'Unsaved recipe changes' }).getByRole('button', { name: 'Discard and leave' }).click();
     await expect(page).toHaveURL(/settings\/profile/);
     release();
@@ -250,7 +251,7 @@ test('a late committed save cannot leave or rewrite the address after confirmed 
     completed();
   });
   try {
-    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await openSettings(page);
     const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
     await guard.getByRole('button', { name: 'Save and leave', exact: true }).click();
     await started;
@@ -351,7 +352,7 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await started;
     await expect(volume).toBeHidden();
-    const account = page.getByRole('button', { name: 'Account menu', exact: true });
+    const account = page.getByRole('button', { name: /^Account menu/ });
     await account.focus();
     release();
     await finished;
@@ -384,7 +385,7 @@ test('a disposed editor ignores a delayed focus read without reactive panic', as
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await started;
-    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await openSettings(page);
     await expect(page).toHaveURL(/settings\/profile/);
     release();
     await finished;
@@ -889,9 +890,11 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       // Existing login isolation initializes Light on navigation. Exercise the
       // real appearance control and assert the actual theme, not stored intent.
       if (await page.locator('html').evaluate(element => element.classList.contains('dark')) !== (theme === 'dark')) {
-        if (width < 768) await page.getByRole('button', { name: 'Toggle menu', exact: true }).click();
-        await page.getByRole('button', { name: theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
-        if (width < 768) await page.keyboard.press('Escape');
+        // Appearance is chosen in Profile; use the desktop shell for it.
+        const restore = page.viewportSize()!;
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await setAppearance(page, theme as 'light' | 'dark');
+        await page.setViewportSize(restore);
       }
       await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -1121,12 +1124,11 @@ test('shared kit native popovers fit the real changed visual viewport', async ({
 test('shared kit native popovers preserve the existing workspace error announcement', async ({ page }) => {
   await page.goto('/recipes');
   await page.route('**/leptos-api/list_user_workspaces*', route => route.fulfill({ status: 503, body: 'workspace lookup unavailable' }));
-  await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Your workspaces', exact: true });
-  await expect(dialog.getByText('Unable to load workspaces', { exact: true })).toBeVisible();
-  await expect(dialog.getByRole('status').filter({ hasText: 'Unable to load workspaces' })).toBeVisible();
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await expect(popup.getByText('Unable to load workspaces', { exact: true })).toBeVisible();
+  await expect(popup.getByRole('status').filter({ hasText: 'Unable to load workspaces' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
+  await expect(popup).toBeHidden();
 });
 
 test('a dirty new recipe remains private to its original account and workspace', async ({ page }) => {
@@ -1149,8 +1151,8 @@ test('a dirty new recipe remains private to its original account and workspace',
   page.on('request', request => {
     if (watchForDraft && request.postData()?.includes('Private unsaved switch draft')) leakedRequests.push(request.url());
   });
-  await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
-  await page.getByRole('button', { name: otherName }).click();
+  const accountPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await accountPopup.getByRole('button', { name: otherName, exact: true }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Stay' }).click();
@@ -1516,7 +1518,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Navigation draft');
   await page.getByLabel('Batch volume (L)').fill('-');
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
@@ -1526,7 +1528,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Navigation draft');
   await page.getByLabel('Batch volume (L)').fill('20');
   await page.route('**/leptos-api/save_recipe*', route => route.abort('failed'));
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(guard.getByRole('status').filter({ hasText: 'Save failed' })).toContainText('Save failed');
   await expect(page).toHaveURL(/recipe-editor/);
@@ -1534,7 +1536,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
   await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeDisabled();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await page.unroute('**/leptos-api/save_recipe*');
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(page).toHaveURL(/settings\/profile/);
 });
@@ -1613,7 +1615,7 @@ test('save and leave waits for a successful revision before navigating', async (
   await page.goto('/recipe-editor/new');
   const name = `Save before leave ${Date.now()}`;
   await page.getByLabel('Recipe name', { exact: true }).fill(name);
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
@@ -1698,7 +1700,7 @@ test('a pending save cannot be discarded while its result is uncertain', async (
     await new Promise(resolve => setTimeout(resolve, 1200));
     await route.fulfill({ response });
   });
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(guard.getByRole('button', { name: 'Discard and leave' })).toBeDisabled();
@@ -1770,8 +1772,8 @@ test('a failed workspace switch is reported after choosing to discard', async ({
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Draft before switch');
   await page.route('**/leptos-api/switch_workspace*', route => route.abort('failed'));
-  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
-  await page.getByRole('button', { name, exact: true }).click();
+  const switchPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await switchPopup.getByRole('button', { name, exact: true }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not switch workspaces.');
@@ -1782,8 +1784,8 @@ test('a failed sign-out is reported after choosing to discard', async ({ page })
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Draft before sign-out');
   await page.route('**/leptos-api/logout*', route => route.abort('failed'));
-  await page.getByRole('button', { name: new RegExp(DEFAULT_TEST_USER.email) }).click();
-  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  const signOutPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await signOutPopup.getByRole('button', { name: 'Sign Out', exact: true }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not sign out.');
@@ -1794,7 +1796,7 @@ test('repeated guarded Back Forward Stay preserves native entries and the exact 
   await page.goto('/recipes');
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/\/settings\/profile$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
@@ -1834,7 +1836,7 @@ test('recipe discard publishes its reset generation before the native departure 
   await page.goto('/recipes');
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/\/settings\/profile$/);
   const target = await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length }));
   await page.evaluate(() => history.back());
@@ -1858,7 +1860,7 @@ test('native asynchronous restoration rejection exposes an owned retry without r
   await page.goto('/recipes');
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/\/settings\/profile$/);
   const destinationKey = await page.evaluate(() => (window as any).navigation.currentEntry.key);
   await page.evaluate(() => history.back());
@@ -1906,7 +1908,7 @@ test(`Stay during held native restoration fences ${successor} after rejection`, 
   await page.goto('/recipes');
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/\/settings\/profile$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
@@ -1945,7 +1947,7 @@ test(`Stay during held native restoration fences ${successor} after rejection`, 
     await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
     await expect(guard).toBeVisible();
   } else if (successor === 'new focus') {
-    await page.getByRole('link', { name: 'Settings', exact: true }).first().focus();
+    await page.getByRole('button', { name: /^Account menu/ }).focus();
   }
   await page.evaluate(() => (window as any).__rejectHeldSourceRestoration(new DOMException('Controlled failure after Stay', 'AbortError')));
   // A settled animation frame follows the real rejected-promise continuation.
@@ -1956,7 +1958,7 @@ test(`Stay during held native restoration fences ${successor} after rejection`, 
     if (successor === 'new destination') await expect(guard).toBeVisible();
     else {
       await expect(guard).not.toBeVisible();
-      await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeFocused();
+      await expect(page.getByRole('button', { name: /^Account menu/ })).toBeFocused();
     }
     expect(await page.evaluate(() => (window as any).__sourceRestorationCalls)).toEqual([source.key, source.key]);
     return;
@@ -1985,7 +1987,7 @@ test.fixme('feature-disabled history must preserve actual Forward Stay entry and
   await page.goto('/recipes');
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/\/settings\/profile$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
@@ -2024,7 +2026,7 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
   await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Save failed' })).toBeVisible();
   expect(requests).toHaveLength(1);
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes', exact: true });
   await expect(guard).toBeVisible();
   // The transport has finished, but the server already committed. Local discard

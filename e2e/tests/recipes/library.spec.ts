@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, walCheckpoint, openSettings } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -336,7 +336,7 @@ test('a delayed denial after leaving the library does not access disposed UI sta
   });
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await startedPromise;
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await openSettings(page);
   await expect(page).toHaveURL(/settings\/profile/);
   release();
   await completedPromise;

@@ -379,9 +379,6 @@
   .mx-auto {
     margin-inline: auto;
   }
-  .my-1 {
-    margin-block: calc(var(--spacing) * 1);
-  }
   .my-6 {
     margin-block: calc(var(--spacing) * 6);
   }
@@ -463,9 +460,6 @@
   .table {
     display: table;
   }
-  .h-2 {
-    height: calc(var(--spacing) * 2);
-  }
   .h-3 {
     height: calc(var(--spacing) * 3);
   }
@@ -546,9 +540,6 @@
   }
   .w-1\/3 {
     width: calc(1 / 3 * 100%);
-  }
-  .w-2 {
-    width: calc(var(--spacing) * 2);
   }
   .w-2\/3 {
     width: calc(2 / 3 * 100%);
@@ -3583,14 +3574,6 @@
 .app-shell__mobile {
   display: none;
 }
-.app-shell__workspace {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--k-color-muted);
-  font-size: var(--k-font-sm);
-}
 .app-shell__content, .app-shell__main {
   min-width: 0;
 }
@@ -3609,13 +3592,6 @@
 }
 .brewery-sidebar__brand {
   padding: var(--k-space-5);
-}
-.brewery-sidebar__workspace {
-  margin: var(--k-space-2) var(--k-space-4) var(--k-space-7);
-  min-height: 60px;
-  border: 1px solid var(--k-color-border-strong);
-  border-radius: var(--k-radius-sm);
-  padding: var(--k-space-2);
 }
 .brewery-sidebar__nav, .brewery-sidebar__footer {
   display: grid;
@@ -3680,6 +3656,73 @@
   gap: var(--k-space-3);
   padding: var(--k-space-2);
   min-width: 0;
+}
+.brewery-sidebar__pending {
+  padding: 0 var(--k-space-3);
+  color: var(--k-color-muted);
+  font-size: var(--k-font-sm);
+}
+.brewery-sidebar__account > * {
+  min-width: 0;
+}
+.brewery-account__trigger {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 44px;
+}
+.brewery-account__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: var(--k-color-primary);
+  color: var(--k-color-primary-foreground);
+  font-size: var(--k-font-xs);
+  font-weight: 600;
+}
+.brewery-account__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.brewery-account__identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.brewery-account__identity-name {
+  font-weight: 600;
+}
+.brewery-account__identity-email, .brewery-account__status {
+  color: var(--k-color-muted);
+  font-size: var(--k-font-sm);
+}
+.brewery-account__heading {
+  color: var(--k-color-muted);
+  font-size: var(--k-font-xs);
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.brewery-account__list {
+  display: grid;
+  gap: var(--k-space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.brewery-account__current {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--k-space-2) var(--k-space-3);
+  font-weight: 600;
 }
 .recipe-library {
   min-width: 0;

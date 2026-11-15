@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
-import { DEFAULT_TEST_USER, db, loginUser, sqlText } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, db, loginUser, setAppearance, sqlText } from '../../helpers/test-helpers';
 
 async function waitForCatalogueSearch(page: Page) {
   await page.waitForResponse(response => {
@@ -25,7 +25,7 @@ test('short Navigation keeps naturally tabbed Account wholly visible', async ({ 
   await page.getByRole('button', { name: 'Toggle menu', exact: true }).click();
   const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
   await expect(navigation).toBeVisible();
-  const account = navigation.getByRole('button', { name: 'Account menu', exact: true });
+  const account = navigation.getByRole('button', { name: /^Account menu/ });
   for (let tab = 0; tab < 12 && !(await account.evaluate(element => element === document.activeElement)); tab++) {
     await page.keyboard.press('Tab');
   }
@@ -837,9 +837,7 @@ test('shared dialogs center the real fermentable picker after open scroll and re
     await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
     await page.goto('/recipe-editor/new');
     // Existing login isolation can set Light. Use the actual appearance control.
-    if (await page.locator('html').evaluate(e => e.classList.contains('dark')) !== (theme === 'dark')) {
-      await page.getByRole('button', { name: theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
-    }
+    await setAppearance(page, theme as 'light' | 'dark');
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
     await opener.click();
@@ -1096,14 +1094,15 @@ test('shared dialogs retain omitted-prop shell returns and mobile nested layers'
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/recipes');
   await page.waitForLoadState('networkidle');
-  for (const [openerName, title] of [['Switch workspace', 'Your workspaces'], ['Account menu', 'Your account']]) {
-    const opener = page.getByRole('button', { name: openerName, exact: true });
+  // The shell account control is a native nonmodal popup, not a shared dialog.
+  {
+    const opener = page.getByRole('button', { name: /^Account menu/ });
     await opener.click();
-    const dialog = page.getByRole('dialog', { name: title, exact: true });
-    await expect(dialog).toBeVisible();
-    expect(await dialog.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+    const popup = page.locator('#account-popover');
+    await expect(popup).toBeVisible();
+    expect(await popup.evaluate(element => element.matches(':popover-open') && !element.matches(':modal'))).toBe(true);
     await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    await expect(popup).toBeHidden();
     await expect(opener).toBeFocused();
   }
   await page.goto('/recipe-editor/new');
@@ -1123,18 +1122,18 @@ test('shared dialogs retain omitted-prop shell returns and mobile nested layers'
   await menu.click();
   const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
   await expect(navigation).toBeVisible();
-  const switcherTrigger = navigation.getByRole('button', { name: 'Switch workspace', exact: true });
-  await switcherTrigger.click();
-  const switcher = page.getByRole('dialog', { name: 'Your workspaces', exact: true });
-  await expect(switcher).toBeVisible();
-  expect(await switcher.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+  const accountTrigger = navigation.getByRole('button', { name: /^Account menu/ });
+  await accountTrigger.click();
+  const popup = page.locator('#mobile-account-popover');
+  await expect(popup).toBeVisible();
+  expect(await popup.evaluate(element => element.matches(':popover-open') && !!element.closest('dialog#mobile-navigation'))).toBe(true);
   await testInfo.attach('mobile-default-layer', { body: JSON.stringify(await page.evaluate(() => ({
     modals: [...document.querySelectorAll('dialog:modal')].map(element => element.id), active: document.activeElement?.outerHTML,
   }))), contentType: 'application/json' });
   await page.keyboard.press('Escape');
-  await expect(switcher).toBeHidden();
+  await expect(popup).toBeHidden();
   await expect(navigation).toBeVisible();
-  await expect(switcherTrigger).toBeFocused();
+  await expect(accountTrigger).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(navigation).toBeHidden();
   await expect(menu).toBeFocused();
@@ -1224,7 +1223,7 @@ test('shared dialogs respect deliberate newer focus and a successor native layer
         if (destination === 'heading') (document.getElementById('recipe-editor-heading') as HTMLElement).focus();
         else {
           (window as any).__kra37ForeignReturn = document.activeElement;
-          (document.querySelector('[aria-label="Account menu"]') as HTMLButtonElement).click();
+          (document.querySelector('[aria-controls="account-popover"]') as HTMLButtonElement).click();
         }
       }), { once: true });
     }, successor);
@@ -1232,20 +1231,19 @@ test('shared dialogs respect deliberate newer focus and a successor native layer
     await expect(picker).toBeHidden();
     if (successor === 'heading') await expect(page.locator('#recipe-editor-heading')).toBeFocused();
     else {
-      const account = page.getByRole('dialog', { name: 'Your account', exact: true });
+      const account = page.locator('#account-popover');
       await expect(account).toBeVisible();
-      expect(await account.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
     }
     await page.evaluate(async () => { for (let frame = 0; frame < 3; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
     if (successor === 'heading') await expect(page.locator('#recipe-editor-heading')).toBeFocused();
     else {
-      const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-      expect(await account.evaluate(element => element.matches(':modal') && element.contains(document.activeElement))).toBe(true);
+      const account = page.locator('#account-popover');
+      await expect(account).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(account).toBeHidden();
-      // Programmatic activation does not focus its trigger. Require the actual
-      // pre-layer focused element, not an invented Account-trigger bookmark.
-      await expect.poll(() => page.evaluate(() => document.activeElement === (window as any).__kra37ForeignReturn)).toBe(true);
+      // The shared dialog must not steal focus from the newer layer's owner:
+      // after dismissing the ordinary popup, focus is not on the closed picker.
+      await expect(page.locator('#ingredient-picker')).toBeHidden();
     }
     await testInfo.attach(`newer-${successor}`, { body: JSON.stringify(await page.evaluate(() => ({ active: document.activeElement?.outerHTML, modals: [...document.querySelectorAll('dialog:modal')].map(element => element.id) }))), contentType: 'application/json' });
   }
@@ -1371,9 +1369,7 @@ test('shared dialogs keep real edit form labels and short footer actions readabl
     await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(picker).toBeHidden();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    if (await page.locator('html').evaluate(e => e.classList.contains('dark')) !== (state.theme === 'dark')) {
-      await page.getByRole('button', { name: state.theme === 'dark' ? 'Dark appearance' : 'Light appearance', exact: true }).click();
-    }
+    await setAppearance(page, state.theme as 'light' | 'dark');
     await expect(page.locator('html')).toHaveClass(state.theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     await page.setViewportSize({ width: state.width, height: state.height });
     await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();

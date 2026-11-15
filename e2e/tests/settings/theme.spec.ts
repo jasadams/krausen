@@ -12,7 +12,7 @@ test.describe('TC-010: Appearance (Theme Switching)', () => {
   test.beforeEach(async ({ page }) => {
     await gotoAuthenticated(page, '/settings/profile');
 
-    const appearanceTitle = page.locator('text=Appearance');
+    const appearanceTitle = page.locator('#appearance').getByText('Appearance', { exact: true });
     await expect(appearanceTitle).toBeVisible();
   });
 
