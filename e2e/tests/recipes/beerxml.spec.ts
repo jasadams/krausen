@@ -274,7 +274,7 @@ test('cancelling after preview creates no recipe', async ({ page }) => {
 });
 
 const lostXml = (title: string) => `<RECIPES><RECIPE><NAME>${title}</NAME></RECIPE></RECIPES>`;
-async function previewAndLoseImportResponse(page: Page, title: string) {
+async function previewAndLoseImportResponse(page: Page, title: string, checkOutcome?: unknown) {
   await page.goto('/beerxml');
   await page.getByLabel('Paste BeerXML').fill(lostXml(title));
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
@@ -284,6 +284,7 @@ async function previewAndLoseImportResponse(page: Page, title: string) {
     bodies.push(route.request().postData() ?? '');
     const response = await route.fetch();
     if (bodies.length === 1) await route.fulfill({ status: 503, body: 'response lost after real import' });
+    else if (checkOutcome !== undefined) await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(checkOutcome) });
     else await route.fulfill({ response });
   });
   await page.getByRole('button', { name: 'Import recipe', exact: true }).click();
@@ -338,6 +339,31 @@ test('a lost import response is retained before sending and survives reload with
   expect(await retainedKeys(page)).toHaveLength(0);
   await expect(page.getByRole('link', { name: 'Open imported recipe' })).toBeFocused();
 });
+
+for (const scenario of [
+  { name: 'expired', outcome: { ResultExpired: { resource_id: null } }, copy: /no longer holds this import/ },
+  { name: 'identity conflict', outcome: 'RequestIdentityConflict', copy: /bound to different content/ },
+] as const) {
+  test(`a ${scenario.name} check keeps the retained request until it is acknowledged by name`, async ({ page }) => {
+    const title = `Retained ${scenario.name} ${Date.now()}`;
+    const bodies = await previewAndLoseImportResponse(page, title, scenario.outcome);
+    await page.getByRole('button', { name: 'Check previous result', exact: true }).click();
+    const recovery = page.locator('#beerxml-recovery');
+    await expect(recovery).toContainText(scenario.copy);
+    expect(bodies).toHaveLength(2);
+    expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
+    await expect(page.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(0);
+    // The status survives reload; no fresh import is offered until acknowledged.
+    await page.reload();
+    await expect(page.locator('#beerxml-recovery')).toContainText(scenario.copy);
+    await expect(page.getByRole('button', { name: 'Import recipe', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Acknowledge and clear retained request', exact: true }).click();
+    await expect(page.locator('#beerxml-recovery')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Preview', exact: true })).toBeEnabled();
+    expect(await retainedKeys(page)).toHaveLength(0);
+    await expect(page.getByLabel('Paste BeerXML')).toBeEnabled();
+  });
+}
 
 test('leaving after a lost response keeps the retained request and reopening checks the same one', async ({ page }) => {
   const title = `Dismiss import ${Date.now()}`;

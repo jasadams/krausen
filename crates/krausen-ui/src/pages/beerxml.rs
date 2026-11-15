@@ -285,6 +285,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
     let busy = RwSignal::new(false);
     let committing = RwSignal::new(false);
     let sequence = RwSignal::new(0_u64);
+    // Fences late previews after a discard without changing the guard generation.
+    let discard_epoch = RwSignal::new(0_u64);
     let clear_errors = move || {
         source_error.set(None);
         file_error.set(None);
@@ -331,6 +333,10 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     selected_profile.set(String::new());
                     // The shared guard fences on the task generation; discarding
                     // must not look like a newer edit, so `sequence` is untouched.
+                    // The task effect later clears `resolved_navigation` when `dirty`
+                    // flips; that is harmless because the leave already captured
+                    // its owners and lease compares only generation/in-flight.
+                    discard_epoch.update(|n| *n = n.wrapping_add(1));
                     preview.set(None);
                     imported_id.set(None);
                     import_diagnostics.set(Vec::new());
@@ -507,6 +513,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         };
         sequence.update(|n| *n = n.checked_add(1).expect("import generation exhausted"));
         let current = sequence.get_untracked();
+        let epoch = discard_epoch.get_untracked();
         // Rejected source/index/generation paths above never move focus.
         #[cfg(target_arch = "wasm32")]
         hand_off_import_action_focus(&_event);
@@ -536,7 +543,9 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 return;
             }
             busy.set(false);
-            if sequence.try_get_untracked() != Some(current) {
+            if sequence.try_get_untracked() != Some(current)
+                || discard_epoch.try_get_untracked() != Some(epoch)
+            {
                 return;
             }
             match outcome {
@@ -630,6 +639,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 outcome
             };
             if !current_context_matches(&attempt.0.intent).await {
+                // The request was already sent: the result is unknown.
+                unconfirmed.set(true);
                 visible.set(false);
                 busy.set(false);
                 committing.set(false);
