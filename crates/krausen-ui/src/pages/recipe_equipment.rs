@@ -154,7 +154,7 @@ pub fn override_hint(
 ) -> String {
     let inherited_text = match (inherited, profile, profile_known) {
         (Some(v), Some(name), _) => format!("{} {spec_unit} from {name}", shown(v, scale)),
-        (None, Some(_), false) => "profile values not loaded".to_owned(),
+        (None, Some(_), false) => "profile values not available".to_owned(),
         (None, Some(name), true) => format!("{name} has no value"),
         (_, None, _) => "no profile selected".to_owned(),
     };
@@ -240,7 +240,7 @@ pub fn RecipeEquipment(
     });
     // Archived profiles remain visible by name but cannot be inherited from.
     let usable_profile = Signal::derive(move || selected_profile.get().filter(|p| !p.archived));
-    let profile_name = Signal::derive(move || usable_profile.get().map(|p| p.name));
+    let profile_name = Signal::derive(move || selected_profile.get().map(|p| p.name));
     let profile_known = Signal::derive(move || usable_profile.get().is_some());
     Effect::new(move |_| {
         let next = draft.with(|d| EquipmentSummary::from_document(d.document(), usable_profile.get().as_ref()));
@@ -406,6 +406,6 @@ mod tests {
             "Overridden for this recipe: effective 4 L/h. Inherited: 3 L/h from Garage."
         );
         assert_eq!(override_hint("%", 100.0, Some(0.7), None, None, false), "Overridden for this recipe: effective 70 %. Inherited: no profile selected.");
-        assert!(override_hint("L", 1.0, None, None, Some("Garage"), false).contains("not loaded"));
+        assert!(override_hint("L", 1.0, None, None, Some("Garage"), false).contains("not available"));
     }
 }

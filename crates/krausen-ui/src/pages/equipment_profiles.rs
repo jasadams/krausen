@@ -776,8 +776,17 @@ pub fn EquipmentManager(
         view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
     };
     view! {
-        <BreweryPanel title="Equipment profiles" description="Reusable workspace equipment. Saving a profile updates future previews and new brews; it does not change any recipe's content or earlier brews.">
-            <p class="recipe-editor__provenance">{move || heading.get()}</p>
+        <BreweryPanel title="Equipment profiles" footer=std::sync::Arc::new(move || view! {
+                <BreweryActionGroup label="Profile actions">
+                <Button disabled=Signal::derive(move || busy.get() || blocked.get() || (pending.get().is_none() && !dirty.get() && editing.with(|p| p.is_some()))) on:click=move |_| submit_save.run(AfterSave::Stay)>{move || if pending.get().is_some() { "Retry previous request" } else { "Save profile" }}</Button>
+                <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || locked.get() || !dirty.get()) on:click=move |_| { form.set(baseline.get_untracked()); form_generation.update(|n| *n += 1); status.set(String::new()); }>"Discard changes"</Button>
+                <Show when=move || editing.with(|p| p.is_some())>
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || blocked.get() || pending.get().is_some() || dirty.get()) on:click=archive>{move || if editing.with(|p| p.as_ref().is_some_and(|p| p.archived)) { "Unarchive" } else { "Archive" }}</Button>
+                </Show>
+            </BreweryActionGroup>
+            }.into_any()) description="Reusable workspace equipment. Saving a profile updates future previews and new brews; it does not change any recipe's content or earlier brews.">
+            <BrewerySection title="Profile">
+            <p class="k-field__hint">{move || heading.get()}</p>
             <div class="recipe-editor__fields">
                 {move || {
                     let mut options = vec![(String::new(), "New profile".to_owned())];
@@ -792,6 +801,7 @@ pub fn EquipmentManager(
             <Show when=move || library.next_cursor.get().is_some()>
                 <Button variant=ButtonVariant::Secondary disabled=library.loading on:click=move |_| library.load_more()>"Load more profiles"</Button>
             </Show>
+            </BrewerySection>
             <Show when=move || !library.error.get().is_empty()>
                 <BreweryNotice title="Profiles unavailable" body=library.error.get() warning=true/>
             </Show>
@@ -832,13 +842,6 @@ pub fn EquipmentManager(
                     </div>
                 </BrewerySection>
             </fieldset>
-            <BreweryActionGroup label="Profile actions">
-                <Button disabled=Signal::derive(move || busy.get() || blocked.get() || (pending.get().is_none() && !dirty.get() && editing.with(|p| p.is_some()))) on:click=move |_| submit_save.run(AfterSave::Stay)>{move || if pending.get().is_some() { "Retry previous request" } else { "Save profile" }}</Button>
-                <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || locked.get() || !dirty.get()) on:click=move |_| { form.set(baseline.get_untracked()); form_generation.update(|n| *n += 1); status.set(String::new()); }>"Discard changes"</Button>
-                <Show when=move || editing.with(|p| p.is_some())>
-                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || blocked.get() || pending.get().is_some() || dirty.get()) on:click=archive>{move || if editing.with(|p| p.as_ref().is_some_and(|p| p.archived)) { "Unarchive" } else { "Archive" }}</Button>
-                </Show>
-            </BreweryActionGroup>
             <Show when=move || blocked.get()><Button variant=ButtonVariant::Secondary on:click=move |_| {
                 pending.set(None);
                 blocked.set(false);
