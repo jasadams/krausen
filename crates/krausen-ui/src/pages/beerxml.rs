@@ -265,6 +265,10 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
     let preview = RwSignal::new(None::<(ImportRequest, ImportPreview)>);
     // The exact sent (or about-to-be-sent) request and its identity.
     let pending = RwSignal::new(None::<(ImportRequest, String)>);
+    // True once a sent request is unconfirmed (or recovered): the action becomes
+    // 'Check previous result'. During the first in-flight send the original named
+    // 'Import recipe' action stays visible and pending.
+    let unconfirmed = RwSignal::new(false);
     let recovery_status = RwSignal::new(RecoveryStatus::Unknown);
     let recovery_checked = RwSignal::new(false);
     let recovery_error = RwSignal::new(None::<String>);
@@ -292,6 +296,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         sequence.update(|n| *n = n.checked_add(1).expect("import generation exhausted"));
         preview.set(None);
         pending.set(None);
+        unconfirmed.set(false);
         imported_id.set(None);
         import_diagnostics.set(Vec::new());
         status.set(String::new());
@@ -324,7 +329,13 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     efficiency.set(String::new());
                     recipe_number.set("1".into());
                     selected_profile.set(String::new());
-                    invalidate.run(());
+                    // The shared guard fences on the task generation; discarding
+                    // must not look like a newer edit, so `sequence` is untouched.
+                    preview.set(None);
+                    imported_id.set(None);
+                    import_diagnostics.set(Vec::new());
+                    status.set(String::new());
+                    clear_errors();
                 }
                 true
             }),
@@ -362,6 +373,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 selected_profile.set(record.request.equipment_profile_id.clone().unwrap_or_default());
                 recovery_status.set(record.status);
                 pending.set(Some((record.request, record.request_id)));
+                unconfirmed.set(true);
             }
             Ok(None) => {}
             Err(message) => recovery_error.set(Some(message)),
@@ -626,12 +638,14 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             busy.set(false);
             committing.set(false);
             if commit_is_unconfirmed(&outcome) {
+                unconfirmed.set(true);
                 recovery_status.set(RecoveryStatus::Unknown);
                 status.set(UNCONFIRMED_TITLE.into());
                 return;
             }
             match outcome {
                 Ok(ImportCommitOutcome::Forbidden | ImportCommitOutcome::ContextChanged) => {
+                    unconfirmed.set(true);
                     // Not confirmed either way: the retained request stays.
                     visible.set(false);
                     return;
@@ -641,6 +655,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     if let Err(message) = beerxml_recovery::set_status(&inst, &attempt.0.intent, &attempt.1, next.clone()) {
                         tracing::warn!("Unable to retain expired import status: {message}");
                     }
+                    unconfirmed.set(true);
                     recovery_status.set(next);
                     status.set(UNCONFIRMED_TITLE.into());
                     return;
@@ -649,6 +664,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     if let Err(message) = beerxml_recovery::set_status(&inst, &attempt.0.intent, &attempt.1, RecoveryStatus::IdentityConflict) {
                         tracing::warn!("Unable to retain identity-conflict status: {message}");
                     }
+                    unconfirmed.set(true);
                     recovery_status.set(RecoveryStatus::IdentityConflict);
                     status.set(UNCONFIRMED_TITLE.into());
                     return;
@@ -658,6 +674,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             // Every remaining outcome is a returned, known result.
             let cleaned = forget_retained(&inst, &attempt.0.intent, &attempt.1);
             pending.set(None);
+            unconfirmed.set(false);
             match outcome {
                 Ok(ImportCommitOutcome::Imported {
                     recipe_id,
@@ -795,7 +812,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     let preview_variant = if has_preview || imported.is_some() { ButtonVariant::Secondary } else { ButtonVariant::Default };
                     view! {
                         <BreweryActionGroup label="Import actions">
-                            <Show when=move || pending.get().is_none()>
+                            <Show when=move || !unconfirmed.get()>
                                 <Button
                                     variant=preview_variant
                                     disabled=busy_label
@@ -803,8 +820,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                                     on:click=preview_action
                                 >"Preview"</Button>
                             </Show>
-                            <Show when=move || preview.get().is_some() && pending.get().is_none()>
-                                <Button disabled=Signal::derive(move || busy.get() || colour_error.get().is_some() || efficiency_error.get().is_some()) on:click=move |event: leptos::ev::MouseEvent| {
+                            <Show when=move || preview.get().is_some() && !unconfirmed.get()>
+                                <Button disabled=Signal::derive(move || busy.get() || colour_error.get().is_some() || efficiency_error.get().is_some()) pending=Signal::derive(move || committing.get()) on:click=move |event: leptos::ev::MouseEvent| {
                                     #[cfg(target_arch = "wasm32")]
                                     {
                                         if !busy.get_untracked() && preview.get_untracked().is_some() {
@@ -814,7 +831,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                                     commit_action(event);
                                 }>"Import recipe"</Button>
                             </Show>
-                            <Show when=move || pending.get().is_some()>
+                            <Show when=move || unconfirmed.get()>
                                 <Button disabled=Signal::derive(move || busy.get()) pending=Signal::derive(move || committing.get()) on:click=move |event: leptos::ev::MouseEvent| {
                                     #[cfg(target_arch = "wasm32")]
                                     {
@@ -823,11 +840,11 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                                     commit_action(event);
                                 }>"Check previous result"</Button>
                             </Show>
-                            <Show when=move || pending.get().is_some() && recovery_status.get() != RecoveryStatus::Unknown>
+                            <Show when=move || unconfirmed.get() && recovery_status.get() != RecoveryStatus::Unknown>
                                 <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get()) on:click=acknowledge>"Acknowledge and clear retained request"</Button>
                             </Show>
                             {imported.map(|id| view! { <ButtonLink variant=if has_preview { ButtonVariant::Secondary } else { ButtonVariant::Default } href=format!("/recipe-editor/{id}")>"Open imported recipe"</ButtonLink> })}
-                            <ButtonLink variant=ButtonVariant::Ghost href="/recipes">{move || if pending.get().is_some() { "Back to recipes" } else { "Cancel" }}</ButtonLink>
+                            <ButtonLink variant=ButtonVariant::Ghost href="/recipes">{move || if unconfirmed.get() { "Back to recipes" } else { "Cancel" }}</ButtonLink>
                         </BreweryActionGroup>
                     }
                 }}
