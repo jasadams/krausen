@@ -297,9 +297,16 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         status.set(String::new());
         clear_errors();
     });
-    let forget_retained = move |intent: &OperationIntent, request_id: &str| {
-        if let Err(message) = beerxml_recovery::remove(&installation.get_value(), intent, request_id) {
-            tracing::warn!("Unable to remove resolved import recovery: {message}");
+    // Reports whether the retained record is really gone. Callers pass the
+    // installation captured while the page was live, so a late completion after
+    // disposal never reads disposed state.
+    let forget_retained = move |installation: &str, intent: &OperationIntent, request_id: &str| -> bool {
+        match beerxml_recovery::remove(installation, intent, request_id) {
+            Ok(()) => true,
+            Err(message) => {
+                tracing::warn!("Unable to remove resolved import recovery: {message}");
+                false
+            }
         }
     };
     let editor_guard = expect_context::<EditorGuard>();
@@ -456,7 +463,6 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     InputField::Source => source_error.set(Some(message.into())),
                     InputField::RecipeNumber => number_error.set(Some(message.into())),
                 }
-                status.set(message.into());
                 return;
             }
         };
@@ -553,7 +559,6 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 }
                 Ok(ImportPreviewOutcome::InvalidSource) => {
                     source_error.set(Some("This is not a BeerXML recipe file the importer can read. Check the source and try again.".into()));
-                    status.set("Unable to preview this BeerXML.".into());
                 }
                 _ => status
                     .set("Unable to preview this BeerXML. Check the source and try again.".into()),
@@ -591,6 +596,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         };
         busy.set(true);
         committing.set(true);
+        let inst = installation.get_value();
         leptos::task::spawn_local(async move {
             if !current_context_matches(&attempt.0.intent).await {
                 visible.set(false);
@@ -632,7 +638,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 }
                 Ok(ImportCommitOutcome::ResultExpired { resource_id }) => {
                     let next = RecoveryStatus::Expired { resource_id };
-                    if let Err(message) = beerxml_recovery::set_status(&installation.get_value(), &attempt.0.intent, next.clone()) {
+                    if let Err(message) = beerxml_recovery::set_status(&inst, &attempt.0.intent, &attempt.1, next.clone()) {
                         tracing::warn!("Unable to retain expired import status: {message}");
                     }
                     recovery_status.set(next);
@@ -640,7 +646,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     return;
                 }
                 Ok(ImportCommitOutcome::RequestIdentityConflict) => {
-                    if let Err(message) = beerxml_recovery::set_status(&installation.get_value(), &attempt.0.intent, RecoveryStatus::IdentityConflict) {
+                    if let Err(message) = beerxml_recovery::set_status(&inst, &attempt.0.intent, &attempt.1, RecoveryStatus::IdentityConflict) {
                         tracing::warn!("Unable to retain identity-conflict status: {message}");
                     }
                     recovery_status.set(RecoveryStatus::IdentityConflict);
@@ -650,7 +656,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 _ => {}
             }
             // Every remaining outcome is a returned, known result.
-            forget_retained(&attempt.0.intent, &attempt.1);
+            let cleaned = forget_retained(&inst, &attempt.0.intent, &attempt.1);
             pending.set(None);
             match outcome {
                 Ok(ImportCommitOutcome::Imported {
@@ -661,7 +667,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     preview.set(None);
                     imported_id.set(Some(recipe_id));
                     import_diagnostics.set(diagnostics);
-                    status.set("Recipe imported.".into());
+                    status.set(if cleaned { "Recipe imported." } else { "Recipe imported. The local recovery record could not be removed; Check previous result may be offered once more." }.into());
                 }
                 Ok(ImportCommitOutcome::ChoicesRequired(diagnostics)) => {
                     let (colour_problem, efficiency_problem) = choice_errors(&diagnostics);
@@ -710,7 +716,10 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
         if recovery_status.get_untracked() == RecoveryStatus::Unknown {
             return;
         }
-        forget_retained(&request.intent, &id);
+        if !forget_retained(&installation.get_value(), &request.intent, &id) {
+            status.set("The retained request could not be cleared. Try again.".into());
+            return;
+        }
         invalidate.run(());
         status.set("The retained import request was cleared. No new import was sent.".into());
     };
@@ -795,7 +804,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                                 >"Preview"</Button>
                             </Show>
                             <Show when=move || preview.get().is_some() && pending.get().is_none()>
-                                <Button disabled=Signal::derive(move || busy.get()) on:click=move |event: leptos::ev::MouseEvent| {
+                                <Button disabled=Signal::derive(move || busy.get() || colour_error.get().is_some() || efficiency_error.get().is_some()) on:click=move |event: leptos::ev::MouseEvent| {
                                     #[cfg(target_arch = "wasm32")]
                                     {
                                         if !busy.get_untracked() && preview.get_untracked().is_some() {
@@ -825,6 +834,16 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             }.into_any())
         >
             {move || recovery_error.get().map(|message| view! { <BreweryNotice title="Import recovery unavailable" body=message warning=true/> })}
+            <Show when=move || recovery_error.get().is_some()>
+                <BreweryActionGroup label="Recovery actions">
+                    <Button variant=ButtonVariant::Secondary on:click=move |_| {
+                        match beerxml_recovery::discard_unreadable(&installation.get_value(), &identity.get_value()) {
+                            Ok(()) => { recovery_error.set(None); status.set("The unreadable retained import record was discarded. Check your recipe library before importing again.".into()); }
+                            Err(message) => status.set(message),
+                        }
+                    }>"Discard unreadable retained request"</Button>
+                </BreweryActionGroup>
+            </Show>
             {move || pending.get().map(|(request, _)| {
                 let body = recovery_copy(&recovery_status.get());
                 let pinned = format!("Pinned source: recipe {} of the file, {} bytes. It cannot be changed while this request is retained.", request.recipe_index + 1, request.xml.len());
@@ -843,7 +862,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     if pending.get_untracked().is_some() { return; }
                     let file = event.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()).and_then(|i| i.files()).and_then(|f| f.get(0));
                     if let Some(file) = file {
-                        if file.size() > krausen_types::interchange::MAX_BEERXML_BYTES as f64 { file_error.set(Some("The file is larger than 2 MiB.".into())); status.set("The file is larger than 2 MiB.".into()); return; }
+                        if file.size() > krausen_types::interchange::MAX_BEERXML_BYTES as f64 { invalidate.run(()); file_error.set(Some("The file is larger than 2 MiB.".into())); return; }
                         invalidate.run(());
                         let generation = sequence.get_untracked();
                         leptos::task::spawn_local(async move {
@@ -851,9 +870,9 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                                 Ok(buffer) => match String::from_utf8(js_sys::Uint8Array::new(&buffer).to_vec()) {
                                     Ok(text) if sequence.try_get_untracked() == Some(generation) && pending.get_untracked().is_none() => { source.set(text); invalidate.run(()); }
                                     Ok(_) => {}
-                                    Err(_) => { file_error.set(Some("The file must be UTF-8.".into())); status.set("The file must be UTF-8.".into()); }
+                                    Err(_) => { invalidate.run(()); file_error.set(Some("The file must be UTF-8.".into())); }
                                 },
-                                Err(_) => { file_error.set(Some("Unable to read the selected file.".into())); status.set("Unable to read the selected file.".into()); }
+                                Err(_) => { invalidate.run(()); file_error.set(Some("Unable to read the selected file.".into())); }
                             }
                         });
                     }

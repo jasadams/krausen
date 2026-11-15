@@ -862,8 +862,12 @@ pub fn Layout() -> impl IntoView {
                 <Show when=move || editor_guard.notice.get()>
                 {move || {
                 let recipe = editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Recipe);
-                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice>
-                    <p>"Your draft remains in this account and workspace until you choose what to do."</p>
+                view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) { "Import result unconfirmed" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice>
+                    {move || if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) {
+                        view! { <p>"An import was sent and its result is unconfirmed. The original request is retained in this account and workspace; leaving does not cancel it, and you can check it later."</p> }.into_any()
+                    } else {
+                        view! { <p>"Your draft remains in this account and workspace until you choose what to do."</p> }.into_any()
+                    }}
                     <p role="status">{move || editor_guard.message.get()}</p>
                     <p role="status">{move || editor_guard.navigation_error.get()}</p>
                     <Show when=move || !editor_guard.navigation_error.get().is_empty() && editor_guard.history_restore_ready.get()>

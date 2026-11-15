@@ -3,6 +3,13 @@
 //! The record is the original scoped request plus its request identity, never a
 //! draft: it is written before dispatch, survives dismissal/navigation/reload,
 //! and is removed only after a known outcome or an explicit named acknowledgement.
+//!
+//! This deliberately does not share `evidence_recovery.rs`: evidence keys many
+//! concurrent writes by brew and request, keeps receipts and reviewed states and
+//! uses a live-tab lock. Import is one finite command per installation/account/
+//! workspace with no receipt; a second tab resending the same identity is safe
+//! because the server replays by request id. Only the storage-key convention and
+//! status vocabulary are mirrored.
 use krausen_types::{interchange::ImportRequest, request_context::OperationIntent};
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +141,7 @@ pub(super) fn load(
 pub(super) fn set_status(
     installation: &str,
     intent: &OperationIntent,
+    request_id: &str,
     status: RecoveryStatus,
 ) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
@@ -141,13 +149,30 @@ pub(super) fn set_status(
         let Some(mut record) = load(installation, intent)? else {
             return Ok(());
         };
+        if record.request_id != request_id {
+            return Ok(());
+        }
         record.status = status.clone();
         let value = serde_json::to_string(&record).map_err(|_| "Unable to update recovery.")?;
         storage()?
             .set_item(&key(installation, intent), &value)
             .map_err(|_| "Unable to update the retained import status.")?;
     }
-    let _ = (installation, intent, status);
+    let _ = (installation, intent, request_id, status);
+    Ok(())
+}
+
+/// Explicit named escape for a record that cannot be read or matched. It removes
+/// the scoped slot unconditionally and is only offered for that failure.
+pub(super) fn discard_unreadable(
+    installation: &str,
+    intent: &OperationIntent,
+) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    storage()?
+        .remove_item(&key(installation, intent))
+        .map_err(|_| "Unable to discard the unreadable retained request.")?;
+    let _ = (installation, intent);
     Ok(())
 }
 

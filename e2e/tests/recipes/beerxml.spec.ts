@@ -203,7 +203,6 @@ for (const theme of ['light', 'dark'] as const) {
       await measureImportActions(page, 'preview', 'Import recipe');
       await source.fill('not valid BeerXML');
       await page.getByRole('button', { name: 'Preview', exact: true }).click();
-      await expect(page.getByRole('status').filter({ hasText: 'Unable to preview this BeerXML' })).toBeVisible();
       await expect(source).toHaveAttribute('aria-invalid', 'true');
       await expect(source).toHaveAccessibleDescription(/not a BeerXML recipe file/);
       await measureImportActions(page, 'error', 'Preview');
@@ -333,6 +332,8 @@ test('a lost import response is retained before sending and survives reload with
   await expect(page.getByRole('status').filter({ hasText: 'Recipe imported.' })).toBeVisible();
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toBe(bodies[0]);
+  expect(JSON.parse(bodies[0]).request_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(title)}`)).toBe('1');
   expect(await retainedKeys(page)).toHaveLength(0);
   await expect(page.getByRole('link', { name: 'Open imported recipe' })).toBeFocused();
@@ -344,7 +345,9 @@ test('leaving after a lost response keeps the retained request and reopening che
   await page.getByRole('link', { name: 'Back to recipes' }).click();
   const guard = page.locator('#workspace-draft-warning');
   await expect(guard).toBeVisible();
-  await expect(guard).not.toContainText(/not created|cancelled|nothing was/i);
+  await expect(guard).toContainText('result is unconfirmed');
+  await expect(guard).toContainText('leaving does not cancel it');
+  await expect(guard).not.toContainText(/not created|cancelled by|nothing was/i);
   await guard.getByRole('button', { name: 'Leave and keep the retained request' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   expect(await retainedKeys(page)).toHaveLength(1);
@@ -354,6 +357,7 @@ test('leaving after a lost response keeps the retained request and reopening che
   await expect(page.getByRole('status').filter({ hasText: 'Recipe imported.' })).toBeVisible();
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toBe(bodies[0]);
+  expect(JSON.parse(bodies[1]).request_id).toBe(JSON.parse(bodies[0]).request_id);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = ${sqlText(title)}`)).toBe('1');
 });
 
