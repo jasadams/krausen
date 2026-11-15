@@ -1319,9 +1319,11 @@ test('a dirty profile draft is guarded on profile switch and navigation, then di
 test('a profile conflict keeps the raw edits and never overwrites the newer revision', async ({ page }) => {
   const id = await createEquipmentProfile(page, `Conflict ${Date.now()}`, { 'profile-boil-off': '3' });
   await page.goto(`/equipment?profile=${id}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
   await page.locator('#profile-boil-off').fill('4');
   const other = await page.context().newPage();
   await other.goto(`/equipment?profile=${id}`);
+  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
   await other.locator('#profile-boil-off').fill('9');
   await other.getByRole('button', { name: 'Save profile' }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
@@ -1329,8 +1331,13 @@ test('a profile conflict keeps the raw edits and never overwrites the newer revi
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile changed elsewhere' })).toBeVisible();
   await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await page.getByRole('button', { name: 'Load latest and keep my edits' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Loaded the latest profile' })).toBeVisible();
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await page.goto(`/equipment?profile=${id}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('9');
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
 });
 
 test('recipe overrides show inherited and effective values and reset deletes the override', async ({ page }) => {

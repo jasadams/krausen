@@ -504,19 +504,18 @@ pub fn EquipmentManager(
         let expected = identity.get_untracked();
         leptos::task::spawn_local(async move {
             if !current_context_matches(&expected).await {
-                if busy.try_set(false).is_some() {
+                if busy.try_set(false).is_none() {
                     context_visible.set(false);
                 }
                 return;
             }
             let outcome = equipment_command_shared(command).await;
-            if busy.try_set(false).is_none() {
+            if busy.try_set(false).is_some() {
                 return;
             }
             if !current_context_matches(&expected).await {
-                if context_visible.try_set(false).is_none() {
-                    return;
-                }
+                // Disposed or not, there is nothing further to apply.
+                let _hidden = context_visible.try_set(false);
                 return;
             }
             if form_generation.try_get_untracked().is_none() {
@@ -709,7 +708,7 @@ pub fn EquipmentManager(
                 profile_id: current.profile_id,
             }))
             .await;
-            if busy.try_set(false).is_none() {
+            if busy.try_set(false).is_some() {
                 return;
             }
             match outcome {
