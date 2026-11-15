@@ -13,8 +13,8 @@ test('shell composes recipe navigation and the compact account popup without a b
   assert.ok(!layout.includes('crate::components::theme::set_theme('));
   assert.ok(layout.includes('<crate::components::BreweryPopover'));
   assert.ok(!layout.includes('id=if mobile { "mobile-account-menu"'));
-  assert.ok(!layout.includes('Switch workspace'));
-  assert.ok(!layout.includes('href="/equipment"'));
+  assert.ok(!layout.includes('aria_label="Switch workspace"'));
+  assert.ok(layout.includes('href="/equipment"')); // delivered by KRA-39
   assert.ok(!layout.includes('href="/brews"'));
 });
 

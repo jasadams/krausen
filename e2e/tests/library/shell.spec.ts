@@ -137,6 +137,11 @@ const accountTrigger = (scope: Page | Locator) => scope.getByRole('button', { na
 
 // IA-002 / ACC-002: one anchored nonmodal popup of ordinary links and buttons.
 test('account popup is ordinary nonmodal navigation with natural keyboard, Escape and outside dismissal', async ({ page }) => {
+  // Isolate from memberships other specs leave behind in a shared database:
+  // this test is about a verified SINGLE membership.
+  await page.route('**/leptos-api/list_user_workspaces*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([
+    { workspace_id: 'only', name: 'Only brewery', is_current: true },
+  ]) }));
   const desktop = page.locator('.app-shell__desktop');
   const trigger = accountTrigger(desktop);
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -185,6 +190,7 @@ test('account Settings closes the popup only after navigation commits and a dirt
   await expect(page.getByRole('heading', { name: 'Profile Settings', exact: true })).toBeVisible();
 
   await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Recipe name', { exact: true }).fill('Guarded account navigation');
   const dirtyPopup = await openAccount(page, desktop);
   await dirtyPopup.getByRole('link', { name: 'Settings', exact: true }).click();
@@ -330,6 +336,7 @@ test.describe('with a second membership', () => {
   test('a failed switch keeps the original context and the dirty draft', async ({ page }) => {
     await page.route('**/leptos-api/switch_workspace*', route => route.abort('failed'));
     await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     await page.getByLabel('Recipe name', { exact: true }).fill('Draft kept through failed switch');
     const popup = await openAccount(page, page.locator('.app-shell__desktop'));
     await popup.getByRole('button', { name: otherName, exact: true }).click();
@@ -390,6 +397,7 @@ test.describe('mobile navigation drawer', () => {
 
   test('a dirty draft turns the drawer into the single guard, and Stay never navigates behind it', async ({ page }) => {
     await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     await page.getByLabel('Recipe name', { exact: true }).fill('Guarded mobile navigation');
     const menu = page.getByRole('button', { name: 'Toggle menu' });
     await menu.click();
