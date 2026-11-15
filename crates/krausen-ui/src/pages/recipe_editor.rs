@@ -276,6 +276,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let context_visible = RwSignal::new(true);
     let context_lost = RwSignal::new(false);
     let profile_generation = RwSignal::new(0_u64);
+    let equipment_summary = RwSignal::new(crate::pages::recipe_equipment::EquipmentSummary::default());
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let history_authority_failure = Callback::new(move |()| {
         if context_visible.try_get_untracked().is_none() { return; }
@@ -833,34 +834,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         })
     });
 
-    let chilling = Signal::derive(move || {
-        draft.with(|d| {
-            match &d.document().equipment_overrides.chilling {
-                None => "",
-                Some(krausen_types::brewery::ChillingV1::Natural) => "natural",
-                Some(krausen_types::brewery::ChillingV1::Forced { .. }) => "forced",
-                Some(krausen_types::brewery::ChillingV1::Counterflow { .. }) => "counterflow",
-            }
-            .to_owned()
-        })
-    });
-    let chilling_change = Callback::new(move |value: String| {
-        draft.update(|d| {
-            d.edit_clearing("equipment_overrides.chilling.", |doc| {
-                doc.equipment_overrides.chilling = match value.as_str() {
-                    "natural" => Some(krausen_types::brewery::ChillingV1::Natural),
-                    "forced" => Some(krausen_types::brewery::ChillingV1::Forced {
-                        rate_per_minute: None,
-                        plateau_c: None,
-                    }),
-                    "counterflow" => Some(krausen_types::brewery::ChillingV1::Counterflow {
-                        litres_per_minute: None,
-                    }),
-                    _ => None,
-                };
-            })
-        })
-    });
     let save = move || {
         let identity_signal = identity;
         if pending.get_untracked()
@@ -1362,23 +1335,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <NumberField id="recipe-whirlpool-temp" label="Whirlpool temperature" unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_temperature_c=n/>
             </div></BreweryDisclosure>
             <BreweryDisclosure title="Equipment settings">
-                <crate::pages::equipment_profiles::EquipmentProfiles draft=draft identity=identity context_visible=context_visible refresh_preview=profile_generation/>
-                <div class="recipe-editor__fields">
-                <NumberField id="recipe-efficiency-override" label="Brewhouse efficiency override" unit="%" scale=100.0 path="equipment_overrides.efficiency_override_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.efficiency_override_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.efficiency_override_fraction=n/>
-                <NumberField id="recipe-efficiency" label="Mash efficiency" unit="%" scale=100.0 path="equipment_overrides.mash_efficiency_fraction" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_efficiency_fraction write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_efficiency_fraction=n/>
-                <NumberField id="recipe-boil-off" label="Boil-off" unit="L/h" path="equipment_overrides.boil_off_l_per_hour" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.boil_off_l_per_hour write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.boil_off_l_per_hour=n/>
-                <NumberField id="recipe-loss" label="Transfer loss" unit="L" path="equipment_overrides.transfer_loss_l" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.transfer_loss_l write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.transfer_loss_l=n/>
-                <NumberField id="recipe-deadspace" label="Pre-boil deadspace" unit="L" path="equipment_overrides.pre_boil_deadspace_l" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.pre_boil_deadspace_l write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.pre_boil_deadspace_l=n/>
-                <NumberField id="recipe-absorption" label="Grain absorption" unit="L/kg" path="equipment_overrides.grain_absorption_l_per_kg" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.grain_absorption_l_per_kg write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.grain_absorption_l_per_kg=n/>
-                <NumberField id="recipe-thickness" label="Mash thickness" unit="L/kg" path="equipment_overrides.mash_thickness_l_per_kg" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.mash_thickness_l_per_kg write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.mash_thickness_l_per_kg=n/>
-                <NumberField id="recipe-capacity" label="Kettle capacity" unit="L" path="equipment_overrides.kettle_capacity_l" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.kettle_capacity_l write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.kettle_capacity_l=n/>
-                <NumberField id="recipe-diameter" label="Kettle diameter" unit="cm" path="equipment_overrides.kettle_diameter_cm" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.kettle_diameter_cm write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.kettle_diameter_cm=n/>
-                <NumberField id="recipe-opening" label="Kettle opening" unit="cm" path="equipment_overrides.kettle_opening_cm" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.kettle_opening_cm write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.kettle_opening_cm=n/>
-                <NumberField id="recipe-boil-temp" label="Boil temperature" unit="°C" path="equipment_overrides.boil_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.equipment_overrides.boil_temperature_c write=|d: &mut RecipeDocumentV1,n| d.equipment_overrides.boil_temperature_c=n/>
-                <BreweryDraftSelect id="recipe-chilling" label="Chilling" value=chilling on_change=chilling_change options=vec![("".into(), "Not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
-                <Show when=move || chilling.get() == "forced"><NumberField id="recipe-chilling-rate" label="Cooling rate" unit="per min" path="equipment_overrides.chilling.rate_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..}) => *rate_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{rate_per_minute,..})=&mut d.equipment_overrides.chilling { *rate_per_minute=n }/><NumberField id="recipe-chilling-plateau" label="Cooling plateau" unit="°C" path="equipment_overrides.chilling.plateau_c" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..}) => *plateau_c, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Forced{plateau_c,..})=&mut d.equipment_overrides.chilling { *plateau_c=n }/></Show>
-                <Show when=move || chilling.get() == "counterflow"><NumberField id="recipe-chilling-flow" label="Counterflow rate" unit="L/min" path="equipment_overrides.chilling.litres_per_minute" draft=draft read=|d: &RecipeDocumentV1| match &d.equipment_overrides.chilling { Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute}) => *litres_per_minute, _ => None } write=|d: &mut RecipeDocumentV1,n| if let Some(krausen_types::brewery::ChillingV1::Counterflow{litres_per_minute})=&mut d.equipment_overrides.chilling { *litres_per_minute=n }/></Show>
-            </div></BreweryDisclosure>
+                <crate::pages::recipe_equipment::RecipeEquipment draft=draft identity=identity context_visible=context_visible recipe_id=recipe_id summary=equipment_summary/>
+</BreweryDisclosure>
             <BreweryDisclosure title="Export and print">
                 <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
                 <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>

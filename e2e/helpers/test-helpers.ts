@@ -732,3 +732,25 @@ export async function isolateClientIp(page: Page): Promise<void> {
  * option as "not specified" and falls back to the config value.
  */
 export const SIGNED_OUT = { cookies: [], origins: [] };
+
+/**
+ * Create a shared equipment profile through the real Equipment manager.
+ * `values` maps manager field ids (for example `profile-boil-off`) to raw text.
+ * Returns the saved profile's id from the manager's selection.
+ */
+export async function createEquipmentProfile(
+  page: Page,
+  name: string,
+  values: Record<string, string> = {},
+  chilling = '',
+): Promise<string> {
+  await page.goto('/equipment');
+  await page.locator('#equipment-profile-name').fill(name);
+  for (const [id, text] of Object.entries(values)) {
+    await page.locator(`#${id}`).fill(text);
+  }
+  if (chilling) await page.locator('#profile-chilling').selectOption(chilling);
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await page.getByRole('status').filter({ hasText: 'Profile saved.' }).waitFor();
+  return await page.locator('#equipment-profile-edit').inputValue();
+}

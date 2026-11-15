@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, seedWorkspace, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, seedWorkspace, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -1211,44 +1211,190 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
       try { previews.push(await response.json()); } catch { /* Ignore non-JSON transport failures. */ }
     }
   });
+  const name = `Profile ${Date.now()}`;
+  await page.goto('/equipment');
+  await page.getByLabel('Profile name').fill(name);
+  await page.getByLabel('Mash efficiency (%)').fill('75');
+  await page.getByLabel('Boil-off (L/h)', { exact: true }).fill('3');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  const profileId = await page.getByLabel('Manage profile').inputValue();
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(`Profile recipe ${Date.now()}`);
   await page.getByText('Equipment settings', { exact: true }).click();
-  const name = `Profile ${Date.now()}`;
-  await page.getByLabel('Profile name').fill(name);
-  await page.getByLabel('Mash efficiency (%)').first().fill('75');
-  await page.getByLabel('Boil-off (L/h)', { exact: true }).first().fill('3');
-  await page.getByRole('button', { name: 'Save profile' }).click();
   const selector = page.getByLabel('Equipment profile', { exact: true });
   await expect(selector.getByRole('option', { name })).toBeAttached();
   await selector.selectOption({ label: name });
-  const profileId = await selector.inputValue();
+  expect(await selector.inputValue()).toBe(profileId);
   await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1)).toBe(true);
   const originalDigest = previews.find(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1).Preview.context_digest;
   await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const recipeUrl = page.url();
   await page.reload();
   await page.getByText('Equipment settings', { exact: true }).click();
   await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
-  const manage = page.getByLabel('Manage profile');
-  await manage.selectOption({ label: name });
-  await page.getByLabel('Mash efficiency (%)').first().fill('80');
+  // Edit the shared profile in the independent manager; the saved recipe is untouched.
+  await page.goto(`/equipment?profile=${profileId}`);
+  await expect(page.getByLabel('Manage profile')).toHaveValue(profileId);
+  await page.getByLabel('Mash efficiency (%)').fill('80');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
-  await expect(page.getByLabel('Mash efficiency (%)').first()).toHaveValue('80');
+  await expect(page.getByLabel('Mash efficiency (%)')).toHaveValue('80');
+  await page.goto(recipeUrl);
   await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 2 && result.Preview.context_digest !== originalDigest)).toBe(true);
+  await page.goto(`/equipment?profile=${profileId}`);
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile archived.' })).toBeVisible();
+  await page.goto(recipeUrl);
+  await page.getByText('Equipment settings', { exact: true }).click();
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toBeVisible();
-  await expect.poll(() => previews.includes('UnresolvedProfile')).toBe(true);
+  await page.goto(`/equipment?profile=${profileId}`);
   await page.getByRole('button', { name: 'Unarchive' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.goto(recipeUrl);
+  await page.getByText('Equipment settings', { exact: true }).click();
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toHaveCount(0);
 });
 
+test('Equipment opens from customer navigation without a recipe and keeps the manager independent', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Equipment' }).click();
+  await expect(page).toHaveURL(/\/equipment$/);
+  await expect(page.getByRole('heading', { name: 'Equipment', level: 1 })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Equipment' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByText('Editing shared profile')).toHaveCount(0);
+  await expect(page.getByText('New equipment profile')).toBeVisible();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Recipe name')).toHaveCount(0);
+});
+
+test('a dirty profile draft is guarded on profile switch and navigation, then discarded or kept on request', async ({ page }) => {
+  const first = await createEquipmentProfile(page, `Guard first ${Date.now()}`, { 'profile-boil-off': '3' });
+  const second = await createEquipmentProfile(page, `Guard second ${Date.now()}`, { 'profile-boil-off': '5' });
+  await page.goto(`/equipment?profile=${first}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
+  await page.locator('#profile-boil-off').fill('4');
+  await page.locator('#equipment-profile-edit').selectOption(second);
+  const choice = page.getByRole('group', { name: 'Unsaved profile changes' });
+  await expect(choice).toBeVisible();
+  // The edit is neither lost nor replaced while the choice is open.
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#equipment-profile-edit')).toHaveValue(first);
+  await choice.getByRole('button', { name: 'Stay on profile' }).click();
+  await expect(page.locator('#equipment-profile-edit')).toBeFocused();
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.getByRole('button', { name: 'Archive' })).toBeDisabled();
+  // Leaving through the shell uses the shared guard; Stay keeps the draft.
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Unsaved task changes' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Stay' }).click();
+  await expect(page).toHaveURL(/\/equipment/);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  // Discard and switch drops only the profile draft.
+  await page.locator('#equipment-profile-edit').selectOption(second);
+  await page.getByRole('group', { name: 'Unsaved profile changes' }).getByRole('button', { name: 'Discard changes and switch' }).click();
+  await expect(page.locator('#equipment-profile-edit')).toHaveValue(second);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('5');
+  // Save profile and switch persists the first profile revision before moving.
+  await page.locator('#equipment-profile-edit').selectOption(first);
+  await page.locator('#profile-boil-off').fill('6');
+  await page.locator('#equipment-profile-edit').selectOption(second);
+  await page.getByRole('group', { name: 'Unsaved profile changes' }).getByRole('button', { name: 'Save profile and switch' }).click();
+  await expect(page.locator('#equipment-profile-edit')).toHaveValue(second);
+  await page.locator('#equipment-profile-edit').selectOption(first);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('6');
+  // Save and leave from the shell guard saves the profile, then navigates once.
+  await page.locator('#profile-boil-off').fill('7');
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
+  await page.getByRole('dialog', { name: 'Unsaved task changes' }).getByRole('button', { name: 'Save and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await page.goto(`/equipment?profile=${first}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('7');
+});
+
+test('a profile conflict keeps the raw edits and never overwrites the newer revision', async ({ page }) => {
+  const id = await createEquipmentProfile(page, `Conflict ${Date.now()}`, { 'profile-boil-off': '3' });
+  await page.goto(`/equipment?profile=${id}`);
+  await page.locator('#profile-boil-off').fill('4');
+  const other = await page.context().newPage();
+  await other.goto(`/equipment?profile=${id}`);
+  await other.locator('#profile-boil-off').fill('9');
+  await other.getByRole('button', { name: 'Save profile' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await other.close();
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile changed elsewhere' })).toBeVisible();
+  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await page.goto(`/equipment?profile=${id}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('9');
+});
+
+test('recipe overrides show inherited and effective values and reset deletes the override', async ({ page }) => {
+  const name = `Inherit ${Date.now()}`;
+  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-off': '3', 'profile-mash-efficiency': '75', 'profile-capacity': '30' }, 'natural');
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Override recipe ${Date.now()}`);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.getByLabel('Equipment profile', { exact: true }).selectOption(profileId);
+  await expect(page.getByText(`Using profile “${name}” for this recipe`)).toBeVisible();
+  const boil = page.locator('#recipe-boil-off');
+  await expect(boil).toHaveValue('');
+  await expect(page.getByText(`Inherited: effective 3 L/h from ${name}.`)).toBeVisible();
+  await boil.fill('4');
+  await expect(page.getByText(`Overridden for this recipe: effective 4 L/h. Inherited: 3 L/h from ${name}.`)).toBeVisible();
+  await expect(page.getByText('1 recipe override', { exact: false })).toBeVisible();
+  await page.locator('#recipe-efficiency').fill('70');
+  await expect(page.locator('#recipe-efficiency-override')).toHaveValue('');
+  await page.locator('#recipe-chilling').selectOption('forced');
+  await page.locator('#recipe-chilling-rate').fill('0.5');
+  await page.getByRole('button', { name: 'Reset Boil-off to inherited' }).click();
+  // Reset removes the override rather than copying the profile value into it.
+  await expect(boil).toHaveValue('');
+  await expect(page.getByText(`Inherited: effective 3 L/h from ${name}.`)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reset Boil-off to inherited' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reset Chilling to inherited' }).click();
+  await expect(page.locator('#recipe-chilling')).toHaveValue('');
+  await expect(page.locator('#recipe-chilling-rate')).toHaveCount(0);
+  // A raw unfinished override is still an override the user can reset.
+  await boil.fill('-');
+  await expect(page.getByRole('button', { name: 'Reset Boil-off to inherited' })).toBeVisible();
+  await page.getByRole('button', { name: 'Reset Boil-off to inherited' }).click();
+  await expect(boil).toHaveValue('');
+  // Switching the selected profile never writes into the recipe overrides.
+  await page.getByLabel('Equipment profile', { exact: true }).selectOption('');
+  await expect(page.getByText('Using recipe-only equipment')).toBeVisible();
+  await expect(page.locator('#recipe-capacity')).toHaveValue('');
+});
+
+test('Manage equipment from a recipe returns to the retained recipe', async ({ page }) => {
+  const name = `Manage ${Date.now()}`;
+  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-off': '3' });
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Retained ${Date.now()}`);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.getByLabel('Equipment profile', { exact: true }).selectOption(profileId);
+  await page.getByRole('link', { name: 'Manage equipment profiles' }).click();
+  // The dirty recipe is protected by its own guard; nothing is discarded implicitly.
+  const dialog = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Stay' }).click();
+  await expect(page).toHaveURL(/recipe-editor\/new/);
+  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  const recipeUrl = page.url();
+  await page.getByRole('link', { name: 'Manage equipment profiles' }).click();
+  await expect(page).toHaveURL(/\/equipment\?profile=/);
+  await expect(page.getByLabel('Manage profile')).toHaveValue(profileId);
+  await page.getByRole('link', { name: 'Back to recipe' }).click();
+  await expect(page).toHaveURL(recipeUrl);
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(/^Retained /);
+});
 
 test('an uncertain equipment save retries the identical request', async ({ page }) => {
-  await page.goto('/recipe-editor/new');
-  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.goto('/equipment');
   const name = `Retry profile ${Date.now()}`;
   await page.getByLabel('Profile name').fill(name);
   const requests: { profile_id: string, request_id: string }[] = [];
@@ -1267,13 +1413,18 @@ test('an uncertain equipment save retries the identical request', async ({ page 
   });
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByText('The result is uncertain. Retry the same request.')).toBeVisible();
+  // The pinned request locks the form and survives a reload with the same identity.
+  await expect(page.getByLabel('Profile name')).toBeDisabled();
+  await page.reload();
+  await expect(page.getByText('A previous profile request was not confirmed')).toBeVisible();
+  await expect(page.getByLabel('Profile name')).toHaveValue(name);
+  await expect(page.getByLabel('Profile name')).toBeDisabled();
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   expect(requests).toHaveLength(2);
   expect(requests[1].request_id).toBe(requests[0].request_id);
   expect(requests[1].profile_id).toBe(requests[0].profile_id);
-  const selector = page.getByLabel('Equipment profile', { exact: true });
-  await expect(selector.getByRole('option', { name })).toHaveCount(1);
+  await expect(page.getByLabel('Manage profile').getByRole('option', { name })).toHaveCount(1);
 });
 
 test('profile pagination exposes later active and archived profiles', async ({ page }) => {
@@ -1298,12 +1449,14 @@ test('profile pagination exposes later active and archived profiles', async ({ p
   inserts.push('COMMIT');
   db.exec(inserts.join(';'));
   walCheckpoint();
-  await page.goto('/recipe-editor/new');
-  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.goto('/equipment');
   const manage = page.getByLabel('Manage profile');
   await expect(manage.getByRole('option', { name: 'Paged profile 101 (archived)' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Load more profiles' }).click();
   await expect(manage.getByRole('option', { name: 'Paged profile 101 (archived)' })).toBeAttached();
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.getByRole('button', { name: 'Load more profiles' }).click();
   await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 100' })).toBeAttached();
   await expect(page.getByLabel('Equipment profile', { exact: true }).getByRole('option', { name: 'Paged profile 101 (archived)' })).toHaveCount(0);
 });
@@ -1557,12 +1710,10 @@ test('recovered draft retains saved profile selection and resolves its preview',
       try { previews.push(await response.json()); } catch { /* Transport errors are not previews. */ }
     }
   });
+  const profileName = `Recovery profile ${Date.now()}`;
+  await createEquipmentProfile(page, profileName);
   await page.goto('/recipe-editor/new');
   await page.getByText('Equipment settings', { exact: true }).click();
-  const profileName = `Recovery profile ${Date.now()}`;
-  await page.getByLabel('Profile name').fill(profileName);
-  await page.getByRole('button', { name: 'Save profile' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   const selector = page.getByLabel('Equipment profile', { exact: true });
   if (await selector.getByRole('option', { name: profileName }).count() === 0 && await page.getByRole('button', { name: 'Load more profiles' }).isVisible()) {
     await page.getByRole('button', { name: 'Load more profiles' }).click();

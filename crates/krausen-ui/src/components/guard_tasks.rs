@@ -55,7 +55,10 @@ impl GuardTaskState {
     pub fn may_discard(self, kind: GuardTaskKind) -> bool {
         !self.in_flight
             && (!self.uncertain
-                || (matches!(kind, GuardTaskKind::Evidence | GuardTaskKind::Import)
+                || (matches!(
+                    kind,
+                    GuardTaskKind::Evidence | GuardTaskKind::Import | GuardTaskKind::Equipment
+                )
                     && self.recovery_retained))
     }
 }
@@ -431,8 +434,13 @@ mod tests {
         state.recovery_retained = true;
         assert!(state.may_discard(GuardTaskKind::Evidence));
         assert!(!state.may_discard(GuardTaskKind::Recipe));
+        assert!(state.may_discard(GuardTaskKind::Equipment));
         state.in_flight = true;
         assert!(!state.may_discard(GuardTaskKind::Evidence));
+        assert!(!state.may_discard(GuardTaskKind::Equipment));
+        state.in_flight = false;
+        state.recovery_retained = false;
+        assert!(!state.may_discard(GuardTaskKind::Equipment));
     }
     #[test]
     fn import_leaves_an_unknown_commit_only_when_its_exact_request_is_retained() {

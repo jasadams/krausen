@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import * as path from 'path';
 import {
   DEFAULT_TEST_USER,
+  createEquipmentProfile,
   getDefaultUserId,
   loginUser,
   seedWorkspace,
@@ -88,22 +89,21 @@ async function importRecipe(page: import('@playwright/test').Page, title: string
 }
 
 async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
+  const recipeUrl = page.url();
+  await createEquipmentProfile(page, 'E2E kettle', {
+    'profile-mash-efficiency': '75',
+    'profile-boil-off': '3',
+    'profile-transfer-loss': '2',
+    'profile-deadspace': '0',
+    'profile-absorption': '0.8',
+    'profile-thickness': '2.5',
+    'profile-capacity': '30',
+    'profile-diameter': '35',
+    'profile-opening': '30',
+    'profile-boil-temperature': '100',
+  }, 'natural');
+  await page.goto(recipeUrl);
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-edit').selectOption('');
-  await page.locator('#equipment-profile-name').fill('E2E kettle');
-  await page.locator('#profile-mash-efficiency').fill('75');
-  await page.locator('#profile-boil-off').fill('3');
-  await page.locator('#profile-transfer-loss').fill('2');
-  await page.locator('#profile-deadspace').fill('0');
-  await page.locator('#profile-absorption').fill('0.8');
-  await page.locator('#profile-thickness').fill('2.5');
-  await page.locator('#profile-capacity').fill('30');
-  await page.locator('#profile-diameter').fill('35');
-  await page.locator('#profile-opening').fill('30');
-  await page.locator('#profile-boil-temperature').fill('100');
-  await page.locator('#profile-chilling').selectOption('natural');
-  await page.getByRole('button', { name: 'Save profile' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Profile saved' })).toBeVisible();
   await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
   await page.getByText('Addition details', { exact: true }).first().click();
   await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
