@@ -88,9 +88,12 @@ async function importRecipe(page: import('@playwright/test').Page, title: string
   await page.getByRole('link', { name: 'Open imported recipe' }).click();
 }
 
-async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
+async function makeSavedRevisionReady(
+  page: import('@playwright/test').Page,
+  profileName = 'E2E kettle',
+): Promise<string> {
   const recipeUrl = page.url();
-  await createEquipmentProfile(page, 'E2E kettle', {
+  const profileId = await createEquipmentProfile(page, profileName, {
     'profile-mash-efficiency': '75',
     'profile-boil-off': '3',
     'profile-transfer-loss': '2',
@@ -104,7 +107,7 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   }, 'natural');
   await page.goto(recipeUrl);
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-select').selectOption({ label: 'E2E kettle' });
+  await page.locator('#equipment-profile-select').selectOption(profileId);
   await page.getByText('Addition details', { exact: true }).first().click();
   await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
   await page.getByText('Recipe process and notes', { exact: true }).click();
@@ -115,6 +118,7 @@ async function makeSavedRevisionReady(page: import('@playwright/test').Page) {
   await page.locator('#recipe-top-up').fill('0');
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  return profileId;
 }
 
 async function prepareAndStart(page: import('@playwright/test').Page, revision: string) {
@@ -152,6 +156,31 @@ test('starts the prepared saved revision with frozen targets', async ({ page }) 
   await makeSavedRevisionReady(page);
   await prepareAndStart(page, '2');
   await expect(page.getByText(`from revision 2`)).toBeVisible();
+});
+
+test('editing a shared profile leaves a started brew frozen and changes only later previews', async ({ page }) => {
+  await importRecipe(page, `Brew frozen ${Date.now()}`);
+  const profileId = await makeSavedRevisionReady(page, `Frozen kettle ${Date.now()}`);
+  const recipeUrl = page.url();
+  await prepareAndStart(page, '2');
+  await page.getByRole('link', { name: 'Open brew evidence' }).click();
+  await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
+  const brewUrl = page.url();
+  await expect(page.getByRole('heading', { name: 'Lifecycle evidence' })).toBeVisible();
+  const before = await page.getByRole('main').innerText();
+  await page.goto(`/equipment?profile=${profileId}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
+  await page.locator('#profile-boil-off').fill('6');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.goto(brewUrl);
+  await expect(page.getByRole('heading', { name: 'Lifecycle evidence' })).toBeVisible();
+  expect(await page.getByRole('main').innerText()).toBe(before);
+  // A later start review resolves the edited current profile instead.
+  await page.goto(recipeUrl);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+  await expect(page.getByText(/Inherited: effective 6 L\/h from Frozen kettle/)).toBeVisible();
 });
 
 test('starts an explicitly selected historical revision without restoring it', async ({

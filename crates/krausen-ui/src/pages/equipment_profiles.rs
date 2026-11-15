@@ -194,7 +194,6 @@ impl ProfileForm {
             .into(),
         }
     }
-    /// Per-field validation message, or `None` when the raw text is empty or numeric.
     /// Chilling-mode values apply only while their mode is selected.
     fn relevant(&self, index: usize) -> bool {
         match index {
@@ -203,6 +202,7 @@ impl ProfileForm {
             _ => true,
         }
     }
+    /// Per-field validation message, or `None` when the raw text is empty or numeric.
     pub fn field_error(&self, index: usize) -> Option<&'static str> {
         if !self.relevant(index) {
             return None;
@@ -347,10 +347,10 @@ pub fn EquipmentManager(
     let form_generation = RwSignal::new(0_u64);
     let pending = RwSignal::new(None::<EquipmentCommand>);
     let busy = RwSignal::new(false);
+    let conflict = RwSignal::new(false);
     let blocked = RwSignal::new(false);
     let status = RwSignal::new(String::new());
     let switch_target = RwSignal::new(None::<String>);
-    let conflict = RwSignal::new(false);
     let initial = StoredValue::new((!initial_profile.is_empty()).then_some(initial_profile));
     let after_save = StoredValue::new(AfterSave::Stay);
     let submitted_generation = StoredValue::new(0_u64);
@@ -363,6 +363,7 @@ pub fn EquipmentManager(
         form.set(next);
         editing.set(profile);
         status.set(String::new());
+        conflict.set(false);
         form_generation.update(|n| *n += 1);
     });
     let edit = move |change: &dyn Fn(&mut ProfileForm)| {
@@ -697,27 +698,44 @@ pub fn EquipmentManager(
         let Some(current) = editing.get_untracked() else {
             return;
         };
-        if busy.get_untracked() {
+        if busy.get_untracked() || pending.get_untracked().is_some() {
             return;
         }
+        // A clean form (archive conflict) simply adopts the latest; edits are kept otherwise.
+        let had_edits = dirty.get_untracked();
         busy.set(true);
         let expected = identity.get_untracked();
         leptos::task::spawn_local(async move {
+            if !current_context_matches(&expected).await {
+                if busy.try_set(false).is_none() {
+                    context_visible.set(false);
+                }
+                return;
+            }
             let outcome = equipment_command_shared(EquipmentCommand::Get(EquipmentQuery {
-                intent: expected,
+                intent: expected.clone(),
                 profile_id: current.profile_id,
             }))
             .await;
             if busy.try_set(false).is_some() {
                 return;
             }
+            if !current_context_matches(&expected).await {
+                context_visible.set(false);
+                return;
+            }
             match outcome {
                 Ok(EquipmentOutcome::Profile(latest)) => {
-                    // Keep the raw edits; they are now measured against the latest revision.
-                    baseline.set(ProfileForm::from_profile(Some(&latest)));
-                    editing.set(Some(latest));
-                    conflict.set(false);
-                    status.set("Loaded the latest profile. Your edits are kept; review and save them.".into());
+                    if had_edits {
+                        // Keep the raw edits; they are now measured against the latest revision.
+                        baseline.set(ProfileForm::from_profile(Some(&latest)));
+                        editing.set(Some(latest));
+                        conflict.set(false);
+                        status.set("Loaded the latest profile. Your edits are kept; review and save them.".into());
+                    } else {
+                        apply.run(Some(latest));
+                        status.set("Loaded the latest profile.".into());
+                    }
                 }
                 _ => status.set("Unable to load the latest profile. Try again.".into()),
             }
@@ -976,6 +994,22 @@ mod tests {
         );
         form.chilling = "forced".into();
         assert_eq!(form.parse(&Default::default()).unwrap(), forced);
+    }
+
+    #[test]
+    fn invalid_text_in_a_hidden_chilling_field_does_not_block_parsing() {
+        let mut form = ProfileForm::blank();
+        form.chilling = "natural".into();
+        form.raw[11] = "abc".into();
+        form.raw[13] = "x".into();
+        assert_eq!(form.field_error(11), None);
+        assert_eq!(
+            form.parse(&Default::default()).unwrap().chilling,
+            Some(ChillingV1::Natural)
+        );
+        form.chilling = "forced".into();
+        assert_eq!(form.field_error(11), Some("Enter a number."));
+        assert_eq!(form.field_error(13), None);
     }
 
     #[test]

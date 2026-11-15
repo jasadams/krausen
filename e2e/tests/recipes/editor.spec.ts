@@ -1340,6 +1340,27 @@ test('a profile conflict keeps the raw edits and never overwrites the newer revi
   await expect(page.locator('#profile-boil-off')).toHaveValue('4');
 });
 
+test('a conflict notice does not follow the user to another profile', async ({ page }) => {
+  const first = await createEquipmentProfile(page, `Conflict A ${Date.now()}`, { 'profile-boil-off': '3' });
+  const second = await createEquipmentProfile(page, `Conflict B ${Date.now()}`, { 'profile-boil-off': '5' });
+  await page.goto(`/equipment?profile=${first}`);
+  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
+  await page.locator('#profile-boil-off').fill('4');
+  const other = await page.context().newPage();
+  await other.goto(`/equipment?profile=${first}`);
+  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
+  await other.locator('#profile-boil-off').fill('9');
+  await other.getByRole('button', { name: 'Save profile' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await other.close();
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('button', { name: 'Load latest and keep my edits' })).toBeVisible();
+  await page.locator('#equipment-profile-edit').selectOption(second);
+  await page.getByRole('group', { name: 'Unsaved profile changes' }).getByRole('button', { name: 'Discard changes and switch' }).click();
+  await expect(page.locator('#equipment-profile-edit')).toHaveValue(second);
+  await expect(page.getByRole('button', { name: 'Load latest and keep my edits' })).toHaveCount(0);
+});
+
 test('recipe overrides show inherited and effective values and reset deletes the override', async ({ page }) => {
   const name = `Inherit ${Date.now()}`;
   const profileId = await createEquipmentProfile(page, name, { 'profile-boil-off': '3', 'profile-mash-efficiency': '75', 'profile-capacity': '30' }, 'natural');
