@@ -395,7 +395,7 @@ test.describe('mobile navigation drawer', () => {
     await expect(navigation).toBeHidden();
   });
 
-  test('every drawer destination closes the drawer when it is already the current route', async ({ page }) => {
+  test('Recipes and Equipment close the drawer when already the current route (Settings is covered separately)', async ({ page }) => {
     const menu = page.getByRole('button', { name: 'Toggle menu' });
     const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
     for (const [path, link] of [['/recipes', 'Recipes'], ['/equipment', 'Equipment']]) {
