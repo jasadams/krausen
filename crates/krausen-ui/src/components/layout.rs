@@ -746,15 +746,25 @@ fn focus_arrival_heading() {
     fn deadline_from_now() -> f64 {
         js_sys::Date::now() + 4_000.0
     }
-    fn attempt(deadline: f64) {
+    // The navigation trigger itself often keeps focus after a client-side route
+    // change; that is not a deliberate move elsewhere.
+    let trigger = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .filter(|element| matches!(element.tag_name().as_str(), "A" | "BUTTON"));
+    fn attempt(deadline: f64, trigger: Option<web_sys::Element>) {
         use wasm_bindgen::JsCast;
         let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
         let Some(main) = document.get_element_by_id("main-content") else { return };
-        // Any deliberate focus the user has taken anywhere (sidebar, account
-        // popover, a field) wins; only the main landmark/body means "still ours".
+        // Any deliberate focus the user has taken anywhere else (skip link,
+        // account popover, a field) wins; the main landmark/body and the very
+        // trigger that started the navigation mean "still ours".
         if let Some(active) = document.active_element() {
             let tag = active.tag_name();
-            if tag != "BODY" && tag != "HTML" && active.id() != "main-content" {
+            let still_ours = matches!(tag.as_str(), "BODY" | "HTML")
+                || active.id() == "main-content"
+                || trigger.as_ref().is_some_and(|trigger| trigger.is_same_node(Some(&active)));
+            if !still_ours {
                 return;
             }
         }
@@ -775,7 +785,8 @@ fn focus_arrival_heading() {
                 }
             }
             None if js_sys::Date::now() < deadline => {
-                request_animation_frame(move || attempt(deadline));
+                let trigger = trigger.clone();
+                request_animation_frame(move || attempt(deadline, trigger));
             }
             None => {
                 if let Ok(main) = main.dyn_into::<web_sys::HtmlElement>() {
@@ -787,7 +798,7 @@ fn focus_arrival_heading() {
         }
     }
     let deadline = deadline_from_now();
-    request_animation_frame(move || attempt(deadline));
+    request_animation_frame(move || attempt(deadline, trigger));
 }
 
 /// Main authenticated layout with sidebar and content area.
