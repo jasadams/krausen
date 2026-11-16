@@ -237,3 +237,14 @@ test('a hash-only Back does not suppress the next arrival focus', async ({ page 
   await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Equipment' }).click();
   await expect(page.getByRole('heading', { name: 'Equipment', level: 1 })).toBeFocused();
 });
+
+test('changing the library filter closes an open saved-versions panel, while Back restores it', async ({ page }) => {
+  const title = `Filter closes ${Date.now()}`;
+  await saveRecipe(page, title);
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
+  await page.getByRole('button', { name: 'Inspect revision 1' }).click();
+  await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
+  await page.getByLabel('Search recipes').fill(`${title} x`);
+  await expect(page.getByRole('heading', { name: `Saved versions · ${title}` })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/versions=/);
+});

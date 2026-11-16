@@ -600,7 +600,7 @@ pub fn StartBrewPanel(
                     )
                 />
                 {target_metrics(&started.targets)}
-                <ButtonLink href=format!("/brews/{}", started.brew_id)>"Open brew evidence"</ButtonLink>
+                <ButtonLink href=crate::utils::nav_state::brew_href(&started.brew_id, false)>"Open brew evidence"</ButtonLink>
             })}
             {move || conflict.get().map(|conflict| view! {
                 <BreweryNotice title="Start conflict — nothing was created" body="Review the current values and prepare an explicit start again." warning=true/>

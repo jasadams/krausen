@@ -277,8 +277,8 @@ pub fn BrewHistoryView(
                             <td><span class="print-sheet__sub">{evidence_text}</span></td>
                             <td>
                                 <div class="recipe-editor__actions">
-                                    <ButtonLink href=format!("/brews/{analysis}/analysis") variant=ButtonVariant::Secondary>"Compare and feedback"</ButtonLink>
-                                    <ButtonLink href=format!("/brews/{evidence}") variant=ButtonVariant::Ghost>"Open evidence"</ButtonLink>
+                                    <ButtonLink href=crate::utils::nav_state::brew_href(&analysis, true) variant=ButtonVariant::Secondary>"Compare and feedback"</ButtonLink>
+                                    <ButtonLink href=crate::utils::nav_state::brew_href(&evidence, false) variant=ButtonVariant::Ghost>"Open evidence"</ButtonLink>
                                 </div>
                             </td>
                         </tr>
@@ -296,7 +296,7 @@ pub fn BrewHistoryView(
         </Show>
         {embedded.then(|| view! {
             <div class="recipe-editor__actions">
-                <ButtonLink href=format!("/recipes/{}/brews", recipe_id.get_untracked()) variant=ButtonVariant::Secondary>"View full brew history"</ButtonLink>
+                <ButtonLink href=crate::utils::nav_state::brews_href(&recipe_id.get_untracked()) variant=ButtonVariant::Secondary>"View full brew history"</ButtonLink>
             </div>
         })}
     };

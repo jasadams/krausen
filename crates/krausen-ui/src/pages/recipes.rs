@@ -78,6 +78,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let search = RwSignal::new(initial_search);
     let archived = RwSignal::new(initial_archived);
     let selected_revision = RwSignal::new(query.with_untracked(|q| parse_revision(q.get("revision").as_deref())));
+    // Set when the URL (Back/Forward, bookmark) rather than the user's own edit
+    // changed the filter, so the selection that URL names is kept.
+    let url_driven = StoredValue::new(false);
     let results = RwSignal::new(Vec::<RecipeSummary>::new());
     let next = RwSignal::new(None::<String>);
     let generation = RwSignal::new(0_u64);
@@ -210,10 +213,12 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         detail_generation.update(|n| *n += 1);
         // A selection the URL still names (Back to an entry that carried one)
         // survives the filter change that brought it here.
-        if first.is_some() && query.with_untracked(|q| q.get("versions").is_none()) {
+        // (A user-driven filter change always closes it.)
+        if first.is_some() && !url_driven.get_value() {
             history.set(None);
             selected_revision.set(None);
         }
+        url_driven.set_value(false);
         recovery.set(None);
         detail_loading.set(false);
         load.run(None);
@@ -240,6 +245,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         });
         if resumed {
             return; // resumed filter: the state-to-URL effect moves the address
+        }
+        if search.get_untracked() != q || archived.get_untracked() != show {
+            url_driven.set_value(true);
         }
         if search.get_untracked() != q { search.set(q); }
         if archived.get_untracked() != show { archived.set(show); }
@@ -442,7 +450,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                 view! { <li class="recipe-library__row"><div class="recipe-library__identity"><h3>{title.clone()}</h3>
                     <p class="recipe-library__meta">{item.style.unwrap_or_else(|| "No style".into())}{item.batch_size_l.map(|v| format!(" · {v} L")).unwrap_or_default()}{format!(" · revision {}", item.revision)}{if archived_item { " · Archived" } else { "" }}</p></div><div class="recipe-library__actions">
                     {(!archived_item && !recovery_item).then(|| view! { <ButtonLink href=format!("/recipe-editor/{id}") variant=ButtonVariant::Secondary aria_label=format!("Open {title}")>"Open recipe"</ButtonLink> })}
-                    {(!recovery_item).then(|| view! { <ButtonLink href=format!("/recipes/{}/brews", item.recipe_id) variant=ButtonVariant::GhostMuted aria_label=format!("Brews for {title}")>"Brews"</ButtonLink> })}
+                    {(!recovery_item).then(|| view! { <ButtonLink href=crate::utils::nav_state::brews_href(&item.recipe_id) variant=ButtonVariant::GhostMuted aria_label=format!("Brews for {title}")>"Brews"</ButtonLink> })}
                     {recovery_item.then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("Recover stored source for {title}") on:click=move |_| recover.run(recovery_id.clone())>"Recover stored source"</Button> })}
                     {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Ghost aria_label=format!("Saved versions for {title}") on:click=move |_| show_history.run((history_id.clone(), history_title.clone()))>"Saved versions"</Button> })}
                     {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("{} {title}", if archived_item { "Restore" } else { "Archive" }) disabled=Signal::derive(move || saving.get() || pending.get().is_some() || blocked.get()) on:click=move |_| {
