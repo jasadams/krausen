@@ -42,12 +42,10 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/login');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await page.goto(`/recipe-editor/${RECIPE_ID}`);
-  const missing = await page
-    .getByText('Recipe not found', { exact: false })
-    .first()
-    .isVisible({ timeout: 5_000 })
-    .catch(() => false);
-  test.skip(missing, 'compact-density workstation fixture recipe is not present in this installation');
+  const form = page.locator('#recipe-title');
+  const missing = page.getByText('Recipe not found', { exact: false }).first();
+  await expect(form.or(missing)).toBeVisible({ timeout: 30_000 });
+  test.skip(!(await form.isVisible()), 'compact-density workstation fixture recipe is not present in this installation');
 });
 
 test('populated recipe uses compact two-row fermentables and keeps Hops in view', async ({
