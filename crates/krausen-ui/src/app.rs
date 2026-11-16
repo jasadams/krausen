@@ -25,7 +25,7 @@ use crate::pages::recipe_editor::RecipeEditorPage;
 use crate::pages::equipment::EquipmentPage;
 use crate::pages::recipes::RecipesPage;
 use crate::pages::settings::{
-    profile::ProfilePage, security::security_tab::SecurityTab, settings_shell::SettingsShell,
+    profile::ProfilePage, security::security_tab::SecurityTab, settings_shell::{SettingsIndex, SettingsShell},
     team::TeamPage, workspace::WorkspacePage,
 };
 use crate::pages::welcome::WelcomePage;
@@ -110,40 +110,9 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/design-system") view=DesignSystemPage/>
                     <Route path=path!("/accept-ownership/:transfer_id") view=AcceptOwnershipPage/>
 
-                    // Settings
-                    <ParentRoute path=path!("/settings") view=|| view! {
-                        <div class="flex flex-col h-full bg-muted overflow-x-hidden" style:flex-direction="column">
-                            <div class="flex-1 overflow-y-auto p-4 md:p-6 relative">
-                                <div class="absolute top-4 right-4 md:top-6 md:right-6 flex items-center gap-2 z-10">
-                                    <button
-                                        class="px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                                        on:click=move |_| {
-                                            leptos::task::spawn_local(async move {
-                                                let _ = crate::server_fns::security::logout().await;
-                                                let _ = web_sys::window()
-                                                    .and_then(|w| w.location().set_href("/login").ok());
-                                            });
-                                        }
-                                    >
-                                        "Sign Out"
-                                    </button>
-                                    <a
-                                        href="/"
-                                        class="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                                        aria-label="Close settings"
-                                    >
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                        </svg>
-                                    </a>
-                                </div>
-                                <div class="w-full">
-                                    <SettingsShell/>
-                                </div>
-                            </div>
-                        </div>
-                    }>
-                        <Route path=path!("") view=|| view! { <Redirect path="/settings/profile"/> }/>
+                    // Settings: scoped route navigation, safe return (IA-008)
+                    <ParentRoute path=path!("/settings") view=SettingsShell>
+                        <Route path=path!("") view=SettingsIndex/>
                         <Route path=path!("/profile") view=ProfilePage/>
                         <Route path=path!("/security") view=SecurityTab/>
                         <Route path=path!("/workspace") view=WorkspacePage/>

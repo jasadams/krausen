@@ -19,6 +19,7 @@ pub mod brew_evidence;
 pub mod brew_history;
 pub mod brew_history_presentation;
 pub mod brew_start;
+pub mod brew_wayfinding;
 pub mod catalogue_picker;
 pub mod equipment;
 pub mod ingredient_addition;

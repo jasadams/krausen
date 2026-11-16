@@ -8,6 +8,7 @@ use krausen_types::request_context::OperationIntent;
 use leptos::prelude::*;
 
 /// Only an in-app recipe editor path may be a return target; never an external URL.
+/// Deliberately narrower than `utils::nav_state::safe_return` (general Settings return).
 pub fn safe_return(value: Option<String>) -> Option<String> {
     let value = value?;
     let rest = value.strip_prefix("/recipe-editor/")?;
@@ -46,6 +47,7 @@ fn EquipmentContent(identity: OperationIntent) -> impl IntoView {
     let back = safe_return(query.with_untracked(|q| q.get("return")));
     view! {
         <div class="recipe-editor">
+            <crate::components::wayfinding::PageTitle text=Signal::derive(|| "Equipment".to_owned())/>
             <header class="recipe-editor__header">
                 <div>
                     <p class="kit-showcase__eyebrow">"Your brewery"</p>

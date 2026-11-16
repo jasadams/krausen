@@ -1710,6 +1710,17 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                     />
                 }
             >
+            <crate::components::wayfinding::PageTitle text=Signal::derive(|| "Brew measurements".to_owned())/>
+            <crate::pages::brew_wayfinding::RecipeTrail
+                intent=intent.get_value()
+                recipe_id=Signal::derive(move || view.get().map(|data| data.recipe_id))
+                end=Signal::derive(move || crate::pages::brew_wayfinding::TrailEnd::Measurements {
+                    brew_id: brew_id.get_value(),
+                    brew_label: view.get().map(|data| format!("Brew · recipe revision {}", data.selected_recipe_revision)).unwrap_or_else(|| "Brew".to_owned()),
+                })
+            />
+            <crate::pages::brew_wayfinding::BrewSiblingLinks brew_id=brew_id.get_value() compare=false/>
+            <h1 id="brew-measurements-heading" tabindex="-1">"Brew measurements"</h1>
             <BreweryPanel
                 title="Brew evidence"
                 description="Readings, notes, lifecycle and archive all use the same shared operations as MCP."

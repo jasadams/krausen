@@ -111,7 +111,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.getByLabel('Batch volume (L)', { exact: true })).toHaveValue('21.5');
     const accountPopup = await openAccount(page, page.locator('.app-shell__desktop'));
     await accountPopup.getByRole('link', { name: 'Settings', exact: true }).click();
-    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
     await expect(page.getByRole('heading', { name: 'Profile Settings', exact: true })).toBeVisible();
   });
 }
@@ -154,8 +154,8 @@ test('account popup is ordinary nonmodal navigation with natural keyboard, Escap
   // Not a dialog or ARIA menu, and the page behind it is not inert.
   expect(await popup.evaluate(element => element.matches(':modal') || element.getAttribute('role') === 'menu' || !!element.querySelector('[role^="menuitem"]'))).toBe(false);
   await expect(page.locator('dialog:modal')).toHaveCount(0);
-  await expect(popup.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('href', '/settings/profile');
-  await expect(popup.getByRole('link', { name: 'Appearance', exact: true })).toHaveAttribute('href', '/settings/profile#appearance');
+  await expect(popup.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('href', /^\/settings\/profile(\?return=[^#]*)?$/);
+  await expect(popup.getByRole('link', { name: 'Appearance', exact: true })).toHaveAttribute('href', /^\/settings\/profile(\?return=[^#]*)?#appearance$/);
   await expect(popup.getByRole('button', { name: 'Sign Out', exact: true })).toBeVisible();
   // Single membership: no workspace identity/choices or switching entry anywhere.
   await expect(popup.getByRole('heading', { name: 'Workspaces' })).toHaveCount(0);
@@ -185,7 +185,7 @@ test('account Settings closes the popup only after navigation commits and a dirt
   const desktop = page.locator('.app-shell__desktop');
   const popup = await openAccount(page, desktop);
   await popup.getByRole('link', { name: 'Settings', exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   await expect(popup).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Profile Settings', exact: true })).toBeVisible();
 
@@ -373,7 +373,7 @@ test.describe('mobile navigation drawer', () => {
     const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
     const popup = await openAccount(page, navigation);
     await popup.getByRole('link', { name: 'Settings', exact: true }).click();
-    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
     await expect(navigation).toBeHidden();
     await expect(page.locator('dialog:modal')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Profile Settings', exact: true })).toBeVisible();
@@ -434,7 +434,7 @@ test.describe('mobile navigation drawer', () => {
     const again = await openAccount(page, navigation);
     await again.getByRole('link', { name: 'Settings', exact: true }).click();
     await guard.getByRole('button', { name: 'Discard and leave' }).click();
-    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   });
 
   test('Escape closes the popup first and the drawer on a later Escape', async ({ page }) => {
