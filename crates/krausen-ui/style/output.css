@@ -3943,9 +3943,6 @@
   gap: var(--k-space-1) var(--k-space-3);
   min-width: 0;
 }
-.recipe-header__hint {
-  grid-column: 1 / -1;
-}
 .recipe-header__equipment {
   display: grid;
   gap: var(--k-space-1);

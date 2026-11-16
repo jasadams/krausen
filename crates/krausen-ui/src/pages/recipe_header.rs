@@ -42,9 +42,15 @@ pub fn primary_action(saved: bool, dirty: bool, readiness: Option<Readiness>) ->
 }
 
 /// Failure wording the editor reports through its one status string.
+///
+/// Deliberate heuristic: the editor has a single free-text `status` and no typed
+/// failure source, and retyping every writer is outside this presentation ticket.
+/// The wording of every failure `status.set` in `recipe_editor.rs` is pinned by
+/// `failure_wording_is_recognised_without_flagging_success`; add new failure
+/// messages there. Text, not colour, still carries the meaning.
 pub fn is_failure_message(message: &str) -> bool {
     let lower = message.to_lowercase();
-    ["could not", "unable", "failed", "unavailable", "denied", "expired", "error"].iter().any(|word| lower.contains(word))
+    ["could not", "unable", "failed", "unavailable", "denied", "expired", "error", "invalid", "no longer"].iter().any(|word| lower.contains(word))
 }
 
 pub fn save_label(saved: bool) -> &'static str {
@@ -234,6 +240,24 @@ mod tests {
     fn failure_wording_is_recognised_without_flagging_success() {
         assert!(is_failure_message("Could not discard the retained local draft."));
         assert!(is_failure_message("Preview unavailable."));
+        for failure in [
+            "Local draft recovery is unavailable in this browser.",
+            "Unable to retain this draft locally.",
+            "Complete invalid number fields before saving.",
+            "Correct the invalid fields before saving.",
+            "The current saved revision could not be loaded. Your draft is unchanged.",
+            "The prior save request could not be verified. Reopen the recipe before saving again.",
+            "This recipe is no longer available in this workspace. Your draft is still open.",
+            "The save request was invalid. Your draft is still open.",
+            "You no longer have access to this workspace.",
+            "The selected equipment profile is unavailable.",
+            "An ingredient or import reference could not be verified.",
+        ] {
+            assert!(is_failure_message(failure), "{failure}");
+        }
+        for neutral in ["Saving…", "Updated to the current saved revision.", "Preparing the print summary…", "Review the sheet, then print or save it as a PDF."] {
+            assert!(!is_failure_message(neutral), "{neutral}");
+        }
         assert!(!is_failure_message("Saved revision 3"));
         assert!(!is_failure_message("Scaled recipe saved as revision 4."));
         assert!(!is_failure_message("Draft retained against the current revision. Review it, then choose Save."));
