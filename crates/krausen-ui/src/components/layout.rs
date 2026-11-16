@@ -17,6 +17,7 @@ pub use guard_tasks::{
 };
 
 use crate::components::{Button, ButtonVariant, Spinner};
+use crate::utils::nav_state::{current_location, settings_href};
 use crate::server_fns::sidebar::{
     SidebarUser, get_sidebar_user, list_user_workspaces, switch_workspace,
 };
@@ -735,6 +736,51 @@ impl EditorGuard {
     }
 }
 
+/// Focuses the page's own heading (else the main landmark) once it has
+/// rendered. Polls a bounded number of frames because pages load asynchronously;
+/// gives up as soon as the user has focused something inside the page.
+#[cfg(target_arch = "wasm32")]
+fn focus_arrival_heading() {
+    fn attempt(frames_left: u8) {
+        use wasm_bindgen::JsCast;
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
+        let Some(main) = document.get_element_by_id("main-content") else { return };
+        if let Some(active) = document.active_element() {
+            if main.contains(Some(&active)) && active.id() != "main-content" {
+                return;
+            }
+        }
+        let heading = main
+            .query_selector("h1")
+            .ok()
+            .flatten()
+            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
+        match heading {
+            Some(heading) => {
+                if heading.tab_index() < 0 && !heading.has_attribute("tabindex") {
+                    if heading.set_attribute("tabindex", "-1").is_err() {
+                        tracing::warn!("Unable to make the arrival heading focusable");
+                    }
+                }
+                if let Err(error) = heading.focus() {
+                    tracing::warn!(?error, "Unable to focus the arrival heading");
+                }
+            }
+            None if frames_left > 0 => {
+                request_animation_frame(move || attempt(frames_left - 1));
+            }
+            None => {
+                if let Ok(main) = main.dyn_into::<web_sys::HtmlElement>() {
+                    if let Err(error) = main.focus() {
+                        tracing::warn!(?error, "Unable to focus the main landmark");
+                    }
+                }
+            }
+        }
+    }
+    request_animation_frame(|| attempt(60));
+}
+
 /// Main authenticated layout with sidebar and content area.
 #[component]
 pub fn Layout() -> impl IntoView {
@@ -750,6 +796,42 @@ pub fn Layout() -> impl IntoView {
         }
         path
     });
+    // Committed NEW navigation moves focus to the arrival heading (IA-011).
+    // Back/Forward restores context instead, same-route query changes and
+    // background refetches never move focus, and a control the user already
+    // focused inside the page is never taken over.
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::{JsCast, closure::Closure};
+        let traversal = StoredValue::new(false);
+        if let Some(window) = web_sys::window() {
+            let popstate = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                traversal.set_value(true);
+            });
+            let _ = window
+                .add_event_listener_with_callback("popstate", popstate.as_ref().unchecked_ref());
+            let listener = send_wrapper::SendWrapper::new((window, popstate));
+            on_cleanup(move || {
+                let (window, popstate) = &*listener;
+                let _ = window.remove_event_listener_with_callback(
+                    "popstate",
+                    popstate.as_ref().unchecked_ref(),
+                );
+            });
+        }
+        Effect::new(move |previous: Option<String>| {
+            let path = location.pathname.get();
+            let arrived = previous.as_ref().is_some_and(|previous| *previous != path);
+            let restored = traversal.get_value();
+            if arrived {
+                traversal.set_value(false);
+                if !restored {
+                    focus_arrival_heading();
+                }
+            }
+            path
+        });
+    }
     // A dirty-work guard replaces the drawer as the single modal; the exact
     // destination stays captured by the guard, never navigated behind it.
     let guard_was_open = StoredValue::new(false);
@@ -955,6 +1037,24 @@ pub fn Layout() -> impl IntoView {
                 </div>
             }
         >
+            <a class="brewery-skip-link print-hide" href="#main-content"
+                on:click=move |event| {
+                    event.prevent_default();
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use wasm_bindgen::JsCast;
+                        if let Some(main) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.get_element_by_id("main-content"))
+                            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+                        {
+                            if let Err(error) = main.focus() {
+                                tracing::warn!(?error, "Unable to focus the main landmark");
+                            }
+                        }
+                    }
+                }
+            >"Skip to main content"</a>
             <div class="app-shell h-dvh bg-background">
                 // Desktop sidebar
                 <div class="app-shell__desktop print-hide">
@@ -1017,7 +1117,7 @@ pub fn Layout() -> impl IntoView {
                         </Button>
                         <crate::components::BreweryBrand/>
                     </div>
-                    <main class="app-shell__main flex-1 overflow-y-auto">
+                    <main id="main-content" tabindex="-1" class="app-shell__main flex-1 overflow-y-auto">
                         <Show when=move || !editor_guard.navigation_error.get().is_empty()>
                             <p role="alert">{move || editor_guard.navigation_error.get()}</p>
                         </Show>
@@ -1084,6 +1184,16 @@ fn Sidebar(
             }
         }
     };
+    let query = leptos_router::hooks::use_query_map();
+    let return_to = Signal::derive(move || {
+        let path = location.pathname.get();
+        if path.starts_with("/settings") {
+            // Already in Settings: keep the original in-app return, never nest.
+            query.read().get("return").unwrap_or_default()
+        } else {
+            current_location(&path, &location.search.get())
+        }
+    });
     let arrived = Callback::new(move |()| {
         account_open.set(false);
         close_if_current("/settings/profile");
@@ -1099,10 +1209,13 @@ fn Sidebar(
                 <p class="brewery-sidebar__label">"Your brewery"</p>
                 <a href="/recipes" id=format!("{suffix}sidebar-recipes-link") class="brewery-sidebar__link"
                     on:click=move |_| close_if_current("/recipes")
-                    aria-current=move || {
-                    let path = location.pathname.get();
-                    (path == "/recipes" || path.starts_with("/recipes/") || path.starts_with("/recipe-editor/") || path.starts_with("/brews/")).then_some("page")
-                }>
+                    aria-current=move || (location.pathname.get() == "/recipes").then_some("page")
+                    data-ancestor=move || {
+                        // The Recipes section contains these pages; only the exact
+                        // destination is the current page (IA-011).
+                        let path = location.pathname.get();
+                        (path.starts_with("/recipes/") || path.starts_with("/recipe-editor/") || path.starts_with("/brews/") || path == "/beerxml").then_some("true")
+                    }>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h5"/></svg>
                     "Recipes"
                 </a>
@@ -1121,8 +1234,8 @@ fn Sidebar(
                     }>
                         {move || user_info.get().map(|result| match result {
                             Ok(user) => match drawer {
-                                Some(drawer) => view! { <AccountPopover user=user open=account_open drawer=drawer arrived=arrived/> }.into_any(),
-                                None => view! { <AccountPopover user=user open=account_open arrived=arrived/> }.into_any(),
+                                Some(drawer) => view! { <AccountPopover user=user open=account_open drawer=drawer arrived=arrived return_to=return_to/> }.into_any(),
+                                None => view! { <AccountPopover user=user open=account_open arrived=arrived return_to=return_to/> }.into_any(),
                             },
                             Err(_) => view! {
                                 <div class="px-3 py-2 text-sm text-[var(--color-sidebar-foreground-muted)]">"Not signed in"</div>
@@ -1146,6 +1259,9 @@ fn AccountPopover(
     /// Same-route arrival commits no route change, so nothing else would close
     /// the popup/drawer. A guarded click never reaches the link handlers.
     arrived: Callback<()>,
+    /// The in-app location Settings returns to (validated before use; empty or
+    /// non-app locations fall back to Recipes there).
+    return_to: Signal<String>,
 ) -> impl IntoView {
     let mobile = drawer.is_some();
     let editor_guard = expect_context::<EditorGuard>();
@@ -1189,8 +1305,8 @@ fn AccountPopover(
             <Show when=move || open.get()>
                 <WorkspaceChoices open=open mobile=mobile/>
             </Show>
-            <a href="/settings/profile" class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Settings"</a>
-            <a href="/settings/profile#appearance" class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Appearance"</a>
+            <a href=move || settings_href("/settings/profile", Some(&return_to.get())) class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Settings"</a>
+            <a href=move || format!("{}#appearance", settings_href("/settings/profile", Some(&return_to.get()))) class="brewery-sidebar__link" on:click=move |_| arrived.run(())>"Appearance"</a>
             <Button variant=ButtonVariant::GhostMuted class="w-full"
                 disabled=Signal::derive(move || editor_guard.pending.get())
                 on:click=move |_| {
@@ -1280,7 +1396,7 @@ mod tests {
         owner.with(|| {
             provide_context(EditorGuard::new());
             let open = RwSignal::new(false);
-            let html = view! { <AccountPopover user=user(Some("Ada Brewer")) open=open arrived=Callback::new(|()| {})/> }.to_html();
+            let html = view! { <AccountPopover user=user(Some("Ada Brewer")) open=open arrived=Callback::new(|()| {}) return_to=Signal::derive(String::new)/> }.to_html();
             assert!(html.contains("aria-label=\"Account menu, Ada Brewer\""));
             assert!(html.contains("popovertarget=\"account-popover\""));
             assert!(html.contains("popover=\"auto\""));
@@ -1292,7 +1408,7 @@ mod tests {
             assert!(!html.contains("<dialog"));
             assert!(!html.contains("Foreign workspace name"));
             assert!(!html.contains("Switch workspace"));
-            let mobile = view! { <AccountPopover user=user(None) open=open drawer=RwSignal::new(true) arrived=Callback::new(|()| {})/> }.to_html();
+            let mobile = view! { <AccountPopover user=user(None) open=open drawer=RwSignal::new(true) arrived=Callback::new(|()| {}) return_to=Signal::derive(String::new)/> }.to_html();
             assert!(mobile.contains("id=\"mobile-account-popover\""));
             assert!(mobile.contains("aria-label=\"Account menu, brewer@example.test\""));
         });

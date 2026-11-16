@@ -30,6 +30,7 @@ pub mod switch;
 pub mod theme;
 pub mod toast;
 pub mod tooltip;
+pub mod wayfinding;
 
 pub use action_status::ActionStatus;
 pub use anchored_popover::BreweryPopover;
