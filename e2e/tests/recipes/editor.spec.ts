@@ -10,7 +10,7 @@ for (const unavailable of ['missing', 'disabled', 'idless'] as const) {
     await page.goto('/recipe-editor/new');
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     const opener = unavailable === 'idless'
-      ? page.getByRole('button', { name: 'Save recipe', exact: true })
+      ? page.getByRole('button', { name: /^Save (recipe|changes)$/ })
       : page.getByLabel('Batch volume (L)');
     await opener.focus();
     let release!: () => void;
@@ -160,7 +160,7 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Recipe name', { exact: true }).fill(`Conflict disposal ${Date.now()}`);
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const url = page.url();
   await page.getByLabel('Recipe name', { exact: true }).fill('Retained stale local work');
@@ -175,7 +175,7 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
     await remote.goto(url);
     await remote.getByRole('button', { name: 'Start a separate draft', exact: true }).click();
     await remote.getByLabel('Boil time (min)').fill('65');
-    await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await remote.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
     let reads = 0;
     await page.route('**/leptos-api/read_recipe*', async route => {
@@ -185,9 +185,9 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
       await held;
       await route.fulfill(continuation === 'denied-after-edit' ? { response, json: 'Forbidden' } : { response });
     });
-    await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await started;
-    await expect(page.getByRole('button', { name: 'Save recipe', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeEnabled();
     if (continuation === 'denied-after-edit') {
       await page.getByLabel('Recipe name', { exact: true }).fill('New local edit must not cancel current denial');
       release();
@@ -198,7 +198,7 @@ test(`explicit save conflict follow-up cannot publish a ${continuation} task`, a
     }
     if (continuation === 'superseded') {
       await remote.getByLabel('Boil time (min)').fill('70');
-      await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+      await remote.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
       await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
       await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       const conflict = page.getByRole('region', { name: 'Save conflict', exact: true });
@@ -279,7 +279,7 @@ test('a late committed save cannot leave or rewrite the address after confirmed 
     await saveCompleted;
     // Observe the production receipt, not a frame evaluation that can throw
     // merely because the broken implementation navigates during it.
-    await expect(page.locator('.recipe-editor__actions [role="status"]')).toContainText('Saved revision 1 in the original context.');
+    await expect(page.locator('.recipe-header__status [role="status"]')).toContainText('Saved revision 1 in the original context.');
     await expect(page).toHaveURL(original);
     expect(requests).toHaveLength(1);
     expect(committed?.revision).toBe(1);
@@ -365,7 +365,7 @@ test('a disposed editor ignores a delayed focus read without reactive panic', as
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Recipe name', { exact: true }).fill(`Disposed check ${Date.now()}`);
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -399,7 +399,7 @@ test('recovered older-base conflict does not invent an original document from th
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Recipe name', { exact: true }).fill('Original recovery base');
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const url = page.url();
   await page.getByLabel('Recipe name', { exact: true }).fill('Retained old-base work');
@@ -410,12 +410,12 @@ test('recovered older-base conflict does not invent an original document from th
     await remote.getByRole('button', { name: 'Start a separate draft', exact: true }).click();
     await remote.getByLabel('Recipe name', { exact: true }).fill('New remote head');
     await remote.getByLabel('Boil time (min)').fill('65');
-    await remote.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await remote.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(remote.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
     page.once('dialog', dialog => dialog.accept());
     await page.reload();
     await page.getByRole('button', { name: 'Restore draft', exact: true }).click();
-    await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     const conflict = page.getByRole('region', { name: 'Save conflict', exact: true });
     await expect(conflict).toBeVisible();
     await conflict.getByText('Compare saved revision and your draft', { exact: true }).click();
@@ -503,7 +503,10 @@ test('all numeric caller families settle format feedback on real blur without re
     await expect(field).toHaveAttribute('aria-invalid', 'true');
     const description = await field.getAttribute('aria-describedby');
     expect(description).toBeTruthy();
-    await expect(page.locator(`[id="${description}"]`)).toContainText('Enter a number');
+    // A control may name more than one description (for example its own note);
+    // the error must be among them, not necessarily the only one.
+    const described = page.locator(description!.split(/\s+/).map(id => `[id="${id}"]`).join(', ')).filter({ hasText: 'Enter a number' });
+    await expect(described).toContainText('Enter a number');
     await field.fill('1.230000000000000');
     await field.press('Tab');
     await expect(field).toHaveValue('1.230000000000000');
@@ -649,7 +652,7 @@ test('initial recipe load failure retries without leaving the requested recipe',
   await page.goto('/recipe-editor/new');
   const name = `Load retry ${Date.now()}`;
   await page.getByLabel('Recipe name', { exact: true }).fill(name);
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const url = page.url();
   await page.route('**/leptos-api/read_recipe*', route => route.abort('failed'));
@@ -720,7 +723,7 @@ test('a delayed save freezes its payload and preserves newer edits without dupli
     await route.fulfill({ response });
   });
   try {
-    const save = page.getByRole('button', { name: 'Save recipe', exact: true });
+    const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
     await save.click();
     await received;
     await expect(save).toBeDisabled();
@@ -759,11 +762,11 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
   const volume = page.getByLabel('Batch volume (L)');
   await volume.fill('-');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields before saving.' })).toBeVisible();
   await expect(volume).toHaveValue('-');
   await volume.fill('20');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await expect(page).toHaveURL(/\/recipe-editor\/(?!new)[^/]+$/);
   await page.reload();
@@ -771,14 +774,14 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.getByLabel('Whole-wort apparent attenuation (%)').fill('75');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.reload();
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await expect(page.getByLabel('Whole-wort apparent attenuation (%)')).toHaveValue('75');
   const id = page.url().split('/').pop()!;
   const before = Number(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`));
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   expect(Number(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`))).toBe(before);
   expect(before).toBe(2);
@@ -836,6 +839,91 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('dialog', { name: 'Navigation' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
+});
+
+test('late editor load never steals a deliberate focus move', async ({ page }) => {
+  const title = `Late load ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+  await page.goto('/recipes');
+  await page.getByLabel('Search recipes').fill(title);
+  const open = page.getByRole('link', { name: `Open ${title}` });
+  await expect(open).toBeVisible();
+  // Hold the editor's data so the heading mounts well inside the arrival window.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/read_recipe*', async route => { await held; await route.continue(); });
+  await open.click();
+  const skip = page.getByRole('link', { name: 'Skip to main content' });
+  await skip.focus();
+  release();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+  await expect(skip, 'arrival focus must not override a deliberate focus move').toBeFocused();
+});
+
+test('a focused recipe heading is visible and not clipped', async ({ page }) => {
+  const title = `Arrival ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+  await page.goto('/recipes');
+  await page.getByLabel('Search recipes').fill(title);
+  const open = page.getByRole('link', { name: `Open ${title}` });
+  await expect(open).toBeVisible();
+  await open.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+/);
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(title);
+  // The shared successor paths (catalogue return, cleared print task) focus this
+  // heading; whenever it carries focus it must reveal itself rather than stay
+  // clipped. Arrival focus on this asynchronously mounted page is the shared
+  // layout's contract (KRA-48) and is not what this test asserts.
+  await heading.focus();
+  await expect(heading).toBeFocused();
+  const visible = await heading.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 1 && rect.height > 1 && style.clipPath !== 'inset(50%)' && style.visibility !== 'hidden';
+  });
+  expect(visible, 'focused heading must not stay clipped').toBe(true);
+});
+
+test('recipe header stays usable under browser page zoom and enlarged text', async ({ page, browserName }, testInfo) => {
+  test.skip(browserName !== 'chromium', 'Page-scale emulation is Chromium-only');
+  await testInfo.attach('zoom-evidence-limits', { contentType: 'application/json', body: JSON.stringify({
+    browser: page.context().browser()?.version(), hostPlatform: process.platform,
+    scope: 'Chromium page-scale (pinch/zoom) emulation and CSS text enlargement. This is not an operating-system screen-reader session; native AT is recorded separately as a limitation.',
+  }) });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Zoom ${Date.now()}`);
+  const client = await page.context().newCDPSession(page);
+  for (const factor of [2, 4]) {
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: factor });
+    const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
+    await expect(save).toBeVisible();
+    // Page scale shrinks the visual viewport; the control must stay reachable
+    // and the layout must not gain horizontal document overflow.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await save.scrollIntoViewIfNeeded();
+    await expect(save).toBeInViewport();
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+    await save.click();
+    await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+  }
+  // Text-only enlargement (root 15px → 30px/60px) is the WCAG resize-text path.
+  for (const root of ['30px', '60px']) {
+    await page.evaluate(size => { document.documentElement.style.fontSize = size; }, root);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start brew' }).first()).toBeVisible();
+  }
 });
 
 test('editor state controls keep raw labels and focus across representative presentation settings', async ({ page }, testInfo) => {
@@ -1233,7 +1321,7 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect.poll(() => previews.some(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1)).toBe(true);
   const originalDigest = previews.find(result => result.Preview?.context?.equipment_profile?.profile_id === profileId && result.Preview.context.equipment_profile.revision === 1).Preview.context_digest;
   await expect(page.getByText('Equipment profile unavailable')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const recipeUrl = page.url();
   await page.reload();
@@ -1415,7 +1503,7 @@ test('Manage equipment from a recipe returns to the retained recipe', async ({ p
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Stay' }).click();
   await expect(page).toHaveURL(/recipe-editor\/new/);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const recipeUrl = page.url();
   await page.getByRole('link', { name: 'Manage equipment profiles' }).click();
@@ -1510,7 +1598,7 @@ test('undo and retained raw draft survive reload without becoming saved history'
   await expect(title).toHaveValue('Recover unfinished recipe');
   await expect(volume).toHaveValue('-');
   await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields to see estimates.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Complete invalid number fields before saving.' })).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(title).toHaveValue('');
@@ -1546,7 +1634,7 @@ test('navigation offers stay, blocks failed save, and discards only on request',
 test('stale saves retain edits and require deliberate reapply against current head', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Conflict base');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const url = page.url();
   const other = await page.context().newPage();
@@ -1554,12 +1642,12 @@ test('stale saves retain edits and require deliberate reapply against current he
   await other.getByLabel('Recipe name', { exact: true }).fill('Remote edit');
   await page.getByLabel('Recipe name', { exact: true }).fill('My retained edit');
   await page.getByLabel('Batch volume (L)').fill('20.000000000000000');
-  await other.getByRole('button', { name: 'Save recipe' }).click();
+  await other.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('region', { name: 'Save conflict' })).toBeVisible();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('My retained edit');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   const conflict = page.getByRole('region', { name: 'Save conflict' });
   await expect(conflict).toBeVisible();
   await conflict.getByText('Compare saved revision and your draft').click();
@@ -1572,7 +1660,7 @@ test('stale saves retain edits and require deliberate reapply against current he
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('My retained edit');
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20.000000000000000');
   await expect(page.getByRole('status').filter({ hasText: 'Review it, then choose Save' })).toBeVisible();
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
   await other.close();
 });
@@ -1663,14 +1751,14 @@ test('recovered uncertain create retries its original request without a duplicat
       await route.abort('failed');
     } else await route.continue();
   });
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Save failed' })).toBeVisible();
   await expect.poll(() => db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
   page.once('dialog', dialog => dialog.accept());
   await page.reload();
   await page.getByRole('button', { name: 'Restore draft' }).click();
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}'`)).toBe('1');
   expect(submitted).toHaveLength(2);
@@ -1720,7 +1808,7 @@ test('clean focus refetch invalidates preview before showing a newer saved recip
   });
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Clean original');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const url = page.url();
   await page.reload();
@@ -1728,7 +1816,7 @@ test('clean focus refetch invalidates preview before showing a newer saved recip
   const other = await page.context().newPage();
   await other.goto(url);
   await other.getByLabel('Recipe name', { exact: true }).fill('Clean remote update');
-  await other.getByRole('button', { name: 'Save recipe' }).click();
+  await other.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Clean remote update');
@@ -2025,7 +2113,7 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
     }
     await route.continue();
   });
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Save failed' })).toBeVisible();
   expect(requests).toHaveLength(1);
   await openSettings(page);

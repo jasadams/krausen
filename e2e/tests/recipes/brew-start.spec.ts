@@ -116,7 +116,7 @@ async function makeSavedRevisionReady(
   await page.locator('#recipe-mash-water').fill('15');
   await page.locator('#recipe-whirlpool').fill('15');
   await page.locator('#recipe-top-up').fill('0');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   return profileId;
 }
@@ -149,6 +149,26 @@ function lifecycleItems(page: import('@playwright/test').Page) {
     .locator('h3', { hasText: 'Lifecycle evidence' })
     .locator('xpath=following-sibling::ul[1]/li');
 }
+
+test('header promotes Start only for a clean saved Ready recipe and swaps back after an edit', async ({ page }) => {
+  await importRecipe(page, `Header ready ${Date.now()}`);
+  await makeSavedRevisionReady(page, `Header kettle ${Date.now()}`);
+  const commands = page.getByRole('group', { name: 'Recipe commands' });
+  const save = commands.getByRole('button', { name: /^Save (recipe|changes)$/ });
+  const start = commands.getByRole('button', { name: 'Start brew', exact: true });
+  await expect(start).toHaveClass(/bg-primary/);
+  await expect(save).not.toHaveClass(/bg-primary/);
+  await expect(start).not.toHaveAccessibleDescription(/Save|complete|estimate/);
+  await page.getByLabel('Batch volume (L)').fill('21');
+  await expect(save).toHaveClass(/bg-primary/);
+  await expect(start).not.toHaveClass(/bg-primary/);
+  await expect(start).toHaveAccessibleDescription('Save your changes before starting a brew.');
+  await start.focus();
+  await page.getByRole('button', { name: 'Undo' }).first().click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+  await expect(save).not.toHaveClass(/bg-primary/);
+  await expect(start).toHaveClass(/bg-primary/);
+});
 
 test('starts the prepared saved revision with frozen targets', async ({ page }) => {
   const title = `Brew start ${Date.now()}`;
@@ -190,7 +210,7 @@ test('starts an explicitly selected historical revision without restoring it', a
   await importRecipe(page, title);
   await makeSavedRevisionReady(page);
   await page.getByLabel('Recipe name', { exact: true }).fill(`${title} head three`);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
   await prepareAndStart(page, '2');
   await expect(page.getByText('from revision 2')).toBeVisible();

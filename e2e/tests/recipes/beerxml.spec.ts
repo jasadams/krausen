@@ -553,7 +553,7 @@ test('file preview, explicit import and saved/original downloads share native va
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
   const editedTitle = `${title} edited`;
   await page.getByLabel('Recipe name', { exact: true }).fill(editedTitle);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
   await page.getByLabel('Saved revision').fill('2');

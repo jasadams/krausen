@@ -3,10 +3,11 @@
 use crate::{
     components::{
         BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
-        BreweryDraftSelect, BreweryNotice, BreweryPanel, BreweryTabs, Button, ButtonLink,
+        BreweryDraftSelect, BreweryNotice, BreweryPanel, BreweryTabs, Button,
         ButtonVariant, SelectedSavedRevision, printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
+    pages::recipe_header::{EditorStatus, RecipeActionSlots, RecipeHeader},
     utils::nav_state::{RecipeSection, current_location, parse_revision, recipe_section_href},
     pages::recipe_scaling::{DuplicateDialog, ScaleDialog},
     server_fns::recipe_editor::{read_recipe, save_recipe},
@@ -145,14 +146,7 @@ impl EditorFocus {
         // A deliberate focus move while the asynchronous check was pending
         // takes precedence over our old bookmark.
         if document.active_element().is_some_and(|active| active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
-        let try_focus = |element: &web_sys::Element| {
-            if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
-                || element.get_client_rects().length() == 0
-                || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
-                    .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
-            element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
-                && document.active_element().is_some_and(|active| active == *element)
-        };
+        let try_focus = try_focus_element;
         let print = document.query_selector("[aria-label='Print preview']").ok().flatten();
         let original = document.get_element_by_id(&self.id)
             .filter(|_| print.is_none() || self.print_return)
@@ -258,6 +252,43 @@ pub fn RecipeEditorPage() -> impl IntoView {
     </Suspense> }
 }
 
+/// One focus guard for every deliberate editor focus move: visible, connected,
+/// enabled and not inside a hidden/inert subtree.
+#[cfg(target_arch = "wasm32")]
+fn try_focus_element(element: &web_sys::Element) -> bool {
+    use wasm_bindgen::JsCast;
+    if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
+        || element.get_client_rects().length() == 0
+        || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
+            .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
+    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
+        && web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|active| active == *element)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn focus_element(id: &str) {
+    let focused = web_sys::window().and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .is_some_and(|element| try_focus_element(&element));
+    if !focused { tracing::warn!(target = id, "Unable to focus a recipe target"); }
+}
+
+/// Open a native disclosure from a header command, then move focus into it.
+#[cfg(target_arch = "wasm32")]
+fn reveal_disclosure(disclosure: &str, focus: &str) {
+    use wasm_bindgen::JsCast;
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    if let Some(details) = document.get_element_by_id(disclosure).and_then(|element| element.dyn_into::<web_sys::HtmlDetailsElement>().ok()) {
+        details.set_open(true);
+        let summary = details.first_element_child().and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
+        if focus == disclosure {
+            if let Some(summary) = summary { if summary.focus().is_err() { tracing::warn!("Unable to focus a disclosure"); } }
+            return;
+        }
+    }
+    focus_element(focus);
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct PendingRecipeSave {
     recipe_id: Option<String>,
@@ -276,7 +307,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     provide_context(ContextCheckGeneration(check_generation));
     let context_visible = RwSignal::new(true);
     let context_lost = RwSignal::new(false);
-    let equipment_summary = RwSignal::new(crate::pages::recipe_equipment::EquipmentSummary::default());
+    let equipment_summary = RwSignal::new(initial.as_ref().map(|snapshot| crate::pages::recipe_equipment::EquipmentSummary::from_saved_document(&snapshot.document)).unwrap_or_default());
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let history_authority_failure = Callback::new(move |()| {
         if context_visible.try_get_untracked().is_none() { return; }
@@ -375,7 +406,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             storage.remove();
         });
     }
-    let status = RwSignal::new(String::new());
+    let status = EditorStatus::new();
     let pending = RwSignal::new(false);
     let save_sequence = RwSignal::new(0_u64);
     let retry = RwSignal::new(None::<PendingRecipeSave>);
@@ -467,7 +498,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
         });
     }
-    Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.get() } else { access.get().guidance().to_owned() }));
+    Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.text.get() } else { access.get().guidance().to_owned() }));
     Effect::new(move |_| {
         if matches!(access.get(), EditorAccess::Mismatch | EditorAccess::Forbidden) {
             saving_to_leave.set(false);
@@ -511,7 +542,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 return;
             }
             if initial_scope.installation.is_empty() {
-                status.set("Local draft recovery is unavailable in this browser.".into());
+                status.fail_storage("Local draft recovery is unavailable in this browser.".into());
                 recovery_ready.set(true);
                 return;
             }
@@ -559,7 +590,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     Ok(candidate) => recovery_choice.set(candidate),
                     Err(_) => {
                         tracing::warn!("Unable to read retained recipe drafts");
-                        status.set("Local draft recovery is unavailable in this browser.".into())
+                        status.fail_storage("Local draft recovery is unavailable in this browser.".into())
                     }
                 }
                 recovery_ready.set(true);
@@ -582,7 +613,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
             let Some(tab) = tab.as_ref() else {
                 if current.dirty {
-                    status.set("Local draft recovery is unavailable in this browser.".into());
+                    status.fail_storage("Local draft recovery is unavailable in this browser.".into());
                 }
                 return;
             };
@@ -607,16 +638,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::write(&key, &record).is_err() {
                     tracing::warn!("Unable to retain a recipe draft locally");
                     retained.set(false);
-                    status.set("Unable to retain this draft locally; keep this page open.".into());
+                    status.resolve_storage_failure();
+                    status.fail_storage("Unable to retain this draft locally; keep this page open.".into());
                 } else {
                     retained.set(true);
+                    status.resolve_storage_failure();
                     if let Some(old) = recovery_storage_key
                         .get_untracked()
                         .filter(|old| old != &key)
                     {
                         if crate::pages::recipe_recovery::remove(&old).is_err() {
                             tracing::warn!("Unable to remove an older retained recipe draft");
-                            status.set(
+                            status.fail_storage(
                                 "An older retained draft could not be removed from this browser."
                                     .into(),
                             );
@@ -628,9 +661,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::remove(&old).is_ok() {
                     recovery_storage_key.set(None);
                     retained.set(false);
+                    status.resolve_storage_failure();
                 } else {
                     tracing::warn!("Unable to remove a retained recipe draft");
-                    status.set("The retained draft could not be removed from this browser.".into());
+                    status.fail_storage("The retained draft could not be removed from this browser.".into());
                 }
             }
         });
@@ -850,12 +884,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             draft.update(|d| d.settle_numbers());
             let snapshot = draft.with_untracked(|d| (d.snapshot(), d.generation));
             let Ok(document) = snapshot.0 else {
-                status.set("Complete invalid number fields before saving.".into());
+                status.fail("Complete invalid number fields before saving.".into());
                 saving_to_leave.set(false);
                 return;
             };
             let Some(request_id) = crate::utils::request_id::new_request_id() else {
-                status.set("Unable to create a secure save request.".into());
+                status.fail("Unable to create a secure save request.".into());
                 saving_to_leave.set(false);
                 return;
             };
@@ -1012,7 +1046,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         } else if may_apply_scope {
                             tracing::warn!("Unable to clear the retained draft after saving");
                             saving_to_leave.set(false);
-                            status.set(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
+                            status.fail_storage(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
                         }
                     } else {
                         saving_to_leave.set(false);
@@ -1026,9 +1060,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     retry.set(None);
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
                         draft.update(|d| d.set_validation(validation));
-                        status.set("Correct the invalid fields before saving.".into());
+                        status.fail("Correct the invalid fields before saving.".into());
                     } else {
-                        status.set(
+                        status.fail(
                             "An earlier save was invalid; your newer changes remain unsaved."
                                 .into(),
                         );
@@ -1098,7 +1132,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                                     context_visible.set(false);
                                 }
                                 Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => hold_editor(access, context_visible, EditorAccess::Expired),
-                                _ => status.set("The current saved revision could not be loaded. Your draft is unchanged.".into()),
+                                _ => status.fail("The current saved revision could not be loaded. Your draft is unchanged.".into()),
                             }
                         } else {
                             hold_editor(access, context_visible, outcome);
@@ -1106,7 +1140,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     }
                 }
                 Ok(RecipeSaveOutcome::ResultExpired { resource_id }) => {
-                    status.set(match resource_id {
+                    status.fail(match resource_id {
                         Some(id) => format!(
                             "The saved response expired. Reopen recipe {id} before saving again."
                         ),
@@ -1117,15 +1151,15 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     });
                 }
                 Ok(RecipeSaveOutcome::RequestIdentityConflict) => {
-                    status.set("The prior save request could not be verified. Reopen the recipe before saving again.".into());
+                    status.fail("The prior save request could not be verified. Reopen the recipe before saving again.".into());
                 }
                 Ok(RecipeSaveOutcome::NotFound) => {
                     retry.set(None);
-                    status.set("This recipe is no longer available in this workspace. Your draft is still open.".into());
+                    status.fail("This recipe is no longer available in this workspace. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::InvalidRequest) => {
                     retry.set(None);
-                    status.set("The save request was invalid. Your draft is still open.".into());
+                    status.fail("The save request was invalid. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::ContextChanged) => {
                     access.set(EditorAccess::Mismatch);
@@ -1135,27 +1169,27 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Forbidden) => {
                     access.set(EditorAccess::Forbidden);
                     context_visible.set(false);
-                    status.set("You no longer have access to this workspace.".into())
+                    status.fail("You no longer have access to this workspace.".into())
                 }
                 Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile) => {
                     retry.set(None);
-                    status.set("The selected equipment profile is unavailable.".into())
+                    status.fail("The selected equipment profile is unavailable.".into())
                 }
                 Ok(
                     RecipeSaveOutcome::UnresolvedIngredientSource
                     | RecipeSaveOutcome::InvalidProvenance,
                 ) => {
                     retry.set(None);
-                    status.set("An ingredient or import reference could not be verified.".into());
+                    status.fail("An ingredient or import reference could not be verified.".into());
                 }
                 Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
                     access.set(EditorAccess::Expired);
                     context_visible.set(false);
-                    status.set(
+                    status.fail(
                         "Your session expired. Sign in again; your draft is still open.".into(),
                     );
                 }
-                _ => status.set(
+                _ => status.fail(
                     "Save failed. Retry to confirm the previous save; your draft is still open."
                         .into(),
                 ),
@@ -1174,7 +1208,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             if let Some(key) = recovery_storage_key.get_untracked() {
                 if crate::pages::recipe_recovery::remove(&key).is_err() {
                     tracing::warn!("Unable to discard a retained recipe draft");
-                    status.set("Could not discard the retained local draft.".into());
+                    status.fail_storage("Could not discard the retained local draft.".into());
                     return false;
                 }
                 recovery_storage_key.set(None);
@@ -1209,7 +1243,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 p.recipe_id == record.scope.recipe_id && p.expected == record.scope.base_revision
             });
             if !valid_pending {
-                status.set(
+                // Request identity, not local draft storage: a later storage success
+                // must not silently retire this outcome.
+                status.fail(
                     "The retained save request is invalid; the draft was not restored.".into(),
                 );
                 return;
@@ -1236,9 +1272,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(target_arch = "wasm32")]
         if crate::pages::recipe_recovery::remove(&key).is_err() {
             tracing::warn!("Unable to discard a retained recipe draft");
-            status.set("Could not remove the retained draft.".into());
+            status.fail_storage("Could not remove the retained draft.".into());
             return;
         }
+        status.resolve_storage_failure();
         recovery_choice.update(|records| records.retain(|(candidate, _)| candidate != &key));
     });
     Effect::new(move |_| {
@@ -1254,6 +1291,61 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let navigate = use_navigate();
     let initial_section = query.with_untracked(|q| RecipeSection::parse(q.get("section").as_deref()));
     let active_tab = RwSignal::new(initial_section.key().to_owned());
+    let actions_open = RwSignal::new(false);
+    // Scale/Duplicate are opened from the Recipe actions popover, which closes
+    // first; return focus to its trigger once the dialog closes with nothing focused.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let was_open = StoredValue::new(false);
+        let opening_route = StoredValue::new(String::new());
+        Effect::new(move |_| {
+            let open = scale_open.get() || duplicate_open.get();
+            let previous = was_open.get_value();
+            was_open.set_value(open);
+            let route = || web_sys::window().and_then(|w| w.location().pathname().ok()).unwrap_or_default();
+            if open && !previous {
+                opening_route.set_value(route());
+            } else if previous && !open {
+                let opened_at = opening_route.get_value();
+                request_animation_frame(move || {
+                    // A successful Duplicate navigates away; arrival focus on the new
+                    // page owns focus, so the old opener must not reclaim it.
+                    if route() != opened_at { return; }
+                    let idle = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element())
+                        .is_none_or(|active| active.tag_name() == "BODY" || active.tag_name() == "HTML");
+                    if idle { focus_element("recipe-actions-trigger"); }
+                });
+            }
+        });
+    }
+    let style_options = Signal::derive(move || {
+        let mut options = vec![(String::new(), "No style".to_owned())];
+        options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name))));
+        options
+    });
+    let reveal = move |disclosure: &'static str, focus: &'static str| {
+        active_tab.set("recipe".to_owned());
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || reveal_disclosure(disclosure, focus));
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (disclosure, focus);
+    };
+    let header_actions = RecipeActionSlots {
+        save: Callback::new(move |()| save()),
+        undo: Callback::new(move |()| draft.update(|d| d.undo())),
+        // Start always opens the existing review workflow; it never commits.
+        start: Callback::new(move |()| {
+            active_tab.set("recipe".to_owned());
+            #[cfg(target_arch = "wasm32")]
+            request_animation_frame(|| focus_element("start-brew"));
+        }),
+        scale: Callback::new(move |()| scale_open.set(true)),
+        duplicate: Callback::new(move |()| duplicate_open.set(true)),
+        print: Callback::new(move |()| reveal("recipe-output-disclosure", "recipe-output-disclosure")),
+        export: Callback::new(move |()| reveal("recipe-output-disclosure", "recipe-output-disclosure")),
+        equipment: Callback::new(move |()| reveal("recipe-equipment-disclosure", "equipment-profile-select")),
+    };
+
     let selected_revision = RwSignal::new(if initial_section == RecipeSection::Versions {
         query.with_untracked(|q| parse_revision(q.get("revision").as_deref()))
     } else {
@@ -1306,7 +1398,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     view! { <div><p>{format!("Retained draft {} · {title} · based on {base}", index + 1)}</p><Button on:click=move |_| restore_recovery.run(restore_key.clone())>"Restore draft"</Button><Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| discard_recovery.run(discard_key.clone())>"Discard retained draft"</Button></div> }
                 }).collect_view()}
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| recovery_choice.set(Vec::new())>"Start a separate draft"</Button>
-                <p role="status">{move || status.get()}</p></section>
+                <p role="status">{move || status.text.get()}</p></section>
         </Show>
         <div class="recipe-editor" hidden=move || !context_visible.get() || !recovery_ready.get() || !recovery_choice.get().is_empty()>
         {move || conflict.get().map(|current| {
@@ -1330,7 +1422,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(key) = recovery_storage_key.get_untracked() {
-                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.set("Could not discard the retained local draft.".into()); return; }
+                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.fail_storage("Could not discard the retained local draft.".into()); return; }
                         recovery_storage_key.set(None);
                     }
                     baseline.set(remote_for_reload.document.clone()); original_baseline_available.set(true); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
@@ -1339,34 +1431,15 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             </section> }
         })}
         <crate::components::wayfinding::PageTitle text=Signal::derive(move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() }))/>
-        <header class="recipe-editor__header recipe-editor__recipe-header"><div class="recipe-editor__topbar"><nav class="recipe-editor__breadcrumb" aria-label="Recipe breadcrumb"><a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span><span>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</span></nav><div class="recipe-editor__actions"><span role="status">{move || {
-            let message = status.get();
-            if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) {
-                let local = if retained.get() { "Unsaved changes · retained locally" } else { "Unsaved changes" };
-                if message.is_empty() { local.to_owned() } else { format!("{message} {local}") }
-            } else { message }
-        }}</span><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| scale_open.set(true)>"Scale…"</Button><Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || revision.get().is_none() || draft.with(|d| d.dirty)) on:click=move |_| duplicate_open.set(true)>"Duplicate…"</Button>{move || recipe_id.get().map(|id| view! { <ButtonLink href=format!("/recipes/{id}/brews") variant=ButtonVariant::Secondary>"Brew history"</ButtonLink> })}<Button variant=crate::components::ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| draft.update(|d| d.undo())>"Undo"</Button><Button disabled=pending on:click=move |_| save()>"Save recipe"</Button></div></div></header>
-        <div class="recipe-editor__heading"><p class="kit-showcase__eyebrow">"Your recipe"</p><h1 id="recipe-editor-heading" tabindex="-1">{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</h1><p>"Changes are saved only when you choose Save."</p></div>
+        <RecipeHeader draft=draft revision=revision status=status retained=retained pending=pending conflict=Signal::derive(move || conflict.with(|c| c.is_some())) equipment=equipment_summary title=title on_title=title_change style_value=selected_style style_options=style_options on_style=change_style actions=header_actions actions_open=actions_open>
+            <NumberField id="recipe-batch" label="Batch volume" unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
+            <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
+        </RecipeHeader>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
-        <div class="recipe-editor__summary recipe-editor__identity-summary">
-            <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=title_change mobile_title=true/>
-            <NumberField id="recipe-batch" label="Batch volume" unit="L" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
-            <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
-            {move || { let mut options = vec![(String::new(), "No style".to_owned())]; options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name)))); view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=selected_style on_change=change_style options=options/> } }}
-        </div>
-        <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())] active=active_tab/>
-        <Show when=move || active_tab.get() == "recipe"><Button variant=ButtonVariant::Secondary on:click=move |_| {
-            #[cfg(target_arch = "wasm32")]
-            {
-                use wasm_bindgen::JsCast;
-                if let Some(target) = web_sys::window().and_then(|window| window.document()).and_then(|document| document.get_element_by_id("start-brew")).and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()) {
-                    if target.focus().is_err() { tracing::warn!("Unable to focus the start-brew workflow"); }
-                }
-            }
-        }>"Start brew"</Button></Show></div>
+        <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())] active=active_tab/></div>
         <div role="tabpanel" id="editor-panel-recipe" aria-labelledby="editor-tab-recipe" hidden=move || active_tab.get() != "recipe">
-        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate><div class="recipe-editor__sections">
+        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate revision=revision><div class="recipe-editor__sections">
             <crate::pages::ingredient_addition::IngredientAdditions draft=draft identity=identity context_visible=context_visible/>
             <ProcessSteps draft=draft/>
             <BreweryDisclosure title="Recipe process and notes"><div class="recipe-editor__fields">
@@ -1379,10 +1452,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <NumberField id="recipe-whirlpool" label="Whirlpool time" unit="min" path="process.whirlpool_minutes" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_minutes write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_minutes=n/>
                 <NumberField id="recipe-whirlpool-temp" label="Whirlpool temperature" unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1,n| d.process.whirlpool_temperature_c=n/>
             </div></BreweryDisclosure>
-            <BreweryDisclosure title="Equipment settings">
+            <BreweryDisclosure id="recipe-equipment-disclosure" title="Equipment settings">
                 <crate::pages::recipe_equipment::RecipeEquipment draft=draft identity=identity context_visible=context_visible recipe_id=recipe_id summary=equipment_summary/>
 </BreweryDisclosure>
-            <BreweryDisclosure title="Export and print">
+            <BreweryDisclosure id="recipe-output-disclosure" title="Export and print">
                 <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
                 <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
             </BreweryDisclosure>
@@ -1650,6 +1723,7 @@ fn NumberField(
     path: &'static str,
     draft: RwSignal<RecipeDraft>,
     #[prop(default = 1.0)] scale: f64,
+    #[prop(optional, into)] described_by: MaybeProp<String>,
     read: fn(&RecipeDocumentV1) -> Option<f64>,
     write: fn(&mut RecipeDocumentV1, Option<f64>),
 ) -> impl IntoView {
@@ -1661,7 +1735,7 @@ fn NumberField(
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error described_by=described_by on_change=change on_blur=blur numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -1828,6 +1902,7 @@ fn FormulationPreview(
     identity: RwSignal<EditorIdentity>,
     context_visible: RwSignal<bool>,
     gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
+    revision: RwSignal<Option<i64>>,
     children: Children,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
@@ -1851,6 +1926,7 @@ fn FormulationPreview(
         let mut generation = 0;
         gate.update_value(|g| generation = g.invalidate());
         result.set(None);
+        if draft.with_untracked(|d| d.readiness().is_some()) { draft.update(|d| d.clear_readiness()); }
         message_generation.set(draft_generation);
         if !visible {
             return;
@@ -2016,7 +2092,7 @@ fn FormulationPreview(
             <Button variant=ButtonVariant::Secondary on:click=move |_| retry_generation.update(|generation| *generation = generation.checked_add(1).expect("preview retry generation exhausted"))>"Retry calculation"</Button>
         </Show>
         <crate::components::BreweryBeerPortrait/>
-        {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview/> })}
+        {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview.clone()/><PreviewSource preview=preview draft=draft revision=revision/> })}
         <div>{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
@@ -2025,51 +2101,86 @@ fn FormulationPreview(
 fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView {
     let style = preview.style.as_ref();
     let comparison = preview.style_comparison.as_ref();
+    // The fermenter batch is the draft that was actually calculated; it is a
+    // different quantity from total water, which belongs to the water plan.
+    let fermenter = preview.context.as_ref().and_then(|context| context.draft.batch_size_l);
     view! { <div class="recipe-editor__metrics">
         {preview_metric("Original gravity", preview.targets.original_sg, style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline)}
         {preview_metric("Final gravity", preview.targets.final_sg, style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline)}
         {preview_metric("Alcohol", preview.targets.abv_percent, style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline)}
         {preview_metric("Bitterness", preview.targets.ibu, style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline)}
         {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline)}
-        {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1, crate::components::MetricDensity::Headline)}
-    </div>
-    {preview.style.as_ref().map(|style| view! { <p class="recipe-editor__provenance">{format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition)}</p> })}
+        {preview_metric("Into fermenter", fermenter, None, None, "L", 1, crate::components::MetricDensity::Headline)}
+    </div> }
+}
+
+/// Which draft and equipment these estimates describe, kept out of the headline
+/// numbers but one disclosure away (UX-007).
+fn estimate_source(dirty: bool, revision: Option<i64>) -> String {
+    match (dirty, revision) {
+        (true, Some(n)) => format!("Current draft, with changes not yet in saved revision {n}."),
+        (false, Some(n)) => format!("Current draft, matching saved revision {n}."),
+        (_, None) => "Current draft, not saved yet.".to_owned(),
+    }
+}
+
+fn effective_equipment(context: &krausen_types::formulation::CalculationContext) -> String {
+    match context.equipment_profile.as_ref() {
+        Some(profile) => format!("Equipment: profile “{}”, revision {}.", profile.name, profile.revision),
+        None => "Equipment: recipe-only settings.".to_owned(),
+    }
+}
+
+#[component]
+fn PreviewSource(
+    preview: krausen_types::formulation::Preview,
+    draft: RwSignal<RecipeDraft>,
+    revision: RwSignal<Option<i64>>,
+) -> impl IntoView {
+    let equipment = preview.context.as_ref().map(effective_equipment);
+    let assumptions = preview.context.as_ref().map(|context| context.assumptions.iter().filter_map(|value| match value.as_str() {
+        "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
+        "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
+        "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
+        "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
+        _ => None,
+    }).collect::<Vec<_>>()).unwrap_or_default();
+    let style = preview.style.as_ref().map(|style| format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition));
+    view! {
+        // Always visible and quiet: which draft and which equipment these numbers describe.
+        <p class="recipe-editor__provenance" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| format!(" {text}"))}</p>
+        {(style.is_some() || !assumptions.is_empty()).then(|| view! { <BreweryDisclosure title="Style reference and assumptions" compact=true>
+            {style.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
+            {(!assumptions.is_empty()).then(|| view! { <ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul> })}
+        </BreweryDisclosure> })}
     }
 }
 
 #[component]
 fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView {
+    use crate::components::{BreweryMetricList, MetricDensity::Quiet};
     view! {
-    <BreweryPanel title="Water plan"><div class="recipe-editor__metrics">
-        {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Grain absorption", preview.targets.grain_absorption_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-        {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3, crate::components::MetricDensity::Quiet)}
-    </div></BreweryPanel>
+    <BreweryPanel title="Water plan"><BreweryMetricList>
+        {preview_metric("Mash water", preview.targets.mash_water_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Sparge water", preview.targets.sparge_water_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Kettle water", preview.targets.kettle_water_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Grain absorption", preview.targets.grain_absorption_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Pre-boil volume", preview.targets.pre_boil_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Post-boil volume", preview.targets.post_boil_l, None, None, "L", 1, Quiet)}
+        {preview_metric("Pre-boil gravity", preview.targets.pre_boil_sg, None, None, "SG", 3, Quiet)}
+        {preview_metric("Total water", preview.targets.total_water_l, None, None, "L", 1, Quiet)}
+    </BreweryMetricList></BreweryPanel>
     {preview.context.as_ref().map(|context| {
         let equipment = context.effective_equipment.clone();
         let name = context.equipment_profile.as_ref().map(|profile| format!("{} · revision {}", profile.name, profile.revision)).unwrap_or_else(|| "Recipe equipment settings".to_owned());
         view! { <BreweryPanel title="Your equipment" description=name>
-            <div class="recipe-editor__metrics">
-                {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1, crate::components::MetricDensity::Quiet)}
-                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1, crate::components::MetricDensity::Quiet)}
-                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1, crate::components::MetricDensity::Quiet)}
-            </div>
+            <BreweryMetricList>
+                {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1, Quiet)}
+                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1, Quiet)}
+                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1, Quiet)}
+            </BreweryMetricList>
             <p>"New brews use current settings; previous brews retain their original equipment."</p>
         </BreweryPanel> }
-    })}
-    {preview.context.as_ref().map(|context| {
-        let assumptions = context.assumptions.iter().filter_map(|value| match value.as_str() {
-            "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
-            "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
-            "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
-            "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
-            _ => None,
-        }).collect::<Vec<_>>();
-        view! { <BreweryDisclosure title="Assumptions"><ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul></BreweryDisclosure> }
     })}
     }
 }

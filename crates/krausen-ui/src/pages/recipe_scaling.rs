@@ -177,7 +177,7 @@ pub fn ScaleDialog(
     context_lost: RwSignal<bool>,
     uncertain: RwSignal<bool>,
     pending: RwSignal<bool>,
-    status: RwSignal<String>,
+    status: crate::pages::recipe_header::EditorStatus,
     on_applied: Callback<(RecipeDocumentV1, i64)>,
 ) -> impl IntoView {
     let target = RwSignal::new(String::new());
@@ -508,7 +508,7 @@ pub fn DuplicateDialog(
     context_lost: RwSignal<bool>,
     uncertain: RwSignal<bool>,
     pending: RwSignal<bool>,
-    status: RwSignal<String>,
+    status: crate::pages::recipe_header::EditorStatus,
 ) -> impl IntoView {
     let title = RwSignal::new(String::new());
     let message = RwSignal::new(String::new());

@@ -15,12 +15,12 @@ test.describe('approved recipe and shared kit composition', () => {
     await page.goto('/recipe-editor/new');
     const title = page.getByLabel('Recipe name', { exact: true });
     await title.fill(`History refresh ${Date.now()}`);
-    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
     await page.getByRole('tab', { name: 'Saved versions' }).click();
     await expect(page.locator('#editor-panel-versions li').filter({ hasText: 'Revision 1' })).toBeVisible();
     await title.fill(`Updated history ${Date.now()}`);
-    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
     await expect(page.locator('#editor-panel-versions li').filter({ hasText: 'Revision 2' })).toBeVisible();
     await page.getByRole('tab', { name: 'Brews' }).click();
@@ -47,16 +47,16 @@ test.describe('approved recipe and shared kit composition', () => {
         await expect(page.getByRole('tab', { name: /Saved versions/ })).toBeVisible();
         await expect(page.getByRole('tab', { name: /Brews/ })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Add fermentable' })).toBeVisible();
-        for (const name of ['Save recipe', 'Undo']) {
-          const control = page.getByRole('button', { name, exact: true });
+        for (const name of ['Save recipe', 'Undo', 'Start brew', 'Recipe actions']) {
+          const control = page.getByRole('button', { name, exact: true }).first();
           await expect(control).toBeVisible();
           const box = await control.boundingBox();
           expect(box).not.toBeNull();
           expect(box!.x).toBeGreaterThanOrEqual(0);
           expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
         }
-        await page.getByRole('button', { name: 'Save recipe', exact: true }).focus();
-        await expect(page.getByRole('button', { name: 'Save recipe', exact: true })).toBeFocused();
+        await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).focus();
+        await expect(page.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeFocused();
         await recipeTab.focus();
         await page.keyboard.press('ArrowRight');
         const historyTab = page.getByRole('tab', { name: /Saved versions/ });
@@ -81,7 +81,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.getByRole('link', { name: 'Open imported recipe' }).click();
         await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Munich Helles');
         await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
-        await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+        await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
         await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
         await expect.poll(() => page.locator('input').evaluateAll(inputs => inputs.some(input => (input as HTMLInputElement).value === 'Joe White Signature Lager'))).toBe(true);
         const formulationHeading = page.getByRole('heading', { name: 'The beer, at a glance' });
@@ -90,6 +90,13 @@ test.describe('approved recipe and shared kit composition', () => {
         if (viewport.width <= 600) await expect(portrait).toBeHidden();
         else await expect(portrait).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Your equipment' })).toBeVisible();
+        const waterRows = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Water plan' }) }).locator('.k-metric-list > .k-metric');
+        expect(await waterRows.count()).toBeGreaterThanOrEqual(8);
+        const lefts = await waterRows.evaluateAll(rows => rows.map(row => Math.round(row.getBoundingClientRect().left)));
+        expect(new Set(lefts).size, 'water plan is one aligned column').toBe(1);
+        await expect(page.getByRole('heading', { name: 'Water plan' }).locator('xpath=ancestor::section[1]').getByText('Total water', { exact: true })).toBeVisible();
+        await expect(page.locator('.recipe-editor__preview-summary').getByText('Total water', { exact: true })).toHaveCount(0);
+        await expect(page.locator('.recipe-editor__preview-summary').getByText('Into fermenter', { exact: true })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Prepare start' })).toBeVisible();
         const ingredients = await page.getByRole('heading', { name: 'Fermentables' }).boundingBox();
         const startWorkflow = await page.locator('#start-brew').boundingBox();
@@ -99,7 +106,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.getByRole('button', { name: 'Start brew', exact: true }).first().click();
         await expect(page.getByRole('button', { name: 'Prepare start' })).toBeInViewport();
         await expect(page.locator('#start-brew')).toBeFocused();
-        const save = page.getByRole('button', { name: 'Save recipe', exact: true });
+        const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
         const saveBox = await save.boundingBox();
         expect(saveBox).not.toBeNull();
         expect(saveBox!.x).toBeGreaterThanOrEqual(0);
@@ -110,5 +117,113 @@ test.describe('approved recipe and shared kit composition', () => {
         await testInfo.attach(`populated-recipe-${theme}-${viewport.width}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
       });
     }
+  }
+
+  test('recipe header keeps one editable identity, state-aware primary and no duplicate history entrance', async ({ page }) => {
+    await page.goto('/recipe-editor/new');
+    const title = page.getByLabel('Recipe name', { exact: true });
+    const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
+    const start = page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true });
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Recipe editor');
+    await expect(save).toHaveText('Save recipe');
+    await expect(save).toHaveClass(/bg-primary/);
+    await expect(start).not.toHaveClass(/bg-primary/);
+    await expect(start).toHaveAccessibleDescription('Save this recipe before starting a brew.');
+    await expect(page.getByRole('status').filter({ hasText: 'Not saved yet' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Brew history' })).toHaveCount(0);
+    await expect(page.getByRole('tab')).toHaveText(['Recipe', 'Saved versions', 'Brews']);
+    const name = `Header ${Date.now()}`;
+    await title.fill(name);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+    await expect(page.getByRole('status').filter({ hasText: 'Unsaved changes' })).toBeVisible();
+    const before = await save.boundingBox();
+    await save.click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await expect(save).toHaveText('Save changes');
+    const after = await save.boundingBox();
+    expect(after!.x).toBeCloseTo(before!.x, 0);
+    expect(after!.y).toBeCloseTo(before!.y, 0);
+    await expect(start).toHaveAccessibleDescription(/complete recipe|estimate/);
+    await expect(start).not.toHaveClass(/bg-primary/);
+    await expect(save, 'a clean saved recipe that is not Ready has nothing to save').not.toHaveClass(/bg-primary/);
+  });
+
+  test('estimates name their source and header commands work from every tab', async ({ page }) => {
+    await page.goto('/beerxml');
+    await page.getByLabel('Paste BeerXML').fill(munichHelles);
+    await page.locator('#beerxml-colour').selectOption('srm');
+    await page.locator('#beerxml-efficiency').selectOption('override');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: 'Import recipe' }).click();
+    await page.getByRole('link', { name: 'Open imported recipe' }).click();
+    const commands = page.getByRole('group', { name: 'Recipe commands' });
+    const save = commands.getByRole('button', { name: /^Save (recipe|changes)$/ });
+    const start = commands.getByRole('button', { name: 'Start brew', exact: true });
+    await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
+    await expect(page.getByTestId('estimate-source')).toContainText('changes not yet in saved revision');
+    await expect(page.getByTestId('estimate-source')).toContainText('Equipment:');
+    await expect(save).toHaveClass(/bg-primary/);
+    await save.click();
+    await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+    await page.reload();
+    // A clean, freshly loaded saved recipe reports the settled state, not a blank status.
+    await expect(page.getByRole('group', { name: 'Recipe commands' }).getByRole('status')).toHaveText('Saved');
+    await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision');
+    await expect(save, 'clean saved but Incomplete: nothing to save, nothing to start').not.toHaveClass(/bg-primary/);
+    await expect(start).not.toHaveClass(/bg-primary/);
+    await page.getByLabel('Batch volume (L)').fill('21');
+    await expect(save).toHaveClass(/bg-primary/);
+    await expect(page.getByTestId('estimate-source')).toContainText('changes not yet in saved revision');
+    await page.getByRole('tab', { name: 'Saved versions' }).click();
+    await start.click();
+    await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#start-brew')).toBeFocused();
+    await page.getByRole('tab', { name: 'Brews' }).click();
+    await page.getByRole('button', { name: 'Recipe actions' }).click();
+    await page.getByRole('button', { name: 'Print…' }).click();
+    await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#recipe-output-disclosure')).toHaveJSProperty('open', true);
+    await expect(page.locator('#recipe-output-disclosure > summary')).toBeFocused();
+  });
+
+  test('Recipe actions is an ordinary popover that returns focus and keeps editing reachable', async ({ page }) => {
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Actions ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    const trigger = page.getByRole('button', { name: 'Recipe actions' });
+    await trigger.click();
+    for (const name of ['Scale…', 'Duplicate…', 'Print…', 'Export…']) await expect(page.getByRole('button', { name })).toBeVisible();
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await page.getByRole('button', { name: 'Export…' }).click();
+    await expect(page.locator('#recipe-output-disclosure')).toHaveJSProperty('open', true);
+    await page.getByRole('button', { name: 'Change equipment' }).click();
+    await expect(page.locator('#recipe-equipment-disclosure')).toHaveJSProperty('open', true);
+    await expect(page.locator('#equipment-profile-select')).toBeFocused();
+  });
+
+  for (const width of [320, 390]) {
+    test(`long recipe name stays directly editable and in bounds at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 700 });
+      await page.goto('/recipe-editor/new');
+      const long = `Very long recipe name ${'with many words '.repeat(8)}${Date.now()}`;
+      const title = page.getByLabel('Recipe name', { exact: true });
+      await title.fill(long);
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(long);
+      await expect(title).toHaveAttribute('title', long);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const add = page.getByRole('button', { name: 'Add fermentable' });
+      await add.scrollIntoViewIfNeeded();
+      await expect(add).toBeInViewport();
+      for (const name of [/^Save (recipe|changes)$/, 'Start brew', 'Recipe actions']) {
+        const box = await page.getByRole('button', { name }).first().boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      }
+    });
   }
 });

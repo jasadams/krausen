@@ -13,11 +13,11 @@ async function saveRecipe(page: Page, title: string, revisions = 1): Promise<str
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill(title);
   await page.getByLabel('Batch volume (L)').fill('20');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   for (let revision = 2; revision <= revisions; revision += 1) {
     await page.getByLabel('Batch volume (L)').fill(String(20 + revision));
-    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: `Saved revision ${revision}` })).toBeVisible();
   }
   await page.goto('/recipes');

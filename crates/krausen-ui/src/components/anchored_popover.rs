@@ -79,6 +79,8 @@ pub fn BreweryPopover(
     /// Trigger presentation only; the native popover relationship is unchanged.
     #[prop(default = ButtonVariant::Secondary)] trigger_variant: ButtonVariant,
     #[prop(optional, into)] trigger_class: String,
+    /// Stable id for the trigger so a task closing elsewhere can return focus to it.
+    #[prop(optional, into)] trigger_id: Option<String>,
     /// Accessible name when the visible trigger content is richer than `label`.
     #[prop(optional, into)] trigger_aria_label: MaybeProp<String>,
     /// Rich visible trigger content (for example identity); `label` otherwise.
@@ -287,7 +289,7 @@ pub fn BreweryPopover(
     }
 
     view! {
-        <Button variant=trigger_variant class=trigger_class aria_label=trigger_aria_label node_ref=trigger aria_controls=id.clone()
+        <Button variant=trigger_variant id=trigger_id.unwrap_or_default() class=trigger_class aria_label=trigger_aria_label node_ref=trigger aria_controls=id.clone()
             aria_expanded=Signal::derive(move || open.get()) popover_target=id.clone()>{match trigger_content { Some(content) => content.run(), None => label.into_any() }}</Button>
         <div id=id class="k-popover" node_ref=content popover="auto"
             on:toggle=move |_| {

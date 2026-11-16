@@ -28,7 +28,7 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.locator('#recipe-deadspace').fill('0');
   await page.locator('#recipe-absorption').fill('0.8');
   await page.locator('#recipe-capacity').fill('30');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
 }
 
@@ -36,6 +36,7 @@ test('scaling previews fixed-loss target changes and applies one revision', asyn
   const title = `Scaled recipe ${Date.now()}`;
   await createScalableRecipe(page, title);
 
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await expect(page.getByRole('heading', { name: 'Scale batch' })).toBeVisible();
   await page.getByLabel('Target fermenter volume (L)').fill('40');
@@ -54,6 +55,7 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   const title = `Duplicate recipe ${Date.now()}`;
   await createScalableRecipe(page, title);
 
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await page.getByLabel('Target fermenter volume (L)').fill('30');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
@@ -61,19 +63,30 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('heading', { name: 'Scale batch' })).toHaveCount(0);
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+  await expect(page.getByRole('button', { name: 'Recipe actions' }), 'focus returns to the visible opener after Cancel').toBeFocused();
 
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Duplicate…' }).click();
   await expect(page.getByRole('heading', { name: 'Duplicate recipe', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('heading', { name: 'Duplicate recipe', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Recipe actions' }), 'focus returns after cancelling Duplicate').toBeFocused();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
   await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue('4');
+  // A committed Duplicate navigation leaves focus to the new page; the closed
+  // popover's opener must not reclaim it (KRA-48 owns arrival focus itself).
+  await expect(page.getByRole('button', { name: 'Recipe actions' })).not.toBeFocused();
 });
 
 test('same-context focus during apply settles without losing the request', async ({ page }) => {
   const title = `Focus apply ${Date.now()}`;
   await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await page.getByLabel('Target fermenter volume (L)').fill('40');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
@@ -85,12 +98,13 @@ test('same-context focus during apply settles without losing the request', async
   await page.getByRole('button', { name: 'Apply scaling' }).click();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save recipe' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeEnabled();
 });
 
 test('uncertain apply keeps its identity through dismissal and blocks navigation', async ({ page }) => {
   const title = `Uncertain apply ${Date.now()}`;
   await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await page.getByLabel('Target fermenter volume (L)').fill('40');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
@@ -99,6 +113,7 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   await page.getByRole('button', { name: 'Apply scaling' }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeDisabled();
@@ -108,6 +123,7 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Stay' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await page.unroute('**/execute_scale_apply*');
@@ -116,19 +132,21 @@ test('uncertain apply keeps its identity through dismissal and blocks navigation
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue(/^40(\.0+)?$/);
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^8(\.0+)?$/);
   // The retry must synchronize the committed revision, not leave the editor at rev1.
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
 });
 
 test('uncertain duplicate keeps its identity through dismissal', async ({ page }) => {
   const title = `Uncertain duplicate ${Date.now()}`;
   await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Duplicate…' }).click();
   await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
   await page.route('**/execute_duplicate_recipe*', route => route.abort());
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Duplicate…' }).click();
   await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Duplicate', exact: true })).toBeDisabled();

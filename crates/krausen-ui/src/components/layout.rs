@@ -739,16 +739,32 @@ impl EditorGuard {
 }
 
 /// Focuses the page's own heading (else the main landmark) once it has
-/// rendered. Polls a bounded number of frames because pages load asynchronously;
-/// gives up as soon as the user has focused something inside the page.
+/// rendered. Pages load their content asynchronously, so this polls for a bounded
+/// time (not a frame count) and gives up as soon as the user focuses something.
 #[cfg(target_arch = "wasm32")]
 fn focus_arrival_heading() {
-    fn attempt(frames_left: u8) {
+    fn deadline_from_now() -> f64 {
+        js_sys::Date::now() + 4_000.0
+    }
+    // The navigation trigger itself often keeps focus after a client-side route
+    // change; that is not a deliberate move elsewhere.
+    let trigger = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .filter(|element| matches!(element.tag_name().as_str(), "A" | "BUTTON"));
+    fn attempt(deadline: f64, trigger: Option<web_sys::Element>) {
         use wasm_bindgen::JsCast;
         let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
         let Some(main) = document.get_element_by_id("main-content") else { return };
+        // Any deliberate focus the user has taken anywhere else (skip link,
+        // account popover, a field) wins; the main landmark/body and the very
+        // trigger that started the navigation mean "still ours".
         if let Some(active) = document.active_element() {
-            if main.contains(Some(&active)) && active.id() != "main-content" {
+            let tag = active.tag_name();
+            let still_ours = matches!(tag.as_str(), "BODY" | "HTML")
+                || active.id() == "main-content"
+                || trigger.as_ref().is_some_and(|trigger| trigger.is_same_node(Some(&active)));
+            if !still_ours {
                 return;
             }
         }
@@ -768,8 +784,9 @@ fn focus_arrival_heading() {
                     tracing::warn!(?error, "Unable to focus the arrival heading");
                 }
             }
-            None if frames_left > 0 => {
-                request_animation_frame(move || attempt(frames_left - 1));
+            None if js_sys::Date::now() < deadline => {
+                let trigger = trigger.clone();
+                request_animation_frame(move || attempt(deadline, trigger));
             }
             None => {
                 if let Ok(main) = main.dyn_into::<web_sys::HtmlElement>() {
@@ -780,7 +797,8 @@ fn focus_arrival_heading() {
             }
         }
     }
-    request_animation_frame(|| attempt(60));
+    let deadline = deadline_from_now();
+    request_animation_frame(move || attempt(deadline, trigger));
 }
 
 /// Main authenticated layout with sidebar and content area.

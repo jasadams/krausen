@@ -31,7 +31,12 @@ pub enum EquipmentSource {
         id: String,
         name: String,
     },
-    /// A profile is selected but is archived or not yet loaded.
+    /// A profile is selected but its record is not loaded yet. This is not the
+    /// same claim as "unavailable"; the header must not say recipe-only.
+    Loading {
+        id: String,
+    },
+    /// A profile is selected but is archived or otherwise unusable.
     Unavailable {
         id: String,
     },
@@ -49,6 +54,7 @@ impl EquipmentSummary {
         match &self.source {
             EquipmentSource::RecipeOnly => "Recipe-only equipment".into(),
             EquipmentSource::Profile { name, .. } => format!("Profile: {name}"),
+            EquipmentSource::Loading { .. } => "Selected equipment profile".into(),
             EquipmentSource::Unavailable { .. } => "Equipment profile unavailable".into(),
         }
     }
@@ -60,12 +66,23 @@ impl EquipmentSummary {
         }
     }
     pub fn from_document(document: &RecipeDocumentV1, profile: Option<&EquipmentProfile>) -> Self {
+        Self::from_document_with_library(document, profile, true)
+    }
+
+    /// `library_loaded` separates "selected profile, details still loading" from a
+    /// genuinely missing or archived profile, so the header never claims either.
+    pub fn from_document_with_library(
+        document: &RecipeDocumentV1,
+        profile: Option<&EquipmentProfile>,
+        library_loaded: bool,
+    ) -> Self {
         let source = match (&document.equipment_profile_id, profile) {
             (None, _) => EquipmentSource::RecipeOnly,
             (Some(id), Some(p)) if p.profile_id == *id && !p.archived => EquipmentSource::Profile {
                 id: id.clone(),
                 name: p.name.clone(),
             },
+            (Some(id), _) if !library_loaded => EquipmentSource::Loading { id: id.clone() },
             (Some(id), _) => EquipmentSource::Unavailable { id: id.clone() },
         };
         Self {
@@ -73,6 +90,25 @@ impl EquipmentSummary {
             override_count: override_count(&document.equipment_overrides),
         }
     }
+}
+
+impl EquipmentSummary {
+    /// First paint, before the profile library has loaded: a selected profile is
+    /// reported as selected without claiming a name, and never as recipe-only.
+    pub fn from_saved_document(document: &RecipeDocumentV1) -> Self {
+        let source = match &document.equipment_profile_id {
+            None => EquipmentSource::RecipeOnly,
+            Some(id) => EquipmentSource::Loading { id: id.clone() },
+        };
+        Self { source, override_count: override_count(&document.equipment_overrides) }
+    }
+}
+
+/// Whether the loaded profile pages can decide the selection. A failed fetch is
+/// decisive (unavailable plus Retry), and a selected profile that is not in the
+/// loaded pages is undecided only while more pages remain.
+pub fn library_decidable(loaded: bool, load_failed: bool, profile_known: bool, has_more: bool) -> bool {
+    load_failed || (loaded && (profile_known || !has_more))
 }
 
 /// Number of settings this recipe overrides; the chilling mode and its values count once.
@@ -243,7 +279,15 @@ pub fn RecipeEquipment(
     let profile_name = Signal::derive(move || selected_profile.get().map(|p| p.name));
     let profile_known = Signal::derive(move || usable_profile.get().is_some());
     Effect::new(move |_| {
-        let next = draft.with(|d| EquipmentSummary::from_document(d.document(), usable_profile.get().as_ref()));
+        // The library may still be paging; a selected profile that is not in the
+        // loaded pages is undecided, not unavailable.
+        let decidable = library_decidable(
+            library.loaded.get(),
+            !library.error.get().is_empty(),
+            selected_profile.get().is_some(),
+            library.next_cursor.get().is_some(),
+        );
+        let next = draft.with(|d| EquipmentSummary::from_document_with_library(d.document(), usable_profile.get().as_ref(), decidable));
         if summary.get_untracked() != next {
             summary.set(next);
         }
@@ -297,6 +341,7 @@ pub fn RecipeEquipment(
             </div>
             <p class="k-field__hint">{move || match summary.get().source {
                 EquipmentSource::Profile { name, .. } => format!("Using profile “{name}” for this recipe. Recipe overrides below apply only to this recipe."),
+                EquipmentSource::Loading { .. } => "The selected profile’s details are still loading; the settings below apply to this recipe until they arrive.".to_owned(),
                 EquipmentSource::Unavailable { .. } => "The selected profile is not available here.".to_owned(),
                 EquipmentSource::RecipeOnly => "Using recipe-only equipment: the settings below belong to this recipe.".to_owned(),
             }}</p>
@@ -382,6 +427,25 @@ mod tests {
         paths.sort();
         paths.dedup();
         assert_eq!((ids.len(), paths.len()), (total, total));
+    }
+
+    #[test]
+    fn library_states_decide_or_stay_loading_truthfully() {
+        assert!(!library_decidable(false, false, false, false));
+        assert!(!library_decidable(false, false, false, true));
+        assert!(library_decidable(true, false, false, false));
+        assert!(!library_decidable(true, false, false, true));
+        assert!(library_decidable(true, false, true, true));
+        assert!(library_decidable(false, true, false, true), "a failed fetch is decided");
+    }
+
+    #[test]
+    fn summary_keeps_selected_profile_loading_until_the_library_can_decide() {
+        let mut document = RecipeDocumentV1::default();
+        document.equipment_profile_id = Some("profile-1".into());
+        assert!(matches!(EquipmentSummary::from_saved_document(&document).source, EquipmentSource::Loading { .. }));
+        assert!(matches!(EquipmentSummary::from_document_with_library(&document, None, false).source, EquipmentSource::Loading { .. }));
+        assert!(matches!(EquipmentSummary::from_document_with_library(&document, None, true).source, EquipmentSource::Unavailable { .. }));
     }
 
     #[test]

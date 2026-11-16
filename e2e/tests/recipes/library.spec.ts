@@ -10,7 +10,7 @@ test('recipe library searches, shows retained history, archives and restores', a
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
   await page.getByLabel('Batch volume (L)').fill('20');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
   await expect(page.getByRole('link', { name: 'Import BeerXML' })).toHaveAttribute('href', '/beerxml');
@@ -85,7 +85,7 @@ test('delayed historical revision responses cannot replace a new selection or su
   for (const title of [a, b]) {
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(title);
-    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   }
   await page.goto('/recipes');
@@ -204,7 +204,7 @@ test('denied archive hides displayed history and rejects a late revision respons
   const title = `Denied history ${Date.now()}`;
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
   await page.getByLabel('Search recipes').fill(title);
@@ -266,7 +266,7 @@ test('a stale denied revision response still redacts the current selection', asy
   for (const title of [a, b]) {
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(title);
-    await page.getByRole('button', { name: 'Save recipe' }).click();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   }
   await page.goto('/recipes');
@@ -310,7 +310,7 @@ test('a delayed denial after leaving the library does not access disposed UI sta
   const title = `Disposed library ${Date.now()}`;
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
   await page.getByLabel('Search recipes').fill(title);

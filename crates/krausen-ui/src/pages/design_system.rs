@@ -4,7 +4,7 @@
 use crate::components::brewery_kit::BreweryBadge;
 use crate::components::{
     BreweryDialog, BreweryDisclosure, BreweryField,
-    BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs,
+    BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BreweryMetricList, BrewerySelect, BreweryTabs,
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
     BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryPopover, BrewerySection,
@@ -262,7 +262,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <p role="status">{move || settled.get()}</p>
                 </BreweryPanel>
                 <BreweryPanel title="Forms without the friction" eyebrow="Component / Field & Select" description="Labels, units and validation stay visible.">
-                    <BrewerySection title="Source fields"><BreweryFieldRow><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" numeric=true hint="Volume into the fermenter"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" numeric=true error="Enter a non-negative amount"/><BreweryField id="show-name" label="Recipe name" value=name/><BreweryTextArea id="show-notes" label="Notes" value=notes/></BreweryFieldRow></BrewerySection>
+                    <BrewerySection title="Source fields"><BreweryFieldRow><BreweryField id="show-volume" label="Batch volume" value=volume unit="L" numeric=true hint="Volume into the fermenter"/><BrewerySelect id="show-style" label="Style" value=style options=vec![("example-a".into(), "Example style A".into()), ("example-b".into(), "Example style B".into())]/><BreweryField id="show-invalid" label="Amount" value=invalid unit="kg" numeric=true error="Enter a non-negative amount"/><BreweryDraftField id="show-name" label="Recipe name" value=Signal::from(name) on_change=Callback::new(move |next: String| name.set(next)) title_variant=true hint="Directly editable page title with the full value in the native title."/><BreweryTextArea id="show-notes" label="Notes" value=notes/></BreweryFieldRow></BrewerySection>
                     <BrewerySection title="Raw field states"><BreweryFieldRow>
                         <BreweryDraftField id="show-raw" label="Raw quantity" unit="kg" numeric=true value=Signal::from(grain) on_change=Callback::new(move |next: String| { grain.set(next); field_error.set(None); }) on_blur=Callback::new(move |()| field_error.set(Some("Demonstration of a settled field message; raw text is retained.".into()))) error={Signal::<Option<String>>::from(field_error)} hint="Type a transient value, then blur; this example does not parse or normalize."/>
                         <BreweryField id="show-readonly" label="Read-only source amount" unit="kg" numeric=true value=grain read_only=true hint="Readable and focusable, but not editable"/>
@@ -271,7 +271,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 </BreweryPanel>
                 <BreweryPanel title="Measurements" presentation=PanelPresentation::Summary mobile_compact=true description="Style ranges are guidance, not a save restriction.">
                     <crate::components::BreweryBeerPortrait/>
-                    <div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
+                    <BreweryMetricList><BreweryMetric label="Mash water" value="15.3" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric><BreweryMetric label="Total water" value="28.9" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric></BreweryMetricList><div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
                 </BreweryPanel>
                 <BreweryPanel title="Brew measurements" description="Frozen planned targets and selected readings remain distinct.">
                     <div class="kit-showcase__table-scroll" tabindex="0" role="region" aria-label="Brew measurements table"><table class="print-sheet__table"><thead><tr><th scope="col">"Measurement"</th><th scope="col">"Planned target"</th><th scope="col">"Selected actual"</th><th scope="col">"Comparison"</th></tr></thead><tbody>
@@ -293,7 +293,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
                     <BreweryActionGroup label="Pending task actions"><Button pending=true>"Save changes"</Button><Button variant=ButtonVariant::Ghost disabled=true>"Cancel"</Button></BreweryActionGroup>
-                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/></BreweryActionGroup>
+                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/><BrewerySaveStatus state=SaveState::Saved single_line=true message=Signal::derive(|| "Saved revision 3; a long status line stays on one line and keeps its full text in the native title".to_owned())/><BrewerySaveStatus state=SaveState::Saved message=Signal::derive(|| "Saved revision 3".to_owned())/></BreweryActionGroup>
                     <BreweryMetric label="Supporting water" value="28.36" unit="L" density=MetricDensity::Quiet>{()}</BreweryMetric>
                     <BreweryMetric label="Compact estimate" value="1.049" unit="SG" density=MetricDensity::Compact>{()}</BreweryMetric>
                 </BreweryPanel>
