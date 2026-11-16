@@ -44,7 +44,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.goto('/recipe-editor/new');
         const recipeTab = page.getByRole('tab', { name: 'Recipe', exact: true });
         await expect(recipeTab).toBeVisible();
-        await expect(page.getByRole('tab', { name: /History/ })).toBeVisible();
+        await expect(page.getByRole('tab', { name: /Saved versions/ })).toBeVisible();
         await expect(page.getByRole('tab', { name: /Brews/ })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Add fermentable' })).toBeVisible();
         for (const name of ['Save recipe', 'Undo']) {
@@ -59,10 +59,10 @@ test.describe('approved recipe and shared kit composition', () => {
         await expect(page.getByRole('button', { name: 'Save recipe', exact: true })).toBeFocused();
         await recipeTab.focus();
         await page.keyboard.press('ArrowRight');
-        const historyTab = page.getByRole('tab', { name: /History/ });
+        const historyTab = page.getByRole('tab', { name: /Saved versions/ });
         await expect(historyTab).toBeFocused();
         await expect(historyTab).toHaveAttribute('aria-selected', 'true');
-        await expect(page.getByText('No saved history yet')).toBeVisible();
+        await expect(page.getByText('No saved versions yet')).toBeVisible();
         await recipeTab.click();
         await expect(page.getByRole('button', { name: 'Add fermentable' })).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

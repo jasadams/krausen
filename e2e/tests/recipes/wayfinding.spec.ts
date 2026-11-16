@@ -173,3 +173,47 @@ test('a missing brew offers a neutral trail and never discloses a recipe or swit
   await expect(history.getByText('Brews', { exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveTitle('Brews · Krausen');
 });
+
+test('returning to a paged, scrolled library restores its pages and scroll position once', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  const total = 120;
+  const row = (index: number) => ({
+    recipe_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    title: `Paged recipe ${String(index).padStart(3, '0')}`,
+    style: null, batch_size_l: 20, revision: 1, metadata_revision: 1,
+    archived: false, needs_recovery: false, created_at: '2026-01-01T00:00:00Z',
+  });
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
+    const command = payload ? JSON.parse(payload) : null;
+    if (!command?.List) return route.continue();
+    const offset = command.List.cursor ? Number(command.List.cursor) : 0;
+    const end = Math.min(offset + 50, total);
+    const items = Array.from({ length: end - offset }, (_, i) => row(offset + i));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ Recipes: { items, next_cursor: end < total ? String(end) : null } }),
+    });
+  });
+  await page.goto('/recipes');
+  await expect(page.getByRole('heading', { name: 'Paged recipe 000' })).toBeVisible();
+  await page.getByRole('button', { name: 'Load more recipes' }).click();
+  await expect(page.getByRole('heading', { name: 'Paged recipe 050' })).toBeAttached();
+  await page.getByRole('button', { name: 'Load more recipes' }).click();
+  await expect(page.getByRole('heading', { name: 'Paged recipe 119' })).toBeAttached();
+  const link = page.getByRole('link', { name: 'Open Paged recipe 090' });
+  await link.scrollIntoViewIfNeeded();
+  const before = await page.locator('.app-shell__main').evaluate(el => el.scrollTop);
+  expect(before).toBeGreaterThan(500);
+  await link.click();
+  await expect(page).toHaveURL(/\/recipe-editor\//);
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
+  await expect(page.getByRole('heading', { name: 'Paged recipe 119' })).toBeAttached();
+  await expect.poll(() => page.locator('.app-shell__main').evaluate(el => el.scrollTop), { timeout: 10_000 })
+    .toBeGreaterThan(before - 80);
+  // Consumed by that one return: a later plain visit starts at the top, first page.
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Equipment' }).click();
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
+  await expect(page.getByRole('heading', { name: 'Paged recipe 000' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Paged recipe 119' })).toHaveCount(0);
+});
