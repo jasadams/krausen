@@ -372,11 +372,12 @@ test.describe('TC-005: Logout', () => {
     );
     expect(await isAuthenticated(page)).toBe(true);
 
-    // Navigate to settings where the Sign Out button lives
+    // Sign out lives in the one account dropdown (IA-002), not duplicated in Settings.
     await page.goto('/settings/profile');
     await waitForWasm(page);
 
-    const signOutButton = page.locator('button:has-text("Sign Out")');
+    await page.locator('.app-shell__desktop').getByRole('button', { name: /^Account menu/ }).click();
+    const signOutButton = page.locator('[popover]:popover-open').getByRole('button', { name: 'Sign Out', exact: true });
     await expect(signOutButton).toBeVisible({ timeout: 10_000 });
     await signOutButton.click();
 

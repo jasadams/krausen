@@ -17,12 +17,12 @@ test.describe('approved recipe and shared kit composition', () => {
     await title.fill(`History refresh ${Date.now()}`);
     await page.getByRole('button', { name: 'Save recipe' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
-    await page.getByRole('tab', { name: 'History' }).click();
-    await expect(page.locator('#editor-panel-history li').filter({ hasText: 'Revision 1' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Saved versions' }).click();
+    await expect(page.locator('#editor-panel-versions li').filter({ hasText: 'Revision 1' })).toBeVisible();
     await title.fill(`Updated history ${Date.now()}`);
     await page.getByRole('button', { name: 'Save recipe' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
-    await expect(page.locator('#editor-panel-history li').filter({ hasText: 'Revision 2' })).toBeVisible();
+    await expect(page.locator('#editor-panel-versions li').filter({ hasText: 'Revision 2' })).toBeVisible();
     await page.getByRole('tab', { name: 'Brews' }).click();
     await expect(page.getByText('No brews have been started for this recipe.')).toBeVisible();
     await expect(page.getByText('Recipe not found.', { exact: true })).toHaveCount(0);
@@ -37,7 +37,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await expect(page.getByRole('tab', { name: 'Recipe' })).toBeVisible();
         await page.getByRole('tab', { name: 'Recipe' }).focus();
         await page.keyboard.press('ArrowRight');
-        await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
+        await expect(page.getByRole('tab', { name: 'Saved versions' })).toBeFocused();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await testInfo.attach(`showcase-${theme}-${viewport.width}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 

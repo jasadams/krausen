@@ -46,6 +46,7 @@ fn EquipmentContent(identity: OperationIntent) -> impl IntoView {
     let back = safe_return(query.with_untracked(|q| q.get("return")));
     view! {
         <div class="recipe-editor">
+            <crate::components::wayfinding::PageTitle text=Signal::derive(|| "Equipment".to_owned())/>
             <header class="recipe-editor__header">
                 <div>
                     <p class="kit-showcase__eyebrow">"Your brewery"</p>

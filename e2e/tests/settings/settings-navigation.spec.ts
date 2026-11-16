@@ -19,14 +19,16 @@ test.describe('TC-008: Settings Navigation', () => {
     await expect(subheading).toBeVisible();
   });
 
-  test('Profile tab is active when on /settings/profile', async ({ page }) => {
+  test('Profile is the current leaf of a labelled Settings navigation (links, not tabs)', async ({ page }) => {
     await gotoAuthenticated(page, '/settings/profile');
 
-    const profileTab = page.locator('a[href="/settings/profile"]').filter({
-      has: page.locator('span', { hasText: 'Profile' }),
-    });
-    await expect(profileTab).toBeVisible();
-    await expect(profileTab).toHaveClass(/border-primary/);
+    const nav = page.getByRole('navigation', { name: 'Settings' });
+    await expect(nav).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Profile', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('link', { name: 'Security', exact: true })).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('tab')).toHaveCount(0);
+    await expect(nav.getByRole('heading', { name: 'Account', exact: true })).toBeVisible();
+    await expect(nav.getByText('apply to you in every workspace')).toBeVisible();
   });
 
   test('/settings redirects to /settings/profile', async ({ page }) => {
@@ -88,20 +90,60 @@ test.describe('TC-008: Settings Navigation', () => {
     expect(markerAfter).toBe('alive');
   });
 
-  test('close button navigates to home', async ({ page }) => {
+  test('without a return location Settings offers Back to recipes', async ({ page }) => {
     await gotoAuthenticated(page, '/settings/profile');
 
-    const closeButton = page.locator('a[aria-label="Close settings"]');
-    await expect(closeButton).toBeVisible();
-
-    const href = await closeButton.getAttribute('href');
-    expect(href).toBe('/');
+    const back = page.getByRole('link', { name: 'Back to recipes' });
+    await expect(back).toBeVisible();
+    await expect(back).toHaveAttribute('href', '/recipes');
   });
 
-  test('Sign Out button is present in settings', async ({ page }) => {
-    await gotoAuthenticated(page, '/settings/profile');
+  test('a validated in-app return survives Settings navigation and is used by Back', async ({ page }) => {
+    await gotoAuthenticated(page, '/settings/profile?return=%2Frecipes%3Fq%3Dhelles');
 
-    const signOutButton = page.locator('button', { hasText: 'Sign Out' });
-    await expect(signOutButton).toBeVisible();
+    const back = page.locator('#settings-return');
+    await expect(back).toHaveAttribute('href', '/recipes?q=helles');
+    const nav = page.getByRole('navigation', { name: 'Settings' });
+    await expect(nav.getByRole('link', { name: 'Profile', exact: true })).toHaveAttribute('href', /return=%2Frecipes%3Fq%3Dhelles/);
+    await nav.getByRole('link', { name: 'Security', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/security\?return=/);
+    await expect(page.locator('#settings-return')).toHaveAttribute('href', '/recipes?q=helles');
+    await page.locator('#settings-return').click();
+    await expect(page).toHaveURL(/\/recipes\?q=helles/);
+  });
+
+  for (const bad of ['https%3A%2F%2Fevil.example%2F', '%2F%2Fevil.example', '%2Fsettings%2Fprofile', 'javascript%3Aalert(1)', '%2Flogin']) {
+    test(`an unsafe return (${bad}) is rejected in favour of Back to recipes`, async ({ page }) => {
+      await gotoAuthenticated(page, `/settings/profile?return=${bad}`);
+      const back = page.locator('#settings-return');
+      await expect(back).toHaveText('Back to recipes');
+      await expect(back).toHaveAttribute('href', '/recipes');
+      await expect(page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: 'Security', exact: true }))
+        .not.toHaveAttribute('href', /return=/);
+    });
+  }
+
+  test('/settings keeps its redirect and carries a validated return through it', async ({ page }) => {
+    await gotoAuthenticated(page, '/settings?return=%2Fequipment');
+    await expect(page).toHaveURL(/\/settings\/profile\?return=%2Fequipment/);
+  });
+
+  test('Settings opened from a page returns to that page, and sign out is only in the account dropdown', async ({ page }) => {
+    await gotoAuthenticated(page, '/equipment');
+    await page.locator('.app-shell__desktop').getByRole('button', { name: /^Account menu/ }).click();
+    const popup = page.locator('[popover]:popover-open');
+    await popup.getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/profile\?return=%2Fequipment/);
+    await expect(page.locator('#settings-return')).toHaveAttribute('href', '/equipment');
+    await expect(page.locator('main').getByRole('button', { name: 'Sign Out' })).toHaveCount(0);
+    await expect(page.locator('main').getByRole('link', { name: 'Close settings' })).toHaveCount(0);
+  });
+
+  test('Settings has a title, a named main landmark and focuses its heading on arrival', async ({ page }) => {
+    await gotoAuthenticated(page, '/recipes');
+    await page.locator('.app-shell__desktop').getByRole('button', { name: /^Account menu/ }).click();
+    await page.locator('[popover]:popover-open').getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveTitle('Settings · Krausen');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeFocused();
   });
 });

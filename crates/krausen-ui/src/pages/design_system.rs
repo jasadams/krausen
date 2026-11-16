@@ -313,9 +313,9 @@ pub fn DesignSystemPage() -> impl IntoView {
                     </div>
                 </BreweryPanel>
                 <BreweryPanel title="Tabs" description="Use the arrow keys to move between sections.">
-                    <BreweryTabs id="show-tabs" label="Recipe sections" active=active_tab items=vec![("recipe".into(), "Recipe".into()), ("history".into(), "History".into()), ("brews".into(), "Brews".into())]/>
+                    <BreweryTabs id="show-tabs" label="Recipe sections" active=active_tab items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())]/>
                     <div role="tabpanel" id="show-tabs-panel-recipe" aria-labelledby="show-tabs-tab-recipe" hidden=move || active_tab.get() != "recipe">"Recipe section"</div>
-                    <div role="tabpanel" id="show-tabs-panel-history" aria-labelledby="show-tabs-tab-history" hidden=move || active_tab.get() != "history">"History section"</div>
+                    <div role="tabpanel" id="show-tabs-panel-versions" aria-labelledby="show-tabs-tab-versions" hidden=move || active_tab.get() != "versions">"Saved versions section"</div>
                     <div role="tabpanel" id="show-tabs-panel-brews" aria-labelledby="show-tabs-tab-brews" hidden=move || active_tab.get() != "brews">"Brews section"</div>
                 </BreweryPanel>
                 <BreweryPanel title="Feedback" description="Status is expressed in words as well as colour.">

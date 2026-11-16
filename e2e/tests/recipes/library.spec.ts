@@ -16,8 +16,8 @@ test('recipe library searches, shows retained history, archives and restores', a
   await expect(page.getByRole('link', { name: 'Import BeerXML' })).toHaveAttribute('href', '/beerxml');
   await page.getByLabel('Search recipes').fill(title);
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('button', { name: `History for ${title}` }).click();
-  await expect(page.getByRole('heading', { name: `History · ${title}` })).toBeVisible();
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
+  await expect(page.getByRole('heading', { name: `Saved versions · ${title}` })).toBeVisible();
   await expect(page.getByText('Revision 1', { exact: false }).last()).toBeVisible();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
@@ -27,8 +27,8 @@ test('recipe library searches, shows retained history, archives and restores', a
   await expect(page.getByRole('heading', { name: title })).toHaveCount(0);
   await page.getByLabel('Show', { exact: true }).selectOption('archived');
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('button', { name: `History for ${title}` }).click();
-  await expect(page.getByRole('heading', { name: `History · ${title}` })).toBeVisible();
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
+  await expect(page.getByRole('heading', { name: `Saved versions · ${title}` })).toBeVisible();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
   await page.getByRole('button', { name: `Restore ${title}` }).click();
@@ -112,10 +112,10 @@ test('delayed historical revision responses cannot replace a new selection or su
       await route.continue();
     }
   });
-  await page.getByRole('button', { name: `History for ${a}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${a}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await startedPromise;
-  await page.getByRole('button', { name: `History for ${b}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${b}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${b}` })).toBeVisible();
   release();
@@ -131,7 +131,7 @@ test('delayed historical revision responses cannot replace a new selection or su
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await startedPromise;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.getByRole('heading', { name: `History · ${b}` })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: `Saved versions · ${b}` })).toHaveCount(0);
   release();
   await completedPromise;
   await page.waitForTimeout(300);
@@ -208,7 +208,7 @@ test('denied archive hides displayed history and rejects a late revision respons
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
   await page.getByLabel('Search recipes').fill(title);
-  await page.getByRole('button', { name: `History for ${title}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
   let started!: () => void;
@@ -243,7 +243,7 @@ test('denied archive hides displayed history and rejects a late revision respons
   // restore retained content after a later denial.
   await page.reload();
   await page.getByLabel('Search recipes').fill(title);
-  await page.getByRole('button', { name: `History for ${title}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${title}` })).toBeVisible();
   delayNextRevision = true;
@@ -289,10 +289,10 @@ test('a stale denied revision response still redacts the current selection', asy
       await route.continue();
     }
   });
-  await page.getByRole('button', { name: `History for ${a}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${a}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await startedPromise;
-  await page.getByRole('button', { name: `History for ${b}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${b}` }).click();
   await page.getByRole('button', { name: 'Inspect revision 1' }).click();
   await expect(page.getByRole('heading', { name: `Historical revision 1 · ${b}` })).toBeVisible();
   release();
@@ -314,7 +314,7 @@ test('a delayed denial after leaving the library does not access disposed UI sta
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.goto('/recipes');
   await page.getByLabel('Search recipes').fill(title);
-  await page.getByRole('button', { name: `History for ${title}` }).click();
+  await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
   let started!: () => void;
   let release!: () => void;
   let completed!: () => void;

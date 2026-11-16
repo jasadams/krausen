@@ -461,7 +461,7 @@ test('raw formatting settles on blur and correction preserves precision and care
     .toEqual([2, 7]);
   await expect(volume).toHaveValue(precise);
   const original = await volume.elementHandle();
-  await page.getByRole('tab', { name: 'History', exact: true }).click();
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
   await page.getByRole('tab', { name: 'Recipe', exact: true }).click();
   await page.getByText('Recipe process and notes', { exact: true }).click();
   await expect(volume).toHaveValue(precise);
@@ -903,7 +903,7 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await expect(page.getByLabel('Amount (kg)', { exact: true }).and(page.locator('#show-invalid'))).toHaveAttribute('aria-invalid', 'true');
       await page.getByRole('tab', { name: 'Recipe' }).focus();
       await page.keyboard.press('ArrowRight');
-      await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
+      await expect(page.getByRole('tab', { name: 'Saved versions' })).toBeFocused();
       const opener = page.getByRole('button', { name: 'Open dialog' });
       await opener.click();
       const dialog = page.getByRole('dialog', { name: 'Keep your changes?' });

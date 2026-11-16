@@ -815,6 +815,9 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
     });
     let busy_label = Signal::derive(move || busy.get() || pending.get().is_some() || !recovery_checked.get() || recovery_error.get().is_some());
     view! { <Show when=move || visible.get() fallback=|| view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context to continue this import." warning=true/> }>
+        <crate::components::wayfinding::PageTitle text=Signal::derive(|| "Import recipes".to_owned())/>
+        <crate::components::wayfinding::Breadcrumb items=vec![crate::components::wayfinding::Crumb::link("Recipes", "/recipes"), crate::components::wayfinding::Crumb::current("Import recipes")]/>
+        <h1 id="beerxml-heading" tabindex="-1">"Import recipes"</h1>
         <BreweryPanel title="Import BeerXML" description="Preview before creating a recipe. The original file is retained separately."
             footer=std::sync::Arc::new(move || view! {
                 {move || {

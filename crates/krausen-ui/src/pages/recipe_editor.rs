@@ -1338,6 +1338,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button on:click=move |_| { baseline.set(remote_for_reapply.clone()); original_baseline_available.set(true); draft.update(|d| d.mark_earlier_document_saved(remote_for_reapply.clone())); revision.set(Some(revision_number)); retry.set(None); conflict.set(None); status.set("Draft retained against the current revision. Review it, then choose Save.".into()); }>"Reapply my draft"</Button>
             </section> }
         })}
+        <crate::components::wayfinding::PageTitle text=Signal::derive(move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() }))/>
         <header class="recipe-editor__header recipe-editor__recipe-header"><div class="recipe-editor__topbar"><nav class="recipe-editor__breadcrumb" aria-label="Recipe breadcrumb"><a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span><span>{move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() })}</span></nav><div class="recipe-editor__actions"><span role="status">{move || {
             let message = status.get();
             if draft.with(|d| d.dirty) && (message.is_empty() || message.starts_with("Saved revision")) {
