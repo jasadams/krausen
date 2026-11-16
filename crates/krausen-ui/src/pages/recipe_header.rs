@@ -41,43 +41,50 @@ pub fn primary_action(saved: bool, dirty: bool, readiness: Option<Readiness>) ->
     }
 }
 
+/// What kind of failure the editor is currently reporting. Stored with the text so
+/// a later success only retires the class it actually supersedes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Saving, validation or preview: retired by the next save outcome.
+    Operation,
+    /// Local draft retention/removal: retired when the retried storage step succeeds.
+    Storage,
+}
+
 /// The editor's single user-facing status line with a typed outcome: `set`
-/// reports progress or success, `fail` reports a failure. Setting always replaces
-/// the previous outcome, so a stale failure can never outlive its message.
+/// reports progress or success, `fail` reports an operation failure and
+/// `fail_storage` a local-storage failure.
 #[derive(Clone, Copy)]
 pub struct EditorStatus {
     pub text: RwSignal<String>,
-    failed: RwSignal<bool>,
+    failed: RwSignal<Option<FailureKind>>,
 }
 
 impl EditorStatus {
     pub fn new() -> Self {
-        Self { text: RwSignal::new(String::new()), failed: RwSignal::new(false) }
+        Self { text: RwSignal::new(String::new()), failed: RwSignal::new(None) }
     }
     pub fn set(&self, message: String) {
-        self.failed.set(false);
+        self.failed.set(None);
         self.text.set(message);
     }
     pub fn fail(&self, message: String) {
-        self.failed.set(true);
+        self.failed.set(Some(FailureKind::Operation));
+        self.text.set(message);
+    }
+    /// A local draft could not be retained or removed; only storage success clears it.
+    pub fn fail_storage(&self, message: String) {
+        self.failed.set(Some(FailureKind::Storage));
         self.text.set(message);
     }
     pub fn failed(&self) -> bool {
-        self.failed.get()
+        self.failed.get().is_some()
     }
     /// Retire a local-storage failure that a later write/removal made obsolete.
-    /// Save and validation failures keep their message until the next outcome.
+    /// Operation failures keep their message until the next outcome.
     pub fn resolve_storage_failure(&self) {
-        const STORAGE: [&str; 4] = [
-            "Unable to retain this draft locally",
-            "The retained draft could not be removed",
-            "Could not remove the retained draft",
-            "Could not discard the retained local draft",
-        ];
-        if self.failed.get_untracked()
-            && STORAGE.iter().any(|prefix| self.text.get_untracked().starts_with(prefix))
-        {
-            self.failed.set(false);
+        if self.failed.get_untracked() == Some(FailureKind::Storage) {
+            self.failed.set(None);
             self.text.set(String::new());
         }
     }
@@ -287,10 +294,16 @@ mod tests {
             status.fail("Complete invalid number fields before saving.".into());
             status.resolve_storage_failure();
             assert!(status.failed(), "a save failure is not a storage failure");
-            status.fail("Unable to retain this draft locally; keep this page open.".into());
-            status.resolve_storage_failure();
-            assert!(!status.failed());
-            assert_eq!(status.text.get_untracked(), "");
+            for storage in [
+                "Unable to retain this draft locally; keep this page open.",
+                "An older retained draft could not be removed from this browser.",
+                "Local draft recovery is unavailable in this browser.",
+            ] {
+                status.fail_storage(storage.into());
+                status.resolve_storage_failure();
+                assert!(!status.failed(), "{storage}");
+                assert_eq!(status.text.get_untracked(), "");
+            }
         });
     }
 
@@ -298,6 +311,8 @@ mod tests {
     fn equipment_context_names_source_and_overrides_without_inventing_unavailable_counts() {
         let recipe_only = EquipmentSummary::default();
         assert_eq!(equipment_context(&recipe_only), "Recipe-only equipment · No recipe overrides");
+        let loading = EquipmentSummary { source: EquipmentSource::Loading { id: "p".into() }, override_count: 0 };
+        assert_eq!(equipment_context(&loading), "Selected equipment profile · loading");
         let missing = EquipmentSummary { source: EquipmentSource::Unavailable { id: "p".into() }, override_count: 3 };
         assert_eq!(equipment_context(&missing), "Selected profile unavailable");
     }

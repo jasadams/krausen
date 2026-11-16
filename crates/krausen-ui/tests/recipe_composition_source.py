@@ -26,8 +26,8 @@ class RecipeComposition(unittest.TestCase):
         for name in ("recipe", "versions", "brews"):
             self.assertIn(f'id="editor-panel-{name}"', self.editor)
             self.assertIn(f'aria-labelledby="editor-tab-{name}"', self.editor)
-        self.assertIn("Recipe / Saved versions / Brews".replace(" / ", ""), "RecipeSaved versionsBrews")
-        self.assertIn('("versions".into(), "Saved versions".into())', self.editor)
+        for key, label in (("recipe", "Recipe"), ("versions", "Saved versions"), ("brews", "Brews")):
+            self.assertIn(f'("{key}".into(), "{label}".into())', self.editor)
         self.assertIn('<crate::components::RecipeRevisionHistory', self.editor)
         self.assertNotIn('fn EditorHistory(', self.editor)
         self.assertIn(

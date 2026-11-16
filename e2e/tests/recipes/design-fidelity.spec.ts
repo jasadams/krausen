@@ -166,6 +166,9 @@ test.describe('approved recipe and shared kit composition', () => {
     await expect(save).toHaveClass(/bg-primary/);
     await save.click();
     await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+    await page.reload();
+    // A clean, freshly loaded saved recipe reports the settled state, not a blank status.
+    await expect(page.getByRole('group', { name: 'Recipe commands' }).getByRole('status')).toHaveText('Saved');
     await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision');
     await expect(save, 'clean saved but Incomplete: nothing to save, nothing to start').not.toHaveClass(/bg-primary/);
     await expect(start).not.toHaveClass(/bg-primary/);

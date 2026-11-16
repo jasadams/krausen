@@ -39,18 +39,22 @@ test.setTimeout(120_000);
 // hardcoded fixture not to be treated as portable acceptance, so an installation
 // without it skips explicitly instead of failing or claiming a pass.
 test.beforeEach(async ({ page }) => {
-  await page.goto('/login');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+});
+
+/** Only the fixture-bound journeys are gated; the new-draft journey runs anywhere. */
+async function requireFixture(page: Page) {
   await page.goto(`/recipe-editor/${RECIPE_ID}`);
   const form = page.locator('#recipe-title');
   const missing = page.getByText('Recipe not found', { exact: false }).first();
   await expect(form.or(missing)).toBeVisible({ timeout: 30_000 });
   test.skip(!(await form.isVisible()), 'compact-density workstation fixture recipe is not present in this installation');
-});
+}
 
 test('populated recipe uses compact two-row fermentables and keeps Hops in view', async ({
   page,
 }, testInfo) => {
+  await requireFixture(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/recipe-editor/${RECIPE_ID}`, { timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Fermentables' })).toBeVisible({ timeout: 30_000 });
@@ -209,6 +213,7 @@ test('populated recipe uses compact two-row fermentables and keeps Hops in view'
 test('recipe editor header and formulation follow the approved hierarchy', async ({
   page,
 }, testInfo) => {
+  await requireFixture(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/recipe-editor/${RECIPE_ID}`, { timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Fermentables' })).toBeVisible({ timeout: 30_000 });
@@ -307,6 +312,7 @@ test('recipe editor header and formulation follow the approved hierarchy', async
 test('compact ingredient controls preserve focus, invalid raw input, disclosure, undo and reload', async ({
   page,
 }, testInfo) => {
+  await requireFixture(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/recipe-editor/${RECIPE_ID}`, { timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Fermentables' })).toBeVisible({ timeout: 30_000 });

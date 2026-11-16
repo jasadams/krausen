@@ -673,6 +673,17 @@ mod tests {
     }
 
     #[test]
+    fn single_line_save_status_keeps_full_text_in_title_and_status() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! { <BrewerySaveStatus state=SaveState::Saved single_line=true message=Signal::derive(|| "Saved revision 3; long wording".to_owned())/> }.to_html();
+            assert!(html.contains("k-save-status--single-line"));
+            assert!(html.contains("role=\"status\""));
+            assert!(html.contains("title=\"Saved revision 3; long wording\""));
+        });
+    }
+
+    #[test]
     fn persistent_help_is_not_an_automatic_live_announcement() {
         let persistent = view! { <BreweryNotice title="Source help" body="This remains available while editing."/> }.to_html();
         assert!(!persistent.contains("role=\"status\""));

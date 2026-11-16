@@ -841,6 +841,25 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
 });
 
+test('keyboard arrival on a recipe focuses a visible heading', async ({ page }) => {
+  await page.goto('/recipes');
+  const open = page.getByRole('link', { name: /^Open / }).first();
+  await expect(open).toBeVisible();
+  await open.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+/);
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toBeFocused();
+  // The heading is visually hidden by default but must reveal itself when it
+  // carries focus, so keyboard users get a visible arrival position.
+  const visible = await heading.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 1 && rect.height > 1 && style.clipPath !== 'inset(50%)' && style.visibility !== 'hidden';
+  });
+  expect(visible, 'focused heading must not stay clipped').toBe(true);
+});
+
 test('recipe header stays usable under browser page zoom and enlarged text', async ({ page, browserName }, testInfo) => {
   test.skip(browserName !== 'chromium', 'Page-scale emulation is Chromium-only');
   await testInfo.attach('zoom-evidence-limits', { contentType: 'application/json', body: JSON.stringify({

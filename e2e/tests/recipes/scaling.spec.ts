@@ -78,6 +78,9 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue('4');
+  // A committed Duplicate navigation leaves focus to the new page; the closed
+  // popover's opener must not reclaim it (KRA-48 owns arrival focus itself).
+  await expect(page.getByRole('button', { name: 'Recipe actions' })).not.toBeFocused();
 });
 
 test('same-context focus during apply settles without losing the request', async ({ page }) => {

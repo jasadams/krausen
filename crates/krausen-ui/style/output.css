@@ -3893,15 +3893,6 @@
   flex: 1 1 8rem;
   min-width: 0;
 }
-.recipe-header__commands {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--k-space-2) var(--k-space-3);
-  min-width: 0;
-  max-width: 100%;
-}
 .recipe-header__status {
   display: inline-flex;
   flex: 0 0 14rem;
@@ -3987,10 +3978,6 @@
   .recipe-header__topbar {
     flex-wrap: wrap;
     padding-top: var(--k-space-2);
-  }
-  .recipe-header__commands {
-    justify-content: flex-start;
-    width: 100%;
   }
   .recipe-header__status {
     flex: 1 0 100%;

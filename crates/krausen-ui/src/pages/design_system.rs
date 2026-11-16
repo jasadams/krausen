@@ -293,7 +293,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
                     <BreweryActionGroup label="Pending task actions"><Button pending=true>"Save changes"</Button><Button variant=ButtonVariant::Ghost disabled=true>"Cancel"</Button></BreweryActionGroup>
-                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/><BrewerySaveStatus state=SaveState::Saved message=Signal::derive(|| "Saved revision 3".to_owned())/></BreweryActionGroup>
+                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/><BrewerySaveStatus state=SaveState::Saved single_line=true message=Signal::derive(|| "Saved revision 3; a long status line stays on one line and keeps its full text in the native title".to_owned())/><BrewerySaveStatus state=SaveState::Saved message=Signal::derive(|| "Saved revision 3".to_owned())/></BreweryActionGroup>
                     <BreweryMetric label="Supporting water" value="28.36" unit="L" density=MetricDensity::Quiet>{()}</BreweryMetric>
                     <BreweryMetric label="Compact estimate" value="1.049" unit="SG" density=MetricDensity::Compact>{()}</BreweryMetric>
                 </BreweryPanel>

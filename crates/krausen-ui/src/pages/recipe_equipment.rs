@@ -66,12 +66,23 @@ impl EquipmentSummary {
         }
     }
     pub fn from_document(document: &RecipeDocumentV1, profile: Option<&EquipmentProfile>) -> Self {
+        Self::from_document_with_library(document, profile, true)
+    }
+
+    /// `library_loaded` separates "selected profile, details still loading" from a
+    /// genuinely missing or archived profile, so the header never claims either.
+    pub fn from_document_with_library(
+        document: &RecipeDocumentV1,
+        profile: Option<&EquipmentProfile>,
+        library_loaded: bool,
+    ) -> Self {
         let source = match (&document.equipment_profile_id, profile) {
             (None, _) => EquipmentSource::RecipeOnly,
             (Some(id), Some(p)) if p.profile_id == *id && !p.archived => EquipmentSource::Profile {
                 id: id.clone(),
                 name: p.name.clone(),
             },
+            (Some(id), _) if !library_loaded => EquipmentSource::Loading { id: id.clone() },
             (Some(id), _) => EquipmentSource::Unavailable { id: id.clone() },
         };
         Self {
@@ -261,7 +272,11 @@ pub fn RecipeEquipment(
     let profile_name = Signal::derive(move || selected_profile.get().map(|p| p.name));
     let profile_known = Signal::derive(move || usable_profile.get().is_some());
     Effect::new(move |_| {
-        let next = draft.with(|d| EquipmentSummary::from_document(d.document(), usable_profile.get().as_ref()));
+        // The library may still be paging; a selected profile that is not in the
+        // loaded pages is undecided, not unavailable.
+        let decidable = library.loaded.get()
+            && (selected_profile.get().is_some() || library.next_cursor.get().is_none());
+        let next = draft.with(|d| EquipmentSummary::from_document_with_library(d.document(), usable_profile.get().as_ref(), decidable));
         if summary.get_untracked() != next {
             summary.set(next);
         }
@@ -401,6 +416,15 @@ mod tests {
         paths.sort();
         paths.dedup();
         assert_eq!((ids.len(), paths.len()), (total, total));
+    }
+
+    #[test]
+    fn summary_keeps_selected_profile_loading_until_the_library_can_decide() {
+        let mut document = RecipeDocumentV1::default();
+        document.equipment_profile_id = Some("profile-1".into());
+        assert!(matches!(EquipmentSummary::from_saved_document(&document).source, EquipmentSource::Loading { .. }));
+        assert!(matches!(EquipmentSummary::from_document_with_library(&document, None, false).source, EquipmentSource::Loading { .. }));
+        assert!(matches!(EquipmentSummary::from_document_with_library(&document, None, true).source, EquipmentSource::Unavailable { .. }));
     }
 
     #[test]

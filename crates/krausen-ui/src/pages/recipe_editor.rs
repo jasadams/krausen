@@ -542,7 +542,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 return;
             }
             if initial_scope.installation.is_empty() {
-                status.fail("Local draft recovery is unavailable in this browser.".into());
+                status.fail_storage("Local draft recovery is unavailable in this browser.".into());
                 recovery_ready.set(true);
                 return;
             }
@@ -590,7 +590,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     Ok(candidate) => recovery_choice.set(candidate),
                     Err(_) => {
                         tracing::warn!("Unable to read retained recipe drafts");
-                        status.fail("Local draft recovery is unavailable in this browser.".into())
+                        status.fail_storage("Local draft recovery is unavailable in this browser.".into())
                     }
                 }
                 recovery_ready.set(true);
@@ -613,7 +613,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
             let Some(tab) = tab.as_ref() else {
                 if current.dirty {
-                    status.fail("Local draft recovery is unavailable in this browser.".into());
+                    status.fail_storage("Local draft recovery is unavailable in this browser.".into());
                 }
                 return;
             };
@@ -639,7 +639,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     tracing::warn!("Unable to retain a recipe draft locally");
                     retained.set(false);
             status.resolve_storage_failure();
-                    status.fail("Unable to retain this draft locally; keep this page open.".into());
+                    status.fail_storage("Unable to retain this draft locally; keep this page open.".into());
                 } else {
                     retained.set(true);
             status.resolve_storage_failure();
@@ -664,7 +664,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             status.resolve_storage_failure();
                 } else {
                     tracing::warn!("Unable to remove a retained recipe draft");
-                    status.fail("The retained draft could not be removed from this browser.".into());
+                    status.fail_storage("The retained draft could not be removed from this browser.".into());
                 }
             }
         });
@@ -1208,7 +1208,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             if let Some(key) = recovery_storage_key.get_untracked() {
                 if crate::pages::recipe_recovery::remove(&key).is_err() {
                     tracing::warn!("Unable to discard a retained recipe draft");
-                    status.fail("Could not discard the retained local draft.".into());
+                    status.fail_storage("Could not discard the retained local draft.".into());
                     return false;
                 }
                 recovery_storage_key.set(None);
@@ -1270,9 +1270,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(target_arch = "wasm32")]
         if crate::pages::recipe_recovery::remove(&key).is_err() {
             tracing::warn!("Unable to discard a retained recipe draft");
-            status.fail("Could not remove the retained draft.".into());
+            status.fail_storage("Could not remove the retained draft.".into());
             return;
         }
+        status.resolve_storage_failure();
         recovery_choice.update(|records| records.retain(|(candidate, _)| candidate != &key));
     });
     Effect::new(move |_| {
@@ -1419,7 +1420,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(key) = recovery_storage_key.get_untracked() {
-                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.fail("Could not discard the retained local draft.".into()); return; }
+                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.fail_storage("Could not discard the retained local draft.".into()); return; }
                         recovery_storage_key.set(None);
                     }
                     baseline.set(remote_for_reload.document.clone()); original_baseline_available.set(true); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());

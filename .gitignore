@@ -19,3 +19,7 @@ playwright-report/
 # graphify local state (the four generated outputs stay tracked)
 graphify-out/cache/
 graphify-out/.graphify_*
+
+# Python bytecode from local composition-test runs
+__pycache__/
+*.pyc
