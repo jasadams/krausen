@@ -97,6 +97,7 @@ pub fn RecipeRevisionHistory(
     let loading = RwSignal::new(false);
     let detail_loading = RwSignal::new(false);
     let error = RwSignal::new(String::new());
+    let detail_error = RwSignal::new(String::new());
     let load = Callback::new(move |cursor: Option<String>| {
         if loading.get_untracked() { return; }
         let append = cursor.is_some();
@@ -144,7 +145,7 @@ pub fn RecipeRevisionHistory(
         let query = RevisionQuery { intent: captured.clone(), recipe_id: recipe_id.get_value(), revision };
         selected.set(None);
         detail_loading.set(true);
-        error.set(String::new());
+        detail_error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::Revision(query)).await;
             if authority_failed(&result) { let _ = on_authority_failure.try_run(()); return; }
@@ -157,8 +158,8 @@ pub fn RecipeRevisionHistory(
             detail_loading.set(false);
             match result {
                 Ok(LibraryOutcome::Revision(document)) => selected.set(Some((revision, document))),
-                Ok(LibraryOutcome::NotFound) => error.set(format!("Saved version {revision} was not found for this recipe.")),
-                _ => error.set("Unable to load that saved version. Try again.".into()),
+                Ok(LibraryOutcome::NotFound) => detail_error.set(format!("Saved version {revision} was not found for this recipe.")),
+                _ => detail_error.set("Unable to load that saved version. Try again.".into()),
             }
         });
     });
@@ -167,7 +168,7 @@ pub fn RecipeRevisionHistory(
         match selected_revision.get() {
             Some(revision) => inspect.run(revision),
             None => {
-                error.set(String::new());
+                detail_error.set(String::new());
                 detail_generation.update(|v| *v += 1);
                 selected.set(None);
                 detail_loading.set(false);
@@ -179,6 +180,7 @@ pub fn RecipeRevisionHistory(
         <BreweryPanel title=title>
             <Show when=move || loading.get()><BreweryNotice title="Loading saved versions" body="Please wait."/></Show>
             {move || (!error.get().is_empty()).then(|| view! { <p role="status">{error.get()}</p> })}
+            {move || (!detail_error.get().is_empty()).then(|| view! { <p role="status">{detail_error.get()}</p> })}
             {move || page.get().map(|history| {
                 let empty = history.items.is_empty();
                 let cursor = history.next_cursor;
@@ -195,6 +197,6 @@ pub fn RecipeRevisionHistory(
         </BreweryPanel>
         <Show when=move || detail_loading.get()><BreweryNotice title="Loading saved content" body="Please wait."/></Show>
         {move || selected.get().map(|(revision, document)| view! { <HistoricalRecipe revision=revision document=document on_close=Callback::new(move |()| on_select.run(None))/> })}
-        {move || (selected_revision.get().is_some() && !detail_loading.get() && selected.get().is_none() && !error.get().is_empty()).then(|| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| on_select.run(None)>"Close saved version"</Button> })}
+        {move || (selected_revision.get().is_some() && !detail_loading.get() && selected.get().is_none() && !detail_error.get().is_empty()).then(|| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| on_select.run(None)>"Close saved version"</Button> })}
     }
 }

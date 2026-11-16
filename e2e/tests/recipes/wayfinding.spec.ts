@@ -163,7 +163,8 @@ test('a missing brew offers a neutral trail and never discloses a recipe or swit
   await expect(page.getByText('Brew not found in this workspace.')).toBeVisible();
   const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
   await expect(trail.getByRole('link', { name: 'Recipes' })).toHaveAttribute('href', '/recipes');
-  await expect(trail.getByText('Recipe', { exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(trail.getByText('Measurements', { exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(trail.getByText('Recipe', { exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(/\/brews\/0{8}-/);
   await expect(page).toHaveTitle('Brew measurements · Krausen');
 
@@ -216,4 +217,23 @@ test('returning to a paged, scrolled library restores its pages and scroll posit
   await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
   await expect(page.getByRole('heading', { name: 'Paged recipe 000' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Paged recipe 119' })).toHaveCount(0);
+});
+
+test('typing quickly in library search keeps every character and the URL agrees', async ({ page }) => {
+  await page.goto('/recipes');
+  const search = page.getByLabel('Search recipes');
+  await search.pressSequentially('quick brown fox', { delay: 5 });
+  await expect(search).toHaveValue('quick brown fox');
+  await expect(page).toHaveURL(/q=quick%20brown%20fox$/);
+});
+
+test('a hash-only Back does not suppress the next arrival focus', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.locator('.app-shell__desktop').getByRole('button', { name: /^Account menu/ }).click();
+  await page.locator('[popover]:popover-open').getByRole('link', { name: 'Appearance', exact: true }).click();
+  await expect(page).toHaveURL(/#appearance$/);
+  await page.evaluate(() => { history.pushState({}, '', location.pathname + location.search + '#x'); history.back(); });
+  await page.waitForTimeout(1200);
+  await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Equipment' }).click();
+  await expect(page.getByRole('heading', { name: 'Equipment', level: 1 })).toBeFocused();
 });

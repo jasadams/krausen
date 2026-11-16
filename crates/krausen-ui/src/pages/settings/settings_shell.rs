@@ -146,7 +146,10 @@ pub fn SettingsShell() -> impl IntoView {
     };
 
     view! {
-        <PageTitle text=Signal::derive(|| "Settings".to_owned())/>
+        <PageTitle text=Signal::derive(move || {
+            let leaf = LINKS.iter().find(|link| link.path == active.get()).map(|link| link.name);
+            match leaf { Some(name) => format!("{name} · Settings"), None => "Settings".to_owned() }
+        })/>
         <div class="settings-shell">
             <div class="settings-shell__header">
                 <div>

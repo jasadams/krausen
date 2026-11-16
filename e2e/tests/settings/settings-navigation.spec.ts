@@ -143,7 +143,7 @@ test.describe('TC-008: Settings Navigation', () => {
     await gotoAuthenticated(page, '/recipes');
     await page.locator('.app-shell__desktop').getByRole('button', { name: /^Account menu/ }).click();
     await page.locator('[popover]:popover-open').getByRole('link', { name: 'Settings', exact: true }).click();
-    await expect(page).toHaveTitle('Settings · Krausen');
+    await expect(page).toHaveTitle('Profile · Settings · Krausen');
     await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeFocused();
   });
 });

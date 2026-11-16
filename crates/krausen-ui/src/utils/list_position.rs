@@ -50,6 +50,22 @@ pub fn save(key: &str, position: &ListPosition) {
     }
 }
 
+/// Forgets every remembered position in this tab (sign-out).
+#[cfg(target_arch = "wasm32")]
+pub fn clear_all() {
+    let Some(storage) = session() else { return };
+    let len = storage.length().unwrap_or(0);
+    let keys: Vec<String> = (0..len)
+        .filter_map(|index| storage.key(index).ok().flatten())
+        .filter(|key| key.starts_with("krausen-library-position:"))
+        .collect();
+    for key in keys {
+        if storage.remove_item(&key).is_err() {
+            tracing::warn!("Unable to clear a remembered library position");
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn take(key: &str) -> Option<ListPosition> {
     let storage = session()?;

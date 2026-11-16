@@ -208,7 +208,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             return;
         }
         detail_generation.update(|n| *n += 1);
-        if first.is_some() {
+        // A selection the URL still names (Back to an entry that carried one)
+        // survives the filter change that brought it here.
+        if first.is_some() && query.with_untracked(|q| q.get("versions").is_none()) {
             history.set(None);
             selected_revision.set(None);
         }
@@ -301,7 +303,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                 .target()
                 .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
                 .is_some_and(|el| el.closest("a[href]").ok().flatten().is_some());
-            if on_link {
+            let plain_click = event.button() == 0
+                && !event.default_prevented()
+                && !(event.ctrl_key() || event.meta_key() || event.shift_key() || event.alt_key());
+            if on_link && plain_click {
                 let scroll_top = web_sys::window()
                     .and_then(|w| w.document())
                     .and_then(|d| d.query_selector(".app-shell__main").ok().flatten())

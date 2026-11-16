@@ -8,6 +8,7 @@ use krausen_types::request_context::OperationIntent;
 use leptos::prelude::*;
 
 /// Only an in-app recipe editor path may be a return target; never an external URL.
+/// Deliberately narrower than `utils::nav_state::safe_return` (general Settings return).
 pub fn safe_return(value: Option<String>) -> Option<String> {
     let value = value?;
     let rest = value.strip_prefix("/recipe-editor/")?;

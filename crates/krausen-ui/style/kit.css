@@ -484,3 +484,4 @@
 .settings-nav__link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--k-space-4); border: 1px solid transparent; border-radius: var(--k-radius-sm); color: var(--k-color-muted); }
 .settings-nav__link:hover { color: var(--k-color-foreground); background: var(--k-color-surface-subtle); }
 .settings-nav__link[aria-current="page"] { color: var(--k-color-foreground); background: var(--k-color-surface-subtle); border-color: var(--k-color-border); font-weight: 600; }
+.brewery-breadcrumb--siblings .brewery-breadcrumb__item + .brewery-breadcrumb__item::before { content: "·"; }

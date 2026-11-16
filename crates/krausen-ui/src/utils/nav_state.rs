@@ -40,7 +40,8 @@ pub fn encode_component(value: &str) -> String {
     out
 }
 
-/// Reverses [`encode_component`]; malformed escapes are rejected, not guessed.
+/// Reverses [`encode_component`]; `+` is read as a space for hand-typed query
+/// strings although `encode_component` itself only ever emits `%20`. Malformed escapes are rejected, not guessed.
 pub fn decode_component(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -81,11 +82,25 @@ pub fn library_filter(location: &str) -> Option<(String, bool)> {
     Some((search, archived))
 }
 
+/// `/recipes/:id/brews`, the recipe-local Brews page.
+pub fn brews_href(recipe_id: &str) -> String {
+    format!("/recipes/{}/brews", encode_component(recipe_id))
+}
+
+/// `/brews/:id` (Measurements) or `/brews/:id/analysis` (Compare).
+pub fn brew_href(brew_id: &str, compare: bool) -> String {
+    let base = format!("/brews/{}", encode_component(brew_id));
+    if compare { format!("{base}/analysis") } else { base }
+}
+
 /// Accepts only a same-origin, in-app absolute path (with optional query/hash).
 /// Rejects scheme/authority forms, protocol-relative and backslash tricks,
 /// control characters, ceremony/Settings routes and oversized input. The
 /// router-decoded query value is what is validated, so double encoding that
 /// decodes into an external form is rejected here too.
+///
+/// General Settings return rule. Equipment's `safe_return` (pages/equipment.rs,
+/// owned by its own ticket) is deliberately narrower: recipe-editor paths only.
 pub fn safe_return(raw: &str) -> Option<String> {
     if raw.is_empty() || raw.len() > MAX_RETURN_LEN {
         return None;

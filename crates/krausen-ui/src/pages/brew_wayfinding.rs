@@ -9,7 +9,7 @@
 use crate::{
     components::wayfinding::{Breadcrumb, Crumb},
     server_fns::recipe_library::library_command_shared,
-    utils::nav_state::{RecipeSection, recipe_section_href},
+    utils::nav_state::{RecipeSection, brew_href, brews_href, recipe_section_href},
 };
 use krausen_types::{
     recipe_library::{HistoryQuery, LibraryCommand, LibraryOutcome, LibraryQuery, RevisionQuery},
@@ -40,6 +40,9 @@ pub fn parent_crumb(recipe_id: &str, state: &ParentState) -> Crumb {
     }
 }
 
+/// Archived pages searched for the parent before it is shown as active.
+const MAX_ARCHIVED_PAGES: usize = 10;
+
 async fn resolve_parent(intent: OperationIntent, recipe_id: String) -> ParentState {
     let head = library_command_shared(LibraryCommand::History(HistoryQuery {
         intent: intent.clone(),
@@ -58,20 +61,29 @@ async fn resolve_parent(intent: OperationIntent, recipe_id: String) -> ParentSta
     .await;
     let Ok(LibraryOutcome::Revision(document)) = document else { return ParentState::Unknown };
     let title = document.title;
-    // Archived is only reported by the library list: look for this exact ID
-    // among archived matches for its title.
-    let archived = library_command_shared(LibraryCommand::List(LibraryQuery {
-        intent,
-        search: title.clone(),
-        archived: true,
-        cursor: None,
-        limit: 50,
-    }))
-    .await;
-    let archived = matches!(
-        archived,
-        Ok(LibraryOutcome::Recipes(page)) if page.items.iter().any(|item| item.recipe_id == recipe_id)
-    );
+    // Archived is only reported by the library list: follow the archived title
+    // matches (bounded) looking for this exact ID.
+    let mut archived = false;
+    let mut cursor = None;
+    for _ in 0..MAX_ARCHIVED_PAGES {
+        let page = library_command_shared(LibraryCommand::List(LibraryQuery {
+            intent: intent.clone(),
+            search: title.clone(),
+            archived: true,
+            cursor: cursor.clone(),
+            limit: 50,
+        }))
+        .await;
+        let Ok(LibraryOutcome::Recipes(page)) = page else { break };
+        if page.items.iter().any(|item| item.recipe_id == recipe_id) {
+            archived = true;
+            break;
+        }
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
     ParentState::Known { title, archived }
 }
 
@@ -118,22 +130,27 @@ pub fn RecipeTrail(
         let mut crumbs = vec![Crumb::link("Recipes", "/recipes")];
         match recipe_id.get() {
             None => {
-                crumbs.push(Crumb::current("Recipe"));
+                // Loading, denied or missing: no parent, but the real page is named.
+                match end.get() {
+                    TrailEnd::Brews => crumbs.push(Crumb::current("Brews")),
+                    TrailEnd::Measurements { .. } => crumbs.push(Crumb::current("Measurements")),
+                    TrailEnd::Compare { .. } => crumbs.push(Crumb::current("Compare")),
+                }
                 return crumbs;
             }
             Some(id) => {
                 crumbs.push(parent_crumb(&id, &parent.get()));
-                let brews = format!("/recipes/{id}/brews");
+                let brews = brews_href(&id);
                 match end.get() {
                     TrailEnd::Brews => crumbs.push(Crumb::current("Brews")),
                     TrailEnd::Measurements { brew_id, brew_label } => {
                         crumbs.push(Crumb::link("Brews", brews));
-                        crumbs.push(Crumb::link(brew_label, format!("/brews/{brew_id}")));
+                        crumbs.push(Crumb::link(brew_label, brew_href(&brew_id, false)));
                         crumbs.push(Crumb::current("Measurements"));
                     }
                     TrailEnd::Compare { brew_id, brew_label } => {
                         crumbs.push(Crumb::link("Brews", brews));
-                        crumbs.push(Crumb::link(brew_label, format!("/brews/{brew_id}")));
+                        crumbs.push(Crumb::link(brew_label, brew_href(&brew_id, false)));
                         crumbs.push(Crumb::current("Compare"));
                     }
                 }
@@ -147,10 +164,10 @@ pub fn RecipeTrail(
 /// Sibling links between one brew's Measurements and Compare pages.
 #[component]
 pub fn BrewSiblingLinks(#[prop(into)] brew_id: String, compare: bool) -> impl IntoView {
-    let measurements = format!("/brews/{brew_id}");
-    let comparison = format!("/brews/{brew_id}/analysis");
+    let measurements = brew_href(&brew_id, false);
+    let comparison = brew_href(&brew_id, true);
     view! {
-        <nav class="brewery-breadcrumb" aria-label="This brew">
+        <nav class="brewery-breadcrumb brewery-breadcrumb--siblings" aria-label="This brew">
             <ul class="brewery-breadcrumb__list">
                 <li class="brewery-breadcrumb__item"><a href=measurements aria-current=(!compare).then_some("page")>"Measurements"</a></li>
                 <li class="brewery-breadcrumb__item"><a href=comparison aria-current=compare.then_some("page")>"Compare"</a></li>

@@ -724,6 +724,8 @@ impl EditorGuard {
                             self.transition_failed(navigation, "A newer session or task state prevents the old sign-out navigation. Your local work remains retained.");
                             return;
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        crate::utils::list_position::clear_all();
                         self.issue_href("/login", navigation)
                     }
                 }
@@ -803,7 +805,9 @@ pub fn Layout() -> impl IntoView {
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::{JsCast, closure::Closure};
-        let traversal = StoredValue::new(false);
+        // Millisecond stamp of the latest Back/Forward; only a very recent one counts,
+        // so a traversal the draft guard cancelled can never leak into a later arrival.
+        let traversal = StoredValue::new(None::<f64>);
         // Back/Forward is detected by the Navigation API's `traverse` type where
         // available and by `popstate` otherwise; both in the capture phase so the
         // flag is set before the router's own handling schedules effects.
@@ -812,7 +816,7 @@ pub fn Layout() -> impl IntoView {
                 .ok()
                 .and_then(|value| value.as_string());
             if kind.is_none() || kind.as_deref() == Some("traverse") {
-                traversal.set_value(true);
+                traversal.set_value(Some(js_sys::Date::now()));
             }
         });
         let mut targets: Vec<web_sys::EventTarget> = Vec::new();
@@ -855,8 +859,10 @@ pub fn Layout() -> impl IntoView {
             // same-route Back never leaks into the next real arrival.
             let _ = location.search.get();
             let arrived = previous.as_ref().is_some_and(|previous| *previous != path);
-            let restored = traversal.get_value();
-            traversal.set_value(false);
+            let restored = traversal
+                .get_value()
+                .is_some_and(|stamp| js_sys::Date::now() - stamp < 750.0);
+            traversal.set_value(None);
             if arrived && !restored {
                 focus_arrival_heading();
             }
