@@ -331,7 +331,7 @@ test('the starter catalogue search copies a resolved specification into the reci
   await expect(picker).toBeHidden();
 
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Weyermann Vienna');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Weyermann Vienna');
@@ -402,7 +402,7 @@ test('custom fermentables save to the workspace library with duplicate feedback'
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(picker).toBeHidden();
 
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue(entryName);
@@ -569,7 +569,7 @@ test('library entries support edit, archive, restore and lost-response retry', a
 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await page.getByLabel('Batch volume (L)').fill('20');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
 });
 

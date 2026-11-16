@@ -116,7 +116,7 @@ async function makeSavedRevisionReady(
   await page.locator('#recipe-mash-water').fill('15');
   await page.locator('#recipe-whirlpool').fill('15');
   await page.locator('#recipe-top-up').fill('0');
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   return profileId;
 }
@@ -190,7 +190,7 @@ test('starts an explicitly selected historical revision without restoring it', a
   await importRecipe(page, title);
   await makeSavedRevisionReady(page);
   await page.getByLabel('Recipe name', { exact: true }).fill(`${title} head three`);
-  await page.getByRole('button', { name: 'Save recipe' }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
   await prepareAndStart(page, '2');
   await expect(page.getByText('from revision 2')).toBeVisible();

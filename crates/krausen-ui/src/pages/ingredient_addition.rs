@@ -787,7 +787,6 @@ fn AdditionPanel(
     view! {
         <BreweryPanel title=title description=description>
             <For each=move || draft.with(|d| row_ids(d.document(), category)) key=|id| id.clone() children=move |id| view! { <AdditionRow category=category draft=draft id=id on_remove=remove/> } />
-            {matches!(category, AdditionCategory::Fermentable).then(|| view! { <p class="k-compact-ingredient__summary">"Grain bill total and shares unavailable."</p> })}
             <p class="note-caption" role="status">{move || status.get()}</p>
             <BreweryActionGroup>
                 <Button id=category.add_button_id() variant=ButtonVariant::Secondary on:click=move |_| open.set(true)>{category.opener()}</Button>

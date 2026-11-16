@@ -126,8 +126,10 @@ fn size_classes(size: ButtonSize) -> &'static str {
 /// ```
 #[component]
 pub fn Button(
-    #[prop(default = ButtonVariant::Default)]
-    variant: ButtonVariant,
+    /// A signal lets state change the semantic variant without remounting the
+    /// button (which would drop keyboard focus).
+    #[prop(default = ButtonVariant::Default.into(), into)]
+    variant: Signal<ButtonVariant>,
     #[prop(default = ButtonSize::Default)]
     size: ButtonSize,
     /// Additional classes for layout only (e.g., "hidden md:flex", "flex-shrink-0").
@@ -162,15 +164,13 @@ pub fn Button(
     /// Stable DOM id for deterministic focus succession and diagnostics.
     #[prop(optional, into)]
     id: Option<String>,
+    /// Adjacent explanation of an unavailable prerequisite or consequence.
+    #[prop(optional, into)]
+    aria_describedby: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
-    let classes = format!(
-        "{} {} {} {}",
-        BASE,
-        variant_classes(variant),
-        size_classes(size),
-        class,
-    );
+    let size_cls = size_classes(size);
+    let classes = move || format!("{} {} {} {}", BASE, variant_classes(variant.get()), size_cls, class);
 
     view! {
         <button
@@ -183,6 +183,7 @@ pub fn Button(
             aria-label=move || aria_label.try_get().flatten()
             aria-pressed=move || aria_pressed.try_get().flatten()
             aria-controls=aria_controls
+            aria-describedby=move || aria_describedby.try_get().flatten()
             aria-expanded=move || aria_expanded.try_get().flatten().map(|value| value.to_string())
             popovertarget=popover_target
             title=move || aria_label.try_get().flatten()

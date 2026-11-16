@@ -50,6 +50,8 @@ pub struct RecipeDraft {
     malformed: BTreeMap<String, String>,
     settled_numbers: BTreeSet<String>,
     diagnostics: Vec<krausen_types::validation::Diagnostic>,
+    /// Server readiness for exactly one draft generation; never carried across edits.
+    readiness: Option<(u64, krausen_types::validation::Readiness)>,
     baseline: DraftContents,
     undo: Vec<DraftContents>,
     pub dirty: bool,
@@ -73,6 +75,7 @@ impl RecipeDraft {
             malformed: BTreeMap::new(),
             settled_numbers: BTreeSet::new(),
             diagnostics: Vec::new(),
+            readiness: None,
             baseline,
             undo: Vec::new(),
             dirty: false,
@@ -235,7 +238,12 @@ impl RecipeDraft {
             .expect("draft generation exhausted");
     }
     pub fn set_validation(&mut self, validation: krausen_types::validation::Validation) {
+        self.readiness = Some((self.generation, validation.state));
         self.diagnostics = validation.diagnostics;
+    }
+    /// Readiness the shared preview reported for this exact draft generation.
+    pub fn readiness(&self) -> Option<krausen_types::validation::Readiness> {
+        self.readiness.filter(|(generation, _)| *generation == self.generation).map(|(_, state)| state)
     }
     pub fn diagnostics(&self) -> &[krausen_types::validation::Diagnostic] {
         &self.diagnostics

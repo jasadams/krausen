@@ -531,8 +531,15 @@ pub enum SaveState {
     Conflict,
     Error,
 }
+/// Textual save state with a stable footprint. `message` replaces the default
+/// label with caller-owned wording (for example "Saved revision 3"); the state
+/// colour and dot never carry meaning alone.
 #[component]
-pub fn BrewerySaveStatus(state: SaveState, #[prop(optional)] quiet: bool) -> impl IntoView {
+pub fn BrewerySaveStatus(
+    state: SaveState,
+    #[prop(optional)] quiet: bool,
+    #[prop(optional, into)] message: Option<Signal<String>>,
+) -> impl IntoView {
     let (class, label) = match state {
         SaveState::Saved => ("k-save-status k-save-status--saved", "Saved"),
         SaveState::Unsaved => ("k-save-status k-save-status--unsaved", "Unsaved changes"),
@@ -540,7 +547,37 @@ pub fn BrewerySaveStatus(state: SaveState, #[prop(optional)] quiet: bool) -> imp
         SaveState::Conflict => ("k-save-status k-save-status--conflict", "Changed elsewhere"),
         SaveState::Error => ("k-save-status k-save-status--error", "Save failed"),
     };
-    view! { <span class=class role=(!quiet).then_some("status")><span class="k-save-status__dot" aria-hidden="true"></span>{label}</span> }
+    view! { <span class=class role=(!quiet).then_some("status")><span class="k-save-status__dot" aria-hidden="true"></span>{move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label.to_owned())}</span> }
+}
+
+/// Reactive-state variant for pages whose state changes after mount.
+#[component]
+pub fn BreweryLiveSaveStatus(
+    #[prop(into)] state: Signal<SaveState>,
+    #[prop(optional, into)] message: Option<Signal<String>>,
+) -> impl IntoView {
+    let label = |state: SaveState| match state {
+        SaveState::Saved => "Saved",
+        SaveState::Unsaved => "Unsaved changes",
+        SaveState::Saving => "Saving",
+        SaveState::Conflict => "Changed elsewhere",
+        SaveState::Error => "Save failed",
+    };
+    let class = move || match state.get() {
+        SaveState::Saved => "k-save-status k-save-status--saved",
+        SaveState::Unsaved => "k-save-status k-save-status--unsaved",
+        SaveState::Saving => "k-save-status",
+        SaveState::Conflict => "k-save-status k-save-status--conflict",
+        SaveState::Error => "k-save-status k-save-status--error",
+    };
+    view! { <span class=class role="status"><span class="k-save-status__dot" aria-hidden="true"></span>{move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label(state.get()).to_owned())}</span> }
+}
+
+/// Aligned one-column secondary values (for example a water plan). Children are
+/// `MetricDensity::Quiet` metrics; the list owns spacing and separators.
+#[component]
+pub fn BreweryMetricList(children: Children) -> impl IntoView {
+    view! { <div class="k-metric-list">{children()}</div> }
 }
 
 /// Labelled select used by recipe and showcase; values remain caller-owned.
@@ -844,6 +881,9 @@ pub fn BreweryDraftField(
     #[prop(default = false)] numeric: bool,
     #[prop(default = false)] disabled: bool,
     #[prop(default = false)] mobile_title: bool,
+    /// Expressive page-title presentation at every width (the recipe name). The
+    /// full value is also exposed as the control's native title.
+    #[prop(default = false)] title_variant: bool,
     #[prop(default = false)] read_only: bool,
     /// Event notification only; formatting/validation policy stays with the caller.
     #[prop(optional)] on_blur: Option<Callback<()>>,
@@ -854,10 +894,10 @@ pub fn BreweryDraftField(
     let label_unit = (!unit.is_empty()).then(|| format!(" ({unit})"));
     let display_unit = (!unit.is_empty()).then_some(unit);
     view! {
-        <div class="k-field" class:k-field--mobile-title=mobile_title class:k-field--numeric=numeric>
+        <div class="k-field" class:k-field--mobile-title=mobile_title class:k-field--title=title_variant class:k-field--numeric=numeric>
             <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
-                <input id=id type=input_type inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled readonly=read_only />
+                <input id=id type=input_type title=move || title_variant.then(|| value.get()) inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled readonly=read_only />
                 {display_unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
             </div>
             {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
@@ -901,11 +941,13 @@ pub fn BreweryBrand(#[prop(optional)] inverse: bool) -> impl IntoView {
 #[component]
 pub fn BreweryDisclosure(
     #[prop(into)] title: String,
+    /// Stable DOM id so a command can reveal this native disclosure.
+    #[prop(optional, into)] id: Option<String>,
     #[prop(optional)] compact: bool,
     #[prop(optional, into)] aria_label: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
-    view! { <details class="k-disclosure" class:k-disclosure--compact=compact><summary aria-label=move || aria_label.try_get().flatten()>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
+    view! { <details id=id class="k-disclosure" class:k-disclosure--compact=compact><summary aria-label=move || aria_label.try_get().flatten()>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
 }
 
 /// Controlled multiline text for descriptions and notes.

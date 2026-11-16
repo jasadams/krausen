@@ -113,7 +113,7 @@ test('populated recipe uses compact two-row fermentables and keeps Hops in view'
     });
   }
 
-  await expect(fermentables.getByText('Grain bill total and shares unavailable.')).toBeVisible();
+  await expect(fermentables.getByText('Grain bill total and shares unavailable.')).toHaveCount(0);
   await expect(fermentables.getByText('Grain bill', { exact: true })).toHaveCount(0);
   await expect(fermentables).not.toContainText('4.20 kg');
 
@@ -216,7 +216,7 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(header.getByText('Recipes', { exact: true })).toBeVisible();
   await expect(header.getByText('Munich Helles', { exact: true })).toBeVisible();
   await expect(header.getByRole('status')).toHaveCount(1);
-  await expect(header.getByRole('button', { name: 'Save recipe' })).toBeVisible();
+  await expect(header.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeVisible();
   await expect(header.getByRole('link', { name: /history/i })).toBeVisible();
 
   const previewSummary = page.locator('.recipe-editor__preview-summary');
@@ -255,7 +255,7 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(header.getByText('Recipes', { exact: true })).toBeVisible();
   await expect(header.getByText('Munich Helles', { exact: true })).toBeVisible();
   await expect(header.getByRole('status')).toHaveCount(1);
-  await expect(header.getByRole('button', { name: 'Save recipe' })).toBeVisible();
+  await expect(header.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeVisible();
   await expect(previewSummary.getByRole('heading', { name: 'The beer, at a glance' })).toBeVisible();
   await expect(previewSummary.getByText('Estimates use the current draft.')).toBeVisible();
   await expect(previewSummary.getByText('Ready', { exact: true })).toBeVisible();
@@ -308,7 +308,7 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   const header = page.locator('.recipe-editor__header');
   const status = header.getByRole('status');
   const undo = header.getByRole('button', { name: 'Undo' });
-  const save = header.getByRole('button', { name: 'Save recipe' });
+  const save = header.getByRole('button', { name: /^Save (recipe|changes)$/ });
   await expect(save).toBeEnabled();
   await expect(undo).toBeDisabled();
   await expect(status).toHaveText('');
@@ -378,7 +378,7 @@ test('recipe topbar saves and guards a new draft', async ({ page }) => {
   const title = page.getByLabel('Recipe name', { exact: true });
   const original = `Compact guard ${Date.now()}`;
   await title.fill(original);
-  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const savedUrl = page.url();
   await title.fill(`${original} draft`);
