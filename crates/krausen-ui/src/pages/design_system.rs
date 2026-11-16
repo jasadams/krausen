@@ -4,7 +4,7 @@
 use crate::components::brewery_kit::BreweryBadge;
 use crate::components::{
     BreweryDialog, BreweryDisclosure, BreweryField,
-    BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BreweryLiveSaveStatus, BreweryMetricList, BrewerySelect, BreweryTabs,
+    BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BreweryMetricList, BrewerySelect, BreweryTabs,
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
     BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryPopover, BrewerySection,
@@ -293,7 +293,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 </BreweryPanel>
                 <BreweryPanel title="Save states" description="A draft is separate from a saved revision.">
                     <BreweryActionGroup label="Pending task actions"><Button pending=true>"Save changes"</Button><Button variant=ButtonVariant::Ghost disabled=true>"Cancel"</Button></BreweryActionGroup>
-                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/><BreweryLiveSaveStatus state=SaveState::Saved message=Signal::derive(|| "Saved revision 3".to_owned())/></BreweryActionGroup>
+                    <BreweryActionGroup><BrewerySaveStatus state=SaveState::Saved quiet=true/><BrewerySaveStatus state=SaveState::Unsaved quiet=true/><BrewerySaveStatus state=SaveState::Saving quiet=true/><BrewerySaveStatus state=SaveState::Conflict quiet=true/><BrewerySaveStatus state=SaveState::Error quiet=true/><BrewerySaveStatus state=SaveState::Saved message=Signal::derive(|| "Saved revision 3".to_owned())/></BreweryActionGroup>
                     <BreweryMetric label="Supporting water" value="28.36" unit="L" density=MetricDensity::Quiet>{()}</BreweryMetric>
                     <BreweryMetric label="Compact estimate" value="1.049" unit="SG" density=MetricDensity::Compact>{()}</BreweryMetric>
                 </BreweryPanel>

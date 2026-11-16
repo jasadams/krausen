@@ -150,6 +150,26 @@ function lifecycleItems(page: import('@playwright/test').Page) {
     .locator('xpath=following-sibling::ul[1]/li');
 }
 
+test('header promotes Start only for a clean saved Ready recipe and swaps back after an edit', async ({ page }) => {
+  await importRecipe(page, `Header ready ${Date.now()}`);
+  await makeSavedRevisionReady(page, `Header kettle ${Date.now()}`);
+  const commands = page.getByRole('group', { name: 'Recipe commands' });
+  const save = commands.getByRole('button', { name: /^Save (recipe|changes)$/ });
+  const start = commands.getByRole('button', { name: 'Start brew', exact: true });
+  await expect(start).toHaveClass(/bg-primary/);
+  await expect(save).not.toHaveClass(/bg-primary/);
+  await expect(start).not.toHaveAccessibleDescription(/Save|complete|estimate/);
+  await page.getByLabel('Batch volume (L)').fill('21');
+  await expect(save).toHaveClass(/bg-primary/);
+  await expect(start).not.toHaveClass(/bg-primary/);
+  await expect(start).toHaveAccessibleDescription('Save your changes before starting a brew.');
+  await start.focus();
+  await page.getByRole('button', { name: 'Undo' }).first().click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+  await expect(save).not.toHaveClass(/bg-primary/);
+  await expect(start).toHaveClass(/bg-primary/);
+});
+
 test('starts the prepared saved revision with frozen targets', async ({ page }) => {
   const title = `Brew start ${Date.now()}`;
   await importRecipe(page, title);

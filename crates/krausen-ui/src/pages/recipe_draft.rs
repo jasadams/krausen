@@ -241,6 +241,11 @@ impl RecipeDraft {
         self.readiness = Some((self.generation, validation.state));
         self.diagnostics = validation.diagnostics;
     }
+    /// Forget readiness when the preview that reported it is no longer trusted
+    /// (context loss or retry at the same generation).
+    pub fn clear_readiness(&mut self) {
+        self.readiness = None;
+    }
     /// Readiness the shared preview reported for this exact draft generation.
     pub fn readiness(&self) -> Option<krausen_types::validation::Readiness> {
         self.readiness.filter(|(generation, _)| *generation == self.generation).map(|(_, state)| state)

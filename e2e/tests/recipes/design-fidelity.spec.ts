@@ -146,6 +146,42 @@ test.describe('approved recipe and shared kit composition', () => {
     expect(after!.y).toBeCloseTo(before!.y, 0);
     await expect(start).toHaveAccessibleDescription(/complete recipe|estimate/);
     await expect(start).not.toHaveClass(/bg-primary/);
+    await expect(save, 'a clean saved recipe that is not Ready has nothing to save').not.toHaveClass(/bg-primary/);
+  });
+
+  test('estimates name their source and header commands work from every tab', async ({ page }) => {
+    await page.goto('/beerxml');
+    await page.getByLabel('Paste BeerXML').fill(munichHelles);
+    await page.locator('#beerxml-colour').selectOption('srm');
+    await page.locator('#beerxml-efficiency').selectOption('override');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: 'Import recipe' }).click();
+    await page.getByRole('link', { name: 'Open imported recipe' }).click();
+    const commands = page.getByRole('group', { name: 'Recipe commands' });
+    const save = commands.getByRole('button', { name: /^Save (recipe|changes)$/ });
+    const start = commands.getByRole('button', { name: 'Start brew', exact: true });
+    await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
+    await expect(page.getByTestId('estimate-source')).toContainText('changes not yet in saved revision');
+    await expect(page.getByTestId('estimate-source')).toContainText('Equipment:');
+    await expect(save).toHaveClass(/bg-primary/);
+    await save.click();
+    await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+    await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision');
+    await expect(save, 'clean saved but Incomplete: nothing to save, nothing to start').not.toHaveClass(/bg-primary/);
+    await expect(start).not.toHaveClass(/bg-primary/);
+    await page.getByLabel('Batch volume (L)').fill('21');
+    await expect(save).toHaveClass(/bg-primary/);
+    await expect(page.getByTestId('estimate-source')).toContainText('changes not yet in saved revision');
+    await page.getByRole('tab', { name: 'Saved versions' }).click();
+    await start.click();
+    await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#start-brew')).toBeFocused();
+    await page.getByRole('tab', { name: 'Brews' }).click();
+    await page.getByRole('button', { name: 'Recipe actions' }).click();
+    await page.getByRole('button', { name: 'Print…' }).click();
+    await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#recipe-output-disclosure')).toHaveJSProperty('open', true);
+    await expect(page.locator('#recipe-output-disclosure > summary')).toBeFocused();
   });
 
   test('Recipe actions is an ordinary popover that returns focus and keeps editing reachable', async ({ page }) => {

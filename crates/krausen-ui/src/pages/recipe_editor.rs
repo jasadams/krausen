@@ -1281,6 +1281,24 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let active_tab = RwSignal::new(initial_section.key().to_owned());
     let active_tab = RwSignal::new("recipe".to_owned());
     let actions_open = RwSignal::new(false);
+    // Scale/Duplicate are opened from the Recipe actions popover, which closes
+    // first; return focus to its trigger once the dialog closes with nothing focused.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let was_open = StoredValue::new(false);
+        Effect::new(move |_| {
+            let open = scale_open.get() || duplicate_open.get();
+            let previous = was_open.get_value();
+            was_open.set_value(open);
+            if previous && !open {
+                request_animation_frame(|| {
+                    let idle = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element())
+                        .is_none_or(|active| active.tag_name() == "BODY" || active.tag_name() == "HTML");
+                    if idle { focus_element("recipe-actions-trigger"); }
+                });
+            }
+        });
+    }
     let style_options = Signal::derive(move || {
         let mut options = vec![(String::new(), "No style".to_owned())];
         options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name))));
@@ -1686,6 +1704,7 @@ fn NumberField(
     path: &'static str,
     draft: RwSignal<RecipeDraft>,
     #[prop(default = 1.0)] scale: f64,
+    #[prop(optional, into)] hint: MaybeProp<String>,
     read: fn(&RecipeDocumentV1) -> Option<f64>,
     write: fn(&mut RecipeDocumentV1, Option<f64>),
 ) -> impl IntoView {
@@ -1697,7 +1716,7 @@ fn NumberField(
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error hint=hint on_change=change on_blur=blur numeric=true/> }
 }
 
 #[derive(Clone, Copy)]
@@ -1888,6 +1907,7 @@ fn FormulationPreview(
         let mut generation = 0;
         gate.update_value(|g| generation = g.invalidate());
         result.set(None);
+        if draft.with_untracked(|d| d.readiness().is_some()) { draft.update(|d| d.clear_readiness()); }
         message_generation.set(draft_generation);
         if !visible {
             return;
@@ -2107,12 +2127,14 @@ fn PreviewSource(
         _ => None,
     }).collect::<Vec<_>>()).unwrap_or_default();
     let style = preview.style.as_ref().map(|style| format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition));
-    view! { <BreweryDisclosure title="Estimate source and assumptions" compact=true>
-        <p class="recipe-editor__provenance">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}</p>
-        {equipment.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
-        {style.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
-        {(!assumptions.is_empty()).then(|| view! { <ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul> })}
-    </BreweryDisclosure> }
+    view! {
+        // Always visible and quiet: which draft and which equipment these numbers describe.
+        <p class="recipe-editor__provenance" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| format!(" {text}"))}</p>
+        {(style.is_some() || !assumptions.is_empty()).then(|| view! { <BreweryDisclosure title="Style reference and assumptions" compact=true>
+            {style.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
+            {(!assumptions.is_empty()).then(|| view! { <ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul> })}
+        </BreweryDisclosure> })}
+    }
 }
 
 #[component]

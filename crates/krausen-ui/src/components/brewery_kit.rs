@@ -531,29 +531,14 @@ pub enum SaveState {
     Conflict,
     Error,
 }
-/// Textual save state with a stable footprint. `message` replaces the default
-/// label with caller-owned wording (for example "Saved revision 3"); the state
-/// colour and dot never carry meaning alone.
+/// Textual save state. `state` may be static or reactive. `message` replaces the
+/// default label with caller-owned wording (for example "Saved revision 3"); the
+/// dot and colour never carry meaning alone. Long wording is clamped to one line
+/// with the full text kept in the native title and the live region.
 #[component]
 pub fn BrewerySaveStatus(
-    state: SaveState,
-    #[prop(optional)] quiet: bool,
-    #[prop(optional, into)] message: Option<Signal<String>>,
-) -> impl IntoView {
-    let (class, label) = match state {
-        SaveState::Saved => ("k-save-status k-save-status--saved", "Saved"),
-        SaveState::Unsaved => ("k-save-status k-save-status--unsaved", "Unsaved changes"),
-        SaveState::Saving => ("k-save-status", "Saving"),
-        SaveState::Conflict => ("k-save-status k-save-status--conflict", "Changed elsewhere"),
-        SaveState::Error => ("k-save-status k-save-status--error", "Save failed"),
-    };
-    view! { <span class=class role=(!quiet).then_some("status")><span class="k-save-status__dot" aria-hidden="true"></span>{move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label.to_owned())}</span> }
-}
-
-/// Reactive-state variant for pages whose state changes after mount.
-#[component]
-pub fn BreweryLiveSaveStatus(
     #[prop(into)] state: Signal<SaveState>,
+    #[prop(optional)] quiet: bool,
     #[prop(optional, into)] message: Option<Signal<String>>,
 ) -> impl IntoView {
     let label = |state: SaveState| match state {
@@ -570,7 +555,8 @@ pub fn BreweryLiveSaveStatus(
         SaveState::Conflict => "k-save-status k-save-status--conflict",
         SaveState::Error => "k-save-status k-save-status--error",
     };
-    view! { <span class=class role="status"><span class="k-save-status__dot" aria-hidden="true"></span>{move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label(state.get()).to_owned())}</span> }
+    let text = move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label(state.get()).to_owned());
+    view! { <span class=class role=(!quiet).then_some("status") title=text><span class="k-save-status__dot" aria-hidden="true"></span><span class="k-save-status__text">{text}</span></span> }
 }
 
 /// Aligned one-column secondary values (for example a water plan). Children are
@@ -880,7 +866,6 @@ pub fn BreweryDraftField(
     #[prop(optional, into)] hint: MaybeProp<String>,
     #[prop(default = false)] numeric: bool,
     #[prop(default = false)] disabled: bool,
-    #[prop(default = false)] mobile_title: bool,
     /// Expressive page-title presentation at every width (the recipe name). The
     /// full value is also exposed as the control's native title.
     #[prop(default = false)] title_variant: bool,
@@ -894,7 +879,7 @@ pub fn BreweryDraftField(
     let label_unit = (!unit.is_empty()).then(|| format!(" ({unit})"));
     let display_unit = (!unit.is_empty()).then_some(unit);
     view! {
-        <div class="k-field" class:k-field--mobile-title=mobile_title class:k-field--title=title_variant class:k-field--numeric=numeric>
+        <div class="k-field" class:k-field--title=title_variant class:k-field--numeric=numeric>
             <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
                 <input id=id type=input_type title=move || title_variant.then(|| value.get()) inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled readonly=read_only />

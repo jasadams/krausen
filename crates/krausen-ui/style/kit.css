@@ -190,7 +190,7 @@
 .k-field input:focus-visible, .k-field textarea:focus-visible, .k-field select:focus-visible { outline: 2px solid var(--k-color-ring); outline-offset: 2px; }
 /* Keep ordinary dialog focus paint inside the control's clipped keyboard slice.
    Title/quiet fields retain their own focus recipes; normal elevation is retained. */
-.k-dialog > .k-dialog__body .k-field:not(.k-field--title):not(.k-field--quiet):not(.k-field--mobile-title) > .k-field__control > :is(input, select, textarea):focus-visible:not(:disabled),
+.k-dialog > .k-dialog__body .k-field:not(.k-field--title):not(.k-field--quiet) > .k-field__control > :is(input, select, textarea):focus-visible:not(:disabled),
 .k-dialog > .k-dialog__actions > :is(button, a):focus-visible:not(:disabled):not([aria-disabled="true"]) {
   outline: 2px solid var(--k-color-ring);
   outline-offset: -4px;
@@ -340,16 +340,15 @@
 .recipe-editor { max-width: 1440px; margin: 0 auto; padding: var(--k-space-7); }
 .recipe-editor__header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--k-space-5); margin-bottom: var(--k-space-6); min-width: 0; }
 .recipe-editor__header h1 { font-family: var(--k-font-display); font-size: var(--k-font-title); line-height: 1.1; }
-.recipe-editor__topbar { min-height: var(--k-header-height); padding: var(--k-space-2) var(--k-space-7); display: flex; align-items: center; justify-content: space-between; gap: var(--k-space-4); min-width: 0; }
-.recipe-editor__breadcrumb { display: flex; align-items: center; gap: var(--k-space-3); min-width: 0; color: var(--k-color-muted); font-size: var(--k-font-sm); }
-.recipe-editor__breadcrumb > :last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--k-color-foreground); }
 /* Recipe header (KRA-45): identity, context and stable commands. Placement only;
    field, button, badge and status internals belong to the shared kit. */
 .recipe-header { display: grid; gap: var(--k-space-3); margin: calc(-1 * var(--k-space-7)) calc(-1 * var(--k-space-7)) var(--k-space-5); padding: 0 var(--k-space-7) var(--k-space-4); border-bottom: 1px solid var(--k-color-border); min-width: 0; }
 .recipe-header__topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--k-space-4); min-height: var(--k-header-height); min-width: 0; }
 .recipe-header__topbar > .brewery-breadcrumb { flex: 1 1 8rem; min-width: 0; }
 .recipe-header__commands { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--k-space-2) var(--k-space-3); min-width: 0; max-width: 100%; }
-.recipe-header__status { display: inline-flex; flex: 0 0 14rem; max-width: 100%; justify-content: flex-end; text-align: right; }
+.recipe-header__status { display: inline-flex; flex: 0 0 14rem; min-width: 0; max-width: 100%; justify-content: flex-end; }
+.k-save-status__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipe-header__status .k-save-status { flex-wrap: nowrap; min-width: 0; max-width: 100%; }
 .recipe-header__heading { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .recipe-header__context { display: grid; grid-template-columns: minmax(14rem, 2fr) minmax(12rem, 2fr) minmax(12rem, 2fr); gap: var(--k-space-4); align-items: start; min-width: 0; }
 .recipe-header__batch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-1) var(--k-space-3); min-width: 0; }
@@ -362,7 +361,7 @@
   .recipe-header { margin: calc(-1 * var(--k-space-4)) calc(-1 * var(--k-space-4)) var(--k-space-3); padding: 0 var(--k-space-4) var(--k-space-3); gap: var(--k-space-2); }
   .recipe-header__topbar { flex-wrap: wrap; padding-top: var(--k-space-2); }
   .recipe-header__commands { justify-content: flex-start; width: 100%; }
-  .recipe-header__status { flex: 1 0 100%; text-align: left; justify-content: flex-start; order: -1; }
+  .recipe-header__status { flex: 1 0 100%; justify-content: flex-start; order: -1; }
 }
 .recipe-editor__navigation { display: flex; align-items: flex-start; gap: var(--k-space-3); min-width: 0; }
 .recipe-editor__navigation > .k-tabs { flex: 1 1 auto; min-width: 0; }
@@ -375,8 +374,7 @@
 .recipe-editor__sections { grid-column: 1; grid-row: 1 / span 2; }
 .recipe-editor__preview-details { display: grid; gap: var(--k-space-4); min-width: 0; grid-column: 2; grid-row: 2; align-self: start; }
 @media (max-width: 850px) { .recipe-editor__layout { grid-template-columns: 1fr; grid-template-rows: auto; } .recipe-editor__preview-summary { grid-column: 1; grid-row: 1; } .recipe-editor__sections { grid-column: 1; grid-row: 2; } .recipe-editor__preview-details { grid-column: 1; grid-row: 3; } }
-@media (max-width: 600px) { .recipe-editor { padding: var(--k-space-4); } .recipe-editor__header { flex-direction: column; } .recipe-editor__topbar { flex-wrap: wrap; padding-inline: var(--k-space-4); } .recipe-editor__summary, .recipe-editor__fields { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .k-field--mobile-title .k-field__control input { font-family: var(--k-font-display); font-size: var(--k-font-title); line-height: 1.14; padding: var(--k-space-1) var(--k-space-2); } }
+@media (max-width: 600px) { .recipe-editor { padding: var(--k-space-4); } .recipe-editor__header { flex-direction: column; } .recipe-editor__summary, .recipe-editor__fields { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
   .recipe-editor__navigation > .k-tabs { margin-bottom: var(--k-space-3); }
   .recipe-editor__layout { gap: var(--k-space-2); }
@@ -404,7 +402,6 @@
 .k-disclosure--compact { border: 0; background: transparent; }
 .k-disclosure--compact > summary { padding: var(--k-space-1) 0; min-height: 44px; align-content: center; color: var(--k-color-muted); font-size: var(--k-font-xs); }
 .k-disclosure--compact > .k-disclosure__body { padding: var(--k-space-2) 0; }
-.k-compact-ingredient__summary { padding: var(--k-space-2) 0; color: var(--k-color-muted); font-size: var(--k-font-xs); }
 .k-compact-ingredient__description { color: var(--k-color-muted); font-size: var(--k-font-xs); }
 @media (min-width: 761px) {
   .k-compact-ingredient { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 9rem) auto auto; align-items: end; column-gap: var(--k-space-2); padding-block: 0; }

@@ -8,7 +8,7 @@
 //! another header change. Nothing here saves or starts automatically.
 use crate::{
     components::{
-        BreweryDraftField, BreweryDraftSelect, BreweryLiveSaveStatus,
+        BreweryDraftField, BreweryDraftSelect, BrewerySaveStatus,
         BreweryPopover, Button, ButtonVariant, SaveState,
     },
     pages::{
@@ -25,16 +25,26 @@ use leptos::prelude::*;
 pub enum PrimaryAction {
     Save,
     Start,
+    /// Clean, saved but not Ready: nothing to save and nothing to start yet.
+    Neither,
 }
 
-/// Save recipe for new work, Save changes for dirty work, Start brew only for a
+/// Save is copper only while there is something to save; Start brew only for a
 /// clean saved Ready recipe. Unknown readiness never promotes Start.
 pub fn primary_action(saved: bool, dirty: bool, readiness: Option<Readiness>) -> PrimaryAction {
-    if saved && !dirty && readiness == Some(Readiness::Ready) {
+    if !saved || dirty {
+        PrimaryAction::Save
+    } else if readiness == Some(Readiness::Ready) {
         PrimaryAction::Start
     } else {
-        PrimaryAction::Save
+        PrimaryAction::Neither
     }
+}
+
+/// Failure wording the editor reports through its one status string.
+pub fn is_failure_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    ["could not", "unable", "failed", "unavailable", "denied", "expired", "error"].iter().any(|word| lower.contains(word))
 }
 
 pub fn save_label(saved: bool) -> &'static str {
@@ -117,6 +127,8 @@ pub fn RecipeHeader(
             SaveState::Saving
         } else if conflict.get() {
             SaveState::Conflict
+        } else if is_failure_message(&status.get()) {
+            SaveState::Error
         } else if dirty.get() || !saved.get() {
             SaveState::Unsaved
         } else {
@@ -151,14 +163,14 @@ pub fn RecipeHeader(
             <div class="recipe-header__topbar">
                 <nav class="recipe-header__breadcrumb" aria-label="Recipe breadcrumb">
                     <a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span>
-                    <span title=crumb>{crumb}</span>
+                    <span>{crumb}</span>
                 </nav>
                 <div class="recipe-header__commands" role="group" aria-label="Recipe commands">
-                    <span class="recipe-header__status"><BreweryLiveSaveStatus state=state message=message/></span>
+                    <span class="recipe-header__status"><BrewerySaveStatus state=state message=message/></span>
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| actions.undo.run(())>"Undo"</Button>
                     <Button variant=save_variant class="min-w-[9rem]" disabled=pending on:click=move |_| actions.save.run(())>{move || save_label(saved.get())}</Button>
                     <Button variant=start_variant aria_describedby=Signal::derive(move || reason.get().map(|_| reason_id.to_owned())) on:click=move |_| actions.start.run(())>"Start brew"</Button>
-                    <BreweryPopover id="recipe-actions" label="Recipe actions" open=actions_open>
+                    <BreweryPopover id="recipe-actions" trigger_id="recipe-actions-trigger" label="Recipe actions" open=actions_open>
                         <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.scale)>"Scale…"</Button>
                         <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.duplicate)>"Duplicate…"</Button>
                         <Button variant=ButtonVariant::Ghost on:click=close_then(actions.print)>"Print…"</Button>
@@ -169,10 +181,10 @@ pub fn RecipeHeader(
                     </BreweryPopover>
                 </div>
             </div>
-            <h1 id="recipe-editor-heading" class="recipe-header__heading">{move || { let name = title.get(); if name.is_empty() { "Recipe editor".to_owned() } else { name } }}</h1>
+            <h1 id="recipe-editor-heading" class="recipe-header__heading">{crumb}</h1>
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
             <div class="recipe-header__context">
-                <div class="recipe-header__batch">{children()}<span class="k-field__hint recipe-header__hint">"Batch is the volume into the fermenter"</span></div>
+                <div class="recipe-header__batch">{children()}</div>
                 {move || view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=style_value on_change=on_style options=style_options.get()/> }}
                 <div class="recipe-header__equipment">
                     <span class="k-field__label">"Equipment"</span>
@@ -198,9 +210,10 @@ mod tests {
         use Readiness::*;
         assert_eq!(primary_action(false, false, Some(Ready)), PrimaryAction::Save);
         assert_eq!(primary_action(true, true, Some(Ready)), PrimaryAction::Save);
-        assert_eq!(primary_action(true, false, Some(Incomplete)), PrimaryAction::Save);
-        assert_eq!(primary_action(true, false, Some(Invalid)), PrimaryAction::Save);
-        assert_eq!(primary_action(true, false, None), PrimaryAction::Save);
+        assert_eq!(primary_action(true, false, Some(Incomplete)), PrimaryAction::Neither);
+        assert_eq!(primary_action(true, false, Some(Invalid)), PrimaryAction::Neither);
+        assert_eq!(primary_action(true, false, None), PrimaryAction::Neither);
+        assert_eq!(primary_action(false, false, None), PrimaryAction::Save);
         assert_eq!(primary_action(true, false, Some(Ready)), PrimaryAction::Start);
     }
 
@@ -215,6 +228,15 @@ mod tests {
         assert!(start_reason(true, false, Some(Invalid)).unwrap().contains("highlighted"));
         assert!(start_reason(true, false, None).unwrap().contains("estimate"));
         assert_eq!(start_reason(true, false, Some(Ready)), None);
+    }
+
+    #[test]
+    fn failure_wording_is_recognised_without_flagging_success() {
+        assert!(is_failure_message("Could not discard the retained local draft."));
+        assert!(is_failure_message("Preview unavailable."));
+        assert!(!is_failure_message("Saved revision 3"));
+        assert!(!is_failure_message("Scaled recipe saved as revision 4."));
+        assert!(!is_failure_message("Draft retained against the current revision. Review it, then choose Save."));
     }
 
     #[test]

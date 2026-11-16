@@ -174,7 +174,7 @@ pub fn Button(
 
     view! {
         <button
-            id=id
+            id=id.filter(|value| !value.is_empty())
             node_ref=node_ref
             r#type=button_type
             class=classes

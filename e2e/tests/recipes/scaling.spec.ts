@@ -63,10 +63,16 @@ test('scaling cancel writes nothing and duplicate opens an independent recipe', 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('heading', { name: 'Scale batch' })).toHaveCount(0);
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+  await expect(page.getByRole('button', { name: 'Recipe actions' }), 'focus returns to the visible opener after Cancel').toBeFocused();
 
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Duplicate…' }).click();
   await expect(page.getByRole('heading', { name: 'Duplicate recipe', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('heading', { name: 'Duplicate recipe', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Recipe actions' }), 'focus returns after cancelling Duplicate').toBeFocused();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
   await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
