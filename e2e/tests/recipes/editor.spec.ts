@@ -1799,7 +1799,7 @@ test('repeated guarded Back Forward Stay preserves native entries and the exact 
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
   await openSettings(page);
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
   const name = page.getByLabel('Recipe name', { exact: true });
@@ -1830,7 +1830,7 @@ test('repeated guarded Back Forward Stay preserves native entries and the exact 
   await page.evaluate(() => history.forward());
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   expect(await page.evaluate(() => history.length)).toBe(before.historyLength);
 });
 
@@ -1839,7 +1839,7 @@ test('recipe discard publishes its reset generation before the native departure 
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
   await openSettings(page);
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   const target = await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length }));
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
@@ -1852,7 +1852,7 @@ test('recipe discard publishes its reset generation before the native departure 
   const guard = page.locator('#workspace-draft-warning');
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   await expect(guard).not.toBeVisible();
   expect(await page.evaluate(() => ({ key: (window as any).navigation.currentEntry.key, length: history.length }))).toEqual(target);
   expect(saves).toHaveLength(0);
@@ -1863,7 +1863,7 @@ test('native asynchronous restoration rejection exposes an owned retry without r
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
   await openSettings(page);
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   const destinationKey = await page.evaluate(() => (window as any).navigation.currentEntry.key);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
@@ -1900,7 +1900,7 @@ test('native asynchronous restoration rejection exposes an owned retry without r
   await page.evaluate(() => history.forward());
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Discard and leave', exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   expect(await page.evaluate(() => (window as any).navigation.currentEntry.key)).toBe(destinationKey);
   expect(await page.evaluate(() => history.length)).toBe(before.length);
 });
@@ -1911,7 +1911,7 @@ test(`Stay during held native restoration fences ${successor} after rejection`, 
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
   await openSettings(page);
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
   const name = page.getByLabel('Recipe name', { exact: true });
@@ -1990,7 +1990,7 @@ test.fixme('feature-disabled history must preserve actual Forward Stay entry and
   await page.getByRole('link', { name: 'New recipe', exact: true }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
   await openSettings(page);
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(/\/recipe-editor\/new$/);
   const name = page.getByLabel('Recipe name', { exact: true });
@@ -2035,7 +2035,7 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
   // must not erase the request and let an identical create become a fresh retry.
   await expect(guard.getByRole('button', { name: 'Discard and leave', exact: true })).toBeDisabled();
   await guard.getByRole('button', { name: 'Save and leave', exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await expect(page).toHaveURL(/\/settings\/profile(\?return=[^#]*)?$/);
   expect(requests).toHaveLength(2);
   expect(requests[1]).toBe(requests[0]);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}' AND native_head_revision = 1`)).toBe('1');
