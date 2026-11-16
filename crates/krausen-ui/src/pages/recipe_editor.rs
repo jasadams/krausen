@@ -4,9 +4,10 @@ use crate::{
     components::{
         BreweryAddition, BreweryDisclosure, BreweryDraftArea, BreweryDraftField,
         BreweryDraftSelect, BreweryNotice, BreweryPanel, BreweryTabs, Button, ButtonLink,
-        ButtonVariant, printable_recipe::diagnostic_message,
+        ButtonVariant, SelectedSavedRevision, printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
+    utils::nav_state::{RecipeSection, current_location, parse_revision, recipe_section_href},
     pages::recipe_scaling::{DuplicateDialog, ScaleDialog},
     server_fns::recipe_editor::{read_recipe, save_recipe},
 };
@@ -18,7 +19,7 @@ use krausen_types::{
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome, RecipeSnapshot},
 };
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 #[path = "recipe_comparison.rs"]
 mod recipe_comparison;
@@ -1246,7 +1247,52 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         }
     });
     let close_print = Callback::new(move |()| print_preview.set(None));
-    let active_tab = RwSignal::new("recipe".to_owned());
+    // Section and inspected saved version live in additive URL state (see
+    // utils::nav_state); the editable draft is never replaced by either.
+    let route_params = use_params_map();
+    let query = use_query_map();
+    let navigate = use_navigate();
+    let initial_section = query.with_untracked(|q| RecipeSection::parse(q.get("section").as_deref()));
+    let active_tab = RwSignal::new(initial_section.key().to_owned());
+    let selected_revision = RwSignal::new(if initial_section == RecipeSection::Versions {
+        query.with_untracked(|q| parse_revision(q.get("revision").as_deref()))
+    } else {
+        None
+    });
+    provide_context(SelectedSavedRevision(selected_revision));
+    Effect::new(move |_| {
+        let (section, revision) = query.with(|q| {
+            let section = RecipeSection::parse(q.get("section").as_deref());
+            let revision = (section == RecipeSection::Versions)
+                .then(|| parse_revision(q.get("revision").as_deref()))
+                .flatten();
+            (section, revision)
+        });
+        if active_tab.get_untracked() != section.key() {
+            active_tab.set(section.key().to_owned());
+        }
+        if selected_revision.get_untracked() != revision {
+            selected_revision.set(revision);
+        }
+    });
+    Effect::new(move |_| {
+        let section = RecipeSection::parse(Some(active_tab.get().as_str()));
+        let revision = selected_revision.get();
+        let id = route_params.with(|p| p.get("id").unwrap_or_default());
+        if id.is_empty() || id == "new" {
+            return;
+        }
+        let revision = (section == RecipeSection::Versions).then_some(revision).flatten();
+        let target = recipe_section_href(&id, section, revision);
+        let current = leptos_router::hooks::use_location();
+        let here = current_location(&current.pathname.get_untracked(), &current.search.get_untracked());
+        let here_path = here.split('?').next().unwrap_or_default().to_owned();
+        if here_path == target.split('?').next().unwrap_or_default() && here != target {
+            // Replace, never push: an in-page section/version change must not add
+            // entries that dirty-draft history guards would have to arbitrate.
+            navigate(&target, leptos_router::NavigateOptions { replace: true, ..Default::default() });
+        }
+    });
     view! { <Show when=move || !context_visible.get()>
         {move || view! { <BreweryNotice title=access.get().title() body=access.get().guidance() warning=true/> }}
         <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || access.get() == EditorAccess::Checking) on:click=move |_| recheck.run(())>"Retry check"</Button>
@@ -1308,7 +1354,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
             {move || { let mut options = vec![(String::new(), "No style".to_owned())]; options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name)))); view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=selected_style on_change=change_style options=options/> } }}
         </div>
-        <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("history".into(), "History".into()), ("brews".into(), "Brews".into())] active=active_tab/>
+        <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())] active=active_tab/>
         <Show when=move || active_tab.get() == "recipe"><Button variant=ButtonVariant::Secondary on:click=move |_| {
             #[cfg(target_arch = "wasm32")]
             {
@@ -1342,9 +1388,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         </div></FormulationPreview></div>
         <section id="start-brew" aria-label="Start brew workflow" tabindex="-1"><crate::pages::brew_start::StartBrewPanel identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision/></section>
         </div>
-        <div role="tabpanel" id="editor-panel-history" aria-labelledby="editor-tab-history" hidden=move || active_tab.get() != "history">
-            <Show when=move || active_tab.get() == "history" && context_visible.get()>
-                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved history yet" body="Save this recipe to create its first revision."/> }.into_any())}
+        <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
+            <Show when=move || active_tab.get() == "versions" && context_visible.get()>
+                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next))/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
             </Show>
         </div>
         <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">

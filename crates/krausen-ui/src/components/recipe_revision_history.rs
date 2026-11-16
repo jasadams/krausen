@@ -20,9 +20,15 @@ fn authority_failed(result: &Result<LibraryOutcome, ServerFnError>) -> bool {
     }
 }
 
+/// The saved version currently inspected in the surrounding recipe page, shared
+/// so later source-bound tasks (Start brew, output) can adopt the same selection
+/// without depending on this component. `None` means the editable current recipe.
+#[derive(Clone, Copy)]
+pub struct SelectedSavedRevision(pub RwSignal<Option<i64>>);
+
 /// Read-only presentation of retained source data; no targets are recalculated.
 #[component]
-fn HistoricalRecipe(revision: i64, document: RecipeDocumentV1) -> impl IntoView {
+fn HistoricalRecipe(revision: i64, document: RecipeDocumentV1, on_close: Callback<()>) -> impl IntoView {
     let title = format!("Historical revision {revision} · {}", document.title);
     let style = document.style.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Not specified".into());
     let batch = document.batch_size_l.map(|v| format!("{v} L")).unwrap_or_else(|| "Not specified".into());
@@ -47,6 +53,7 @@ fn HistoricalRecipe(revision: i64, document: RecipeDocumentV1) -> impl IntoView 
         <h3>"Mash steps"</h3>{saved_rows(mash)}
         <h3>"Fermentation steps"</h3>{saved_rows(fermentation)}
         {document.notes.map(|text| view! { <div><h3>"Notes"</h3><p>{text}</p></div> })}
+        <Button variant=ButtonVariant::Secondary on:click=move |_| on_close.run(())>"Close saved version"</Button>
         <details><summary>"Complete saved data"</summary><pre class="overflow-x-auto">{saved_data}</pre></details>
     </BreweryPanel> }
 }
@@ -75,6 +82,11 @@ pub fn RecipeRevisionHistory(
     recipe_title: String,
     refresh_key: Signal<i64>,
     on_authority_failure: Callback<()>,
+    /// Exact saved version addressed by the page URL (`None`: none inspected).
+    #[prop(into)]
+    selected_revision: Signal<Option<i64>>,
+    /// Requests a different selection; the host owns encoding it in the URL.
+    on_select: Callback<Option<i64>>,
 ) -> impl IntoView {
     let intent = StoredValue::new(intent);
     let recipe_id = StoredValue::new(recipe_id);
@@ -110,20 +122,20 @@ pub fn RecipeRevisionHistory(
                         page.update(|current| if let Some(current) = current { current.items.extend(next.items); current.next_cursor = next.next_cursor; });
                     } else { page.set(Some(next)); }
                 }
-                _ => error.set("Unable to load revision history. Try again.".into()),
+                _ => error.set("Unable to load saved versions. Try again.".into()),
             }
         });
     });
     Effect::new(move |_| {
         let _ = refresh_key.get();
         generation.update(|v| *v += 1);
-        detail_generation.update(|v| *v += 1);
         page.set(None);
-        selected.set(None);
         loading.set(false);
-        detail_loading.set(false);
         load.run(None);
     });
+    // The URL-owned selection drives loading, so bookmarks, reloads and
+    // Back/Forward select the same immutable saved version; stale responses
+    // for an earlier selection are discarded by the detail generation.
     let inspect = Callback::new(move |revision: i64| {
         detail_generation.update(|v| *v += 1);
         let sequence = detail_generation.get_untracked();
@@ -145,30 +157,43 @@ pub fn RecipeRevisionHistory(
             detail_loading.set(false);
             match result {
                 Ok(LibraryOutcome::Revision(document)) => selected.set(Some((revision, document))),
-                _ => error.set("Unable to load that saved revision. Try again.".into()),
+                Ok(LibraryOutcome::NotFound) => error.set(format!("Saved version {revision} was not found for this recipe.")),
+                _ => error.set("Unable to load that saved version. Try again.".into()),
             }
         });
     });
-    let title = format!("History · {recipe_title}");
+    Effect::new(move |_| {
+        let _ = refresh_key.get();
+        match selected_revision.get() {
+            Some(revision) => inspect.run(revision),
+            None => {
+                detail_generation.update(|v| *v += 1);
+                selected.set(None);
+                detail_loading.set(false);
+            }
+        }
+    });
+    let title = format!("Saved versions · {recipe_title}");
     view! {
         <BreweryPanel title=title>
-            <Show when=move || loading.get()><BreweryNotice title="Loading history" body="Please wait."/></Show>
+            <Show when=move || loading.get()><BreweryNotice title="Loading saved versions" body="Please wait."/></Show>
             {move || (!error.get().is_empty()).then(|| view! { <p role="status">{error.get()}</p> })}
             {move || page.get().map(|history| {
                 let empty = history.items.is_empty();
                 let cursor = history.next_cursor;
                 view! {
-                    {empty.then(|| view! { <p>"No saved revisions."</p> })}
+                    {empty.then(|| view! { <p>"No saved versions."</p> })}
                     <ul>{history.items.into_iter().map(|entry| {
                         let revision = entry.revision;
-                        view! { <li>{format!("Revision {revision}")}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}<Button variant=ButtonVariant::Ghost aria_label=format!("Inspect revision {revision}") on:click=move |_| inspect.run(revision)>"Inspect"</Button></li> }
+                        view! { <li>{format!("Revision {revision}")}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}{move || (selected_revision.get() == Some(revision)).then_some(" · Inspecting")}<Button variant=ButtonVariant::Ghost aria_label=format!("Inspect revision {revision}") on:click=move |_| on_select.run(Some(revision))>"Inspect"</Button></li> }
                     }).collect_view()}</ul>
                     {cursor.map(|cursor| view! { <Button variant=ButtonVariant::Secondary disabled=loading on:click=move |_| load.run(Some(cursor.clone()))>"Load more revisions"</Button> })}
                 }
             })}
-            <Show when=move || !loading.get() && page.get().is_none() && !error.get().is_empty()><Button variant=ButtonVariant::Secondary on:click=move |_| load.run(None)>"Retry history"</Button></Show>
+            <Show when=move || !loading.get() && page.get().is_none() && !error.get().is_empty()><Button variant=ButtonVariant::Secondary on:click=move |_| load.run(None)>"Retry saved versions"</Button></Show>
         </BreweryPanel>
         <Show when=move || detail_loading.get()><BreweryNotice title="Loading saved content" body="Please wait."/></Show>
-        {move || selected.get().map(|(revision, document)| view! { <HistoricalRecipe revision=revision document=document/> })}
+        {move || selected.get().map(|(revision, document)| view! { <HistoricalRecipe revision=revision document=document on_close=Callback::new(move |()| on_select.run(None))/> })}
+        {move || (selected_revision.get().is_some() && !detail_loading.get() && selected.get().is_none() && !error.get().is_empty()).then(|| view! { <Button variant=ButtonVariant::Secondary on:click=move |_| on_select.run(None)>"Close saved version"</Button> })}
     }
 }

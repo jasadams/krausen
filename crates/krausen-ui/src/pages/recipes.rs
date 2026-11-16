@@ -6,6 +6,10 @@ use crate::{
         ButtonVariant, RecipeRevisionHistory,
     },
     server_fns::recipe_library::library_command_shared,
+    utils::{
+        list_position::{self, ListPosition},
+        nav_state::{current_location, library_filter, library_href, parse_revision},
+    },
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use krausen_types::{
@@ -15,6 +19,7 @@ use krausen_types::{
     request_context::OperationIntent,
 };
 use leptos::prelude::*;
+use leptos_router::hooks::{use_location, use_navigate, use_query_map};
 
 fn authority_failed(result: &Result<LibraryOutcome, ServerFnError>) -> bool {
     match result {
@@ -41,8 +46,33 @@ pub fn RecipesPage() -> impl IntoView {
 #[component]
 fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let intent = StoredValue::new(intent);
-    let search = RwSignal::new(String::new());
-    let archived = RwSignal::new(false);
+    // Search, archive filter and the inline saved-version selection live in the
+    // URL (see utils::nav_state), so a return, reload or Back restores them.
+    let query = use_query_map();
+    let navigate = use_navigate();
+    let location = use_location();
+    let search = RwSignal::new(query.with_untracked(|q| q.get("q")).unwrap_or_default());
+    let archived = RwSignal::new(query.with_untracked(|q| q.get("show")).as_deref() == Some("archived"));
+    let selected_revision = RwSignal::new(query.with_untracked(|q| parse_revision(q.get("revision").as_deref())));
+    // Pages loaded so far and a saved position still to restore on return.
+    let pages_loaded = RwSignal::new(0_u32);
+    let restore = RwSignal::new(None::<ListPosition>);
+    let position_key = StoredValue::new(list_position::storage_key(&intent.get_value().account_id, &intent.get_value().workspace_id));
+    #[cfg(target_arch = "wasm32")]
+    if let Some(saved) = list_position::take(&position_key.get_value()) {
+        let here = current_location(&location.pathname.get_untracked(), &location.search.get_untracked());
+        let plain = search.get_untracked().is_empty() && !archived.get_untracked() && query.with_untracked(|q| q.get("versions").is_none());
+        if saved.location == here {
+            restore.set(Some(saved));
+        } else if plain {
+            // A plain return to Recipes resumes the search/filter being left.
+            if let Some((saved_search, saved_archived)) = library_filter(&saved.location) {
+                search.set(saved_search);
+                archived.set(saved_archived);
+                restore.set(Some(saved));
+            }
+        }
+    }
     let results = RwSignal::new(Vec::<RecipeSummary>::new());
     let next = RwSignal::new(None::<String>);
     let generation = RwSignal::new(0_u64);
@@ -50,7 +80,12 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let status = RwSignal::new(String::new());
     // Selection owns the shared history component's lifetime. Clearing it
     // disposes list/detail requests as well as any retained historical content.
-    let history = RwSignal::new(None::<(String, String)>);
+    let history = RwSignal::new(
+        query
+            .with_untracked(|q| q.get("versions"))
+            .filter(|id| !id.is_empty())
+            .map(|id| (id, "Selected recipe".to_owned())),
+    );
     let recovery = RwSignal::new(None::<(String, String)>);
     let detail_generation = RwSignal::new(0_u64);
     let detail_loading = RwSignal::new(false);
@@ -143,8 +178,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                 Ok(LibraryOutcome::Recipes(page)) => {
                     if append {
                         results.update(|items| items.extend(page.items));
+                        pages_loaded.update(|n| *n += 1);
                     } else {
                         results.set(page.items);
+                        pages_loaded.set(1);
                     }
                     next.set(page.next_cursor);
                     status.set(String::new());
@@ -159,19 +196,123 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             }
         });
     });
-    Effect::new(move |_| {
+    Effect::new(move |first: Option<()>| {
         let _ = search.get();
         let _ = archived.get();
         if !context_valid.get() {
             return;
         }
         detail_generation.update(|n| *n += 1);
-        history.set(None);
+        if first.is_some() {
+            history.set(None);
+            selected_revision.set(None);
+        }
         recovery.set(None);
         detail_loading.set(false);
         load.run(None);
     });
+    // The heading of a URL-opened selection takes the authorized list title.
+    Effect::new(move |_| {
+        let Some((id, title)) = history.get() else { return };
+        if let Some(found) = results.with(|items| items.iter().find(|item| item.recipe_id == id).map(|item| item.title.clone())) {
+            if found != title {
+                history.set(Some((id, found)));
+            }
+        }
+    });
+    // URL -> state (Back/Forward, bookmarks); state -> URL (replace, never push).
+    Effect::new(move |_| {
+        let (q, show, versions, revision) = query.with(|q| {
+            (
+                q.get("q").unwrap_or_default(),
+                q.get("show").as_deref() == Some("archived"),
+                q.get("versions").filter(|id| !id.is_empty()),
+                parse_revision(q.get("revision").as_deref()),
+            )
+        });
+        if search.get_untracked() != q { search.set(q); }
+        if archived.get_untracked() != show { archived.set(show); }
+        let revision = versions.as_ref().and(revision);
+        if selected_revision.get_untracked() != revision { selected_revision.set(revision); }
+        let current_history = history.get_untracked().map(|(id, _)| id);
+        if current_history != versions {
+            history.set(versions.map(|id| (id, "Selected recipe".to_owned())));
+        }
+    });
+    Effect::new(move |_| {
+        let target = library_href(
+            &search.get(),
+            archived.get(),
+            history.with(|h| h.as_ref().map(|(id, _)| id.clone())).as_deref().map(|id| (id, selected_revision.get())),
+        );
+        if location.pathname.get_untracked() != "/recipes" {
+            return;
+        }
+        let here = current_location(&location.pathname.get_untracked(), &location.search.get_untracked());
+        if here != target {
+            navigate(&target, leptos_router::NavigateOptions { replace: true, ..Default::default() });
+        }
+    });
+    // Replays the pages and scroll left behind by the last visit, then stops.
+    Effect::new(move |_| {
+        let Some(position) = restore.get() else { return };
+        if loading.get() || !context_valid.get() {
+            return;
+        }
+        let loaded = pages_loaded.get();
+        if loaded == 0 {
+            if !status.with(|s| s.is_empty()) {
+                restore.set(None);
+            }
+            return;
+        }
+        if loaded < position.pages && next.with(|cursor| cursor.is_some()) {
+            load.run(next.get_untracked());
+            return;
+        }
+        restore.set(None);
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || {
+            use wasm_bindgen::JsCast;
+            if let Some(main) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.query_selector(".app-shell__main").ok().flatten())
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                main.set_scroll_top(position.scroll_top);
+            }
+        });
+    });
+    // Following a recipe link leaves a position to restore on the way back.
+    let remember_position = move |event: leptos::ev::MouseEvent| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            let on_link = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                .is_some_and(|el| el.closest("a[href]").ok().flatten().is_some());
+            if on_link {
+                let scroll_top = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.query_selector(".app-shell__main").ok().flatten())
+                    .map(|main| main.scroll_top())
+                    .unwrap_or_default();
+                list_position::save(
+                    &position_key.get_value(),
+                    &ListPosition {
+                        pages: pages_loaded.get_untracked().clamp(1, list_position::MAX_RESTORE_PAGES),
+                        scroll_top: scroll_top.max(0),
+                        location: library_href(&search.get_untracked(), archived.get_untracked(), None),
+                    },
+                );
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = event;
+    };
     let show_history = Callback::new(move |(id, name): (String, String)| {
+        selected_revision.set(None);
         detail_generation.update(|n| *n += 1);
         recovery.set(None);
         detail_loading.set(false);
@@ -281,7 +422,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             <Show when=move || loading.get()><BreweryNotice title="Loading recipes" body="Please wait."/></Show>
             {move || (!status.get().is_empty()).then(|| view! { <p role="status">{status.get()}</p> })}
             <Show when=move || !loading.get() && results.with(|items| items.is_empty()) && status.with(|s| s.is_empty())><BreweryNotice title="No recipes found" body="Change the search or create a recipe."/></Show>
-            <ul class="recipe-library__list">{move || results.get().into_iter().map(|item| {
+            <ul class="recipe-library__list" on:click=remember_position>{move || results.get().into_iter().map(|item| {
                 let id = item.recipe_id.clone(); let title = item.title.clone(); let archived_item = item.archived; let recovery_item = item.needs_recovery; let revision = item.metadata_revision;
                 let history_id = id.clone(); let history_title = title.clone(); let archive_id = id.clone(); let recovery_id = id.clone();
                 view! { <li class="recipe-library__row"><div class="recipe-library__identity"><h3>{title.clone()}</h3>
@@ -289,7 +430,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                     {(!archived_item && !recovery_item).then(|| view! { <ButtonLink href=format!("/recipe-editor/{id}") variant=ButtonVariant::Secondary aria_label=format!("Open {title}")>"Open recipe"</ButtonLink> })}
                     {(!recovery_item).then(|| view! { <ButtonLink href=format!("/recipes/{}/brews", item.recipe_id) variant=ButtonVariant::GhostMuted aria_label=format!("Brews for {title}")>"Brews"</ButtonLink> })}
                     {recovery_item.then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("Recover stored source for {title}") on:click=move |_| recover.run(recovery_id.clone())>"Recover stored source"</Button> })}
-                    {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Ghost aria_label=format!("History for {title}") on:click=move |_| show_history.run((history_id.clone(), history_title.clone()))>"History"</Button> })}
+                    {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Ghost aria_label=format!("Saved versions for {title}") on:click=move |_| show_history.run((history_id.clone(), history_title.clone()))>"Saved versions"</Button> })}
                     {(!recovery_item).then(|| view! { <Button variant=ButtonVariant::Secondary aria_label=format!("{} {title}", if archived_item { "Restore" } else { "Archive" }) disabled=Signal::derive(move || saving.get() || pending.get().is_some() || blocked.get()) on:click=move |_| {
                         let Some(request_id) = crate::utils::request_id::new_request_id() else { status.set("Unable to create request identity.".into()); return; };
                         execute_archive.run(ArchiveRecipe { intent: intent.get_value(), recipe_id: archive_id.clone(), expected_metadata_revision: revision, archived: !archived_item, request_id });
@@ -300,7 +441,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             <Show when=move || pending.get().is_some() && !blocked.get()><Button variant=ButtonVariant::Secondary disabled=saving on:click=move |_| { if let Some(command) = pending.get_untracked() { execute_archive.run(command); } }>"Retry previous request"</Button></Show>
         </BreweryPanel>
         {move || recovery.get().map(|(source, diagnostic)| { let href = format!("data:application/json;base64,{}", STANDARD.encode(source.as_bytes())); view! { <BreweryPanel title="Stored recipe source"><p>{diagnostic}</p><a href=href download="legacy-recipe.json">"Download stored source"</a><pre class="overflow-x-auto">{source}</pre></BreweryPanel> } })}
-        {move || history.get().map(|(id, title)| view! { <RecipeRevisionHistory intent=intent.get_value() recipe_id=id recipe_title=title refresh_key=Signal::derive(|| 0_i64) on_authority_failure=invalidate_context/> })}
+        {move || history.get().map(|(id, title)| view! { <RecipeRevisionHistory intent=intent.get_value() recipe_id=id recipe_title=title refresh_key=Signal::derive(|| 0_i64) on_authority_failure=invalidate_context selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next))/> })}
         <Show when=move || detail_loading.get()><BreweryNotice title="Loading saved content" body="Please wait."/></Show>
         </div>
     </div> }

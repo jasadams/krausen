@@ -40,6 +40,47 @@ pub fn encode_component(value: &str) -> String {
     out
 }
 
+/// Reverses [`encode_component`]; malformed escapes are rejected, not guessed.
+pub fn decode_component(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                let hex = value.get(index + 1..index + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                index += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            other => {
+                out.push(other);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Library filter carried by a `/recipes?...` location: search text and archive flag.
+pub fn library_filter(location: &str) -> Option<(String, bool)> {
+    let query = location.strip_prefix("/recipes")?.strip_prefix('?').unwrap_or("");
+    let mut search = String::new();
+    let mut archived = false;
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        match key {
+            "q" => search = decode_component(value)?,
+            "show" => archived = value == "archived",
+            _ => {}
+        }
+    }
+    Some((search, archived))
+}
+
 /// Accepts only a same-origin, in-app absolute path (with optional query/hash).
 /// Rejects scheme/authority forms, protocol-relative and backslash tricks,
 /// control characters, ceremony/Settings routes and oversized input. The
@@ -204,6 +245,18 @@ mod tests {
         assert_eq!(recipe_section_href("r1", RecipeSection::Versions, Some(2)), "/recipe-editor/r1?section=versions&revision=2");
         assert_eq!(recipe_section_href("r1", RecipeSection::Versions, None), "/recipe-editor/r1?section=versions");
         assert_eq!(recipe_section_href("r1", RecipeSection::Brews, Some(2)), "/recipe-editor/r1?section=brews");
+    }
+
+    #[test]
+    fn decode_reverses_encode_and_rejects_malformed_escapes() {
+        for value in ["Hel les", "a&b=c", "ü ß", "100%"] {
+            assert_eq!(decode_component(&encode_component(value)).as_deref(), Some(value));
+        }
+        assert_eq!(decode_component("%zz"), None);
+        assert_eq!(decode_component("%4"), None);
+        assert_eq!(library_filter("/recipes?q=Hel%20les&show=archived"), Some(("Hel les".into(), true)));
+        assert_eq!(library_filter("/recipes"), Some((String::new(), false)));
+        assert_eq!(library_filter("/other"), None);
     }
 
     #[test]
