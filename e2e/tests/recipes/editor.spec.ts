@@ -906,7 +906,7 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await expect(page.getByLabel('Amount (kg)', { exact: true }).and(page.locator('#show-invalid'))).toHaveAttribute('aria-invalid', 'true');
       await page.getByRole('tab', { name: 'Recipe' }).focus();
       await page.keyboard.press('ArrowRight');
-      await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
+      await expect(page.getByRole('tab', { name: 'Saved versions' })).toBeFocused();
       const opener = page.getByRole('button', { name: 'Open dialog' });
       await opener.click();
       const dialog = page.getByRole('dialog', { name: 'Keep your changes?' });
