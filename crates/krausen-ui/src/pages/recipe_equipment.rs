@@ -104,6 +104,13 @@ impl EquipmentSummary {
     }
 }
 
+/// Whether the loaded profile pages can decide the selection. A failed fetch is
+/// decisive (unavailable plus Retry), and a selected profile that is not in the
+/// loaded pages is undecided only while more pages remain.
+pub fn library_decidable(loaded: bool, load_failed: bool, profile_known: bool, has_more: bool) -> bool {
+    load_failed || (loaded && (profile_known || !has_more))
+}
+
 /// Number of settings this recipe overrides; the chilling mode and its values count once.
 pub fn override_count(overrides: &EquipmentSettingsV1) -> usize {
     SPECS
@@ -274,8 +281,12 @@ pub fn RecipeEquipment(
     Effect::new(move |_| {
         // The library may still be paging; a selected profile that is not in the
         // loaded pages is undecided, not unavailable.
-        let decidable = library.loaded.get()
-            && (selected_profile.get().is_some() || library.next_cursor.get().is_none());
+        let decidable = library_decidable(
+            library.loaded.get(),
+            !library.error.get().is_empty(),
+            selected_profile.get().is_some(),
+            library.next_cursor.get().is_some(),
+        );
         let next = draft.with(|d| EquipmentSummary::from_document_with_library(d.document(), usable_profile.get().as_ref(), decidable));
         if summary.get_untracked() != next {
             summary.set(next);
@@ -416,6 +427,16 @@ mod tests {
         paths.sort();
         paths.dedup();
         assert_eq!((ids.len(), paths.len()), (total, total));
+    }
+
+    #[test]
+    fn library_states_decide_or_stay_loading_truthfully() {
+        assert!(!library_decidable(false, false, false, false));
+        assert!(!library_decidable(false, false, false, true));
+        assert!(library_decidable(true, false, false, false));
+        assert!(!library_decidable(true, false, false, true));
+        assert!(library_decidable(true, false, true, true));
+        assert!(library_decidable(false, true, false, true), "a failed fetch is decided");
     }
 
     #[test]

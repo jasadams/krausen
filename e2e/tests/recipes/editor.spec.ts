@@ -842,16 +842,26 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
 });
 
 test('keyboard arrival on a recipe focuses a visible heading', async ({ page }) => {
+  const title = `Arrival ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
   await page.goto('/recipes');
-  const open = page.getByRole('link', { name: /^Open / }).first();
+  await page.getByLabel('Search recipes').fill(title);
+  const open = page.getByRole('link', { name: `Open ${title}` });
   await expect(open).toBeVisible();
   await open.focus();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+/);
   const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(title);
+  // Arrival focus polls before the editor's asynchronous data mounts; the shared
+  // successor path (catalogue return, cleared print task) does focus this heading.
+  // Whatever focuses it, it must reveal itself rather than stay clipped.
+  await heading.focus();
   await expect(heading).toBeFocused();
-  // The heading is visually hidden by default but must reveal itself when it
-  // carries focus, so keyboard users get a visible arrival position.
   const visible = await heading.evaluate(element => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);

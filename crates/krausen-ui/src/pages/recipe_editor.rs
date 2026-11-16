@@ -638,18 +638,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::write(&key, &record).is_err() {
                     tracing::warn!("Unable to retain a recipe draft locally");
                     retained.set(false);
-            status.resolve_storage_failure();
+                    status.resolve_storage_failure();
                     status.fail_storage("Unable to retain this draft locally; keep this page open.".into());
                 } else {
                     retained.set(true);
-            status.resolve_storage_failure();
+                    status.resolve_storage_failure();
                     if let Some(old) = recovery_storage_key
                         .get_untracked()
                         .filter(|old| old != &key)
                     {
                         if crate::pages::recipe_recovery::remove(&old).is_err() {
                             tracing::warn!("Unable to remove an older retained recipe draft");
-                            status.fail(
+                            status.fail_storage(
                                 "An older retained draft could not be removed from this browser."
                                     .into(),
                             );
@@ -661,7 +661,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::remove(&old).is_ok() {
                     recovery_storage_key.set(None);
                     retained.set(false);
-            status.resolve_storage_failure();
+                    status.resolve_storage_failure();
                 } else {
                     tracing::warn!("Unable to remove a retained recipe draft");
                     status.fail_storage("The retained draft could not be removed from this browser.".into());
@@ -1046,7 +1046,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         } else if may_apply_scope {
                             tracing::warn!("Unable to clear the retained draft after saving");
                             saving_to_leave.set(false);
-                            status.fail(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
+                            status.fail_storage(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
                         }
                     } else {
                         saving_to_leave.set(false);
