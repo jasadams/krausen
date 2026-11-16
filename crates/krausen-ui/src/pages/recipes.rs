@@ -51,9 +51,11 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     let query = use_query_map();
     let navigate = use_navigate();
     let location = use_location();
-    let search = RwSignal::new(query.with_untracked(|q| q.get("q")).unwrap_or_default());
-    let archived = RwSignal::new(query.with_untracked(|q| q.get("show")).as_deref() == Some("archived"));
-    let selected_revision = RwSignal::new(query.with_untracked(|q| parse_revision(q.get("revision").as_deref())));
+    let mut initial_search = query.with_untracked(|q| q.get("q")).unwrap_or_default();
+    let mut initial_archived = query.with_untracked(|q| q.get("show")).as_deref() == Some("archived");
+    let plain_visit = initial_search.is_empty()
+        && !initial_archived
+        && query.with_untracked(|q| q.get("versions").is_none() && q.get("revision").is_none());
     // Pages loaded so far and a saved position still to restore on return.
     let pages_loaded = RwSignal::new(0_u32);
     let restore = RwSignal::new(None::<ListPosition>);
@@ -61,18 +63,21 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     #[cfg(target_arch = "wasm32")]
     if let Some(saved) = list_position::take(&position_key.get_value()) {
         let here = current_location(&location.pathname.get_untracked(), &location.search.get_untracked());
-        let plain = search.get_untracked().is_empty() && !archived.get_untracked() && query.with_untracked(|q| q.get("versions").is_none());
         if saved.location == here {
             restore.set(Some(saved));
-        } else if plain {
-            // A plain return to Recipes resumes the search/filter being left.
+        } else if plain_visit {
+            // A plain return to Recipes resumes the search/filter being left; the
+            // state-to-URL effect then moves the address to match.
             if let Some((saved_search, saved_archived)) = library_filter(&saved.location) {
-                search.set(saved_search);
-                archived.set(saved_archived);
+                initial_search = saved_search;
+                initial_archived = saved_archived;
                 restore.set(Some(saved));
             }
         }
     }
+    let search = RwSignal::new(initial_search);
+    let archived = RwSignal::new(initial_archived);
+    let selected_revision = RwSignal::new(query.with_untracked(|q| parse_revision(q.get("revision").as_deref())));
     let results = RwSignal::new(Vec::<RecipeSummary>::new());
     let next = RwSignal::new(None::<String>);
     let generation = RwSignal::new(0_u64);
@@ -221,7 +226,8 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         }
     });
     // URL -> state (Back/Forward, bookmarks); state -> URL (replace, never push).
-    Effect::new(move |_| {
+    Effect::new(move |first: Option<()>| {
+        let resumed = first.is_none() && plain_visit && (search.get_untracked() != "" || archived.get_untracked());
         let (q, show, versions, revision) = query.with(|q| {
             (
                 q.get("q").unwrap_or_default(),
@@ -230,6 +236,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
                 parse_revision(q.get("revision").as_deref()),
             )
         });
+        if resumed {
+            return; // resumed filter: the state-to-URL effect moves the address
+        }
         if search.get_untracked() != q { search.set(q); }
         if archived.get_untracked() != show { archived.set(show); }
         let revision = versions.as_ref().and(revision);

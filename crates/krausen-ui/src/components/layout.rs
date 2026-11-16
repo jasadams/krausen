@@ -804,30 +804,61 @@ pub fn Layout() -> impl IntoView {
     {
         use wasm_bindgen::{JsCast, closure::Closure};
         let traversal = StoredValue::new(false);
-        if let Some(window) = web_sys::window() {
-            let popstate = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        // Back/Forward is detected by the Navigation API's `traverse` type where
+        // available and by `popstate` otherwise; both in the capture phase so the
+        // flag is set before the router's own handling schedules effects.
+        let mark = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            let kind = js_sys::Reflect::get(event.as_ref(), &"navigationType".into())
+                .ok()
+                .and_then(|value| value.as_string());
+            if kind.is_none() || kind.as_deref() == Some("traverse") {
                 traversal.set_value(true);
-            });
-            let _ = window
-                .add_event_listener_with_callback("popstate", popstate.as_ref().unchecked_ref());
-            let listener = send_wrapper::SendWrapper::new((window, popstate));
-            on_cleanup(move || {
-                let (window, popstate) = &*listener;
-                let _ = window.remove_event_listener_with_callback(
-                    "popstate",
-                    popstate.as_ref().unchecked_ref(),
-                );
-            });
+            }
+        });
+        let mut targets: Vec<web_sys::EventTarget> = Vec::new();
+        if let Some(window) = web_sys::window() {
+            if let Ok(navigation) = js_sys::Reflect::get(window.as_ref(), &"navigation".into()) {
+                if let Ok(target) = navigation.dyn_into::<web_sys::EventTarget>() {
+                    targets.push(target);
+                }
+            }
+            targets.push(window.into());
         }
+        let mut bound: Vec<(web_sys::EventTarget, &'static str)> = Vec::new();
+        for target in targets {
+            let name = if bound.is_empty() && js_sys::Reflect::has(target.as_ref(), &"currentEntry".into()).unwrap_or(false) {
+                "navigate"
+            } else {
+                "popstate"
+            };
+            if target
+                .add_event_listener_with_callback_and_bool(name, mark.as_ref().unchecked_ref(), true)
+                .is_ok()
+            {
+                bound.push((target, name));
+            }
+        }
+        let listener = send_wrapper::SendWrapper::new((bound, mark));
+        on_cleanup(move || {
+            let (bound, mark) = &*listener;
+            for (target, name) in bound {
+                let _ = target.remove_event_listener_with_callback_and_bool(
+                    name,
+                    mark.as_ref().unchecked_ref(),
+                    true,
+                );
+            }
+        });
         Effect::new(move |previous: Option<String>| {
             let path = location.pathname.get();
+            // Any committed location change consumes the traversal flag, so a
+            // same-route Back never leaks into the next real arrival.
+            let _ = location.search.get();
             let arrived = previous.as_ref().is_some_and(|previous| *previous != path);
             let restored = traversal.get_value();
-            if arrived {
-                traversal.set_value(false);
-                if !restored {
-                    focus_arrival_heading();
-                }
+            traversal.set_value(false);
+            if arrived && !restored {
+                focus_arrival_heading();
             }
             path
         });

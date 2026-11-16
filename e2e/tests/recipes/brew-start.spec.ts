@@ -870,6 +870,40 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
 });
 
+test('brew pages carry the authorized Recipes → recipe → Brews → brew trail and sibling links', async ({ page }) => {
+  const title = `Brew trail ${Date.now()}`;
+  const brewId = await startBrewAndOpenEvidence(page, title);
+  const recipeId = sqliteExec(
+    `SELECT recipe_id FROM brews WHERE brew_id = '${brewId.replaceAll("'", "''")}';`,
+  );
+  const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
+
+  await expect(page).toHaveURL(new RegExp(`/brews/${brewId}$`));
+  await expect(trail.getByRole('link', { name: 'Recipes', exact: true })).toHaveAttribute('href', '/recipes');
+  await expect(trail.getByRole('link', { name: title })).toHaveAttribute('href', `/recipe-editor/${recipeId}`);
+  await expect(trail.getByRole('link', { name: 'Brews', exact: true })).toHaveAttribute('href', `/recipes/${recipeId}/brews`);
+  await expect(trail.getByText('Measurements', { exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { name: 'Brew measurements', level: 1 })).toBeVisible();
+
+  // Sibling links reach Compare, whose trail ends there and links back.
+  const siblings = page.getByRole('navigation', { name: 'This brew' });
+  await expect(siblings.getByRole('link', { name: 'Measurements' })).toHaveAttribute('aria-current', 'page');
+  await siblings.getByRole('link', { name: 'Compare' }).click();
+  await expect(page).toHaveURL(new RegExp(`/brews/${brewId}/analysis$`));
+  await expect(page.getByRole('heading', { name: 'Plan versus actual', level: 1 })).toBeFocused();
+  await expect(trail.getByText('Compare', { exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(trail.getByRole('link', { name: title })).toBeVisible();
+  await page.getByRole('navigation', { name: 'This brew' }).getByRole('link', { name: 'Measurements' }).click();
+  await expect(page).toHaveURL(new RegExp(`/brews/${brewId}$`));
+
+  // The recipe-local Brews page ends the trail at Brews, with the recipe linked.
+  await trail.getByRole('link', { name: 'Brews', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/recipes/${recipeId}/brews$`));
+  await expect(trail.getByText('Brews', { exact: true })).toHaveAttribute('aria-current', 'page');
+  await trail.getByRole('link', { name: title }).click();
+  await expect(page).toHaveURL(new RegExp(`/recipe-editor/${recipeId}$`));
+});
+
 test('historical presentation uses human labels and hides machine identifiers', async ({
   page,
 }) => {

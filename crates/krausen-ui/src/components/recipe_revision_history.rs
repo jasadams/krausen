@@ -167,6 +167,7 @@ pub fn RecipeRevisionHistory(
         match selected_revision.get() {
             Some(revision) => inspect.run(revision),
             None => {
+                error.set(String::new());
                 detail_generation.update(|v| *v += 1);
                 selected.set(None);
                 detail_loading.set(false);
