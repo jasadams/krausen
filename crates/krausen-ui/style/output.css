@@ -3956,6 +3956,12 @@
   min-height: var(--k-control-height);
   min-width: 0;
 }
+.recipe-header__hint {
+  grid-column: 1 / -1;
+}
+.recipe-editor > .recipe-header:not(:first-child) {
+  margin-top: 0;
+}
 .recipe-header__reason {
   margin: 0;
   color: var(--k-color-muted);

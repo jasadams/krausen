@@ -869,6 +869,8 @@ pub fn BreweryDraftField(
     /// Expressive page-title presentation at every width (the recipe name). The
     /// full value is also exposed as the control's native title.
     #[prop(default = false)] title_variant: bool,
+    /// Id of caller-owned adjacent text that also describes this control.
+    #[prop(optional, into)] described_by: MaybeProp<String>,
     #[prop(default = false)] read_only: bool,
     /// Event notification only; formatting/validation policy stays with the caller.
     #[prop(optional)] on_blur: Option<Callback<()>>,
@@ -882,7 +884,7 @@ pub fn BreweryDraftField(
         <div class="k-field" class:k-field--title=title_variant class:k-field--numeric=numeric>
             <label class="k-field__label" for=id.clone()>{label}{label_unit}</label>
             <div class="k-field__control">
-                <input id=id type=input_type title=move || title_variant.then(|| value.get()) inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || (error.get().is_some() || hint.get().is_some()).then(|| described.clone()) disabled=disabled readonly=read_only />
+                <input id=id type=input_type title=move || title_variant.then(|| value.get()) inputmode=if numeric { "decimal" } else { "text" } prop:value=move || value.get() on:input=move |ev| on_change.run(event_target_value(&ev)) on:blur=move |_| { if let Some(callback) = on_blur { callback.run(()); } } aria-invalid=move || error.get().is_some().to_string() aria-describedby=move || { let own = (error.get().is_some() || hint.get().is_some()).then(|| described.clone()); match (own, described_by.get()) { (Some(a), Some(b)) => Some(format!("{a} {b}")), (a, b) => a.or(b) } } disabled=disabled readonly=read_only />
                 {display_unit.map(|text| view! { <span class="k-field__unit" aria-hidden="true">{text}</span> })}
             </div>
             {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}

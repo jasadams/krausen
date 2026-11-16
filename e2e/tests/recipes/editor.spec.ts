@@ -279,7 +279,7 @@ test('a late committed save cannot leave or rewrite the address after confirmed 
     await saveCompleted;
     // Observe the production receipt, not a frame evaluation that can throw
     // merely because the broken implementation navigates during it.
-    await expect(page.locator('.recipe-editor__actions [role="status"]')).toContainText('Saved revision 1 in the original context.');
+    await expect(page.locator('.recipe-header__status [role="status"]')).toContainText('Saved revision 1 in the original context.');
     await expect(page).toHaveURL(original);
     expect(requests).toHaveLength(1);
     expect(committed?.revision).toBe(1);
@@ -503,7 +503,10 @@ test('all numeric caller families settle format feedback on real blur without re
     await expect(field).toHaveAttribute('aria-invalid', 'true');
     const description = await field.getAttribute('aria-describedby');
     expect(description).toBeTruthy();
-    await expect(page.locator(`[id="${description}"]`)).toContainText('Enter a number');
+    // A control may name more than one description (for example its own note);
+    // the error must be among them, not necessarily the only one.
+    const described = page.locator(description!.split(/\s+/).map(id => `[id="${id}"]`).join(', ')).filter({ hasText: 'Enter a number' });
+    await expect(described).toContainText('Enter a number');
     await field.fill('1.230000000000000');
     await field.press('Tab');
     await expect(field).toHaveValue('1.230000000000000');
@@ -903,7 +906,7 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
       await expect(page.getByLabel('Amount (kg)', { exact: true }).and(page.locator('#show-invalid'))).toHaveAttribute('aria-invalid', 'true');
       await page.getByRole('tab', { name: 'Recipe' }).focus();
       await page.keyboard.press('ArrowRight');
-      await expect(page.getByRole('tab', { name: 'Saved versions' })).toBeFocused();
+      await expect(page.getByRole('tab', { name: 'History' })).toBeFocused();
       const opener = page.getByRole('button', { name: 'Open dialog' });
       await opener.click();
       const dialog = page.getByRole('dialog', { name: 'Keep your changes?' });

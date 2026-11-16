@@ -206,7 +206,7 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(page.locator('.recipe-editor__preview-summary')).toContainText('Ready');
   await attachScreenshot(page, testInfo, 'header-formulation-before-1440');
 
-  const header = page.locator('.recipe-editor__header');
+  const header = page.locator('.recipe-header__topbar');
   const headerBox = await header.boundingBox();
   expect(headerBox, 'recipe header must be visible').not.toBeNull();
   expect(
@@ -305,7 +305,7 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   const rows = fermentables.locator('.k-compact-ingredient');
   await expect(rows).toHaveCount(2);
 
-  const header = page.locator('.recipe-editor__header');
+  const header = page.locator('.recipe-header__topbar');
   const status = header.getByRole('status');
   const undo = header.getByRole('button', { name: 'Undo' });
   const save = header.getByRole('button', { name: /^Save (recipe|changes)$/ });

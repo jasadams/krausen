@@ -7,7 +7,7 @@ use crate::{
         ButtonVariant, SelectedSavedRevision, printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
-    pages::recipe_header::{RecipeActionSlots, RecipeHeader},
+    pages::recipe_header::{EditorStatus, RecipeActionSlots, RecipeHeader},
     utils::nav_state::{RecipeSection, current_location, parse_revision, recipe_section_href},
     pages::recipe_scaling::{DuplicateDialog, ScaleDialog},
     server_fns::recipe_editor::{read_recipe, save_recipe},
@@ -400,7 +400,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             storage.remove();
         });
     }
-    let status = RwSignal::new(String::new());
+    let status = EditorStatus::new();
     let pending = RwSignal::new(false);
     let save_sequence = RwSignal::new(0_u64);
     let retry = RwSignal::new(None::<PendingRecipeSave>);
@@ -492,7 +492,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
         });
     }
-    Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.get() } else { access.get().guidance().to_owned() }));
+    Effect::new(move |_| editor_guard.message.set(if context_visible.get() { status.text.get() } else { access.get().guidance().to_owned() }));
     Effect::new(move |_| {
         if matches!(access.get(), EditorAccess::Mismatch | EditorAccess::Forbidden) {
             saving_to_leave.set(false);
@@ -536,7 +536,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 return;
             }
             if initial_scope.installation.is_empty() {
-                status.set("Local draft recovery is unavailable in this browser.".into());
+                status.fail("Local draft recovery is unavailable in this browser.".into());
                 recovery_ready.set(true);
                 return;
             }
@@ -584,7 +584,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     Ok(candidate) => recovery_choice.set(candidate),
                     Err(_) => {
                         tracing::warn!("Unable to read retained recipe drafts");
-                        status.set("Local draft recovery is unavailable in this browser.".into())
+                        status.fail("Local draft recovery is unavailable in this browser.".into())
                     }
                 }
                 recovery_ready.set(true);
@@ -607,7 +607,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             }
             let Some(tab) = tab.as_ref() else {
                 if current.dirty {
-                    status.set("Local draft recovery is unavailable in this browser.".into());
+                    status.fail("Local draft recovery is unavailable in this browser.".into());
                 }
                 return;
             };
@@ -632,7 +632,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::write(&key, &record).is_err() {
                     tracing::warn!("Unable to retain a recipe draft locally");
                     retained.set(false);
-                    status.set("Unable to retain this draft locally; keep this page open.".into());
+                    status.fail("Unable to retain this draft locally; keep this page open.".into());
                 } else {
                     retained.set(true);
                     if let Some(old) = recovery_storage_key
@@ -641,7 +641,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     {
                         if crate::pages::recipe_recovery::remove(&old).is_err() {
                             tracing::warn!("Unable to remove an older retained recipe draft");
-                            status.set(
+                            status.fail(
                                 "An older retained draft could not be removed from this browser."
                                     .into(),
                             );
@@ -655,7 +655,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     retained.set(false);
                 } else {
                     tracing::warn!("Unable to remove a retained recipe draft");
-                    status.set("The retained draft could not be removed from this browser.".into());
+                    status.fail("The retained draft could not be removed from this browser.".into());
                 }
             }
         });
@@ -875,12 +875,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             draft.update(|d| d.settle_numbers());
             let snapshot = draft.with_untracked(|d| (d.snapshot(), d.generation));
             let Ok(document) = snapshot.0 else {
-                status.set("Complete invalid number fields before saving.".into());
+                status.fail("Complete invalid number fields before saving.".into());
                 saving_to_leave.set(false);
                 return;
             };
             let Some(request_id) = crate::utils::request_id::new_request_id() else {
-                status.set("Unable to create a secure save request.".into());
+                status.fail("Unable to create a secure save request.".into());
                 saving_to_leave.set(false);
                 return;
             };
@@ -1037,7 +1037,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         } else if may_apply_scope {
                             tracing::warn!("Unable to clear the retained draft after saving");
                             saving_to_leave.set(false);
-                            status.set(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
+                            status.fail(format!("Saved revision {saved}, but the retained local draft could not be cleared."));
                         }
                     } else {
                         saving_to_leave.set(false);
@@ -1051,9 +1051,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     retry.set(None);
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
                         draft.update(|d| d.set_validation(validation));
-                        status.set("Correct the invalid fields before saving.".into());
+                        status.fail("Correct the invalid fields before saving.".into());
                     } else {
-                        status.set(
+                        status.fail(
                             "An earlier save was invalid; your newer changes remain unsaved."
                                 .into(),
                         );
@@ -1123,7 +1123,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                                     context_visible.set(false);
                                 }
                                 Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => hold_editor(access, context_visible, EditorAccess::Expired),
-                                _ => status.set("The current saved revision could not be loaded. Your draft is unchanged.".into()),
+                                _ => status.fail("The current saved revision could not be loaded. Your draft is unchanged.".into()),
                             }
                         } else {
                             hold_editor(access, context_visible, outcome);
@@ -1131,7 +1131,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     }
                 }
                 Ok(RecipeSaveOutcome::ResultExpired { resource_id }) => {
-                    status.set(match resource_id {
+                    status.fail(match resource_id {
                         Some(id) => format!(
                             "The saved response expired. Reopen recipe {id} before saving again."
                         ),
@@ -1142,15 +1142,15 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     });
                 }
                 Ok(RecipeSaveOutcome::RequestIdentityConflict) => {
-                    status.set("The prior save request could not be verified. Reopen the recipe before saving again.".into());
+                    status.fail("The prior save request could not be verified. Reopen the recipe before saving again.".into());
                 }
                 Ok(RecipeSaveOutcome::NotFound) => {
                     retry.set(None);
-                    status.set("This recipe is no longer available in this workspace. Your draft is still open.".into());
+                    status.fail("This recipe is no longer available in this workspace. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::InvalidRequest) => {
                     retry.set(None);
-                    status.set("The save request was invalid. Your draft is still open.".into());
+                    status.fail("The save request was invalid. Your draft is still open.".into());
                 }
                 Ok(RecipeSaveOutcome::ContextChanged) => {
                     access.set(EditorAccess::Mismatch);
@@ -1160,27 +1160,27 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Forbidden) => {
                     access.set(EditorAccess::Forbidden);
                     context_visible.set(false);
-                    status.set("You no longer have access to this workspace.".into())
+                    status.fail("You no longer have access to this workspace.".into())
                 }
                 Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile) => {
                     retry.set(None);
-                    status.set("The selected equipment profile is unavailable.".into())
+                    status.fail("The selected equipment profile is unavailable.".into())
                 }
                 Ok(
                     RecipeSaveOutcome::UnresolvedIngredientSource
                     | RecipeSaveOutcome::InvalidProvenance,
                 ) => {
                     retry.set(None);
-                    status.set("An ingredient or import reference could not be verified.".into());
+                    status.fail("An ingredient or import reference could not be verified.".into());
                 }
                 Err(e) if crate::utils::auth_refresh::is_auth_error(&e.to_string()) => {
                     access.set(EditorAccess::Expired);
                     context_visible.set(false);
-                    status.set(
+                    status.fail(
                         "Your session expired. Sign in again; your draft is still open.".into(),
                     );
                 }
-                _ => status.set(
+                _ => status.fail(
                     "Save failed. Retry to confirm the previous save; your draft is still open."
                         .into(),
                 ),
@@ -1199,7 +1199,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             if let Some(key) = recovery_storage_key.get_untracked() {
                 if crate::pages::recipe_recovery::remove(&key).is_err() {
                     tracing::warn!("Unable to discard a retained recipe draft");
-                    status.set("Could not discard the retained local draft.".into());
+                    status.fail("Could not discard the retained local draft.".into());
                     return false;
                 }
                 recovery_storage_key.set(None);
@@ -1234,7 +1234,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 p.recipe_id == record.scope.recipe_id && p.expected == record.scope.base_revision
             });
             if !valid_pending {
-                status.set(
+                status.fail(
                     "The retained save request is invalid; the draft was not restored.".into(),
                 );
                 return;
@@ -1261,7 +1261,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(target_arch = "wasm32")]
         if crate::pages::recipe_recovery::remove(&key).is_err() {
             tracing::warn!("Unable to discard a retained recipe draft");
-            status.set("Could not remove the retained draft.".into());
+            status.fail("Could not remove the retained draft.".into());
             return;
         }
         recovery_choice.update(|records| records.retain(|(candidate, _)| candidate != &key));
@@ -1379,7 +1379,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     view! { <div><p>{format!("Retained draft {} · {title} · based on {base}", index + 1)}</p><Button on:click=move |_| restore_recovery.run(restore_key.clone())>"Restore draft"</Button><Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| discard_recovery.run(discard_key.clone())>"Discard retained draft"</Button></div> }
                 }).collect_view()}
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| recovery_choice.set(Vec::new())>"Start a separate draft"</Button>
-                <p role="status">{move || status.get()}</p></section>
+                <p role="status">{move || status.text.get()}</p></section>
         </Show>
         <div class="recipe-editor" hidden=move || !context_visible.get() || !recovery_ready.get() || !recovery_choice.get().is_empty()>
         {move || conflict.get().map(|current| {
@@ -1403,7 +1403,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(key) = recovery_storage_key.get_untracked() {
-                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.set("Could not discard the retained local draft.".into()); return; }
+                        if crate::pages::recipe_recovery::remove(&key).is_err() { tracing::warn!("Unable to discard a retained recipe draft"); status.fail("Could not discard the retained local draft.".into()); return; }
                         recovery_storage_key.set(None);
                     }
                     baseline.set(remote_for_reload.document.clone()); original_baseline_available.set(true); draft.update(|d| d.replace_saved(remote_for_reload.document.clone())); revision.set(Some(remote_for_reload.revision)); retry.set(None); conflict.set(None); status.set("Loaded the current saved revision; local changes were discarded.".into());
@@ -1413,7 +1413,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         })}
         <crate::components::wayfinding::PageTitle text=Signal::derive(move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() }))/>
         <RecipeHeader draft=draft revision=revision status=status retained=retained pending=pending conflict=Signal::derive(move || conflict.with(|c| c.is_some())) equipment=equipment_summary title=title on_title=title_change style_value=selected_style style_options=style_options on_style=change_style actions=header_actions actions_open=actions_open>
-            <NumberField id="recipe-batch" label="Batch volume" unit="L" hint="Volume into the fermenter" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
+            <NumberField id="recipe-batch" label="Batch volume" unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
             <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1,n| d.boil_minutes=n/>
         </RecipeHeader>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
@@ -1704,7 +1704,7 @@ fn NumberField(
     path: &'static str,
     draft: RwSignal<RecipeDraft>,
     #[prop(default = 1.0)] scale: f64,
-    #[prop(optional, into)] hint: MaybeProp<String>,
+    #[prop(optional, into)] described_by: MaybeProp<String>,
     read: fn(&RecipeDocumentV1) -> Option<f64>,
     write: fn(&mut RecipeDocumentV1, Option<f64>),
 ) -> impl IntoView {
@@ -1716,7 +1716,7 @@ fn NumberField(
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error hint=hint on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error described_by=described_by on_change=change on_blur=blur numeric=true/> }
 }
 
 #[derive(Clone, Copy)]

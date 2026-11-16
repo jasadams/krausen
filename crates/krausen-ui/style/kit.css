@@ -354,6 +354,8 @@
 .recipe-header__batch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-1) var(--k-space-3); min-width: 0; }
 .recipe-header__equipment { display: grid; gap: var(--k-space-1); min-width: 0; }
 .recipe-header__equipment-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--k-space-2); min-height: var(--k-control-height); min-width: 0; }
+.recipe-header__hint { grid-column: 1 / -1; }
+.recipe-editor > .recipe-header:not(:first-child) { margin-top: 0; }
 .recipe-header__reason { margin: 0; color: var(--k-color-muted); font-size: var(--k-font-xs); }
 @media (max-width: 850px) { .recipe-header__context { grid-template-columns: repeat(2, minmax(0, 1fr)); } .recipe-header__equipment { grid-column: 1 / -1; } }
 @media (max-width: 600px) {

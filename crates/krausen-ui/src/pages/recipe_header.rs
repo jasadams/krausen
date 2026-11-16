@@ -41,16 +41,36 @@ pub fn primary_action(saved: bool, dirty: bool, readiness: Option<Readiness>) ->
     }
 }
 
-/// Failure wording the editor reports through its one status string.
-///
-/// Deliberate heuristic: the editor has a single free-text `status` and no typed
-/// failure source, and retyping every writer is outside this presentation ticket.
-/// The wording of every failure `status.set` in `recipe_editor.rs` is pinned by
-/// `failure_wording_is_recognised_without_flagging_success`; add new failure
-/// messages there. Text, not colour, still carries the meaning.
-pub fn is_failure_message(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    ["could not", "unable", "failed", "unavailable", "denied", "expired", "error", "invalid", "no longer"].iter().any(|word| lower.contains(word))
+/// The editor's single user-facing status line with a typed outcome: `set`
+/// reports progress or success, `fail` reports a failure. Setting always replaces
+/// the previous outcome, so a stale failure can never outlive its message.
+#[derive(Clone, Copy)]
+pub struct EditorStatus {
+    pub text: RwSignal<String>,
+    failed: RwSignal<bool>,
+}
+
+impl EditorStatus {
+    pub fn new() -> Self {
+        Self { text: RwSignal::new(String::new()), failed: RwSignal::new(false) }
+    }
+    pub fn set(&self, message: String) {
+        self.failed.set(false);
+        self.text.set(message);
+    }
+    pub fn fail(&self, message: String) {
+        self.failed.set(true);
+        self.text.set(message);
+    }
+    pub fn failed(&self) -> bool {
+        self.failed.get()
+    }
+}
+
+impl Default for EditorStatus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub fn save_label(saved: bool) -> &'static str {
@@ -92,7 +112,7 @@ pub struct RecipeActionSlots {
 
 fn equipment_context(summary: &EquipmentSummary) -> String {
     match &summary.source {
-        EquipmentSource::Unavailable { .. } => summary.identity(),
+        EquipmentSource::Unavailable { .. } => "Selected profile unavailable".to_owned(),
         _ => format!("{} · {}", summary.identity(), summary.overrides()),
     }
 }
@@ -101,7 +121,7 @@ fn equipment_context(summary: &EquipmentSummary) -> String {
 pub fn RecipeHeader(
     draft: RwSignal<RecipeDraft>,
     revision: RwSignal<Option<i64>>,
-    status: RwSignal<String>,
+    status: EditorStatus,
     retained: RwSignal<bool>,
     pending: RwSignal<bool>,
     conflict: Signal<bool>,
@@ -133,7 +153,7 @@ pub fn RecipeHeader(
             SaveState::Saving
         } else if conflict.get() {
             SaveState::Conflict
-        } else if is_failure_message(&status.get()) {
+        } else if status.failed() {
             SaveState::Error
         } else if dirty.get() || !saved.get() {
             SaveState::Unsaved
@@ -142,7 +162,7 @@ pub fn RecipeHeader(
         }
     });
     let message = Signal::derive(move || {
-        let message = status.get();
+        let message = status.text.get();
         if dirty.get() && (message.is_empty() || message.starts_with("Saved revision")) {
             let local = if retained.get() { "Unsaved changes · retained locally" } else { "Unsaved changes" };
             if message.is_empty() { local.to_owned() } else { format!("{message} {local}") }
@@ -187,10 +207,10 @@ pub fn RecipeHeader(
                     </BreweryPopover>
                 </div>
             </div>
-            <h1 id="recipe-editor-heading" class="recipe-header__heading">{crumb}</h1>
+            <h1 id="recipe-editor-heading" class="recipe-header__heading" tabindex="-1">{crumb}</h1>
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
             <div class="recipe-header__context">
-                <div class="recipe-header__batch">{children()}</div>
+                <div class="recipe-header__batch">{children()}<span id="recipe-batch-note" class="k-field__hint recipe-header__hint">"Batch is the volume into the fermenter"</span></div>
                 {move || view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=style_value on_change=on_style options=style_options.get()/> }}
                 <div class="recipe-header__equipment">
                     <span class="k-field__label">"Equipment"</span>
@@ -237,30 +257,17 @@ mod tests {
     }
 
     #[test]
-    fn failure_wording_is_recognised_without_flagging_success() {
-        assert!(is_failure_message("Could not discard the retained local draft."));
-        assert!(is_failure_message("Preview unavailable."));
-        for failure in [
-            "Local draft recovery is unavailable in this browser.",
-            "Unable to retain this draft locally.",
-            "Complete invalid number fields before saving.",
-            "Correct the invalid fields before saving.",
-            "The current saved revision could not be loaded. Your draft is unchanged.",
-            "The prior save request could not be verified. Reopen the recipe before saving again.",
-            "This recipe is no longer available in this workspace. Your draft is still open.",
-            "The save request was invalid. Your draft is still open.",
-            "You no longer have access to this workspace.",
-            "The selected equipment profile is unavailable.",
-            "An ingredient or import reference could not be verified.",
-        ] {
-            assert!(is_failure_message(failure), "{failure}");
-        }
-        for neutral in ["Saving…", "Updated to the current saved revision.", "Preparing the print summary…", "Review the sheet, then print or save it as a PDF."] {
-            assert!(!is_failure_message(neutral), "{neutral}");
-        }
-        assert!(!is_failure_message("Saved revision 3"));
-        assert!(!is_failure_message("Scaled recipe saved as revision 4."));
-        assert!(!is_failure_message("Draft retained against the current revision. Review it, then choose Save."));
+    fn typed_status_outcome_never_outlives_its_message() {
+        let owner = leptos::reactive::owner::Owner::new();
+        owner.with(|| {
+            let status = EditorStatus::new();
+            assert!(!status.failed());
+            status.fail("Could not save.".into());
+            assert!(status.failed());
+            status.set("Saved revision 3".into());
+            assert!(!status.failed());
+            assert_eq!(status.text.get_untracked(), "Saved revision 3");
+        });
     }
 
     #[test]
@@ -268,6 +275,6 @@ mod tests {
         let recipe_only = EquipmentSummary::default();
         assert_eq!(equipment_context(&recipe_only), "Recipe-only equipment · No recipe overrides");
         let missing = EquipmentSummary { source: EquipmentSource::Unavailable { id: "p".into() }, override_count: 3 };
-        assert_eq!(equipment_context(&missing), "Equipment profile unavailable");
+        assert_eq!(equipment_context(&missing), "Selected profile unavailable");
     }
 }
