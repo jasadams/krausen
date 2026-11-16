@@ -540,6 +540,8 @@ pub fn BrewerySaveStatus(
     #[prop(into)] state: Signal<SaveState>,
     #[prop(optional)] quiet: bool,
     #[prop(optional, into)] message: Option<Signal<String>>,
+    /// Clamp long wording to one line; the full text stays in `title` and the live region.
+    #[prop(optional)] single_line: bool,
 ) -> impl IntoView {
     let label = |state: SaveState| match state {
         SaveState::Saved => "Saved",
@@ -556,6 +558,7 @@ pub fn BrewerySaveStatus(
         SaveState::Error => "k-save-status k-save-status--error",
     };
     let text = move || message.map(|m| m.get()).filter(|m| !m.is_empty()).unwrap_or_else(|| label(state.get()).to_owned());
+    let class = move || format!("{}{}", class(), if single_line { " k-save-status--single-line" } else { "" });
     view! { <span class=class role=(!quiet).then_some("status") title=text><span class="k-save-status__dot" aria-hidden="true"></span><span class="k-save-status__text">{text}</span></span> }
 }
 

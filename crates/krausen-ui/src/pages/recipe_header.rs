@@ -8,7 +8,7 @@
 //! another header change. Nothing here saves or starts automatically.
 use crate::{
     components::{
-        BreweryDraftField, BreweryDraftSelect, BrewerySaveStatus,
+        BreweryActionGroup, BreweryDraftField, BreweryDraftSelect, BrewerySaveStatus,
         BreweryPopover, Button, ButtonVariant, SaveState,
     },
     pages::{
@@ -65,6 +65,22 @@ impl EditorStatus {
     pub fn failed(&self) -> bool {
         self.failed.get()
     }
+    /// Retire a local-storage failure that a later write/removal made obsolete.
+    /// Save and validation failures keep their message until the next outcome.
+    pub fn resolve_storage_failure(&self) {
+        const STORAGE: [&str; 4] = [
+            "Unable to retain this draft locally",
+            "The retained draft could not be removed",
+            "Could not remove the retained draft",
+            "Could not discard the retained local draft",
+        ];
+        if self.failed.get_untracked()
+            && STORAGE.iter().any(|prefix| self.text.get_untracked().starts_with(prefix))
+        {
+            self.failed.set(false);
+            self.text.set(String::new());
+        }
+    }
 }
 
 impl Default for EditorStatus {
@@ -112,6 +128,7 @@ pub struct RecipeActionSlots {
 
 fn equipment_context(summary: &EquipmentSummary) -> String {
     match &summary.source {
+        EquipmentSource::Loading { .. } => "Selected equipment profile · loading".to_owned(),
         EquipmentSource::Unavailable { .. } => "Selected profile unavailable".to_owned(),
         _ => format!("{} · {}", summary.identity(), summary.overrides()),
     }
@@ -187,12 +204,12 @@ pub fn RecipeHeader(
     view! {
         <header class="recipe-header">
             <div class="recipe-header__topbar">
-                <nav class="recipe-header__breadcrumb" aria-label="Recipe breadcrumb">
-                    <a href="/recipes">"Recipes"</a><span aria-hidden="true">"/"</span>
-                    <span>{crumb}</span>
-                </nav>
-                <div class="recipe-header__commands" role="group" aria-label="Recipe commands">
-                    <span class="recipe-header__status"><BrewerySaveStatus state=state message=message/></span>
+                <crate::components::wayfinding::Breadcrumb items=Signal::derive(move || vec![
+                    crate::components::wayfinding::Crumb::link("Recipes", "/recipes"),
+                    crate::components::wayfinding::Crumb::current(crumb()),
+                ])/>
+                <BreweryActionGroup end=true label="Recipe commands">
+                    <span class="recipe-header__status"><BrewerySaveStatus state=state message=message single_line=true/></span>
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| actions.undo.run(())>"Undo"</Button>
                     <Button variant=save_variant class="min-w-[9rem]" disabled=pending on:click=move |_| actions.save.run(())>{move || save_label(saved.get())}</Button>
                     <Button variant=start_variant aria_describedby=Signal::derive(move || reason.get().map(|_| reason_id.to_owned())) on:click=move |_| actions.start.run(())>"Start brew"</Button>
@@ -205,7 +222,7 @@ pub fn RecipeHeader(
                             <p class="note-caption">"Scale and Duplicate use the saved recipe. Save your changes first."</p>
                         </Show>
                     </BreweryPopover>
-                </div>
+                </BreweryActionGroup>
             </div>
             <h1 id="recipe-editor-heading" class="recipe-header__heading" tabindex="-1">{crumb}</h1>
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
@@ -267,6 +284,13 @@ mod tests {
             status.set("Saved revision 3".into());
             assert!(!status.failed());
             assert_eq!(status.text.get_untracked(), "Saved revision 3");
+            status.fail("Complete invalid number fields before saving.".into());
+            status.resolve_storage_failure();
+            assert!(status.failed(), "a save failure is not a storage failure");
+            status.fail("Unable to retain this draft locally; keep this page open.".into());
+            status.resolve_storage_failure();
+            assert!(!status.failed());
+            assert_eq!(status.text.get_untracked(), "");
         });
     }
 

@@ -146,14 +146,7 @@ impl EditorFocus {
         // A deliberate focus move while the asynchronous check was pending
         // takes precedence over our old bookmark.
         if document.active_element().is_some_and(|active| active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
-        let try_focus = |element: &web_sys::Element| {
-            if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
-                || element.get_client_rects().length() == 0
-                || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
-                    .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
-            element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
-                && document.active_element().is_some_and(|active| active == *element)
-        };
+        let try_focus = try_focus_element;
         let print = document.query_selector("[aria-label='Print preview']").ok().flatten();
         let original = document.get_element_by_id(&self.id)
             .filter(|_| print.is_none() || self.print_return)
@@ -259,12 +252,25 @@ pub fn RecipeEditorPage() -> impl IntoView {
     </Suspense> }
 }
 
+/// One focus guard for every deliberate editor focus move: visible, connected,
+/// enabled and not inside a hidden/inert subtree.
+#[cfg(target_arch = "wasm32")]
+fn try_focus_element(element: &web_sys::Element) -> bool {
+    use wasm_bindgen::JsCast;
+    if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
+        || element.get_client_rects().length() == 0
+        || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
+            .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
+    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
+        && web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|active| active == *element)
+}
+
 #[cfg(target_arch = "wasm32")]
 fn focus_element(id: &str) {
-    use wasm_bindgen::JsCast;
-    if let Some(target) = web_sys::window().and_then(|window| window.document()).and_then(|document| document.get_element_by_id(id)).and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok()) {
-        if target.focus().is_err() { tracing::warn!("Unable to focus a recipe section"); }
-    }
+    let focused = web_sys::window().and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .is_some_and(|element| try_focus_element(&element));
+    if !focused { tracing::warn!(target = id, "Unable to focus a recipe target"); }
 }
 
 /// Open a native disclosure from a header command, then move focus into it.
@@ -301,7 +307,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     provide_context(ContextCheckGeneration(check_generation));
     let context_visible = RwSignal::new(true);
     let context_lost = RwSignal::new(false);
-    let equipment_summary = RwSignal::new(crate::pages::recipe_equipment::EquipmentSummary::default());
+    let equipment_summary = RwSignal::new(initial.as_ref().map(|snapshot| crate::pages::recipe_equipment::EquipmentSummary::from_saved_document(&snapshot.document)).unwrap_or_default());
     let preview_gate = StoredValue::new(crate::pages::recipe_preview_gate::PreviewGate::default());
     let history_authority_failure = Callback::new(move |()| {
         if context_visible.try_get_untracked().is_none() { return; }
@@ -632,9 +638,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::write(&key, &record).is_err() {
                     tracing::warn!("Unable to retain a recipe draft locally");
                     retained.set(false);
+            status.resolve_storage_failure();
                     status.fail("Unable to retain this draft locally; keep this page open.".into());
                 } else {
                     retained.set(true);
+            status.resolve_storage_failure();
                     if let Some(old) = recovery_storage_key
                         .get_untracked()
                         .filter(|old| old != &key)
@@ -653,6 +661,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 if crate::pages::recipe_recovery::remove(&old).is_ok() {
                     recovery_storage_key.set(None);
                     retained.set(false);
+            status.resolve_storage_failure();
                 } else {
                     tracing::warn!("Unable to remove a retained recipe draft");
                     status.fail("The retained draft could not be removed from this browser.".into());
@@ -1279,19 +1288,26 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let navigate = use_navigate();
     let initial_section = query.with_untracked(|q| RecipeSection::parse(q.get("section").as_deref()));
     let active_tab = RwSignal::new(initial_section.key().to_owned());
-    let active_tab = RwSignal::new("recipe".to_owned());
     let actions_open = RwSignal::new(false);
     // Scale/Duplicate are opened from the Recipe actions popover, which closes
     // first; return focus to its trigger once the dialog closes with nothing focused.
     #[cfg(target_arch = "wasm32")]
     {
         let was_open = StoredValue::new(false);
+        let opening_route = StoredValue::new(String::new());
         Effect::new(move |_| {
             let open = scale_open.get() || duplicate_open.get();
             let previous = was_open.get_value();
             was_open.set_value(open);
-            if previous && !open {
-                request_animation_frame(|| {
+            let route = || web_sys::window().and_then(|w| w.location().pathname().ok()).unwrap_or_default();
+            if open && !previous {
+                opening_route.set_value(route());
+            } else if previous && !open {
+                let opened_at = opening_route.get_value();
+                request_animation_frame(move || {
+                    // A successful Duplicate navigates away; arrival focus on the new
+                    // page owns focus, so the old opener must not reclaim it.
+                    if route() != opened_at { return; }
                     let idle = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element())
                         .is_none_or(|active| active.tag_name() == "BODY" || active.tag_name() == "HTML");
                     if idle { focus_element("recipe-actions-trigger"); }

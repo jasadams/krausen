@@ -31,7 +31,12 @@ pub enum EquipmentSource {
         id: String,
         name: String,
     },
-    /// A profile is selected but is archived or not yet loaded.
+    /// A profile is selected but its record is not loaded yet. This is not the
+    /// same claim as "unavailable"; the header must not say recipe-only.
+    Loading {
+        id: String,
+    },
+    /// A profile is selected but is archived or otherwise unusable.
     Unavailable {
         id: String,
     },
@@ -49,6 +54,7 @@ impl EquipmentSummary {
         match &self.source {
             EquipmentSource::RecipeOnly => "Recipe-only equipment".into(),
             EquipmentSource::Profile { name, .. } => format!("Profile: {name}"),
+            EquipmentSource::Loading { .. } => "Selected equipment profile".into(),
             EquipmentSource::Unavailable { .. } => "Equipment profile unavailable".into(),
         }
     }
@@ -72,6 +78,18 @@ impl EquipmentSummary {
             source,
             override_count: override_count(&document.equipment_overrides),
         }
+    }
+}
+
+impl EquipmentSummary {
+    /// First paint, before the profile library has loaded: a selected profile is
+    /// reported as selected without claiming a name, and never as recipe-only.
+    pub fn from_saved_document(document: &RecipeDocumentV1) -> Self {
+        let source = match &document.equipment_profile_id {
+            None => EquipmentSource::RecipeOnly,
+            Some(id) => EquipmentSource::Loading { id: id.clone() },
+        };
+        Self { source, override_count: override_count(&document.equipment_overrides) }
     }
 }
 
@@ -297,6 +315,7 @@ pub fn RecipeEquipment(
             </div>
             <p class="k-field__hint">{move || match summary.get().source {
                 EquipmentSource::Profile { name, .. } => format!("Using profile “{name}” for this recipe. Recipe overrides below apply only to this recipe."),
+                EquipmentSource::Loading { .. } => "The selected profile’s details are still loading; the settings below apply to this recipe until they arrive.".to_owned(),
                 EquipmentSource::Unavailable { .. } => "The selected profile is not available here.".to_owned(),
                 EquipmentSource::RecipeOnly => "Using recipe-only equipment: the settings below belong to this recipe.".to_owned(),
             }}</p>

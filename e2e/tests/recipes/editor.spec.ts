@@ -841,6 +841,38 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
 });
 
+test('recipe header stays usable under browser page zoom and enlarged text', async ({ page, browserName }, testInfo) => {
+  test.skip(browserName !== 'chromium', 'Page-scale emulation is Chromium-only');
+  await testInfo.attach('zoom-evidence-limits', { contentType: 'application/json', body: JSON.stringify({
+    browser: page.context().browser()?.version(), hostPlatform: process.platform,
+    scope: 'Chromium page-scale (pinch/zoom) emulation and CSS text enlargement. This is not an operating-system screen-reader session; native AT is recorded separately as a limitation.',
+  }) });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Zoom ${Date.now()}`);
+  const client = await page.context().newCDPSession(page);
+  for (const factor of [2, 4]) {
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: factor });
+    const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
+    await expect(save).toBeVisible();
+    // Page scale shrinks the visual viewport; the control must stay reachable
+    // and the layout must not gain horizontal document overflow.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await save.scrollIntoViewIfNeeded();
+    await expect(save).toBeInViewport();
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+    await save.click();
+    await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+  }
+  // Text-only enlargement (root 15px → 30px/60px) is the WCAG resize-text path.
+  for (const root of ['30px', '60px']) {
+    await page.evaluate(size => { document.documentElement.style.fontSize = size; }, root);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start brew' }).first()).toBeVisible();
+  }
+});
+
 test('editor state controls keep raw labels and focus across representative presentation settings', async ({ page }, testInfo) => {
   await testInfo.attach('browser-and-evidence-limits', { contentType: 'application/json', body: JSON.stringify({
     browser: page.context().browser()?.version(), hostPlatform: process.platform,

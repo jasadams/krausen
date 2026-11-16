@@ -35,8 +35,19 @@ const SECOND_FERMENTABLE = 'Weyermann Munich I';
 
 test.setTimeout(120_000);
 
+// This suite renders one workstation fixture recipe by id. KRA-45 requires the
+// hardcoded fixture not to be treated as portable acceptance, so an installation
+// without it skips explicitly instead of failing or claiming a pass.
 test.beforeEach(async ({ page }) => {
+  await page.goto('/login');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
+  await page.goto(`/recipe-editor/${RECIPE_ID}`);
+  const missing = await page
+    .getByText('Recipe not found', { exact: false })
+    .first()
+    .isVisible({ timeout: 5_000 })
+    .catch(() => false);
+  test.skip(missing, 'compact-density workstation fixture recipe is not present in this installation');
 });
 
 test('populated recipe uses compact two-row fermentables and keeps Hops in view', async ({
@@ -217,7 +228,8 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(header.getByText('Munich Helles', { exact: true })).toBeVisible();
   await expect(header.getByRole('status')).toHaveCount(1);
   await expect(header.getByRole('button', { name: /^Save (recipe|changes)$/ })).toBeVisible();
-  await expect(header.getByRole('link', { name: /history/i })).toBeVisible();
+  await expect(header.getByRole('link', { name: /history/i })).toHaveCount(0);
+  await expect(header.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
 
   const previewSummary = page.locator('.recipe-editor__preview-summary');
   const previewDetails = page.locator('.recipe-editor__preview-details');
@@ -231,7 +243,9 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(previewSummary.getByText('4.9')).toBeVisible();
   await expect(previewSummary.getByText('20.5')).toBeVisible();
   await expect(previewSummary.getByText('6.8')).toBeVisible();
-  await expect(previewSummary.getByText('28.9')).toBeVisible();
+  await expect(previewSummary.getByText('28.9')).toHaveCount(0);
+  await expect(previewSummary.getByText('Into fermenter')).toBeVisible();
+  await expect(page.locator('.recipe-editor__preview-details').getByText('28.9')).toBeVisible();
   await expect(previewSummary.locator('.beer-portrait')).toBeVisible();
 
   await expect(previewDetails.getByRole('heading', { name: 'Water plan' })).toBeVisible();
@@ -311,7 +325,7 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   const save = header.getByRole('button', { name: /^Save (recipe|changes)$/ });
   await expect(save).toBeEnabled();
   await expect(undo).toBeDisabled();
-  await expect(status).toHaveText('');
+  await expect(status).toHaveText('Saved');
 
   const firstRow = rows.first();
   const name = firstRow.locator('input').first();
@@ -339,7 +353,7 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   await undo.click();
   await expect(name).toHaveValue(FIRST_FERMENTABLE);
   await expect(undo).toBeDisabled();
-  await expect(status).toHaveText('');
+  await expect(status).toHaveText('Saved');
 
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Fermentables' })).toBeVisible({ timeout: 30_000 });
@@ -361,12 +375,12 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   await expect(previewSummary.getByText('Original gravity')).toHaveCount(0);
   await expect(previewSummary.getByText('1.045')).toHaveCount(0);
   await attachScreenshot(page, testInfo, 'compact-ingredient-invalid-raw');
-  await page.getByRole('navigation', { name: 'Recipe breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
+  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(amount).toHaveValue('abc');
-  await page.getByRole('navigation', { name: 'Recipe breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
+  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page).toHaveURL(/\/recipes\/?$/);
   await page.goto(`/recipe-editor/${RECIPE_ID}`);
@@ -382,12 +396,12 @@ test('recipe topbar saves and guards a new draft', async ({ page }) => {
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   const savedUrl = page.url();
   await title.fill(`${original} draft`);
-  await page.getByRole('navigation', { name: 'Recipe breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
+  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
   const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Stay' }).click();
   await expect(title).toHaveValue(`${original} draft`);
-  await page.getByRole('navigation', { name: 'Recipe breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
+  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
   await guard.getByRole('button', { name: 'Save and leave' }).click();
   await expect(page).toHaveURL(/\/recipes\/?$/);
   await page.goto(savedUrl);
