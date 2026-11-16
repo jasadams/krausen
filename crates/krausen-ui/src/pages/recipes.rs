@@ -207,6 +207,9 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
     Effect::new(move |first: Option<()>| {
         let _ = search.get();
         let _ = archived.get();
+        // Consumed on every run, even when the context is invalid, so it cannot go stale.
+        let from_url = url_driven.get_value();
+        url_driven.set_value(false);
         if !context_valid.get() {
             return;
         }
@@ -214,11 +217,10 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         // A selection the URL still names (Back to an entry that carried one)
         // survives the filter change that brought it here.
         // (A user-driven filter change always closes it.)
-        if first.is_some() && !url_driven.get_value() {
+        if first.is_some() && !from_url {
             history.set(None);
             selected_revision.set(None);
         }
-        url_driven.set_value(false);
         recovery.set(None);
         detail_loading.set(false);
         load.run(None);

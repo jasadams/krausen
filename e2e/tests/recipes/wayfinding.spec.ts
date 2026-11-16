@@ -238,7 +238,7 @@ test('a hash-only Back does not suppress the next arrival focus', async ({ page 
   await expect(page.getByRole('heading', { name: 'Equipment', level: 1 })).toBeFocused();
 });
 
-test('changing the library filter closes an open saved-versions panel, while Back restores it', async ({ page }) => {
+test('changing the library filter closes an open saved-versions panel', async ({ page }) => {
   const title = `Filter closes ${Date.now()}`;
   await saveRecipe(page, title);
   await page.getByRole('button', { name: `Saved versions for ${title}` }).click();
