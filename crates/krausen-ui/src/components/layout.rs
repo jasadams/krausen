@@ -750,8 +750,11 @@ fn focus_arrival_heading() {
         use wasm_bindgen::JsCast;
         let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
         let Some(main) = document.get_element_by_id("main-content") else { return };
+        // Any deliberate focus the user has taken anywhere (sidebar, account
+        // popover, a field) wins; only the main landmark/body means "still ours".
         if let Some(active) = document.active_element() {
-            if main.contains(Some(&active)) && active.id() != "main-content" {
+            let tag = active.tag_name();
+            if tag != "BODY" && tag != "HTML" && active.id() != "main-content" {
                 return;
             }
         }

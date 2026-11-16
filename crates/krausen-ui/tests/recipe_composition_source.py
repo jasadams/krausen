@@ -106,9 +106,15 @@ class RecipeComposition(unittest.TestCase):
             start = 0
             while (index := self.editor.find(message, start)) != -1:
                 before = self.editor[max(0, index - 300):index]
-                calls = [(before.rfind("fail_storage("), "fail_storage"), (before.rfind("status.fail("), "fail")]
-                kind = max(calls)[1]
-                self.assertEqual(kind, "fail_storage", message)
+                calls = {
+                    "fail_storage": before.rfind("fail_storage("),
+                    "fail": before.rfind("status.fail("),
+                    "set": before.rfind("status.set("),
+                    "fail_operation": before.rfind("status.fail_operation("),
+                }
+                writer, position = max(calls.items(), key=lambda call: call[1])
+                self.assertGreaterEqual(position, 0, f"{message} has no recognised status writer")
+                self.assertEqual(writer, "fail_storage", message)
                 start = index + 1
 
     def test_recipe_name_is_the_shared_editable_title_variant(self):

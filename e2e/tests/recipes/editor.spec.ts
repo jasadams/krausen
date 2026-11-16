@@ -841,6 +841,29 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
 });
 
+test('late editor load never steals a deliberate focus move', async ({ page }) => {
+  const title = `Late load ${Date.now()}`;
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Saved revision \d+/ })).toBeVisible();
+  await page.goto('/recipes');
+  await page.getByLabel('Search recipes').fill(title);
+  const open = page.getByRole('link', { name: `Open ${title}` });
+  await expect(open).toBeVisible();
+  // Hold the editor's data so the heading mounts well inside the arrival window.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/read_recipe*', async route => { await held; await route.continue(); });
+  await open.click();
+  const skip = page.getByRole('link', { name: 'Skip to main content' });
+  await skip.focus();
+  release();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+  await expect(skip, 'arrival focus must not override a deliberate focus move').toBeFocused();
+});
+
 test('a focused recipe heading is visible and not clipped', async ({ page }) => {
   const title = `Arrival ${Date.now()}`;
   await page.goto('/recipe-editor/new');
