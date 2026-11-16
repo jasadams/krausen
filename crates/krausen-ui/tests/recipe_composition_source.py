@@ -92,7 +92,8 @@ class RecipeComposition(unittest.TestCase):
 
     def test_local_storage_failures_are_typed_as_storage(self):
         # A storage failure must be retired only by a later storage success, so the
-        # editor must route these messages through fail_storage, not fail.
+        # editor must route these messages through fail_storage, not fail. The
+        # messages span lines and format! calls, so classify by the nearest call.
         for message in (
             "Unable to retain this draft locally",
             "An older retained draft could not be removed from this browser.",
@@ -102,8 +103,13 @@ class RecipeComposition(unittest.TestCase):
             "Local draft recovery is unavailable in this browser.",
             "but the retained local draft could not be cleared",
         ):
-            self.assertNotIn(f'status.fail("{message}', self.editor)
-        self.assertIn("status.fail_storage(", self.editor)
+            start = 0
+            while (index := self.editor.find(message, start)) != -1:
+                before = self.editor[max(0, index - 300):index]
+                calls = [(before.rfind("fail_storage("), "fail_storage"), (before.rfind("status.fail("), "fail")]
+                kind = max(calls)[1]
+                self.assertEqual(kind, "fail_storage", message)
+                start = index + 1
 
     def test_recipe_name_is_the_shared_editable_title_variant(self):
         self.assertIn("title_variant=true", self.header)

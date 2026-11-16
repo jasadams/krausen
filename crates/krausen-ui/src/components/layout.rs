@@ -739,11 +739,14 @@ impl EditorGuard {
 }
 
 /// Focuses the page's own heading (else the main landmark) once it has
-/// rendered. Polls a bounded number of frames because pages load asynchronously;
-/// gives up as soon as the user has focused something inside the page.
+/// rendered. Pages load their content asynchronously, so this polls for a bounded
+/// time (not a frame count) and gives up as soon as the user focuses something.
 #[cfg(target_arch = "wasm32")]
 fn focus_arrival_heading() {
-    fn attempt(frames_left: u8) {
+    fn deadline_from_now() -> f64 {
+        js_sys::Date::now() + 4_000.0
+    }
+    fn attempt(deadline: f64) {
         use wasm_bindgen::JsCast;
         let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
         let Some(main) = document.get_element_by_id("main-content") else { return };
@@ -768,8 +771,8 @@ fn focus_arrival_heading() {
                     tracing::warn!(?error, "Unable to focus the arrival heading");
                 }
             }
-            None if frames_left > 0 => {
-                request_animation_frame(move || attempt(frames_left - 1));
+            None if js_sys::Date::now() < deadline => {
+                request_animation_frame(move || attempt(deadline));
             }
             None => {
                 if let Ok(main) = main.dyn_into::<web_sys::HtmlElement>() {
@@ -780,7 +783,8 @@ fn focus_arrival_heading() {
             }
         }
     }
-    request_animation_frame(|| attempt(60));
+    let deadline = deadline_from_now();
+    request_animation_frame(move || attempt(deadline));
 }
 
 /// Main authenticated layout with sidebar and content area.

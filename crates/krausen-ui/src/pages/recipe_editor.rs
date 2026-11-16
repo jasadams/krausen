@@ -1243,6 +1243,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 p.recipe_id == record.scope.recipe_id && p.expected == record.scope.base_revision
             });
             if !valid_pending {
+                // Request identity, not local draft storage: a later storage success
+                // must not silently retire this outcome.
                 status.fail(
                     "The retained save request is invalid; the draft was not restored.".into(),
                 );

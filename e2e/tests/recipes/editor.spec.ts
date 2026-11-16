@@ -841,7 +841,7 @@ test('editor controls remain usable on mobile and in dark mode', async ({ page }
   await expect(page.getByRole('button', { name: 'Toggle menu' })).toBeFocused();
 });
 
-test('keyboard arrival on a recipe focuses a visible heading', async ({ page }) => {
+test('a focused recipe heading is visible and not clipped', async ({ page }) => {
   const title = `Arrival ${Date.now()}`;
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
@@ -857,9 +857,10 @@ test('keyboard arrival on a recipe focuses a visible heading', async ({ page }) 
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+/);
   const heading = page.getByRole('heading', { level: 1 });
   await expect(heading).toHaveText(title);
-  // Arrival focus polls before the editor's asynchronous data mounts; the shared
-  // successor path (catalogue return, cleared print task) does focus this heading.
-  // Whatever focuses it, it must reveal itself rather than stay clipped.
+  // The shared successor paths (catalogue return, cleared print task) focus this
+  // heading; whenever it carries focus it must reveal itself rather than stay
+  // clipped. Arrival focus on this asynchronously mounted page is the shared
+  // layout's contract (KRA-48) and is not what this test asserts.
   await heading.focus();
   await expect(heading).toBeFocused();
   const visible = await heading.evaluate(element => {

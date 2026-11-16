@@ -162,6 +162,8 @@ pub fn Button(
     #[prop(optional, into)]
     popover_target: Option<String>,
     /// Stable DOM id for deterministic focus succession and diagnostics.
+    /// Convention: an empty String means "no id", so optional callers may pass a
+    /// defaulted String without emitting an empty id attribute.
     #[prop(optional, into)]
     id: Option<String>,
     /// Adjacent explanation of an unavailable prerequisite or consequence.
