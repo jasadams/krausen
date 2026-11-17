@@ -214,9 +214,11 @@ pub fn BreweryMetric(
     #[prop(optional, into)] unit: String,
     #[prop(optional, into)] hint: Option<String>,
     #[prop(optional)] density: MetricDensity,
+    /// Stable hook for tests and focus targets on the metric's root element.
+    #[prop(optional, into)] testid: Option<String>,
     children: Children,
 ) -> impl IntoView {
-    view! { <div class="k-metric" class:k-metric--compact=matches!(density, MetricDensity::Compact) class:k-metric--quiet=matches!(density, MetricDensity::Quiet)><div class="k-metric__label">{label}</div><div class="k-metric__value">{value}<span class="k-metric__unit">{unit}</span></div>{children()}{hint.map(|h| view! { <div class="k-metric__hint">{h}</div> })}</div> }
+    view! { <div class="k-metric" data-testid=testid class:k-metric--compact=matches!(density, MetricDensity::Compact) class:k-metric--quiet=matches!(density, MetricDensity::Quiet)><div class="k-metric__label">{label}</div><div class="k-metric__value">{value}<span class="k-metric__unit">{unit}</span></div>{children()}{hint.map(|h| view! { <div class="k-metric__hint">{h}</div> })}</div> }
 }
 
 #[component]
@@ -410,7 +412,8 @@ pub fn use_brewery_dialog_return_focus(
 pub fn BreweryDialog(
     #[prop(into)] id: String,
     #[prop(into)] title: String,
-    #[prop(into)] description: String,
+    /// Static text or a signal, so a task can describe its current state.
+    #[prop(into)] description: Signal<String>,
     open: RwSignal<bool>,
     /// Wider content column for composed pickers and forms.
     #[prop(default = false)]
@@ -469,7 +472,7 @@ pub fn BreweryDialog(
         <dialog id=id class=if wide { "k-dialog k-dialog--wide" } else { "k-dialog" } node_ref=dialog aria-labelledby=title_id.clone() aria-describedby=description_id.clone() on:close=move |_| {
             if programmatic_closes.get_untracked() > 0 { programmatic_closes.update(|count| *count -= 1); } else { open.set(false); }
         }>
-            <header class="k-dialog__header"><div><h2 id=title_id.clone()>{title}</h2><p id=description_id.clone()>{description}</p></div></header>
+            <header class="k-dialog__header"><div><h2 id=title_id.clone()>{title}</h2><p id=description_id.clone()>{move || description.get()}</p></div></header>
             <div class="k-dialog__body">{children()}</div>
             <div class="k-dialog__actions">{action_row}</div>
         </dialog>

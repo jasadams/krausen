@@ -57,7 +57,10 @@ impl GuardTaskState {
             && (!self.uncertain
                 || (matches!(
                     kind,
-                    GuardTaskKind::Evidence | GuardTaskKind::Import | GuardTaskKind::Equipment
+                    GuardTaskKind::Evidence
+                        | GuardTaskKind::Import
+                        | GuardTaskKind::Equipment
+                        | GuardTaskKind::Start
                 )
                     && self.recovery_retained))
     }
@@ -163,6 +166,17 @@ fn save_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_unconfirmed_start_may_be_left_only_with_its_retained_record() {
+        let uncertain = |in_flight, recovery_retained| GuardTaskState { uncertain: true, in_flight, recovery_retained, ..Default::default() };
+        assert!(uncertain(false, true).may_discard(GuardTaskKind::Start));
+        assert!(!uncertain(false, false).may_discard(GuardTaskKind::Start));
+        assert!(!uncertain(true, true).may_discard(GuardTaskKind::Start));
+        assert!(!GuardTaskState { in_flight: true, ..Default::default() }.may_discard(GuardTaskKind::Start));
+        assert!(!uncertain(false, true).may_discard(GuardTaskKind::Recipe));
+        // A load-error Stuck is uncertain with a retained (unidentified) record: leaving is allowed.
+        assert!(GuardTaskState { uncertain: true, recovery_retained: true, ..Default::default() }.may_discard(GuardTaskKind::Start));
+    }
     #[test]
     fn retired_history_cannot_cancel_or_publish_failure_over_a_replacement_navigation() {
         let owner = Owner::new();
@@ -274,6 +288,39 @@ mod tests {
                 !guard.history_arrival_owned(next),
                 "a subsequent genuine Close must still cancel"
             );
+        });
+    }
+    #[test]
+    fn a_start_task_changing_phase_does_not_invalidate_a_recipe_leave_lease() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let guard = super::super::EditorGuard::new();
+            let scope = |resource: Option<&str>| GuardScope {
+                installation: "local".into(),
+                account_id: "a".into(),
+                workspace_id: "w".into(),
+                resource_id: resource.map(str::to_owned),
+                base_revision: None,
+            };
+            let callbacks = || GuardTaskCallbacks {
+                save_and_leave: None,
+                return_to_actions: None,
+                discard_unsent: Callback::new(|()| true),
+            };
+            let recipe = guard.register_task(GuardTaskKind::Recipe, scope(Some("r")), callbacks());
+            let start = guard.register_task(GuardTaskKind::Start, scope(Some("r")), callbacks());
+            recipe.update(GuardTaskState { dirty: true, generation: 1, context_visible: true, ..Default::default() });
+            start.update(GuardTaskState { context_visible: true, ..Default::default() });
+            guard.request(super::super::EditorDestination::History { key: "leave".into(), attempt: 1 });
+            let navigation = guard.begin_transition();
+            assert!(guard.history_arrival_owned(navigation));
+            // The Start task keeps a constant generation, so its phase changes
+            // (here: a result becoming unconfirmed) leave the Recipe lease intact.
+            start.update(GuardTaskState { uncertain: true, recovery_retained: true, context_visible: true, ..Default::default() });
+            assert!(guard.history_arrival_owned(navigation));
+            // A moving generation would break it, which is why Start never uses one.
+            start.update(GuardTaskState { generation: 7, context_visible: true, ..Default::default() });
+            assert!(!guard.history_arrival_owned(navigation));
         });
     }
     #[test]

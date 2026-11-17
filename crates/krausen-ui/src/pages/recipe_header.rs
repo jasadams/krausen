@@ -219,7 +219,7 @@ pub fn RecipeHeader(
                     <span class="recipe-header__status"><BrewerySaveStatus state=state message=message single_line=true/></span>
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || pending.get() || !draft.with(|d| d.can_undo())) on:click=move |_| actions.undo.run(())>"Undo"</Button>
                     <Button variant=save_variant class="min-w-[9rem]" disabled=pending on:click=move |_| actions.save.run(())>{move || save_label(saved.get())}</Button>
-                    <Button variant=start_variant aria_describedby=Signal::derive(move || reason.get().map(|_| reason_id.to_owned())) on:click=move |_| actions.start.run(())>"Start brew"</Button>
+                    <Button id="recipe-start-command" variant=start_variant aria_describedby=Signal::derive(move || reason.get().map(|_| reason_id.to_owned())) on:click=move |_| actions.start.run(())>"Start brew"</Button>
                     <BreweryPopover id="recipe-actions" trigger_id="recipe-actions-trigger" label="Recipe actions" open=actions_open>
                         <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.scale)>"Scale…"</Button>
                         <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.duplicate)>"Duplicate…"</Button>

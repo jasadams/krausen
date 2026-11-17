@@ -266,7 +266,7 @@ fn try_focus_element(element: &web_sys::Element) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn focus_element(id: &str) {
+pub(crate) fn focus_element(id: &str) {
     let focused = web_sys::window().and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id(id))
         .is_some_and(|element| try_focus_element(&element));
@@ -1323,6 +1323,15 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name))));
         options
     });
+    let selected_revision = RwSignal::new(if initial_section == RecipeSection::Versions {
+        query.with_untracked(|q| parse_revision(q.get("revision").as_deref()))
+    } else {
+        None
+    });
+    provide_context(SelectedSavedRevision(selected_revision));
+    let start_open = RwSignal::new(false);
+    let version_labels = RwSignal::new(Vec::<krausen_types::recipe_library::RevisionSummary>::new());
+    let start_historical = RwSignal::new(None::<krausen_types::recipe_library::RevisionSummary>);
     let reveal = move |disclosure: &'static str, focus: &'static str| {
         active_tab.set("recipe".to_owned());
         #[cfg(target_arch = "wasm32")]
@@ -1333,11 +1342,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let header_actions = RecipeActionSlots {
         save: Callback::new(move |()| save()),
         undo: Callback::new(move |()| draft.update(|d| d.undo())),
-        // Start always opens the existing review workflow; it never commits.
+        // Start always opens the bounded review task; it never commits. A saved
+        // version inspected through `?revision=N` is the default source; its list
+        // entry is not needed, so the label falls back to the revision number.
         start: Callback::new(move |()| {
-            active_tab.set("recipe".to_owned());
-            #[cfg(target_arch = "wasm32")]
-            request_animation_frame(|| focus_element("start-brew"));
+            let head = revision.get_untracked();
+            start_historical.set(selected_revision.get_untracked().filter(|r| Some(*r) != head).map(|r| {
+                version_labels.with_untracked(|known| known.iter().find(|v| v.revision == r).cloned())
+                    .unwrap_or(krausen_types::recipe_library::RevisionSummary { revision: r, saved_by: None, saved_at: None, restored_from_revision: None })
+            }));
+            start_open.set(true);
         }),
         scale: Callback::new(move |()| scale_open.set(true)),
         duplicate: Callback::new(move |()| duplicate_open.set(true)),
@@ -1346,12 +1360,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         equipment: Callback::new(move |()| reveal("recipe-equipment-disclosure", "equipment-profile-select")),
     };
 
-    let selected_revision = RwSignal::new(if initial_section == RecipeSection::Versions {
-        query.with_untracked(|q| parse_revision(q.get("revision").as_deref()))
-    } else {
-        None
-    });
-    provide_context(SelectedSavedRevision(selected_revision));
     Effect::new(move |_| {
         let (section, revision) = query.with(|q| {
             let section = RecipeSection::parse(q.get("section").as_deref());
@@ -1438,6 +1446,14 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
         <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())] active=active_tab/></div>
+        <crate::pages::brew_start::StartBrewTask
+            open=start_open historical=start_historical identity=identity context_visible=context_visible
+            recipe_id=recipe_id revision=revision
+            dirty=Signal::derive(move || draft.with(|d| d.dirty))
+            saving=Signal::derive(move || pending.get())
+            save_status=Signal::derive(move || status.text.get())
+            request_save=Callback::new(move |()| { if pending.get_untracked() { return false; } save(); pending.get_untracked() })
+        />
         <div role="tabpanel" id="editor-panel-recipe" aria-labelledby="editor-tab-recipe" hidden=move || active_tab.get() != "recipe">
         <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate revision=revision><div class="recipe-editor__sections">
             <crate::pages::ingredient_addition::IngredientAdditions draft=draft identity=identity context_visible=context_visible/>
@@ -1460,11 +1476,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
             </BreweryDisclosure>
         </div></FormulationPreview></div>
-        <section id="start-brew" aria-label="Start brew workflow" tabindex="-1"><crate::pages::brew_start::StartBrewPanel identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision/></section>
         </div>
         <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
             <Show when=move || active_tab.get() == "versions" && context_visible.get()>
-                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next))/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
+                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
             </Show>
         </div>
         <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">
