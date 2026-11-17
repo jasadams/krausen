@@ -209,7 +209,8 @@ Workspace removal revokes that membership, not every credential the account owns
 Reuse Kyomi's installation-local browser login/authorization, PKCE and refresh
 patterns. Use exact registered redirect matching, state, S256 PKCE and one-time
 codes bound to client, user, redirect and resource audience. Refresh rotates a
-hashed token family atomically; replay revokes the family. Ordinary operations
+hashed token family atomically; reuse of a replaced browser token after the
+grace period revokes the family (MCP OAuth refresh tokens stay single-use). Ordinary operations
 never return access/refresh tokens in retry records, logs or change events.
 Pending proof records bind account, initiating credential/session, action,
 challenge, expiry and target. Completion atomically verifies and consumes the

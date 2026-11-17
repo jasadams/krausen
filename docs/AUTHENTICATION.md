@@ -3,9 +3,15 @@
 Browser and MCP access require an active account and a durable credential. On
 upgrade, existing browser access and refresh tokens without a credential binding
 are rejected; users must sign in again. Existing accounts, workspace ownership,
-recipes and password or passkey methods are retained. Refresh tokens rotate;
-reusing an earlier token revokes its credential family, so the user must sign in
-again or reconnect the MCP client.
+recipes and password or passkey methods are retained. Browser refresh tokens
+rotate with the same grace-period behaviour as Kyomi: a token that was just
+replaced is still accepted for `refresh_token_grace_period_seconds` (30 seconds)
+and rotates again, so a lost refresh response or several tabs holding the same
+cookie never sign the user out. A replaced token presented after the grace period
+is treated as theft: its credential family is revoked and the user must sign in
+again. A revoked, expired or unbound credential is rejected even inside the grace
+period. MCP OAuth refresh tokens are unchanged and remain single use: reusing a
+consumed one revokes its credential, so the MCP client must reconnect.
 
 With SMTP configured, signup sends a link; opening the link changes nothing until the
 user presses "Confirm Email", which creates the account, so mail scanners that

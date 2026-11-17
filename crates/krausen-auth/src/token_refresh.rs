@@ -25,8 +25,10 @@ pub struct RefreshedTokens {
 
 /// Attempt to mint a new access token and rotate the refresh token.
 ///
-/// Atomically rotates the durable credential family. Reuse revokes the family;
-/// verification failures and database errors return `Err`.
+/// Atomically rotates the durable credential family with Kyomi's grace-period
+/// semantics: a replaced token is accepted (and rotated again) inside the grace
+/// period, reuse after it revokes the family; verification failures, theft detection
+/// and database errors return `Err`.
 ///
 /// Does NOT perform rate limiting — callers layer that on top if they want it.
 /// Does NOT set cookies — callers assemble the HTTP response themselves.
