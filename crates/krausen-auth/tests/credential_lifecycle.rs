@@ -112,11 +112,10 @@ async fn exercise(db: DbPool) {
     let actor = krausen_app::ActorContext {
         actor_id: user.user_id.clone(),
         workspace_id: ws,
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert!(krausen_app::workspace_snapshot(&db, &actor).await.is_ok());
-    exercise_oauth(&db, &actor).await;
     let rotated = token_refresh::refresh_tokens(
         &db,
         "test-secret-at-least-32-bytes-long",
@@ -183,10 +182,12 @@ async fn exercise(db: DbPool) {
     let second_actor = krausen_app::ActorContext {
         actor_id: actor.actor_id.clone(),
         workspace_id: actor.workspace_id.clone(),
-        credential_id: second_claims.extra["credential_id"]
-            .as_str()
-            .unwrap()
-            .into(),
+        credential_id: Some(
+            second_claims.extra["credential_id"]
+                .as_str()
+                .unwrap()
+                .into(),
+        ),
         access_expires_at: second_claims.exp,
     };
     let mut held = db.begin_write().await.unwrap();
@@ -201,7 +202,7 @@ async fn exercise(db: DbPool) {
     )
     .unwrap();
     let other_db = db.clone();
-    let family = second_actor.credential_id.clone();
+    let family = second_actor.credential_id.clone().unwrap();
     let mut revoke = tokio::spawn(async move {
         krausen_auth::token_service::revoke_token_family(&other_db, &family).await
     });
@@ -224,274 +225,6 @@ async fn exercise(db: DbPool) {
     )
     .unwrap();
     assert!(jwt::validate_browser_token(&legacy, "test-secret-at-least-32-bytes-long").is_err());
-}
-
-async fn exercise_oauth(db: &DbPool, actor: &krausen_app::ActorContext) {
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    use krausen_auth::oauth_service::{self, AuthorizationRequest, Principal};
-    use sha2::{Digest, Sha256};
-    let principal = Principal {
-        user_id: actor.actor_id.clone(),
-        credential_id: actor.credential_id.clone(),
-        access_expires_at: actor.access_expires_at,
-    };
-    assert!(
-        oauth_service::register_client(db, "bad", &["http://example.test/callback".into()])
-            .await
-            .is_err()
-    );
-    let redirect = "http://127.0.0.1:34567/callback";
-    let client = oauth_service::register_client(db, "client", &[redirect.into()])
-        .await
-        .unwrap();
-    let verifier = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let request = AuthorizationRequest {
-        client_id: client.client_id.clone(),
-        redirect_uri: redirect.into(),
-        resource: "https://example.test/mcp".into(),
-        state: "opaque-state".into(),
-        code_challenge: challenge,
-        code_challenge_method: "S256".into(),
-        response_type: "code".into(),
-    };
-    let pending = oauth_service::begin_authorization(db, &request, "https://example.test/mcp")
-        .await
-        .unwrap();
-    assert!(
-        oauth_service::approve(db, &pending, &principal)
-            .await
-            .is_err()
-    );
-    oauth_service::bind_pending(db, &pending, &principal)
-        .await
-        .unwrap();
-    let (_, state, code) = oauth_service::approve(db, &pending, &principal)
-        .await
-        .unwrap();
-    assert_eq!(state, "opaque-state");
-    assert!(
-        oauth_service::approve(db, &pending, &principal)
-            .await
-            .is_err()
-    );
-    assert!(
-        oauth_service::exchange_code(
-            db,
-            "https://example.test",
-            &client.client_id,
-            None,
-            redirect,
-            "https://example.test/mcp",
-            &code,
-            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
-        )
-        .await
-        .is_err()
-    );
-    let token = oauth_service::exchange_code(
-        db,
-        "https://example.test",
-        &client.client_id,
-        None,
-        redirect,
-        "https://example.test/mcp",
-        &code,
-        verifier,
-    )
-    .await
-    .unwrap();
-    assert!(
-        oauth_service::exchange_code(
-            db,
-            "https://example.test",
-            &client.client_id,
-            None,
-            redirect,
-            "https://example.test/mcp",
-            &code,
-            verifier
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        oauth_service::verify_access(
-            db,
-            "https://example.test",
-            "https://other.test/mcp",
-            &token.access_token
-        )
-        .await
-        .is_err()
-    );
-    let agent = oauth_service::verify_access(
-        db,
-        "https://example.test",
-        "https://example.test/mcp",
-        &token.access_token,
-    )
-    .await
-    .unwrap();
-    let agent_actor = krausen_app::ActorContext {
-        actor_id: agent.user_id,
-        workspace_id: actor.workspace_id.clone(),
-        credential_id: agent.credential_id,
-        access_expires_at: agent.access_expires_at,
-    };
-    assert!(
-        krausen_app::workspace_snapshot(db, &agent_actor)
-            .await
-            .is_ok()
-    );
-    let rotated = oauth_service::refresh(
-        db,
-        "https://example.test",
-        &client.client_id,
-        None,
-        "https://example.test/mcp",
-        &token.refresh_token,
-    )
-    .await
-    .unwrap();
-    assert!(
-        oauth_service::refresh(
-            db,
-            "https://example.test",
-            &client.client_id,
-            None,
-            "https://example.test/mcp",
-            &token.refresh_token
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        oauth_service::verify_access(
-            db,
-            "https://example.test",
-            "https://example.test/mcp",
-            &rotated.access_token
-        )
-        .await
-        .is_err()
-    );
-    assert!(matches!(
-        krausen_app::workspace_snapshot(db, &agent_actor).await,
-        Err(krausen_app::Error::Forbidden)
-    ));
-    let confidential = oauth_service::register_client_with_method(
-        db,
-        "confidential",
-        &[redirect.into()],
-        "client_secret_basic",
-    )
-    .await
-    .unwrap();
-    let mut request = request;
-    request.client_id = confidential.client_id.clone();
-    let pending = oauth_service::begin_authorization(db, &request, "https://example.test/mcp")
-        .await
-        .unwrap();
-    oauth_service::bind_pending(db, &pending, &principal)
-        .await
-        .unwrap();
-    let (_, _, code) = oauth_service::approve(db, &pending, &principal)
-        .await
-        .unwrap();
-    assert!(
-        oauth_service::exchange_code(
-            db,
-            "https://example.test",
-            &confidential.client_id,
-            None,
-            redirect,
-            "https://example.test/mcp",
-            &code,
-            verifier
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        oauth_service::exchange_code(
-            db,
-            "https://example.test",
-            &confidential.client_id,
-            Some("incorrect"),
-            redirect,
-            "https://example.test/mcp",
-            &code,
-            verifier
-        )
-        .await
-        .is_err()
-    );
-    let secret = confidential.client_secret.as_deref().unwrap();
-    let issued = oauth_service::exchange_code(
-        db,
-        "https://example.test",
-        &confidential.client_id,
-        Some(secret),
-        redirect,
-        "https://example.test/mcp",
-        &code,
-        verifier,
-    )
-    .await
-    .unwrap();
-    assert!(
-        oauth_service::refresh(
-            db,
-            "https://example.test",
-            &confidential.client_id,
-            Some("incorrect"),
-            "https://example.test/mcp",
-            &issued.refresh_token
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        oauth_service::refresh(
-            db,
-            "https://example.test",
-            &client.client_id,
-            None,
-            "https://example.test/mcp",
-            &issued.refresh_token
-        )
-        .await
-        .is_err()
-    );
-    let next = oauth_service::refresh(
-        db,
-        "https://example.test",
-        &confidential.client_id,
-        Some(secret),
-        "https://example.test/mcp",
-        &issued.refresh_token,
-    )
-    .await
-    .unwrap();
-    oauth_service::revoke(
-        db,
-        &confidential.client_id,
-        Some(secret),
-        &next.refresh_token,
-    )
-    .await
-    .unwrap();
-    assert!(
-        oauth_service::verify_access(
-            db,
-            "https://example.test",
-            "https://example.test/mcp",
-            &next.access_token
-        )
-        .await
-        .is_err()
-    );
 }
 
 async fn sqlite() -> DbPool {

@@ -30,6 +30,12 @@ pub fn cors_layer() -> CorsLayer {
 
 /// Security headers middleware.
 pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    let is_consent_get = request.method() == Method::GET
+        && matches!(
+            request.uri().path(),
+            "/api/v1/oauth/authorize" | "/api/v1/oauth/authorize/continue"
+        );
+
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
@@ -45,6 +51,21 @@ pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
         HeaderName::from_static("x-xss-protection"),
         HeaderValue::from_static("1; mode=block"),
     );
+
+    // Consent pages get a scriptless policy. Fonts are served from this origin
+    // (/public/fonts, imported by the page stylesheet), so font-src is 'self'.
+    if is_consent_get
+        && headers
+            .get("content-type")
+            .is_some_and(|value| value.as_bytes().starts_with(b"text/html"))
+    {
+        headers.insert(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static(
+                "default-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            ),
+        );
+    }
 
     response
 }

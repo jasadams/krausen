@@ -133,3 +133,34 @@ pub struct ApiToken {
     pub last_used: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
+
+/// OAuth client record.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct OAuthClient {
+    /// Primary key (UUID stored as TEXT for SQLite compatibility).
+    pub id: String,
+
+    /// Unique client identifier (e.g., "mcp-<random>").
+    pub client_id: String,
+
+    /// Optional hashed client secret (public clients have None).
+    pub client_secret_hash: Option<String>,
+
+    /// Display name (e.g., "Cursor IDE").
+    pub name: String,
+
+    /// Allowed redirect URIs (JSONB array).
+    pub redirect_uris: serde_json::Value,
+
+    /// Allowed scopes (JSONB array).
+    pub scopes: serde_json::Value,
+
+    /// Client type: "public" or "confidential".
+    pub client_type: String,
+
+    /// Whether this client is active.
+    pub active: bool,
+
+    /// When this client was registered.
+    pub created_at: DateTime<Utc>,
+}

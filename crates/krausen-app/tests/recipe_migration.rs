@@ -33,7 +33,7 @@ async fn exercise(db: DbPool) {
     let actor = ActorContext {
         actor_id: "migration-u".into(),
         workspace_id: "migration-w".into(),
-        credential_id: "migration-c".into(),
+        credential_id: Some("migration-c".into()),
         access_expires_at: 4102444800,
     };
     assert!(matches!(
@@ -70,7 +70,7 @@ async fn exercise(db: DbPool) {
     let wrong = ActorContext {
         actor_id: "migration-u".into(),
         workspace_id: "wrong-workspace".into(),
-        credential_id: "migration-c".into(),
+        credential_id: Some("migration-c".into()),
         access_expires_at: 4102444800,
     };
     assert!(matches!(

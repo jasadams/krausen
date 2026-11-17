@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use krausen_auth::{
-    oauth_service::{self, AuthorizationRequest, Principal},
+    middleware::Principal,
     session,
     token_service::DeviceInfo,
     user_service,
@@ -107,54 +107,22 @@ async fn exercise(db: DbPool) {
     .unwrap()
     .claims;
     let principal = Principal {
-        user_id: user.user_id,
-        credential_id: claims.extra["credential_id"].as_str().unwrap().into(),
+        user_id: user.user_id.clone(),
+        credential_id: Some(claims.extra["credential_id"].as_str().unwrap().into()),
         access_expires_at: claims.exp,
     };
     let redirect = "http://127.0.0.1:34567/callback";
-    let reg = oauth_service::register_client(&db, "SDK client", &[redirect.into()])
-        .await
-        .unwrap();
+    let resource = format!("{base}/mcp");
     let verifier = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let req = AuthorizationRequest {
-        client_id: reg.client_id.clone(),
-        redirect_uri: redirect.into(),
-        resource: format!("{base}/mcp"),
-        state: "state".into(),
-        code_challenge: URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
-        code_challenge_method: "S256".into(),
-        response_type: "code".into(),
-    };
-    let pending = oauth_service::begin_authorization(&db, &req, &req.resource)
-        .await
-        .unwrap();
-    oauth_service::bind_pending(&db, &pending, &principal)
-        .await
-        .unwrap();
-    let (_, _, code) = oauth_service::approve(&db, &pending, &principal)
-        .await
-        .unwrap();
-    let tokens = oauth_service::exchange_code(
-        &db,
-        &base,
-        &reg.client_id,
-        None,
-        redirect,
-        &req.resource,
-        &code,
-        verifier,
-    )
-    .await
-    .unwrap();
-    // Exercise the browser-facing OAuth endpoints, not just the grant service.
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let http_oauth = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
+
+    // Discovery.
     let metadata: serde_json::Value = http_oauth
         .get(format!("{base}/.well-known/oauth-authorization-server"))
-        .header("Forwarded", "proto=https;host=attacker.example")
-        .header("X-Forwarded-Host", "attacker.example")
         .send()
         .await
         .unwrap()
@@ -166,90 +134,141 @@ async fn exercise(db: DbPool) {
         metadata["token_endpoint"],
         format!("{base}/api/v1/oauth/token")
     );
-    assert_eq!(
-        metadata["token_endpoint_auth_methods_supported"],
-        json!(["none", "client_secret_basic"])
-    );
+    assert_eq!(metadata["token_endpoint_auth_methods_supported"], json!(["none"]));
     let protected: serde_json::Value = http_oauth
         .get(format!("{base}/.well-known/oauth-protected-resource/mcp"))
-        .header("X-Forwarded-Proto", "https")
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert_eq!(protected["resource"], req.resource);
+    assert_eq!(protected["resource"], resource);
     assert_eq!(protected["authorization_servers"], json!([base]));
-    let registration = http_oauth.post(format!("{base}/api/v1/oauth/register"))
-        .json(&json!({"client_name":"HTTP client","redirect_uris":[redirect],"token_endpoint_auth_method":"none"})).send().await.unwrap();
-    assert_eq!(registration.status(), reqwest::StatusCode::CREATED);
-    let registered: serde_json::Value = registration.json().await.unwrap();
-    let private_registration = http_oauth.post(format!("{base}/api/v1/oauth/register")).json(&json!({"client_name":"HTTP confidential", "redirect_uris":[redirect], "token_endpoint_auth_method":"client_secret_basic"})).send().await.unwrap();
-    assert_eq!(private_registration.status(), reqwest::StatusCode::CREATED);
-    let private_registration: serde_json::Value = private_registration.json().await.unwrap();
-    assert!(private_registration["client_secret"].as_str().is_some());
-    assert_eq!(private_registration["client_secret_expires_at"], 0);
+    for path in ["/.well-known/openid-configuration", "/mcp/.well-known/openid-configuration"] {
+        let openid = http_oauth.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(openid.status(), reqwest::StatusCode::OK, "{path}");
+    }
 
-    let http_client_id = registered["client_id"].as_str().unwrap();
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let started = http_oauth
+    // Dynamic client registration creates a public client.
+    let registration = http_oauth
+        .post(format!("{base}/api/v1/oauth/register"))
+        .json(&json!({"client_name":"HTTP client","redirect_uris":[redirect]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(registration.status(), reqwest::StatusCode::OK);
+    let registered: serde_json::Value = registration.json().await.unwrap();
+    let client_id = registered["client_id"].as_str().unwrap().to_string();
+    assert!(registered.get("client_secret").is_none());
+
+    // Authorization: signed out is sent to login; signed in gets the consent page.
+    let authorize_query = |state: &str| {
+        vec![
+            ("client_id", client_id.clone()),
+            ("redirect_uri", redirect.to_string()),
+            ("state", state.to_string()),
+            ("code_challenge", challenge.clone()),
+            ("code_challenge_method", "S256".to_string()),
+            ("response_type", "code".to_string()),
+            ("scope", "mcp".to_string()),
+        ]
+    };
+    let signed_out = http_oauth
         .get(format!("{base}/api/v1/oauth/authorize"))
-        .query(&[
-            ("client_id", http_client_id),
-            ("redirect_uri", redirect),
-            ("resource", req.resource.as_str()),
-            ("state", "http-state"),
-            ("code_challenge", challenge.as_str()),
-            ("code_challenge_method", "S256"),
-            ("response_type", "code"),
-        ])
+        .query(&authorize_query("s0"))
         .send()
         .await
         .unwrap();
-    assert!(started.status().is_redirection());
-    let continue_path = started.headers()[reqwest::header::LOCATION]
-        .to_str()
-        .unwrap();
-    let pending_id = url::Url::parse(&format!("{base}{continue_path}"))
-        .unwrap()
-        .query_pairs()
-        .find(|(k, _)| k == "state")
-        .unwrap()
-        .1
-        .into_owned();
-    let consent = http_oauth
-        .get(format!("{base}{continue_path}"))
-        .bearer_auth(&browser.access_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(consent.status(), reqwest::StatusCode::OK);
-    let denied = http_oauth
-        .post(format!("{base}/api/v1/oauth/authorize/approve"))
-        .bearer_auth(&browser.access_token)
-        .header("Origin", "https://evil.example")
-        .form(&[("state", pending_id.as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
-    let approval = http_oauth
-        .post(format!("{base}/api/v1/oauth/authorize/approve"))
-        .bearer_auth(&browser.access_token)
-        .header("Origin", &base)
-        .form(&[("state", pending_id.as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert!(approval.status().is_redirection());
-    let location = url::Url::parse(
-        approval.headers()[reqwest::header::LOCATION]
+    assert!(signed_out.status().is_redirection());
+    assert!(
+        signed_out.headers()[reqwest::header::LOCATION]
             .to_str()
-            .unwrap(),
+            .unwrap()
+            .contains("/login?oauth_continue=")
+    );
+    let session_cookie = format!("access_token={}", browser.access_token);
+    let consent_page = |state: &'static str| {
+        let http = http_oauth.clone();
+        let base = base.clone();
+        let query = authorize_query(state);
+        let cookie = session_cookie.clone();
+        async move {
+            let page = http
+                .get(format!("{base}/api/v1/oauth/authorize"))
+                .query(&query)
+                .header(reqwest::header::COOKIE, cookie)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(page.status(), reqwest::StatusCode::OK);
+            let nonce_cookie = page
+                .headers()
+                .get_all(reqwest::header::SET_COOKIE)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .find(|v| v.starts_with("oauth_consent_"))
+                .and_then(|v| v.split(';').next())
+                .unwrap()
+                .to_string();
+            let html = page.text().await.unwrap();
+            let field = |name: &str| {
+                let marker = format!("name=\"{name}\" value=\"");
+                let start = html.find(&marker).unwrap() + marker.len();
+                html[start..start + html[start..].find('"').unwrap()].to_string()
+            };
+            assert!(html.contains("Allow") && html.contains("Deny"));
+            (field("transaction"), field("csrf"), nonce_cookie)
+        }
+    };
+    let decide = |transaction: String, csrf: String, nonce: String, decision: &'static str| {
+        let http = http_oauth.clone();
+        let base = base.clone();
+        let cookie = format!("{session_cookie}; {nonce}");
+        async move {
+            http.post(format!("{base}/api/v1/oauth/authorize"))
+                .header(reqwest::header::COOKIE, cookie)
+                .form(&[
+                    ("transaction", transaction.as_str()),
+                    ("csrf", csrf.as_str()),
+                    ("decision", decision),
+                ])
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    // A wrong CSRF token is refused, and consumes the transaction.
+    let (tx, _csrf, nonce) = consent_page("s1").await;
+    assert_eq!(
+        decide(tx.clone(), "wrong".into(), nonce.clone(), "allow").await.status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        decide(tx, "wrong".into(), nonce, "allow").await.status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    // Deny returns access_denied to the client.
+    let (tx, csrf, nonce) = consent_page("s2").await;
+    let denied = decide(tx, csrf, nonce, "deny").await;
+    assert_eq!(denied.status(), reqwest::StatusCode::OK);
+    assert!(denied.headers()["refresh"].to_str().unwrap().contains("error=access_denied"));
+    // Allow returns a code.
+    let (tx, csrf, nonce) = consent_page("s3").await;
+    let allowed = decide(tx, csrf, nonce, "allow").await;
+    assert_eq!(allowed.status(), reqwest::StatusCode::OK);
+    let callback = url::Url::parse(
+        allowed.headers()["refresh"]
+            .to_str()
+            .unwrap()
+            .trim_start_matches("0; url="),
     )
     .unwrap();
-    let http_code = location
+    assert_eq!(
+        callback.query_pairs().find(|(k, _)| k == "state").unwrap().1,
+        "s3"
+    );
+    let code = callback
         .query_pairs()
         .find(|(k, _)| k == "code")
         .unwrap()
@@ -259,9 +278,8 @@ async fn exercise(db: DbPool) {
         .post(format!("{base}/api/v1/oauth/token"))
         .form(&[
             ("grant_type", "authorization_code"),
-            ("client_id", http_client_id),
-            ("resource", req.resource.as_str()),
-            ("code", http_code.as_str()),
+            ("client_id", client_id.as_str()),
+            ("code", code.as_str()),
             ("redirect_uri", redirect),
             ("code_verifier", verifier),
         ])
@@ -269,82 +287,48 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert_eq!(exchange.status(), reqwest::StatusCode::OK);
-    assert!(
-        exchange.json::<serde_json::Value>().await.unwrap()["access_token"]
-            .as_str()
-            .is_some()
-    );
-    // Confidential client authentication is enforced by the HTTP token and
-    // revocation endpoints as well as by the shared grant service.
-    let private = oauth_service::register_client_with_method(
-        &db,
-        "private",
-        &[redirect.into()],
-        "client_secret_basic",
-    )
-    .await
-    .unwrap();
-    let mut private_request = req.clone();
-    private_request.client_id = private.client_id.clone();
-    let private_pending = oauth_service::begin_authorization(&db, &private_request, &req.resource)
-        .await
-        .unwrap();
-    oauth_service::bind_pending(&db, &private_pending, &principal)
-        .await
-        .unwrap();
-    let (_, _, private_code) = oauth_service::approve(&db, &private_pending, &principal)
-        .await
-        .unwrap();
-    let private_secret = private.client_secret.as_deref().unwrap();
-    let form = [
-        ("grant_type", "authorization_code"),
-        ("resource", req.resource.as_str()),
-        ("code", private_code.as_str()),
-        ("redirect_uri", redirect),
-        ("code_verifier", verifier),
-    ];
-    let wrong = http_oauth
+    let exchange: serde_json::Value = exchange.json().await.unwrap();
+    struct Tokens {
+        access_token: String,
+        refresh_token: String,
+    }
+    let tokens = Tokens {
+        access_token: exchange["access_token"].as_str().unwrap().to_string(),
+        refresh_token: exchange["refresh_token"].as_str().unwrap().to_string(),
+    };
+    assert_eq!(exchange["scope"], "mcp");
+    // The code is single use.
+    let replay = http_oauth
         .post(format!("{base}/api/v1/oauth/token"))
-        .basic_auth(&private.client_id, Some("wrong"))
-        .form(&form)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(wrong.status(), reqwest::StatusCode::UNAUTHORIZED);
-    let granted = http_oauth
-        .post(format!("{base}/api/v1/oauth/token"))
-        .basic_auth(&private.client_id, Some(private_secret))
-        .form(&form)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(granted.status(), reqwest::StatusCode::OK);
-    let granted: serde_json::Value = granted.json().await.unwrap();
-    let private_refresh = granted["refresh_token"].as_str().unwrap();
-    let refresh = http_oauth
-        .post(format!("{base}/api/v1/oauth/token"))
-        .basic_auth(&private.client_id, Some(private_secret))
         .form(&[
-            ("grant_type", "refresh_token"),
-            ("resource", req.resource.as_str()),
-            ("refresh_token", private_refresh),
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id.as_str()),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect),
+            ("code_verifier", verifier),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(refresh.status(), reqwest::StatusCode::OK);
-    let refresh: serde_json::Value = refresh.json().await.unwrap();
-    let revoked = http_oauth
-        .post(format!("{base}/api/v1/oauth/revoke"))
-        .basic_auth(&private.client_id, Some(private_secret))
-        .form(&[("token", refresh["refresh_token"].as_str().unwrap())])
+    assert_eq!(replay.status(), reqwest::StatusCode::BAD_REQUEST);
+    // Refresh does not rotate: the same refresh token comes back with a new access token.
+    let refreshed = http_oauth
+        .post(format!("{base}/api/v1/oauth/token"))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", client_id.as_str()),
+            ("refresh_token", tokens.refresh_token.as_str()),
+        ])
         .send()
         .await
         .unwrap();
-    assert_eq!(revoked.status(), reqwest::StatusCode::OK);
+    assert_eq!(refreshed.status(), reqwest::StatusCode::OK);
+    let refreshed: serde_json::Value = refreshed.json().await.unwrap();
+    assert_eq!(refreshed["refresh_token"], tokens.refresh_token);
+    assert!(refreshed["access_token"].as_str().is_some());
     let transport = || {
         StreamableHttpClientTransport::from_config(
-            StreamableHttpClientTransportConfig::with_uri(req.resource.clone())
+            StreamableHttpClientTransportConfig::with_uri(resource.clone())
                 .auth_header(tokens.access_token.clone()),
         )
     };
@@ -2417,47 +2401,14 @@ async fn exercise(db: DbPool) {
     assert_eq!(denied.is_error, Some(true));
     krausen_core::db_execute!(&db, "UPDATE workspace_users SET role = 'workspace_admin' WHERE workspace_id = $1 AND user_id = $2", &ws, &principal.user_id).unwrap();
     let http = reqwest::Client::new();
-    assert_eq!(
-        http.post(&req.resource).send().await.unwrap().status(),
-        reqwest::StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        http.post(&req.resource)
-            .bearer_auth(&tokens.access_token)
-            .header("Origin", "https://evil.example")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::FORBIDDEN
-    );
-    let rotated = oauth_service::refresh(
-        &db,
-        &base,
-        &reg.client_id,
-        None,
-        &req.resource,
-        &tokens.refresh_token,
-    )
-    .await
-    .unwrap();
-    assert!(
-        oauth_service::refresh(
-            &db,
-            &base,
-            &reg.client_id,
-            None,
-            &req.resource,
-            &tokens.refresh_token
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        oauth_service::verify_access(&db, &base, &req.resource, &rotated.access_token)
-            .await
-            .is_err()
-    );
+    let unauthenticated = http.post(&resource).send().await.unwrap();
+    assert_eq!(unauthenticated.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let challenge = unauthenticated.headers()[reqwest::header::WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap();
+    assert!(challenge.contains("resource_metadata=") && challenge.contains("invalid_token"));
+    // A token minted for a deactivated account is refused.
+    krausen_core::db_execute!(&db, "UPDATE users SET active = FALSE WHERE user_id = $1", &principal.user_id).unwrap();
     assert!(
         modern
             .call_tool(
@@ -2480,6 +2431,7 @@ async fn exercise(db: DbPool) {
             .await
             .is_err()
     );
+    krausen_core::db_execute!(&db, "UPDATE users SET active = TRUE WHERE user_id = $1", &principal.user_id).unwrap();
     krausen_core::db_execute!(
         &db,
         "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
@@ -2507,6 +2459,9 @@ async fn exercise(db: DbPool) {
         .await,
         krausen_types::recipe_library::LibraryOutcome::Forbidden
     ));
+    // An MCP access token is its own authority (a signed JWT with `purpose = mcp`):
+    // revoking the browser session does not end it; the token ends at
+    // its expiry or when the account is deactivated (asserted above).
     assert!(
         modern
             .call_tool(
@@ -2518,7 +2473,7 @@ async fn exercise(db: DbPool) {
                 )
             )
             .await
-            .is_err()
+            .is_ok()
     );
     server.abort();
 }

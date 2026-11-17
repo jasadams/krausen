@@ -199,18 +199,20 @@ login-free personal mode for protected operations. Without SMTP, the first
 user and invited users sign up directly and other addresses are refused; ordinary account/role rules apply afterwards.
 No separate subscription or agent permission model is introduced.
 
-Browser sessions and MCP connections have durable credential records linked to
-one account. Every protected call verifies issuer, audience, expiry and durable
-credential/account revocation; current workspace membership is checked in shared
+Browser sessions have durable credential records linked to one account; an MCP
+connection carries a signed access token (see `docs/AUTHENTICATION.md`). Every
+protected call verifies issuer, audience, expiry and, for browser sessions, durable
+credential revocation, and for both the account's active state; current workspace membership is checked in shared
 operations. Authentication failures and datastore failures fail closed. Positive
 membership/revocation caches cannot extend access past a committed revocation.
 Workspace removal revokes that membership, not every credential the account owns.
 
 Reuse Kyomi's installation-local browser login/authorization, PKCE and refresh
-patterns. Use exact registered redirect matching, state, S256 PKCE and one-time
-codes bound to client, user, redirect and resource audience. Refresh rotates a
-hashed token family atomically; reuse of a replaced browser token after the
-grace period revokes the family (MCP OAuth refresh tokens stay single-use). Ordinary operations
+patterns. Use exact registered redirect matching, S256 PKCE and one-time codes bound
+to client, user and redirect. Browser refresh rotates a hashed token family atomically;
+reuse of a replaced browser token after the grace period revokes the family. MCP OAuth
+refresh tokens do not rotate: the same token returns with a new access
+token and a renewed window. Ordinary operations
 never return access/refresh tokens in retry records, logs or change events.
 Pending proof records bind account, initiating credential/session, action,
 challenge, expiry and target. Completion atomically verifies and consumes the
@@ -240,9 +242,8 @@ client support. Unsupported versions fail explicitly.
 The newer revision has self-contained requests and no protocol-level session;
 legacy session/stream state belongs only to its adapter. Reconnect/refetch plus
 application request identity ensures correctness without durable notification
-replay. Adopt installation-local OAuth discovery and protected-resource metadata;
-validate resource audience and Origin, and keep callback/client metadata fetches
-bounded and protected against private-network SSRF. SDK updates and additional
+replay. Adopt installation-local OAuth discovery and protected-resource metadata and
+dynamic client registration; callback and client metadata are never fetched. SDK updates and additional
 clients are mechanical implementation work under this contract, not a new
 business permission design.
 

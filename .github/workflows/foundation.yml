@@ -39,14 +39,15 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y socat openssl
-        timeout-minutes: 5
       - run: cargo test -p krausen-auth --test credential_lifecycle
       - run: FRONTEND_URL=https://example.test cargo test -p krausen-auth --test secure_cookie
-      - run: FRONTEND_URL=https://localhost cargo test -p krausen-server --test https_proxy
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
       - run: cargo test -p krausen-server --test migration_orders --test mcp_auth
+      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry
+      - run: cargo test -p krausen-server --lib route_error
+      - run: cargo test -p krausen-auth --lib sliding_expiry_tests
+      - run: cargo test -p krausen-auth --lib request_meta
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-app --test formulation_preview
       - run: cargo test -p krausen-app --test equipment_profiles

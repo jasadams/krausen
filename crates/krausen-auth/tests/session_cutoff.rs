@@ -370,6 +370,47 @@ async fn user_lookup_error_fails_closed(db: &DbPool) {
     );
 }
 
+/// KYO-571 port: an MCP JWT is refused by the browser extractor (`AuthUser`),
+/// so it cannot reach any non-`/mcp` route. Without browser issuer/audience the
+/// validator refuses it first, with the same message as any foreign token.
+async fn mcp_token_is_refused_by_the_browser_extractor(db: &DbPool) {
+    let u = user(db).await;
+    let mcp = jwt::create_mcp_access_token_str(&u.user_id, SECRET, 15, Default::default()).unwrap();
+    match authenticate(db, &mcp).await {
+        Err(krausen_core::Error::Unauthorized(msg)) => {
+            assert_eq!(msg, "Invalid browser credential")
+        }
+        Err(other) => panic!("expected Unauthorized, got {other:?}"),
+        Ok(_) => panic!("an MCP token must not authenticate as a browser session"),
+    }
+    // The control: a real browser session for the same user is accepted.
+    let sess = login(db, &u).await;
+    assert!(authenticate(db, &sess.access_token).await.is_ok());
+}
+
+/// Even an MCP-purpose token that carries a live browser credential id and the
+/// browser issuer/audience (everything else the extractor checks) is refused
+/// because the purpose claim means it has no browser authority.
+async fn mcp_purpose_with_browser_claims_is_still_refused(db: &DbPool) {
+    let u = user(db).await;
+    let sess = login(db, &u).await;
+    let browser = jwt::validate_browser_token(&sess.access_token, SECRET)
+        .unwrap()
+        .claims;
+    let mut extra = browser.extra.clone();
+    extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
+    extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
+    assert!(extra.contains_key("credential_id"), "fixture carries a live credential");
+    let forged = jwt::create_mcp_access_token_str(&u.user_id, SECRET, 15, extra).unwrap();
+    match authenticate(db, &forged).await {
+        Err(krausen_core::Error::Unauthorized(msg)) => {
+            assert_eq!(msg, "Token is not a browser session")
+        }
+        Err(other) => panic!("expected Unauthorized, got {other:?}"),
+        Ok(_) => panic!("a purpose token must never authenticate as a browser session"),
+    }
+}
+
 async fn sqlite() -> DbPool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -414,6 +455,8 @@ macro_rules! on_both_backends {
 }
 
 on_both_backends!(
+    mcp_token_is_refused_by_the_browser_extractor,
+    mcp_purpose_with_browser_claims_is_still_refused,
     new_user_has_no_cutoff,
     login_signs_session_issuance_and_authenticates,
     revoke_all_sessions_invalidates_access_and_refresh,

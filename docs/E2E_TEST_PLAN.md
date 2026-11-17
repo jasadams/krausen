@@ -492,9 +492,27 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ---
 
+## TC-022a: MCP OAuth Authorization
+
+**Description:** An MCP client obtains an access token through dynamic registration, consent and the token endpoint.
+
+**Steps:**
+1. GET `/.well-known/oauth-authorization-server` and verify the issuer, `/api/v1/oauth/authorize`, `/api/v1/oauth/token` and `/api/v1/oauth/register` endpoints and `["none"]` token endpoint auth methods
+2. POST `/api/v1/oauth/register` with a loopback redirect URI and verify a public `client_id` is returned
+3. Open `/api/v1/oauth/authorize` with the client, redirect URI, `state`, an S256 `code_challenge` and `response_type=code` while signed out; verify the redirect to `/login?oauth_continue=...`
+4. Sign in; verify the consent page names the client, account, workspace and callback origin, with Allow and Deny
+5. Click Deny in one attempt and verify the callback receives `error=access_denied`; repeat and click Allow, and verify the callback receives a `code` and the original `state`
+6. POST the code with the PKCE verifier to `/api/v1/oauth/token` and verify an access token, a refresh token and scope `mcp`; verify replaying the code fails
+7. POST the refresh token to the token endpoint and verify the same refresh token returns with a new access token
+8. Call `/mcp` without a token and verify 401 with a `WWW-Authenticate` header pointing at the protected-resource metadata; call it with the access token and verify the call succeeds
+
+**Expected Result:** The client holds an MCP access token that works only on `/mcp`; signing out of the browser does not end it.
+
+---
+
 ## TC-022: MCP Endpoint
 
-**Description:** The MCP server responds to initialize, tools/list, and tools/call requests.
+**Description:** The MCP server responds to initialize, tools/list, and tools/call requests, authenticated with an MCP access token (TC-022a) sent as a Bearer token.
 
 **Steps:**
 1. Send a POST request to `/mcp` with the JSON-RPC `initialize` method:

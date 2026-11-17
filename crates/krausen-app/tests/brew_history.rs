@@ -113,7 +113,7 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1, RecipeDocume
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace,
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let profile_id = Uuid::new_v4().to_string();

@@ -107,6 +107,16 @@ pub fn create_session_access_token_str(
     create_access_token_with_purpose(sub, secret, expires_minutes, extra, None, Some(issued))
 }
 
+/// Issue an access token usable only by the MCP resource.
+pub fn create_mcp_access_token_str(
+    sub: &str,
+    secret: &str,
+    expires_minutes: i64,
+    extra: std::collections::HashMap<String, serde_json::Value>,
+) -> krausen_core::Result<String> {
+    create_access_token_with_purpose(sub, secret, expires_minutes, extra, Some(TokenPurpose::Mcp), None)
+}
+
 fn create_access_token_with_purpose(
     sub: &str,
     secret: &str,
@@ -259,6 +269,85 @@ mod tests {
             decoded.claims.extra.is_empty(),
             "Rust-created tokens have no extra fields"
         );
+        decoded.claims.require_session().unwrap();
+    }
+
+    #[test]
+    fn mcp_purpose_is_signed_and_cannot_be_used_as_session() {
+        let token =
+            create_mcp_access_token_str("user-1", "secret", 15, Default::default()).unwrap();
+        let decoded = validate_token(&token, "secret").unwrap();
+        assert_eq!(decoded.claims.purpose, Some(TokenPurpose::Mcp));
+        assert!(decoded.claims.require_session().is_err());
+        assert!(validate_token(&token, "other-secret").is_err());
+    }
+
+    #[test]
+    fn malformed_or_unknown_purpose_is_rejected() {
+        let now = Utc::now();
+        for purpose in [
+            serde_json::json!("browser"),
+            serde_json::json!(["mcp"]),
+            serde_json::json!(7),
+            serde_json::Value::Null,
+        ] {
+            let payload = serde_json::json!({
+                "sub": "user-1",
+                "iat": now.timestamp(),
+                "exp": (now + Duration::minutes(15)).timestamp(),
+                "purpose": purpose,
+            });
+            let token = jsonwebtoken::encode(
+                &Header::default(),
+                &payload,
+                &EncodingKey::from_secret(b"secret"),
+            )
+            .unwrap();
+            assert!(validate_token(&token, "secret").is_err());
+        }
+    }
+
+    #[test]
+    fn mcp_token_ignores_caller_supplied_purpose_and_session_claims() {
+        // A caller cannot smuggle a different purpose or a session issuance
+        // into an MCP token through `extra`.
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("purpose".to_string(), serde_json::json!("browser"));
+        extra.insert("session_iat_us".to_string(), serde_json::json!(1));
+        let token = create_mcp_access_token_str("user-1", "secret", 15, extra).unwrap();
+        let claims = validate_token(&token, "secret").unwrap().claims;
+        assert_eq!(claims.purpose, Some(TokenPurpose::Mcp));
+        assert_eq!(claims.session_iat_us, None);
+    }
+
+    #[test]
+    fn mcp_token_is_refused_by_browser_validation() {
+        // No browser issuer/audience: the browser validator must refuse it.
+        let token =
+            create_mcp_access_token_str("user-1", "secret", 15, Default::default()).unwrap();
+        assert!(validate_browser_token(&token, "secret").is_err());
+    }
+
+    #[test]
+    fn require_current_session_exempts_purpose_tokens_from_the_cutoff() {
+        let token =
+            create_mcp_access_token_str("user-1", "secret", 15, Default::default()).unwrap();
+        let claims = validate_token(&token, "secret").unwrap().claims;
+        // A cutoff far in the future revokes every browser session, not MCP.
+        claims
+            .require_current_session(Some(Utc::now().timestamp_micros() + 10_000_000_000))
+            .unwrap();
+        let session = validate_token(
+            &create_session_access_token_str("user-1", "secret", 15, Default::default(), None)
+                .unwrap(),
+            "secret",
+        )
+        .unwrap()
+        .claims;
+        session.require_session().unwrap();
+        assert!(session
+            .require_current_session(Some(Utc::now().timestamp_micros() + 10_000_000_000))
+            .is_err());
     }
 
     #[test]

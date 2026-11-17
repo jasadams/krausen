@@ -1117,7 +1117,7 @@ mod tests {
         let actor = ActorContext {
             actor_id: user.clone(),
             workspace_id: workspace.clone(),
-            credential_id: credential,
+            credential_id: Some(credential),
             access_expires_at: 4102444800,
         };
         let intent = OperationIntent {

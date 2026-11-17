@@ -25,8 +25,8 @@ pub fn build_router(state: state::AppState) -> Router {
         .nest("/api/v1/auth", routes::auth_token::routes())
         .nest("/api/v1/auth", routes::auth_google_oauth::routes())
         .nest("/mcp", routes::mcp::routes(state.clone()))
-        .merge(routes::oauth::well_known_routes(state.clone()))
-        .nest("/api/v1/oauth", routes::oauth::routes(state.clone()))
+        .merge(routes::oauth::well_known_routes())
+        .nest("/api/v1/oauth", routes::oauth::routes())
         .route("/ws/{user_id}", axum::routing::get(routes::websocket::ws_handler))
         // Leptos server functions
         .route("/leptos-api/{*fn_name}", axum::routing::post({
