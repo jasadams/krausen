@@ -551,8 +551,13 @@ pub struct SessionInfo {
     pub oauth_client_name: Option<String>,
 }
 
-/// Rotate a browser refresh token atomically. Reuse revokes the entire durable
-/// credential family; an old unbound token cannot create a new session.
+/// Rotate a browser refresh token atomically, with Kyomi's grace-period semantics.
+///
+/// A current token rotates. A token that was already replaced is still accepted
+/// inside `refresh_token_grace_period_seconds` (a lost response or another tab racing
+/// the same cookie) and rotates again so each caller gets a fresh token; reuse AFTER the
+/// grace period is theft and revokes the whole durable credential family. An old
+/// unbound token, or a revoked or expired credential, can never create a session.
 pub async fn rotate_browser_refresh(
     pool: &DbPool,
     raw_token: &str,
@@ -570,7 +575,7 @@ pub async fn rotate_browser_refresh(
     }
     #[derive(sqlx::FromRow)]
     struct TokenState {
-        used: i64,
+        replaced_at: Option<DateTime<Utc>>,
     }
     let hash = hash_refresh_token(raw_token);
     let mut tx = pool.begin_write().await?;
@@ -580,7 +585,7 @@ pub async fn rotate_browser_refresh(
         "SELECT token_id,user_id,family_id FROM refresh_tokens WHERE token_hash = $1",
         &hash
     )?
-    .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid refresh token".into()))?;
+    .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid or expired refresh token".into()))?;
     let pg = pool.is_postgres();
     let account_sql = if pg {
         "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
@@ -590,7 +595,7 @@ pub async fn rotate_browser_refresh(
     let account = krausen_core::dbtx_fetch_optional!(&mut tx, Id, account_sql, &token.user_id)?;
     if account.is_none() {
         return Err(krausen_core::Error::Unauthorized(
-            "Invalid refresh token".into(),
+            "Invalid or expired refresh token".into(),
         ));
     }
     let credential_sql = if pg {
@@ -609,18 +614,30 @@ pub async fn rotate_browser_refresh(
     )?;
     if credential.is_none() {
         return Err(krausen_core::Error::Unauthorized(
-            "Invalid refresh token".into(),
+            "Invalid or expired refresh token".into(),
         ));
     }
     let active = sql_compat::bool_true(pg);
     let future = sql_compat::is_future(pg, "expires_at");
     let lock = if pg { " FOR UPDATE" } else { "" };
     let sql = format!(
-        "SELECT CAST(CASE WHEN replaced_at IS NULL THEN 0 ELSE 1 END AS BIGINT) AS used FROM refresh_tokens WHERE token_id = $1 AND is_active = {active} AND {future}{lock}"
+        "SELECT replaced_at FROM refresh_tokens WHERE token_id = $1 AND is_active = {active} AND {future}{lock}"
     );
     let state = krausen_core::dbtx_fetch_optional!(&mut tx, TokenState, &sql, &token.token_id)?
-        .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid refresh token".into()))?;
-    if state.used != 0 {
+        .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid or expired refresh token".into()))?;
+    let past_grace = state.replaced_at.is_some_and(|replaced_at| {
+        let grace = krausen_core::constants::get()
+            .jwt
+            .refresh_token_grace_period_seconds;
+        Utc::now() > replaced_at + Duration::seconds(grace)
+    });
+    if past_grace {
+        tracing::warn!(
+            family_id = %token.family_id,
+            user_id = %token.user_id,
+            token_id = %token.token_id,
+            "refresh token reuse after grace period — revoking credential family (theft detection)"
+        );
         krausen_core::dbtx_execute!(
             &mut tx,
             "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND revoked_at IS NULL",
@@ -634,14 +651,16 @@ pub async fn rotate_browser_refresh(
         krausen_core::dbtx_execute!(&mut tx, &sql, &token.family_id)?;
         tx.commit().await?;
         return Err(krausen_core::Error::Unauthorized(
-            "Refresh token replayed".into(),
+            "Refresh token has been revoked (possible token theft detected)".into(),
         ));
     }
-    let replaced = krausen_core::dbtx_execute!(
-        &mut tx,
-        "UPDATE refresh_tokens SET replaced_at = CURRENT_TIMESTAMP WHERE token_id = $1 AND replaced_at IS NULL",
-        &token.token_id
-    )?;
+    // As Kyomi's verify + rotate: record the use, then mark the token replaced now. A
+    // re-rotation inside the grace period therefore restarts that token's grace window.
+    let now = sql_compat::now(pg);
+    let used_sql = format!("UPDATE refresh_tokens SET last_used = {now} WHERE token_id = $1");
+    krausen_core::dbtx_execute!(&mut tx, &used_sql, &token.token_id)?;
+    let replace_sql = format!("UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1");
+    let replaced = krausen_core::dbtx_execute!(&mut tx, &replace_sql, &token.token_id)?;
     if replaced.rows_affected() != 1 {
         return Err(krausen_core::Error::Conflict(
             "Refresh token changed".into(),
