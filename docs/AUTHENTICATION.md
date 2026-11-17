@@ -112,5 +112,16 @@ sessions also refresh on origins without `navigator.locks` (plain-HTTP LAN addre
 The client address recorded for a session and used for rate limits comes from `X-Real-IP`,
 then the first `X-Forwarded-For` entry, and is `unknown` when neither is a valid address.
 
-Public passkey enrollment is temporarily unavailable until account ownership
-can be proven. Existing authenticated passkey management is unchanged.
+There is no public passkey signup. A passkey is added by a signed-in account (Settings >
+Security) or re-registered through passkey recovery: a verified account requests a recovery
+link by email (`/auth/recover-passkey`), the link opens a 15-minute recovery session, and
+completing it registers a new passkey and revokes every session that existed before, as
+password recovery does. WebAuthn challenges are bound to the flow that minted them (login,
+recovery, add-device), so a challenge from one flow cannot be completed in another, and a
+user cannot remove their last remaining sign-in method: the shared removal guard refuses to
+deactivate the last active password, passkey or Google sign-in method (TOTP is a second
+factor and is never blocked). There is no Google unlink flow yet; it would use the same guard.
+The recovery session token (`scope = passkey_recovery`) lives only in an HttpOnly `recovery_session` cookie that the session extractor does not read. Like Kyomi, the extractor refuses only MCP-purpose tokens, so the same token sent as a bearer header would authenticate as a session (and is exempt from the session cutoff).
+
+Passkey recovery, like password recovery, needs email; without SMTP an administrator must
+be asked.

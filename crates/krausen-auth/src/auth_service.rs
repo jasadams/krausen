@@ -357,6 +357,8 @@ async fn signup_smtp_less_new_user(
 enum VerificationEmailKind {
     /// `send_verification_email` — signup / resend-verification flows.
     Verification,
+    /// `send_passkey_recovery` — passkey-only account, lost-authenticator flow.
+    PasskeyRecovery,
     /// `send_existing_account_notice` — an already-verified account attempted
     /// signup again. Carries the account's active `user_auth_methods.auth_type`
     /// values so the email can name how the owner signs in.
@@ -1148,38 +1150,6 @@ pub async fn recovery_set_password_service(
     Ok(RecoverySetPasswordServiceResult::Success(Box::new(sess)))
 }
 
-/// Recovery happens precisely because the account may be compromised —
-/// the previous authenticator lost or stolen, or the password recovery
-/// flow deliberately wresting back control (it also disables TOTP for the
-/// same reason) — so whoever held prior access must not keep a renewable
-/// session after the account owner regains control. The revoke below must
-/// run BEFORE `create_authenticated_session` — that call both mints and
-/// persists the recovering user's own new refresh token, and revoking
-/// after it would immediately log the user back out of the session they
-/// are in the middle of establishing.
-///
-/// Atomically invalidate prior browser access and refresh sessions,
-/// then reload the committed cutoff before creating the recovery session.
-async fn revoke_sessions_and_mint_recovery_session(
-    db: &DbPool,
-    kv: &KVPool,
-    jwt_secret: &str,
-    user: &krausen_core::models::User,
-    device: &DeviceInfo,
-    flow: &'static str,
-) -> krausen_core::Result<AuthenticatedSession> {
-    let revoked_count =
-        crate::token_service::revoke_all_user_sessions(db, &user.user_id).await?;
-    tracing::info!(
-        user_id = %user.user_id,
-        revoked_count,
-        recovery_flow = flow,
-        "Prior browser sessions and refresh tokens revoked during account recovery"
-    );
-
-    create_authenticated_session(db, kv, jwt_secret, user, device).await
-}
-
 // ---------------------------------------------------------------------------
 // Passkey login complete
 // ---------------------------------------------------------------------------
@@ -1216,16 +1186,7 @@ pub struct PasskeyLoginCompleteParams<'a> {
 pub async fn passkey_login_complete_service(
     params: PasskeyLoginCompleteParams<'_>,
 ) -> krausen_core::Result<PasskeyLoginServiceResult> {
-    let PasskeyLoginCompleteParams {
-        db,
-        kv,
-        jwt_secret,
-        webauthn,
-        challenge_id,
-        assertion_json,
-        ip,
-        device,
-    } = params;
+    let PasskeyLoginCompleteParams { db, kv, jwt_secret, webauthn, challenge_id, assertion_json, ip, device } = params;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use webauthn_rs::prelude::*;
 
@@ -1248,10 +1209,20 @@ pub async fn passkey_login_complete_service(
     };
     crate::redis_ops::delete_webauthn_challenge(kv, challenge_id).await?;
 
+    // Reject a challenge minted by any other flow (KYO-279) — fail closed,
+    // same rejection as "not found" so this can't be used to probe purpose.
+    if !crate::webauthn_challenge_purpose::has_purpose(
+        &challenge_data,
+        &[crate::webauthn_challenge_purpose::PASSKEY_LOGIN],
+    ) {
+        return Ok(PasskeyLoginServiceResult::InvalidChallenge);
+    }
+
     // Find user by credential ID
     let cred_id_bytes: &[u8] = credential.raw_id.as_ref();
     let credential_id_b64 = URL_SAFE_NO_PAD.encode(cred_id_bytes);
-    let user = crate::user_service::find_user_by_credential_id(db, &credential_id_b64).await?;
+    let user =
+        crate::user_service::find_user_by_credential_id(db, &credential_id_b64).await?;
     let Some(user) = user else {
         return Ok(PasskeyLoginServiceResult::InvalidCredentials);
     };
@@ -1262,68 +1233,45 @@ pub async fn passkey_login_complete_service(
         });
     }
 
-    // Verify assertion (discoverable or standard flow)
-    let is_discoverable = challenge_data["discoverable"].as_bool().unwrap_or(false);
+    // Verify assertion. The Leptos login flow (`passkey_login_start` in
+    // krausen-ui) always mints a discoverable challenge — the non-discoverable
+    // ("standard", `allowCredentials` populated) flow was only ever produced
+    // by the REST implementation this replaced, removed in KYO-286.
     let passkeys = get_passkeys_for_user(db, &user.user_id).await?;
 
-    if is_discoverable {
-        let disc_state: DiscoverableAuthentication =
-            serde_json::from_value(challenge_data["discoverable_state"].clone()).map_err(|e| {
-                krausen_core::Error::Internal(format!("Deserialize discoverable state: {e}"))
+    let disc_state: DiscoverableAuthentication =
+        serde_json::from_value(challenge_data["discoverable_state"].clone())
+            .map_err(|e| {
+                krausen_core::Error::Internal(format!(
+                    "Deserialize discoverable state: {e}"
+                ))
             })?;
-        if passkeys.is_empty() {
-            return Ok(PasskeyLoginServiceResult::InvalidCredentials);
+    if passkeys.is_empty() {
+        return Ok(PasskeyLoginServiceResult::InvalidCredentials);
+    }
+    let auth_result = crate::webauthn::finish_discoverable_authentication(
+        webauthn,
+        &credential,
+        disc_state,
+        &passkeys,
+    )
+    .map_err(|e| {
+        tracing::warn!(error = %e, "Passkey discoverable auth failed");
+        krausen_core::Error::Internal("Authentication failed".into())
+    });
+    match auth_result {
+        Ok(auth_result) => {
+            update_passkey_after_auth_inner(
+                db,
+                &user.user_id,
+                &credential_id_b64,
+                cred_id_bytes,
+                &passkeys,
+                &auth_result,
+            )
+            .await;
         }
-        let auth_result = crate::webauthn::finish_discoverable_authentication(
-            webauthn,
-            &credential,
-            disc_state,
-            &passkeys,
-        )
-        .map_err(|e| {
-            tracing::warn!(error = %e, "Passkey discoverable auth failed");
-            krausen_core::Error::Internal("Authentication failed".into())
-        });
-        match auth_result {
-            Ok(auth_result) => {
-                update_passkey_after_auth_inner(
-                    db,
-                    &user.user_id,
-                    &credential_id_b64,
-                    cred_id_bytes,
-                    &passkeys,
-                    &auth_result,
-                )
-                .await;
-            }
-            Err(_) => return Ok(PasskeyLoginServiceResult::AuthFailed),
-        }
-    } else {
-        let auth_state: PasskeyAuthentication = serde_json::from_value(
-            challenge_data["authentication_state"].clone(),
-        )
-        .map_err(|e| krausen_core::Error::Internal(format!("Deserialize auth state: {e}")))?;
-        let auth_result =
-            crate::webauthn::finish_authentication(webauthn, &credential, &auth_state).map_err(
-                |e| {
-                    tracing::warn!(error = %e, "Passkey auth failed");
-                    krausen_core::Error::Internal("Authentication failed".into())
-                },
-            );
-        match auth_result {
-            Ok(auth_result) => {
-                update_passkey_after_auth_inner(
-                    db,
-                    &user.user_id,
-                    &credential_id_b64,
-                    cred_id_bytes,
-                    &passkeys,
-                    &auth_result,
-                )
-                .await;
-            }
-            Err(_) => return Ok(PasskeyLoginServiceResult::AuthFailed),
-        }
+        Err(_) => return Ok(PasskeyLoginServiceResult::AuthFailed),
     }
 
     // Touch last_used on webauthn auth method (best-effort)
@@ -1334,65 +1282,121 @@ pub async fn passkey_login_complete_service(
 }
 
 // ---------------------------------------------------------------------------
-// Passkey register start
+// Passkey registration verify-and-store
 // ---------------------------------------------------------------------------
 
-/// Outcome of `passkey_register_start_service`.
-pub enum PasskeyRegisterStartServiceResult {
-    /// Challenge generated — server_fn returns to client.
-    Success {
-        challenge_id: String,
-        creation_challenge: String,
-    },
-    /// Rate limited.
-    RateLimited { retry_after_secs: u64 },
-    /// Unverified email — must verify first.
-    UnverifiedEmail,
-    /// SaaS: verification email sent — user must verify before proceeding.
-    VerificationEmailSent,
+/// Verify a completed WebAuthn registration ceremony and persist the
+/// resulting passkey credential.
+///
+/// Used by `passkey_recovery_complete_service` (KYO-284). Originally
+/// extracted because the verify-and-store sequence below —
+/// `finish_registration` → cred-id base64 encoding → passkey serialization →
+/// counter extraction → `add_passkey_to_user` — was duplicated byte-for-byte
+/// between that service and the since-retired (KYO-729) unauthenticated
+/// passkey-signup completion. That was precisely the failure mode that
+/// produced KYO-279/281/282 in this subsystem: a future fix to one copy
+/// (e.g. the counter-extraction fallback, or a new validation step) silently
+/// missing the other. Kept as its own function rather than inlined back in
+/// now that only one caller remains, in case a future authenticated
+/// registration path (e.g. the add-device flow, currently its own
+/// implementation in `security_service`) needs to share it again.
+///
+/// Returns the base64url (no padding) encoded credential id on success.
+async fn verify_and_store_passkey(
+    webauthn: &webauthn_rs::Webauthn,
+    credential: &webauthn_rs::prelude::RegisterPublicKeyCredential,
+    reg_state: &webauthn_rs::prelude::PasskeyRegistration,
+    db: &DbPool,
+    user_id: &str,
+    device_name: &str,
+) -> krausen_core::Result<String> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    // Verify credential
+    let passkey = crate::webauthn::finish_registration(webauthn, credential, reg_state)
+        .map_err(|e| krausen_core::Error::Internal(e.to_string()))?;
+
+    // Extract and encode credential ID
+    let cred_id_bytes: &[u8] = passkey.cred_id().as_ref();
+    let credential_id_b64 = URL_SAFE_NO_PAD.encode(cred_id_bytes);
+
+    // Serialize passkey
+    let passkey_json = serde_json::to_value(&passkey)
+        .map_err(|e| krausen_core::Error::Internal(format!("Serialize passkey: {e}")))?;
+    let public_key_b64 = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&passkey)
+            .map_err(|e| krausen_core::Error::Internal(format!("Serialize passkey bytes: {e}")))?,
+    );
+    let initial_counter = passkey_json
+        .get("cred")
+        .and_then(|c| c.get("counter"))
+        .and_then(|c| c.as_u64())
+        .unwrap_or(0) as u32;
+
+    // Store credential
+    crate::user_service::add_passkey_to_user(
+        db,
+        user_id,
+        &credential_id_b64,
+        &public_key_b64,
+        initial_counter,
+        device_name,
+        &passkey_json,
+    )
+    .await?;
+
+    Ok(credential_id_b64)
 }
 
-/// Parameters for `passkey_register_start_service`.
-pub struct PasskeyRegisterStartParams<'a> {
+// ---------------------------------------------------------------------------
+// Passkey recovery complete
+// ---------------------------------------------------------------------------
+
+/// Parameters for `passkey_recovery_complete_service`.
+pub struct PasskeyRecoveryCompleteParams<'a> {
     pub db: &'a DbPool,
     pub kv: &'a KVPool,
+    pub jwt_secret: &'a str,
     pub webauthn: &'a webauthn_rs::Webauthn,
-    pub email: &'a str,
-    pub name: &'a str,
-    pub device_name: &'a str,
-    pub ip: &'a str,
-    pub self_hosted: bool,
-    pub smtp_configured: bool,
-    pub frontend_url: &'a str,
+    pub challenge_id: &'a str,
+    pub credential_json: &'a str,
+    pub device: &'a DeviceInfo,
+    /// The `recovery_session` cookie value, if the caller sent one at all.
+    /// `None` when the cookie is absent — rejected identically to every
+    /// other binding failure below (KYO-284).
+    pub recovery_session_token: Option<&'a str>,
 }
 
-/// Full passkey-register-start orchestration.
-pub async fn passkey_register_start_service(
-    params: PasskeyRegisterStartParams<'_>,
-) -> krausen_core::Result<PasskeyRegisterStartServiceResult> {
-    let _ = params;
-    Err(krausen_core::Error::ServiceUnavailable(
-        "Public passkey enrollment is unavailable until account ownership can be verified".into(),
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// Passkey register complete
-// ---------------------------------------------------------------------------
-
-/// Full passkey-register-complete orchestration.
+/// Full passkey-recovery-complete orchestration (KYO-284).
 ///
-/// Returns an `AuthenticatedSession` on success (auto-login after registration).
-pub async fn passkey_register_complete_service(
-    db: &DbPool,
-    kv: &KVPool,
-    jwt_secret: &str,
-    webauthn: &webauthn_rs::Webauthn,
-    challenge_id: &str,
-    credential_json: &str,
-    device: &DeviceInfo,
+/// Split out of `passkey_register_complete_service` so completing account
+/// recovery requires binding proof — possession of the HttpOnly
+/// `recovery_session` cookie minted by `passkey_recovery_verify_service` —
+/// not just a bare `challenge_id`. Before this split, the *only* thing
+/// binding a caller to the account being recovered was possession of the
+/// `challenge_id` returned in `passkey_recovery_verify`'s JSON response
+/// body; anyone who obtained that id (server logs, a compromised extension,
+/// a proxy) could attach their own passkey to the victim's account and be
+/// auto-logged in as them.
+///
+/// Requires, in order:
+/// 1. A `recovery_session` cookie value was supplied at all.
+/// 2. It validates as a JWT against `jwt_secret`.
+/// 3. Its `scope` claim is exactly `"passkey_recovery"`.
+/// 4. The challenge's `purpose` is `PASSKEY_RECOVERY`.
+/// 5. The challenge's stored `email` matches the JWT's `email` claim.
+/// 6. The user identified by the JWT's `user_id` claim still exists.
+///
+/// Every rejection above returns the identical
+/// `Error::Internal("Invalid or expired challenge")` a nonexistent
+/// `challenge_id` produces — a distinguishable error for "wrong scope" or
+/// "email mismatch" would let an attacker learn which check they failed
+/// (the same fail-closed, no-oracle rule KYO-279/KYO-280 established for
+/// challenge purpose binding).
+pub async fn passkey_recovery_complete_service(
+    params: PasskeyRecoveryCompleteParams<'_>,
 ) -> krausen_core::Result<AuthenticatedSession> {
-    let _ = (
+    let PasskeyRecoveryCompleteParams {
         db,
         kv,
         jwt_secret,
@@ -1400,141 +1404,226 @@ pub async fn passkey_register_complete_service(
         challenge_id,
         credential_json,
         device,
-    );
-    Err(krausen_core::Error::ServiceUnavailable(
-        "Public passkey enrollment is unavailable until account ownership can be verified".into(),
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// Passkey signup complete
-// ---------------------------------------------------------------------------
-
-/// Parameters for `passkey_signup_complete_service`.
-pub struct PasskeySignupCompleteParams<'a> {
-    pub db: &'a DbPool,
-    pub kv: &'a KVPool,
-    pub webauthn: &'a webauthn_rs::Webauthn,
-    pub token: &'a str,
-    pub name: &'a str,
-    pub terms_accepted: bool,
-    pub marketing_consent: bool,
-    pub config: Option<&'a krausen_core::Config>,
-    pub slack_feedback_webhook_url: Option<&'a str>,
-    pub support_email: &'a str,
-}
-
-/// Full passkey-signup-complete orchestration.
-///
-/// Verifies the email verification token, sets up the user account, and
-/// generates a WebAuthn registration challenge. Returns the challenge for the
-/// client to complete via `passkey_register_complete`.
-pub async fn passkey_signup_complete_service(
-    params: PasskeySignupCompleteParams<'_>,
-) -> krausen_core::Result<Result<(String, String), String>> {
-    let PasskeySignupCompleteParams {
-        db,
-        kv,
-        webauthn,
-        token,
-        name,
-        terms_accepted,
-        marketing_consent,
-        config,
-        slack_feedback_webhook_url,
-        support_email,
+        recovery_session_token,
     } = params;
-    // Returns Ok((challenge_id, creation_challenge)) or Err(message)
+    use webauthn_rs::prelude::*;
 
-    if !terms_accepted {
-        return Ok(Err(
-            "You must accept the Terms of Service and Privacy Policy to create an account."
-                .to_string(),
-        ));
-    }
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Ok(Err("Name is required".to_string()));
+    fn invalid_or_expired_challenge() -> krausen_core::Error {
+        krausen_core::Error::Internal("Invalid or expired challenge".into())
     }
 
-    // Verify token
-    let email =
-        crate::token_service::verify_verification_token(db, token, "email_verification").await?;
-    let Some(email) = email else {
-        return Ok(Err(
-            "Invalid or expired signup link. Please request a new one.".to_string(),
-        ));
-    };
+    let credential: RegisterPublicKeyCredential = serde_json::from_str(credential_json)
+        .map_err(|e| krausen_core::Error::Internal(format!("Invalid credential JSON: {e}")))?;
 
-    // The token proved control of the mailbox, so this is where the account
-    // comes into being — passkey signup-start deliberately left no row behind.
-    let user = establish_verified_account(EstablishVerifiedAccountParams {
+    // 1. A recovery session cookie must have been supplied at all.
+    let recovery_session_token = recovery_session_token.ok_or_else(invalid_or_expired_challenge)?;
+
+    // 2. It must validate as a JWT against the configured secret.
+    let token_data = crate::jwt::validate_token(recovery_session_token, jwt_secret)
+        .map_err(|_| invalid_or_expired_challenge())?;
+
+    // 3. Its scope must be exactly "passkey_recovery" — rejects, for
+    // example, a normal access-token cookie replayed here.
+    let scope = token_data
+        .claims
+        .extra
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if scope != "passkey_recovery" {
+        return Err(invalid_or_expired_challenge());
+    }
+
+    let recovery_user_id = token_data
+        .claims
+        .extra
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(invalid_or_expired_challenge)?
+        .to_string();
+    let recovery_email = token_data
+        .claims
+        .extra
+        .get("email")
+        .and_then(|v| v.as_str())
+        .ok_or_else(invalid_or_expired_challenge)?
+        .to_string();
+
+    // Get and delete challenge (prevent replay).
+    let challenge_data = crate::redis_ops::get_webauthn_challenge(kv, challenge_id)
+        .await?
+        .ok_or_else(invalid_or_expired_challenge)?;
+    crate::redis_ops::delete_webauthn_challenge(kv, challenge_id).await?;
+
+    // 4. Reject a challenge minted by any other flow — e.g. a signup or
+    // add-device challenge replayed here to register a passkey under the
+    // recovery session's user without the account's original consent.
+    if !crate::webauthn_challenge_purpose::has_purpose(
+        &challenge_data,
+        &[crate::webauthn_challenge_purpose::PASSKEY_RECOVERY],
+    ) {
+        return Err(invalid_or_expired_challenge());
+    }
+
+    // 5. The challenge's stored email must match the recovery session's.
+    let challenge_email = challenge_data["email"].as_str().unwrap_or("");
+    if challenge_email != recovery_email {
+        return Err(invalid_or_expired_challenge());
+    }
+
+    // 6. The user must still exist.
+    let user = crate::user_service::get_user_by_id(db, &recovery_user_id)
+        .await?
+        .ok_or_else(invalid_or_expired_challenge)?;
+
+    // Extract challenge state
+    let reg_state: PasskeyRegistration =
+        serde_json::from_value(challenge_data["registration_state"].clone())
+            .map_err(|e| krausen_core::Error::Internal(format!("Deserialize reg state: {e}")))?;
+    let device_name = challenge_data["device_name"]
+        .as_str()
+        .unwrap_or("Unknown Device");
+
+    let credential_id_b64 = verify_and_store_passkey(
+        webauthn,
+        &credential,
+        &reg_state,
         db,
-        email: &email,
-        name: Some(&name),
-        marketing_consent,
-        config,
-        slack_feedback_webhook_url,
-        support_email,
-    })
+        &user.user_id,
+        device_name,
+    )
     .await?;
 
-    // Generate WebAuthn registration challenge
-    let user_unique_id = webauthn_user_id(&email);
-    let creds = crate::user_service::get_passkey_credentials(db, &user.user_id).await?;
-    let exclude_ids = build_exclude_ids(&creds);
-    let exclude_opt = if exclude_ids.is_empty() {
-        None
-    } else {
-        Some(exclude_ids)
-    };
-
-    let (ccr, reg_state) =
-        crate::webauthn::start_registration(webauthn, user_unique_id, &email, &name, exclude_opt)
-            .map_err(|e| krausen_core::Error::Internal(e.to_string()))?;
-
-    let challenge_id = crate::redis_ops::generate_token();
-    let reg_state_json = serde_json::to_value(&reg_state)
-        .map_err(|e| krausen_core::Error::Internal(format!("Serialize reg state: {e}")))?;
-    let challenge_data = serde_json::json!({
-        "registration_state": reg_state_json,
-        "email": email,
-        "user_name": &name,
-        "user_id": user.user_id,
-        "device_name": "Unknown Device",
-        "is_signup": true,
-    });
-    crate::redis_ops::store_webauthn_challenge(kv, &challenge_id, &challenge_data).await?;
-
-    let creation_challenge = serde_json::to_string(&ccr)
-        .map_err(|e| krausen_core::Error::Internal(format!("Serialize creation challenge: {e}")))?;
-
+    // Preserve the current post-completion UX (auto-login) — the security
+    // fix here is the session binding above; the additional fix here is
+    // that any session an attacker held before recovery does not survive
+    // it (KYO-287) — see `revoke_sessions_and_mint_recovery_session`.
+    let sess = revoke_sessions_and_mint_recovery_session(
+        db, kv, jwt_secret, &user, device, "passkey",
+    )
+    .await?;
     tracing::info!(
-        email = %email,
         user_id = %user.user_id,
-        "Passkey signup token verified, WebAuthn challenge generated"
+        credential_id = %credential_id_b64,
+        "Passkey recovery completed and user auto-logged in"
     );
-    Ok(Ok((challenge_id, creation_challenge)))
+    Ok(sess)
+}
+
+/// Revoke every refresh token issued to `user` before this recovery
+/// ceremony, then mint the fresh session the recovering user is
+/// establishing right now.
+///
+/// Shared by two callers: `passkey_recovery_complete_service` (KYO-287) and
+/// `recovery_set_password_service` (KYO-339) — both are "wrest back control
+/// of a possibly-compromised account" flows, and both need the same
+/// ordering guarantee below. `flow` is a tracing field only (`"passkey"` /
+/// `"password"`), so the log line still distinguishes which recovery path
+/// produced a given revocation without duplicating this function.
+///
+/// Originally split out of [`passkey_recovery_complete_service`] so the
+/// revoke-before-mint ordering can be tested directly against the
+/// database, independent of a real WebAuthn ceremony:
+/// `verify_and_store_passkey` requires a credential that cryptographically
+/// matches the `PasskeyRegistration` state generated for this specific
+/// challenge, which none of this module's test fixture credentials do (see
+/// the `tests` module's module-level comment below), so no test in this
+/// file can drive `passkey_recovery_complete_service` end-to-end to a
+/// successful `Ok(_)`. This constraint is specific to the passkey caller —
+/// `recovery_set_password_service` has no cryptographic ceremony in its
+/// path and its tests drive it end-to-end through the real entry point.
+///
+/// Recovery happens precisely because the account may be compromised —
+/// the previous authenticator lost or stolen, or the password recovery
+/// flow deliberately wresting back control (it also disables TOTP for the
+/// same reason) — so whoever held prior access must not keep a renewable
+/// session after the account owner regains control. The revoke below must
+/// run BEFORE `create_authenticated_session` — that call both mints and
+/// persists the recovering user's own new refresh token, and revoking
+/// after it would immediately log the user back out of the session they
+/// are in the middle of establishing.
+///
+/// KYO-341: atomically invalidate prior browser access and refresh sessions,
+/// then reload the committed cutoff before creating the recovery session.
+async fn revoke_sessions_and_mint_recovery_session(
+    db: &DbPool,
+    kv: &KVPool,
+    jwt_secret: &str,
+    user: &krausen_core::models::User,
+    device: &DeviceInfo,
+    flow: &'static str,
+) -> krausen_core::Result<AuthenticatedSession> {
+    let revoked_count =
+        crate::token_service::revoke_all_user_sessions(db, &user.user_id).await?;
+    tracing::info!(
+        user_id = %user.user_id,
+        revoked_count,
+        recovery_flow = flow,
+        "Prior browser sessions and refresh tokens revoked during account recovery"
+    );
+
+    create_authenticated_session(db, kv, jwt_secret, user, device).await
 }
 
 // ---------------------------------------------------------------------------
 // Passkey recovery verify
 // ---------------------------------------------------------------------------
 
+/// Success payload for `passkey_recovery_verify_service` (KYO-284).
+///
+/// A named struct rather than a tuple deliberately — every field here is a
+/// `String`, and the caller (`passkey_recovery_verify` in
+/// `krausen-ui/src/server_fns/auth.rs`) sets `recovery_session_jwt` as an
+/// HttpOnly cookie. A positional mix-up between `email` and
+/// `recovery_session_jwt` in a 4-`String` tuple would compile silently and
+/// leak the session token into a response field, or vice versa.
+pub struct PasskeyRecoveryVerifySuccess {
+    pub challenge_id: String,
+    pub creation_challenge: String,
+    pub email: String,
+    /// Short-lived JWT (`scope: "passkey_recovery"`) binding the eventual
+    /// `passkey_recovery_complete_service` call to this same browser
+    /// session. The server_fn sets this as the HttpOnly `recovery_session`
+    /// cookie — it must never be sent back in the JSON response body.
+    pub recovery_session_jwt: String,
+}
+
+/// Hand-written, not derived: `recovery_session_jwt` is a live bearer
+/// credential (KYO-284) — a signed JWT that authenticates the completion
+/// call for the next 15 minutes. A derived `Debug` would print it verbatim
+/// into any `{result:?}` assertion failure, panic message, or log line that
+/// formats this struct. Every other field is non-secret and printed as-is.
+impl std::fmt::Debug for PasskeyRecoveryVerifySuccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasskeyRecoveryVerifySuccess")
+            .field("challenge_id", &self.challenge_id)
+            .field("creation_challenge", &self.creation_challenge)
+            .field("email", &self.email)
+            .field("recovery_session_jwt", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Full passkey-recovery-verify orchestration.
 ///
-/// Verifies the recovery token and generates a WebAuthn registration challenge
-/// for replacing the user's passkey. Returns `(challenge_id, creation_challenge,
-/// email)` on success, or an error message on failure.
+/// Verifies the recovery token and generates a WebAuthn registration
+/// challenge for replacing the user's passkey, plus a short-lived
+/// `recovery_session` JWT (KYO-284) that binds the eventual completion call
+/// to this same browser session. Returns [`PasskeyRecoveryVerifySuccess`] on
+/// success, or an error message on failure.
 pub async fn passkey_recovery_verify_service(
     db: &DbPool,
     kv: &KVPool,
+    jwt_secret: &str,
     webauthn: &webauthn_rs::Webauthn,
     token: &str,
-) -> krausen_core::Result<Result<(String, String, String), String>> {
-    // Returns Ok((challenge_id, creation_challenge, email)) or Err(message)
-
-    let email = crate::token_service::verify_verification_token(db, token, "recovery").await?;
+) -> krausen_core::Result<Result<PasskeyRecoveryVerifySuccess, String>> {
+    // Verify token. Must be "passkey_recovery" — the type actually minted
+    // for this URL (`/auth/recover-passkey/complete`). The old literal,
+    // "recovery", was never minted anywhere in the workspace (KYO-282), so
+    // this verifier rejected every token from its own flow.
+    let email =
+        crate::token_service::verify_verification_token(db, token, "passkey_recovery").await?;
     let Some(email) = email else {
         return Ok(Err(
             "Invalid or expired recovery link. Please request a new one.".to_string(),
@@ -1545,7 +1634,7 @@ pub async fn passkey_recovery_verify_service(
         .await?
         .ok_or_else(|| krausen_core::Error::Internal("User not found for recovery token".into()))?;
 
-    let user_unique_id = webauthn_user_id(&email);
+    let user_unique_id = webauthn_user_id_inner(&email);
     let display_name = user.name.as_deref().unwrap_or(&email);
 
     let creds = crate::user_service::get_passkey_credentials(db, &user.user_id).await?;
@@ -1574,19 +1663,37 @@ pub async fn passkey_recovery_verify_service(
         "user_name": display_name,
         "user_id": user.user_id,
         "device_name": "Unknown Device",
-        "is_signup": false,
+        "purpose": crate::webauthn_challenge_purpose::PASSKEY_RECOVERY,
     });
     crate::redis_ops::store_webauthn_challenge(kv, &challenge_id, &challenge_data).await?;
 
     let creation_challenge = serde_json::to_string(&ccr)
         .map_err(|e| krausen_core::Error::Internal(format!("Serialize creation challenge: {e}")))?;
 
+    // Mint the recovery session JWT (KYO-284) — 15-minute expiry, matching
+    // the `recovery_session` cookie's Max-Age below.
+    let mut extra = std::collections::HashMap::new();
+    extra.insert("user_id".into(), serde_json::json!(&user.user_id));
+    extra.insert("email".into(), serde_json::json!(&email));
+    extra.insert("scope".into(), serde_json::json!("passkey_recovery"));
+    let recovery_session_jwt = crate::jwt::create_access_token_str(
+        &user.user_id,
+        jwt_secret,
+        15, // 15 minutes — matches the REST recovery_session cookie's Max-Age=900
+        extra,
+    )?;
+
     tracing::info!(
         email = %email,
         user_id = %user.user_id,
         "Passkey recovery token verified, WebAuthn challenge generated"
     );
-    Ok(Ok((challenge_id, creation_challenge, email)))
+    Ok(Ok(PasskeyRecoveryVerifySuccess {
+        challenge_id,
+        creation_challenge,
+        email,
+        recovery_session_jwt,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1614,7 +1721,7 @@ pub async fn check_rate_limit(
 /// Generate a WebAuthn user handle from email (deterministic, matching the server route).
 ///
 /// `sha256(email)[:16]` interpreted as a UUID.
-pub fn webauthn_user_id(email: &str) -> webauthn_rs::prelude::Uuid {
+fn webauthn_user_id_inner(email: &str) -> webauthn_rs::prelude::Uuid {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
@@ -1758,15 +1865,26 @@ pub struct RecoveryStartResult {
     pub raw_token: String,
 }
 
-/// Check rate limit, look up the verified user, and create a recovery token
-/// in one service call. Returns `None` if rate-limited or user not found/unverified.
+/// Check rate limit, look up the verified user, and — only if one exists and
+/// is verified — create a recovery token in one service call.
+///
+/// Like `passkey_recovery_start_service` below, the only signal returned to
+/// a caller besides rate-limiting is silence: whether the account exists,
+/// is unverified, or token minting failed are all indistinguishable from
+/// the caller's perspective — every one of those cases returns `Ok(None)`.
+/// Rate limiting is the one exception: a rate-limited call returns `Err`
+/// directly, and that check runs before any account lookup, so it leaks
+/// nothing about a specific email. This uniformity is deliberate, not
+/// incidental: see KYO-291, which closed two enumeration channels here (the
+/// user lookup and the token-mint) to bring this path to parity with the
+/// passkey one.
 pub async fn recovery_start_service(
     db: &krausen_core::DbPool,
     kv: &KVPool,
     ip: &str,
     email: &str,
 ) -> krausen_core::Result<Option<RecoveryStartResult>> {
-    let rate = crate::rate_limiter::check_rate_limit(kv, ip, "register", None).await?;
+    let rate = check_rate_limit(kv, ip, "register").await?;
     if !rate.allowed {
         return Err(krausen_core::Error::BadRequest(format!(
             "Rate limited. Try again in {} seconds",
@@ -1774,24 +1892,142 @@ pub async fn recovery_start_service(
         )));
     }
 
-    let user = crate::user_service::get_user_by_email(db, email).await?;
+    let user = lookup_recovery_user(db, email, "account_recovery").await;
     let Some(user) = user else { return Ok(None) };
     if !user.verified {
         return Ok(None);
     }
 
-    let raw_token = crate::token_service::create_verification_token_with_expiry(
+    let raw_token = match crate::token_service::create_verification_token_with_expiry(
         db,
         email,
         "account_recovery",
         Some(0.25),
     )
-    .await?;
+    .await
+    {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::error!(
+                flow = "account_recovery",
+                error = %e,
+                "recovery: token creation failed"
+            );
+            return Ok(None);
+        }
+    };
 
     Ok(Some(RecoveryStartResult {
         user_name: user.name.unwrap_or_default(),
         raw_token,
     }))
+}
+
+/// Look up the user for an enumeration-resistant recovery path.
+///
+/// Returns `None` both when no such user exists and when the lookup fails —
+/// callers must not be able to distinguish those, or the endpoint leaks
+/// account existence. The difference is recorded in the logs instead, so a
+/// database outage on a recovery path is visible to operators rather than
+/// silently returning success to every caller. `flow` is logged alongside
+/// the error so operators can still tell which caller hit the failure —
+/// shared by `recovery_start_service` (account/password recovery) and
+/// `passkey_recovery_start_service` (passkey recovery) below.
+///
+/// Ported from `lookup_recovery_user` in the REST passkey-recovery
+/// implementation this replaced (deleted in KYO-286 once the Leptos path
+/// fully replaced it); generalized in KYO-291 to serve account recovery too.
+async fn lookup_recovery_user(
+    db: &DbPool,
+    email: &str,
+    flow: &'static str,
+) -> Option<krausen_core::models::User> {
+    match crate::user_service::get_user_by_email(db, email).await {
+        Ok(user) => user,
+        Err(e) => {
+            tracing::error!(flow = flow, error = %e, "recovery: user lookup failed");
+            None
+        }
+    }
+}
+
+/// Check rate limit, look up the verified user, and — only if one exists and
+/// is verified — mint a "passkey_recovery" token (15-minute expiry) and email
+/// a recovery link.
+///
+/// KYO-285: this is the fix for `/auth/recover-passkey` being wired to the
+/// *account/password* recovery flow (`recovery_start_service` above). A
+/// passkey-only user who loses their authenticator must get a link that
+/// leads to re-registering a passkey, not one that lets them set a password
+/// — completing the wrong flow silently strips their TOTP via
+/// `recover_set_password_service`'s `remove_auth_method(db, user_id, "totp")`
+/// and never re-establishes a passkey.
+///
+/// Ported from the REST `recovery_request` handler this replaced (removed in
+/// KYO-286). Like that handler (and like `recovery_start_service` above), the
+/// only signal returned to a caller besides rate-limiting is silence: whether
+/// the account exists, is unverified, or token minting failed are all
+/// indistinguishable from the caller's perspective.
+///
+/// This enumeration resistance has never depended on what the UI does with
+/// the result: every account-dependent outcome (no such user, unverified,
+/// token-mint failure) is folded into `Ok(())` right here, and rate
+/// limiting — the only `Err` this function itself returns — is checked
+/// before any account lookup runs, so it leaks nothing about a specific
+/// email either. That is where the property lives.
+///
+/// `RecoveryRequestCard` in `krausen-ui` surfaces this function's `Err` to the
+/// user (KYO-684) instead of discarding it. That is safe precisely because
+/// of the above: the only `Err`s that reach the card are this rate limit
+/// and the server_fn wrapper's own config/infra preconditions (e.g.
+/// self-hosted-without-SMTP), both of which also fire before any account
+/// lookup. If a future change ever makes an `Err` path out of *this*
+/// function depend on account state, the enumeration resistance breaks
+/// here — regardless of what the UI does with the result.
+pub async fn passkey_recovery_start_service(
+    db: &krausen_core::DbPool,
+    kv: &KVPool,
+    ip: &str,
+    email: &str,
+    frontend_url: &str,
+    self_hosted: bool,
+) -> krausen_core::Result<()> {
+    let rate = check_rate_limit(kv, ip, "passkey_recovery").await?;
+    if !rate.allowed {
+        return Err(krausen_core::Error::TooManyRequests(
+            format!("Rate limited. Try again in {} seconds", rate.retry_after_secs),
+            rate.retry_after_secs,
+        ));
+    }
+
+    // Always proceed to Ok(()) below regardless of what happens here — do
+    // the work silently, exactly as the reference REST handler does.
+    let user = lookup_recovery_user(db, email, "passkey_recovery").await;
+
+    if let Some(user) = user
+        && user.verified
+    {
+        let user_name = user.name.clone().unwrap_or_default();
+        if let Err(e) = mint_and_send_verification_email(MintVerificationEmailParams {
+            db,
+            email,
+            name: &user_name,
+            user_id: Some(&user.user_id),
+            frontend_url,
+            self_hosted,
+            dev_mode: cfg!(debug_assertions),
+            token_type: "passkey_recovery",
+            verification_path: "/auth/recover-passkey/complete",
+            expire_hours: Some(0.25),
+            email_kind: VerificationEmailKind::PasskeyRecovery,
+        })
+        .await
+        {
+            tracing::error!(error = %e, "passkey recovery: token creation failed");
+        }
+    }
+
+    Ok(())
 }
 
 /// `tracing` target for the fire-and-forget verification-email task.
@@ -1810,6 +2046,7 @@ impl VerificationEmailKind {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Verification => "verification",
+            Self::PasskeyRecovery => "passkey_recovery",
             Self::ExistingAccount { .. } => "existing_account",
         }
     }
@@ -1833,6 +2070,9 @@ async fn send_verification_email_of_kind(
     match kind {
         VerificationEmailKind::Verification => {
             email_svc.send_verification_email(email, name, url).await
+        }
+        VerificationEmailKind::PasskeyRecovery => {
+            email_svc.send_passkey_recovery(email, name, url).await
         }
         VerificationEmailKind::ExistingAccount { auth_methods } => {
             email_svc
@@ -1896,3 +2136,6 @@ fn spawn_verification_email(
 
 #[cfg(test)]
 pub(crate) mod signup_tests;
+
+#[cfg(test)]
+pub(crate) mod passkey_tests;

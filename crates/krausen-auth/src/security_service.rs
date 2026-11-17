@@ -12,6 +12,7 @@
 //! `&webauthn_rs::Webauthn`.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest, Sha256};
 use webauthn_rs::prelude::*;
 
 use krausen_core::{DbPool, KVPool};
@@ -271,8 +272,15 @@ pub async fn start_passkey_registration(
     let email = &db_user.email;
     let display_name = db_user.name.as_deref().unwrap_or(email);
 
-    // Deterministic user handle from email — shared helper in auth_service.
-    let user_unique_id = crate::auth_service::webauthn_user_id(email);
+    // Generate a deterministic user handle from the email: SHA-256, truncated
+    // to the first 16 bytes, read as a UUID.
+    let user_unique_id = {
+        let mut hasher = Sha256::new();
+        hasher.update(email.as_bytes());
+        let hash = hasher.finalize();
+        let bytes: [u8; 16] = hash[..16].try_into().expect("16 bytes");
+        Uuid::from_bytes(bytes)
+    };
 
     let creds = crate::user_service::get_passkey_credentials(pool, user_id).await?;
 
@@ -306,6 +314,7 @@ pub async fn start_passkey_registration(
         "user_name": display_name,
         "user_id": user_id,
         "device_name": device_name,
+        "purpose": crate::webauthn_challenge_purpose::PASSKEY_ADD_DEVICE,
     });
     crate::redis_ops::store_webauthn_challenge(kv, &challenge_id, &challenge_data).await?;
 
@@ -332,6 +341,19 @@ pub async fn complete_passkey_registration(
         .ok_or_else(|| krausen_core::Error::Internal("Invalid or expired challenge".into()))?;
 
     crate::redis_ops::delete_webauthn_challenge(kv, challenge_id).await?;
+
+    // Reject a challenge minted by any other flow — e.g. an unauthenticated
+    // signup/recovery challenge replayed here to attach an attacker-controlled
+    // passkey to an authenticated session's account. Same rejection as "not
+    // found" so this can't be used to probe purpose.
+    if !crate::webauthn_challenge_purpose::has_purpose(
+        &challenge_data,
+        &[crate::webauthn_challenge_purpose::PASSKEY_ADD_DEVICE],
+    ) {
+        return Err(krausen_core::Error::Internal(
+            "Invalid or expired challenge".into(),
+        ));
+    }
 
     let challenge_user_id = challenge_data["user_id"].as_str().unwrap_or("");
     if challenge_user_id != user_id {
@@ -381,3 +403,6 @@ pub async fn complete_passkey_registration(
 
     Ok(device_name)
 }
+
+#[cfg(test)]
+mod purpose_tests;

@@ -228,7 +228,7 @@ families, exact incoming proof/callback parameters and associated operations:
 | `/settings`, `/settings/profile`, `/settings/security`, `/settings/workspace`, `/settings/team` | Existing redirects/routes, new grouping and safe return |
 | `/accept-ownership/:transfer_id`, `/onboarding` | Existing incoming/setup tasks, not primary clutter |
 | `/login`, `/signup`, `/signup/complete`, `/account/recover`, `/account/recover/complete` | Existing account entry/recovery |
-| `/auth/google/callback`, `/auth/passkey-signup`, `/auth/recover-passkey`, `/auth/recover-passkey/complete`, `/oauth-complete` | Existing proof/callback/ceremony flows |
+| `/auth/google/callback`, `/auth/recover-passkey`, `/auth/recover-passkey/complete`, `/oauth-complete` | Existing proof/callback/ceremony flows |
 | `/design-system` | Deliberately retained direct engineering route; no customer entry |
 
 `/equipment` is the approved additive UI destination, **not present at the review

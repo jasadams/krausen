@@ -313,6 +313,22 @@ async fn removed_member_with_an_mcp_token_is_refused(srv: &TestServer) {
     assert_eq!(denied.structured_content.unwrap()["outcome"], "Forbidden");
 }
 
+/// Kyomi parity: `/mcp` falls back to the session extractor, which refuses only
+/// MCP-purpose tokens, so a `scope = passkey_recovery` token sent as a bearer is
+/// accepted like any signed session token. (The recovery token normally lives
+/// only in an HttpOnly cookie that neither extractor reads.)
+async fn a_recovery_scope_bearer_is_accepted_like_any_signed_session_token(srv: &TestServer) {
+    let who = account(srv).await;
+    let token = jwt::create_access_token_str(
+        &who.user_id,
+        &srv.secret,
+        15,
+        [("scope".to_string(), json!("passkey_recovery"))].into_iter().collect(),
+    )
+    .unwrap();
+    assert_eq!(post_mcp(&srv.base, Some(&token)).await.status(), StatusCode::OK);
+}
+
 common::both_backends!(
     no_token_is_401_with_the_oauth_challenge,
     mcp_jwt_for_an_active_user_is_accepted,
@@ -327,4 +343,5 @@ common::both_backends!(
     old_opaque_bearer_tokens_are_401_with_the_challenge,
     backend_failure_is_500_with_a_json_error_not_401,
     removed_member_with_an_mcp_token_is_refused,
+    a_recovery_scope_bearer_is_accepted_like_any_signed_session_token,
 );

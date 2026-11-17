@@ -309,12 +309,12 @@ fn signup_verify_params<'a>(
 // Token-type binding
 // ---------------------------------------------------------------------------
 
-const TOKEN_TYPE_PASSWORD_SIGNUP: &str = "email_verification";
-const TOKEN_TYPE_PASSWORD_RECOVERY: &str = "account_recovery";
-const TOKEN_TYPE_PASSKEY_SIGNUP: &str = "signup";
-const TOKEN_TYPE_PASSKEY_RECOVERY: &str = "passkey_recovery";
+pub(crate) const TOKEN_TYPE_PASSWORD_SIGNUP: &str = "email_verification";
+pub(crate) const TOKEN_TYPE_PASSWORD_RECOVERY: &str = "account_recovery";
+pub(crate) const TOKEN_TYPE_PASSKEY_SIGNUP: &str = "signup";
+pub(crate) const TOKEN_TYPE_PASSKEY_RECOVERY: &str = "passkey_recovery";
 
-const ALL_VERIFICATION_TOKEN_TYPES: [&str; 4] = [
+pub(crate) const ALL_VERIFICATION_TOKEN_TYPES: [&str; 4] = [
     TOKEN_TYPE_PASSWORD_SIGNUP,
     TOKEN_TYPE_PASSWORD_RECOVERY,
     TOKEN_TYPE_PASSKEY_SIGNUP,
