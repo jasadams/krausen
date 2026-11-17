@@ -12,6 +12,8 @@
 
 use krausen_core::{DbPool, KVPool};
 
+use crate::rate_limiter::RateLimitResult;
+
 use crate::session::{AuthenticatedSession, create_authenticated_session};
 use crate::token_service::DeviceInfo;
 
@@ -122,17 +124,12 @@ pub async fn login_with_password_service(
                     .get("secret")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        krausen_core::Error::Internal(
-                            "TOTP auth method is missing its secret".into(),
-                        )
+                        krausen_core::Error::Internal("TOTP auth method missing secret".into())
                     })?;
 
                 if !crate::totp::verify_code(secret, code) {
                     return Ok(LoginServiceResult::InvalidCredentials);
                 }
-
-                // Best-effort: record that the second factor was used.
-                let _ = crate::user_service::touch_auth_method(db, &user.user_id, "totp").await;
             }
         }
     }
@@ -178,34 +175,21 @@ pub struct SignupStartParams<'a> {
     pub config: Option<&'a krausen_core::Config>,
 }
 
-/// Step one of signup: take an email address and send a link to it.
+/// Full signup-start orchestration.
 ///
-/// **This writes no `users` row, and must not start doing so.** Submitting an
-/// address is a claim; the account is created once the emailed token comes back
-/// and proves whoever sent it can read that mailbox. That happens in
-/// [`establish_verified_account`], called from [`signup_complete_service`] and
-/// [`passkey_signup_complete_service`]. There is no unverified-user state, and
-/// nothing downstream should have to ask whether a row is "real yet".
-///
-/// The one exception is a self-hosted server with no mailer configured: there
-/// is no link to send, so the account is made here and the caller is signed
-/// straight in.
+/// Two modes:
+/// - Self-hosted SMTP-less: creates user directly and returns a session.
+/// - SaaS: mints and emails a verification token; no `users` row is written
+///   here (KYO-683 phase 1) — `slack_feedback_webhook_url` / `support_email`
+///   are no longer params of this function because of that: the admin
+///   signup notification they fed now fires from `establish_verified_account`
+///   at redemption time, once an account actually exists to report.
 pub async fn signup_start_service(
     params: SignupStartParams<'_>,
 ) -> krausen_core::Result<SignupStartServiceResult> {
     let SignupStartParams {
-        db,
-        kv,
-        jwt_secret,
-        email,
-        name,
-        password,
-        ip,
-        device,
-        self_hosted,
-        smtp_configured,
-        frontend_url,
-        config,
+        db, kv, jwt_secret, email, name, password, ip, device,
+        self_hosted, smtp_configured, frontend_url, config,
     } = params;
     // Rate limit
     let rate = crate::rate_limiter::check_rate_limit(kv, ip, "signup", None).await?;
@@ -216,15 +200,6 @@ pub async fn signup_start_service(
     }
 
     let smtp_less_self_hosted = self_hosted && !smtp_configured;
-
-    // An email address by itself is not proof of an invitation. First-owner
-    // setup is a local operator action; invitation proof must be implemented
-    // before SMTP-less remote signup can be enabled.
-    if smtp_less_self_hosted {
-        return Ok(SignupStartServiceResult::Error {
-            message: "Registration requires an administrator-provided proof; initialize the first owner locally.".into(),
-        });
-    }
 
     // Look up existing user
     let existing_user = crate::user_service::get_user_by_email(db, email).await?;
@@ -245,26 +220,47 @@ pub async fn signup_start_service(
     }
 
     match existing_user {
-        None if smtp_less_self_hosted => {
-            // No mailer, so there is no link to send. The account is made here
-            // and the caller is signed straight in.
-            signup_smtp_less_new_user(SmtpLessNewUserParams {
+        None => {
+            if smtp_less_self_hosted {
+                let result = signup_smtp_less_new_user(SmtpLessNewUserParams {
+                    db, kv, jwt_secret, email, name, password, device, config,
+                })
+                .await?;
+                Ok(result)
+            } else {
+                // KYO-683 phase 1: no `users` row is written here anymore.
+                // Only a verification token is minted and emailed; the row
+                // itself is created (verified = true) when that token is
+                // redeemed, by `signup_verify_service` below.
+                mint_verification_email_or_notify_existing(
+                    db,
+                    email,
+                    name,
+                    frontend_url,
+                    self_hosted,
+                    None,
+                )
+                .await?;
+                Ok(SignupStartServiceResult::VerificationRequired)
+            }
+        }
+        Some(ref user) => {
+            // An account already exists for this email — verified (post
+            // KYO-683's `00037_verify_pre_existing_unverified_users`
+            // migration, there's no other kind of row left). The HTTP
+            // response must stay VerificationRequired, identical to the
+            // `None` arm above, to prevent email enumeration; the mailbox
+            // (which only the account owner can read) gets a "you already
+            // have an account" notice instead of staying silent (KYO-681).
+            mint_verification_email_or_notify_existing(
                 db,
-                kv,
-                jwt_secret,
                 email,
                 name,
-                password,
-                device,
-                config,
-            })
-            .await
-        }
-        // Known or unknown, the answer is the same: a link goes to the mailbox
-        // and the response says so. Anything that distinguished the two cases
-        // would let a stranger enumerate who has an account.
-        _ => {
-            send_signup_link(db, email, frontend_url).await?;
+                frontend_url,
+                self_hosted,
+                Some(user),
+            )
+            .await?;
             Ok(SignupStartServiceResult::VerificationRequired)
         }
     }
@@ -285,16 +281,7 @@ struct SmtpLessNewUserParams<'a> {
 async fn signup_smtp_less_new_user(
     params: SmtpLessNewUserParams<'_>,
 ) -> krausen_core::Result<SignupStartServiceResult> {
-    let SmtpLessNewUserParams {
-        db,
-        kv,
-        jwt_secret,
-        email,
-        name,
-        password,
-        device,
-        config,
-    } = params;
+    let SmtpLessNewUserParams { db, kv, jwt_secret, email, name, password, device, config } = params;
     let name_str = name.unwrap_or("").trim();
     let password_str = password.unwrap_or("");
     if name_str.is_empty() || password_str.is_empty() {
@@ -321,10 +308,15 @@ async fn signup_smtp_less_new_user(
     .await?;
 
     // Check for pending invitations
-    let pending = crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
+    let pending =
+        crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
     if let Some(inv) = pending.first() {
-        crate::workspace_service::accept_invitation_for_user(db, &inv.invitation_id, &user.user_id)
-            .await?;
+        crate::workspace_service::accept_invitation_for_user(
+            db,
+            &inv.invitation_id,
+            &user.user_id,
+        )
+        .await?;
         crate::user_service::update_last_workspace(db, &user.user_id, &inv.workspace_id).await?;
     } else {
         crate::user_service::create_workspace_for_user(
@@ -351,44 +343,286 @@ async fn signup_smtp_less_new_user(
     Ok(SignupStartServiceResult::AccountCreated(Box::new(sess)))
 }
 
-/// Mint a signup link and email it. Writes no `users` row.
+/// Which `EmailService` method `spawn_verification_email` invokes.
 ///
-/// The account is created when the emailed token is redeemed, by
-/// [`establish_verified_account`]. Submitting an email address is a claim, not
-/// an account: until someone proves they can read that mailbox there is
-/// nothing to store, and a half-made row is a state the rest of the system has
-/// to keep asking about.
+/// Every variant except `ExistingAccount` has an underlying method with the
+/// identical `(email: &str, name: &str, link: &str) ->
+/// Result<(), EmailSendError>` signature, so
+/// picking a variant is the only thing that needs to vary between callers —
+/// no other plumbing changes. `ExistingAccount` is the one exception: its
+/// underlying method, `send_existing_account_notice`, also needs the
+/// account's active sign-in methods, so it carries that as data on the
+/// variant rather than forcing it through the three-argument shape the
+/// others share (KYO-681).
+enum VerificationEmailKind {
+    /// `send_verification_email` — signup / resend-verification flows.
+    Verification,
+    /// `send_existing_account_notice` — an already-verified account attempted
+    /// signup again. Carries the account's active `user_auth_methods.auth_type`
+    /// values so the email can name how the owner signs in.
+    ExistingAccount { auth_methods: Vec<String> },
+}
+
+/// Whether the operator log may contain the *live, unhashed* value of a
+/// verification/recovery token — i.e. the whole URL, not just that a token
+/// was minted.
 ///
-/// Called for an unknown address and for one that already has an account — the
-/// return value is identical either way, so the response cannot be used to
-/// discover who has signed up. The mailbox, which only its owner can read, is
-/// what tells the two apart.
-async fn send_signup_link(
-    db: &DbPool,
-    email: &str,
-    frontend_url: &str,
+/// KYO-763: every one of these tokens is a live credential, not just an
+/// email-confirmation nonce — redeeming one creates the account
+/// (`"email_verification"` / `"signup"`, post-KYO-683) or recovers it
+/// (`"passkey_recovery"`, and the `"account_recovery"` sibling in
+/// `krausen-ui`'s `recovery_start`). Logging the full link is therefore
+/// equivalent to logging a password. A SaaS production build ships its
+/// logs to an aggregator with real retention, so anyone with log access —
+/// not just the account owner — could complete the flow for any address
+/// that requests one.
+///
+/// `self_hosted` keeps the line: that deployment is its own instance with
+/// its own log retention, and the line is the documented way an
+/// administrator unblocks a user whose mail server is misbehaving (see
+/// `krausen-ui`'s `recovery_start`, which shares this exact predicate for its
+/// own failure-path link). `dev_mode` keeps it too, for a locally run
+/// `dev-server`-profile build (`debug-assertions = true`, `Cargo.toml`) —
+/// the shape a local dev server runs under: `self_hosted` is false there (it's SaaS-mode config), but there
+/// is no aggregated log and, for agent/manual testing with no mailbox to
+/// check, often no working SMTP either.
+///
+/// Neither flag is set on a real SaaS production build, which is the case
+/// this predicate exists to close. Takes both as plain `bool`s — rather
+/// than reading `Config`/`cfg!(debug_assertions)` itself — so every
+/// combination is exercised by a plain unit test regardless of the profile
+/// the test binary itself was compiled with (`cfg!(debug_assertions)` is
+/// `true` in an ordinary `cargo test` run, same as `dev-server`).
+pub fn may_log_live_credential_link(self_hosted: bool, dev_mode: bool) -> bool {
+    self_hosted || dev_mode
+}
+
+/// Parameters for `mint_and_send_verification_email`.
+struct MintVerificationEmailParams<'a> {
+    db: &'a DbPool,
+    email: &'a str,
+    name: &'a str,
+    /// Only used for the log line below. `None` for the signup-start callers
+    /// (KYO-683 phase 1: no `users` row exists yet at this point — the token
+    /// is minted before any account is created), `Some(&user.user_id)` for
+    /// the passkey-recovery start step, the one caller with an existing row.
+    user_id: Option<&'a str>,
+    frontend_url: &'a str,
+    /// Fed to [`may_log_live_credential_link`] — see that function for what
+    /// each flag means. Real callers pass their own `self_hosted` and
+    /// `cfg!(debug_assertions)`; kept as explicit fields (rather than this
+    /// function reading `cfg!` itself) so a test can drive the SaaS-
+    /// production combination (`false, false`) directly, which an ordinary
+    /// `cargo test` binary's own `debug_assertions` can never produce on
+    /// its own (KYO-763).
+    self_hosted: bool,
+    dev_mode: bool,
+    token_type: &'a str,
+    verification_path: &'a str,
+    /// Token lifetime override, in hours. `None` uses
+    /// `create_verification_token_with_expiry`'s default
+    /// (`constants().jwt.email_verification_expire_hours`) — the previous
+    /// fixed behavior of this helper, preserved for the three signup
+    /// callers below. The passkey-recovery start step passes `Some(0.25)`
+    /// (15 minutes).
+    expire_hours: Option<f64>,
+    /// Which email to send — see `VerificationEmailKind`.
+    email_kind: VerificationEmailKind,
+}
+
+/// Mint a verification token, build the verification/landing URL, log it
+/// (only where [`may_log_live_credential_link`] allows — KYO-763), and send
+/// the verification email in the background.
+///
+/// Shared primitive behind every "mint a token + email a link" step: the
+/// brand-new-signup case ("email_verification" token type, `/signup/complete`
+/// landing page); the resend case (`resend_verification_service`, same token
+/// type and landing page as signup); and the passkey-recovery start step
+/// ("passkey_recovery" token type, 15-minute expiry,
+/// `/auth/recover-passkey/complete` landing page, and the
+/// `send_passkey_recovery` email rather than the generic verification one).
+/// Token type, landing path, expiry, and which email to send are the only
+/// things that vary between callers; parameterizing them here avoids
+/// near-identical copies of "mint token, build URL, log, spawn email" — and,
+/// as of KYO-763, near-identical copies of deciding whether the link may be
+/// logged at all.
+///
+/// Deliberately does **not** touch the `users` table (KYO-683 phase 1): the
+/// row is created or adopted only when the token is redeemed, by
+/// `establish_verified_account` below.
+async fn mint_and_send_verification_email(
+    params: MintVerificationEmailParams<'_>,
 ) -> krausen_core::Result<()> {
-    let raw_token =
-        crate::token_service::create_verification_token(db, email, "email_verification").await?;
-    let signup_url = format!(
-        "{}/signup/complete?token={raw_token}",
+    let MintVerificationEmailParams {
+        db,
+        email,
+        name,
+        user_id,
+        frontend_url,
+        self_hosted,
+        dev_mode,
+        token_type,
+        verification_path,
+        expire_hours,
+        email_kind,
+    } = params;
+
+    let raw_token = crate::token_service::create_verification_token_with_expiry(
+        db,
+        email,
+        token_type,
+        expire_hours,
+    )
+    .await?;
+    let url = format!(
+        "{}{verification_path}?token={raw_token}",
         frontend_url.trim_end_matches('/')
     );
-    tracing::info!("Password signup link for {email}: {signup_url}");
-
-    spawn_verification_email(email.to_string(), String::new(), signup_url);
+    if may_log_live_credential_link(self_hosted, dev_mode) {
+        match user_id {
+            Some(user_id) => tracing::info!(
+                "Verification link ({token_type}) for {email}: {url} (user_id={user_id})"
+            ),
+            None => tracing::info!(
+                "Verification link ({token_type}) for {email}: {url} (user not yet created)"
+            ),
+        }
+    }
+    spawn_verification_email(email.to_string(), name.to_string(), url, email_kind);
     Ok(())
 }
 
+/// Parameters for `notify_existing_verified_account`.
+struct ExistingAccountNoticeParams<'a> {
+    db: &'a DbPool,
+    email: &'a str,
+    name: &'a str,
+    user_id: &'a str,
+    frontend_url: &'a str,
+}
+
+/// Sibling of `mint_and_send_verification_email` for the "this email
+/// already belongs to a verified account" case (KYO-681).
+///
+/// Deliberately mints **no** token — there is nothing to verify — and sends
+/// a different email: a sign-in link plus the account's active auth
+/// methods, rather than a verification link. This is what lets the
+/// `Some(_)` (verified user) arm of `signup_start_service` stop being a
+/// silent dead end while still returning the exact same
+/// `VerificationRequired` result the other account states return.
+///
+/// The enumeration-resistance property those callers guard only constrains
+/// the *HTTP response* — it says nothing about the mailbox, which only the
+/// address owner can read. So the response stays generic while the email
+/// gets to be specific: it is the one channel safe to tell "you already
+/// have an account" to.
+async fn notify_existing_verified_account(
+    params: ExistingAccountNoticeParams<'_>,
+) -> krausen_core::Result<()> {
+    let ExistingAccountNoticeParams { db, email, name, user_id, frontend_url } = params;
+
+    let auth_methods = crate::user_service::list_active_auth_types(db, user_id).await?;
+    let sign_in_url = format!("{}/login", frontend_url.trim_end_matches('/'));
+
+    // The equivalent of mint_and_send_verification_email's info log below —
+    // without it, this path (like the dead end it replaces) is invisible
+    // from server logs, which is exactly what made KYO-681 hard to diagnose.
+    tracing::info!(
+        email = %email,
+        user_id = %user_id,
+        auth_methods = ?auth_methods,
+        "Signup attempted for an already-registered, verified email — sending \
+         existing-account notice instead of a verification email"
+    );
+
+    spawn_verification_email(
+        email.to_string(),
+        name.to_string(),
+        sign_in_url,
+        VerificationEmailKind::ExistingAccount { auth_methods },
+    );
+    Ok(())
+}
+
+/// Shared "send a verification email for this address" step behind both
+/// `signup_start_service` (new signup) and `resend_verification_service`
+/// (the "Resend" button shown while a signup is pending). Both callers
+/// already have to look the address up via `get_user_by_email` for their
+/// own purposes, so both pass that lookup's result straight through rather
+/// than re-querying.
+///
+/// KYO-683 phase 1 is exactly why this has to be keyed on `existing_user`
+/// rather than on some other signal: no `users` row exists between "signup
+/// form submitted" and "verification link clicked", which is precisely the
+/// window the Resend button is shown in. Gating on row existence (as
+/// `resend_verification_service` used to) makes that whole window a silent
+/// no-op — the row lookup returns `None` and there is nothing to resend to.
+///
+/// - No existing row: mint and send a fresh `"email_verification"` token via
+///   `mint_and_send_verification_email` — the signup-in-progress case.
+/// - An existing row: notify the owner they already have an account via
+///   `notify_existing_verified_account` (KYO-681) instead, minting no
+///   token — there's nothing left to verify. Every row reaching this arm is
+///   verified: KYO-683's `00037_verify_pre_existing_unverified_users`
+///   migration reconciled every unverified row that could have predated
+///   this design, and nothing created since writes one that stays
+///   unverified.
+///
+/// Both arms must stay indistinguishable to the caller — `signup_start_service`
+/// and `resend_verification_service` both rely on this for KYO-681
+/// email-enumeration safety and must not let their own response differ
+/// based on which arm ran.
+async fn mint_verification_email_or_notify_existing(
+    db: &DbPool,
+    email: &str,
+    name: Option<&str>,
+    frontend_url: &str,
+    self_hosted: bool,
+    existing_user: Option<&krausen_core::models::User>,
+) -> krausen_core::Result<()> {
+    match existing_user {
+        None => {
+            mint_and_send_verification_email(MintVerificationEmailParams {
+                db,
+                email,
+                name: name.unwrap_or_default(),
+                user_id: None,
+                frontend_url,
+                self_hosted,
+                dev_mode: cfg!(debug_assertions),
+                token_type: "email_verification",
+                verification_path: "/signup/complete",
+                expire_hours: None,
+                email_kind: VerificationEmailKind::Verification,
+            })
+            .await
+        }
+        Some(user) => {
+            let user_name = user.name.clone().unwrap_or_default();
+            notify_existing_verified_account(ExistingAccountNoticeParams {
+                db,
+                email,
+                name: &user_name,
+                user_id: &user.user_id,
+                frontend_url,
+            })
+            .await
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Account establishment
+// Account establishment (KYO-683 phase 1)
 // ---------------------------------------------------------------------------
 
-/// Parameters for [`establish_verified_account`].
+/// Parameters for `establish_verified_account`.
 struct EstablishVerifiedAccountParams<'a> {
     db: &'a DbPool,
     email: &'a str,
-    /// Display name collected by the redeeming step.
+    /// Display name to set, if the redeeming step collected one.
+    /// `signup_verify_service` forwards whatever its own caller passed —
+    /// `None` for a bare redemption, `Some` if the caller's "Confirm" step
+    /// already collected one.
     name: Option<&'a str>,
     marketing_consent: bool,
     config: Option<&'a krausen_core::Config>,
@@ -396,36 +630,43 @@ struct EstablishVerifiedAccountParams<'a> {
     support_email: &'a str,
 }
 
-/// Create-or-adopt a verified `users` row, record terms, and place the user in
-/// a workspace.
+/// Create-or-adopt a verified `users` row, record terms acceptance, and
+/// ensure a workspace exists.
 ///
-/// This is the single point where a signup becomes an account. No signup path
-/// writes a `users` row before its verification token is redeemed, so every
-/// redeeming step — [`signup_complete_service`] and
-/// [`passkey_signup_complete_service`] — has to create the account rather than
-/// find one an earlier step left behind.
+/// KYO-683 phase 1: no signup flow writes a `users` row until its
+/// verification token is redeemed. This is that redemption step —
+/// `signup_verify_service` calls it, because it now has to create the
+/// account rather than find a row an earlier step already wrote.
 ///
-/// - No row for `email`: create one, already verified, and fire the admin
-///   notification — this is a genuinely new account.
-/// - A row already exists: adopt it. Mark it verified and carry on, with no
-///   admin notification, because the account is not new. This is reachable
-///   rather than exotic — someone can ask for a signup link, sign in with
-///   Google before clicking it, then click it. The token proves they control
-///   the mailbox, so finishing password or passkey setup on that same row is
-///   the right answer, not a collision.
+/// - No row for `email` exists: create one, pre-verified, and fire the
+///   admin `notify_signup` notification (a genuinely new account).
+/// - A row for `email` already exists: adopt it — mark it verified and carry
+///   on identically, but fire **no** admin notification (the account isn't
+///   new). This is reachable, not exotic: a user can sign up by email, then
+///   sign in with Google before clicking the emailed link, then click the
+///   link — the token proves control of the mailbox, so completing the
+///   password/passkey setup on that same row is correct, not an error. It's
+///   also what keeps this safe against the pre-KYO-683 unverified rows a
+///   separate migration reconciles: redeeming a stale token for one of them
+///   adopts rather than 500s on a `users_email_key` collision.
 ///
-/// Returns the row as it stands afterwards.
+/// Workspace creation goes through `ensure_user_has_workspace` rather than
+/// an unconditional `create_workspace_for_user` call — the adopt branch can
+/// hand back a row that already has one (see the reachable scenario above:
+/// finishing Google OAuth onboarding creates both the row and a workspace
+/// before the stale email link is ever clicked), and `create_workspace_for_user`
+/// is not idempotent — it always inserts a new `workspaces` row, repoints
+/// `last_workspace_id`, and opens a second Stripe subscription when Stripe
+/// is configured. This does not special-case pending invitations the way
+/// `signup_smtp_less_new_user` does; that divergence predates this change
+/// and is out of scope for it.
+///
+/// Returns the freshly re-fetched user row.
 async fn establish_verified_account(
     params: EstablishVerifiedAccountParams<'_>,
 ) -> krausen_core::Result<krausen_core::models::User> {
     let EstablishVerifiedAccountParams {
-        db,
-        email,
-        name,
-        marketing_consent,
-        config,
-        slack_feedback_webhook_url,
-        support_email,
+        db, email, name, marketing_consent, config, slack_feedback_webhook_url, support_email,
     } = params;
 
     let existing = crate::user_service::get_user_by_email(db, email).await?;
@@ -461,13 +702,24 @@ async fn establish_verified_account(
         .await?;
     }
 
-    place_user_in_workspace(db, &user_id, name, email, config).await?;
+    // `ensure_user_has_workspace`, not a bare `create_workspace_for_user`
+    // call: the adopt branch above can hand back a row that already has a
+    // workspace (e.g. the user finished Google OAuth onboarding — which
+    // creates both the row and a workspace — before clicking a stale email
+    // link). `create_workspace_for_user` is not idempotent — it always
+    // inserts a new `workspaces` row, repoints `last_workspace_id`, and (with
+    // Stripe configured) opens a second Stripe subscription — so calling it
+    // unconditionally here would duplicate all three for that user on every
+    // redemption of a stale link.
+    ensure_user_has_workspace(db, &user_id, name, email, config).await?;
 
     if is_new_account {
-        // Fire-and-forget, and only for a new account: the adopt branch already
-        // had one, so there is nothing to announce. This sits here rather than
-        // at signup-start because there it could report a user who never came
-        // into being.
+        // Admin notification (Slack + email) — fire-and-forget. Moved here
+        // from signup-start (KYO-683 phase 1): it used to fire before the
+        // account existed and could report a user who never came into
+        // being. Fired only on the new-account branch — the adopt branch
+        // already has an account, so it isn't "new" from the admin's
+        // perspective.
         let notify_webhook = slack_feedback_webhook_url.map(|s| s.to_string());
         let notify_support = support_email.to_string();
         let notify_email = email.to_string();
@@ -488,65 +740,34 @@ async fn establish_verified_account(
     crate::user_service::get_user_by_email(db, email)
         .await?
         .ok_or_else(|| {
-            krausen_core::Error::Internal("user vanished after being established".into())
+            krausen_core::Error::Internal("User not found after account establishment".into())
         })
 }
 
-/// Give a user somewhere to work: join the workspace they were invited to, or
-/// make them one of their own.
-///
-/// Does nothing when they already have a workspace. The adopt branch of
-/// [`establish_verified_account`] can hand back a row that already has one, and
-/// `create_workspace_for_user` is not idempotent — it inserts a fresh
-/// `workspaces` row and repoints `last_workspace_id` every time it is called.
-async fn place_user_in_workspace(
-    db: &DbPool,
-    user_id: &str,
-    user_name: Option<&str>,
-    email: &str,
-    config: Option<&krausen_core::Config>,
-) -> krausen_core::Result<()> {
-    if crate::user_service::get_user_workspace_context(db, user_id)
-        .await?
-        .is_some()
-    {
-        return Ok(());
-    }
-
-    let pending = crate::workspace_service::get_pending_invitations_for_email(db, email).await?;
-    if let Some(inv) = pending.first() {
-        crate::workspace_service::accept_invitation_for_user(db, &inv.invitation_id, user_id)
-            .await?;
-        crate::user_service::update_last_workspace(db, user_id, &inv.workspace_id).await?;
-    } else {
-        crate::user_service::create_workspace_for_user(db, user_id, user_name, email, config)
-            .await?;
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
-// Signup complete (email verification token flow)
+// Signup verify (POST redemption, KYO-683 phase 1)
 // ---------------------------------------------------------------------------
 
-/// Outcome of `signup_complete_service`.
-pub enum SignupCompleteServiceResult {
-    /// Validation error (terms not accepted, bad password, etc.).
+/// Outcome of `signup_verify_service`.
+pub enum SignupVerifyServiceResult {
+    /// Validation error (terms not accepted).
     Error { message: String },
     /// Invalid or expired signup token.
     InvalidToken,
-    /// Account created and authenticated — server_fn should set cookies.
+    /// Account established and authenticated — server_fn should set cookies.
     Success(Box<AuthenticatedSession>),
 }
 
-/// Parameters for `signup_complete_service`.
-pub struct SignupCompleteParams<'a> {
+/// Parameters for `signup_verify_service`.
+pub struct SignupVerifyParams<'a> {
     pub db: &'a DbPool,
     pub kv: &'a KVPool,
     pub jwt_secret: &'a str,
     pub token: &'a str,
-    pub name: &'a str,
-    pub password: &'a str,
+    /// Display name to set on the account, if the caller collected one.
+    /// `None` for a bare token redemption; the `signup_verify` `#[server]`
+    /// endpoint passes through whatever a "Confirm" step collects (KYO-728).
+    pub name: Option<&'a str>,
     pub terms_accepted: bool,
     pub marketing_consent: bool,
     pub device: &'a DeviceInfo,
@@ -555,61 +776,40 @@ pub struct SignupCompleteParams<'a> {
     pub support_email: &'a str,
 }
 
-/// Full signup-complete orchestration (email verification token flow).
-pub async fn signup_complete_service(
-    params: SignupCompleteParams<'_>,
-) -> krausen_core::Result<SignupCompleteServiceResult> {
-    let SignupCompleteParams {
-        db,
-        kv,
-        jwt_secret,
-        token,
-        name,
-        password,
-        terms_accepted,
-        marketing_consent,
-        device,
-        config,
-        slack_feedback_webhook_url,
-        support_email,
+/// Redeem an `"email_verification"` token by POST, establishing the account.
+///
+/// KYO-683 phase 1: this is the contract that actually creates the `users`
+/// row for password signup — `signup_start_service` only ever mints and
+/// emails the token. This contract collects no password; it exists for the
+/// phase-2 (KYO-728) confirm-then-credentials flow, where the password is
+/// collected in a later, separate step against the now-authenticated
+/// session. A display name is optional here — pass `None` for a bare
+/// redemption, or `Some` if the caller's "Confirm" step already collected
+/// one.
+pub async fn signup_verify_service(
+    params: SignupVerifyParams<'_>,
+) -> krausen_core::Result<SignupVerifyServiceResult> {
+    let SignupVerifyParams {
+        db, kv, jwt_secret, token, name, terms_accepted, marketing_consent, device, config,
+        slack_feedback_webhook_url, support_email,
     } = params;
+
     if !terms_accepted {
-        return Ok(SignupCompleteServiceResult::Error {
-            message:
-                "You must accept the Terms of Service and Privacy Policy to create an account."
-                    .to_string(),
-        });
-    }
-    if password.len() < 8 {
-        return Ok(SignupCompleteServiceResult::Error {
-            message: "Password must be at least 8 characters".to_string(),
-        });
-    }
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Ok(SignupCompleteServiceResult::Error {
-            message: "Name is required".to_string(),
+        return Ok(SignupVerifyServiceResult::Error {
+            message: "You must accept the Terms of Service and Privacy Policy to create an account.".to_string(),
         });
     }
 
-    // Verify email verification token
     let email =
         crate::token_service::verify_verification_token(db, token, "email_verification").await?;
     let Some(email) = email else {
-        return Ok(SignupCompleteServiceResult::InvalidToken);
+        return Ok(SignupVerifyServiceResult::InvalidToken);
     };
 
-    // Hash first, so a bad password fails before anything is written.
-    let hash = crate::password::hash_password(password)
-        .map_err(|e| krausen_core::Error::Internal(format!("Failed to hash password: {e}")))?;
-    let auth_data = serde_json::json!({"hash": hash});
-
-    // The token proved control of the mailbox, so this is where the account
-    // comes into being — signup-start deliberately left no row behind.
     let user = establish_verified_account(EstablishVerifiedAccountParams {
         db,
         email: &email,
-        name: Some(&name),
+        name,
         marketing_consent,
         config,
         slack_feedback_webhook_url,
@@ -617,10 +817,8 @@ pub async fn signup_complete_service(
     })
     .await?;
 
-    crate::user_service::upsert_auth_method(db, &user.user_id, "password", &auth_data).await?;
-
     let sess = create_authenticated_session(db, kv, jwt_secret, &user, device).await?;
-    Ok(SignupCompleteServiceResult::Success(Box::new(sess)))
+    Ok(SignupVerifyServiceResult::Success(Box::new(sess)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,6 +1564,19 @@ pub async fn passkey_recovery_verify_service(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Rate limit helper
+// ---------------------------------------------------------------------------
+
+/// Check rate limit for a given IP and bucket, returning the result.
+pub async fn check_rate_limit(
+    kv: &KVPool,
+    ip: &str,
+    bucket: &str,
+) -> krausen_core::Result<RateLimitResult> {
+    crate::rate_limiter::check_rate_limit(kv, ip, bucket, None).await
+}
+
 /// Generate a WebAuthn user handle from email (deterministic, matching the server route).
 ///
 /// `sha256(email)[:16]` interpreted as a UUID.
@@ -1461,42 +1672,50 @@ pub async fn update_passkey_after_auth_inner(
     }
 }
 
-/// Result of attempting to resend a verification email.
-pub struct ResendVerificationResult {
-    pub should_send: bool,
-    pub user_name: String,
-    pub raw_token: String,
-}
-
-/// Issue another signup link for an address. Returns `None` only when rate
-/// limited.
+/// Re-send the verification email for a pending or already-registered
+/// signup — the "Resend" button shown by the `VerificationRequired` state
+/// `signup_start_service` returns, for as long as the address has no
+/// confirmed account.
 ///
-/// "Send it again" is the same operation as "send it" — it mints a fresh
-/// [`signup_start_service`] token and nothing else. In particular it does not
-/// look for an unverified `users` row to attach to, because no signup writes
-/// one; it used to, which made this permanently return `None`.
+/// KYO-683 phase 1 moved account creation from signup-start to
+/// token-redemption, so for exactly as long as this button is shown there
+/// is no `users` row for the address yet. This function used to gate on row
+/// existence and return early when none was found — which, after that
+/// move, made every resend in that window a silent no-op: the lookup always
+/// missed, so nothing was ever (re-)sent. It now shares
+/// `signup_start_service`'s own address-state gate,
+/// `mint_verification_email_or_notify_existing`, so a signup-in-progress
+/// resend mints a fresh token exactly like the original signup did, and the
+/// two paths stay identical by construction rather than by two people
+/// remembering to keep them in sync.
 ///
-/// No lookup means no way to tell a registered address from an unregistered
-/// one by watching what comes back.
+/// Always returns `Ok(())`, regardless of whether an email was actually
+/// sent — rate-limited, no account for `email`, or an already-verified
+/// account are all indistinguishable from the caller's perspective
+/// (KYO-681 email-enumeration safety).
 pub async fn resend_verification_service(
     db: &krausen_core::DbPool,
     kv: &KVPool,
+    frontend_url: &str,
     ip: &str,
     email: &str,
-) -> krausen_core::Result<Option<ResendVerificationResult>> {
-    let rate = crate::rate_limiter::check_rate_limit(kv, ip, "register", None).await?;
+    self_hosted: bool,
+) -> krausen_core::Result<()> {
+    let rate = check_rate_limit(kv, ip, "register").await?;
     if !rate.allowed {
-        return Ok(None);
+        return Ok(());
     }
 
-    let raw_token =
-        crate::token_service::create_verification_token(db, email, "email_verification").await?;
-
-    Ok(Some(ResendVerificationResult {
-        should_send: true,
-        user_name: String::new(),
-        raw_token,
-    }))
+    let existing_user = crate::user_service::get_user_by_email(db, email).await?;
+    mint_verification_email_or_notify_existing(
+        db,
+        email,
+        None,
+        frontend_url,
+        self_hosted,
+        existing_user.as_ref(),
+    )
+    .await
 }
 
 /// Result of attempting to start account recovery.
@@ -1541,15 +1760,105 @@ pub async fn recovery_start_service(
     }))
 }
 
+/// `tracing` target for the fire-and-forget verification-email task.
+///
+/// Stable and greppable on purpose (KYO-697): this task runs after the HTTP
+/// response has already told the user to check their mailbox, so the log is
+/// the *only* place a failed send is ever visible. Filtering on this target
+/// alone gives an operator every signup/recovery mail outcome without
+/// having to know which `send_*` method was involved.
+const VERIFICATION_EMAIL_TARGET: &str = "krausen::auth::verification_email";
+
+impl VerificationEmailKind {
+    /// Stable label for the structured `email_kind` log field — the
+    /// discriminant an operator filters on to tell a failed signup
+    /// verification from a failed passkey recovery.
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Verification => "verification",
+            Self::ExistingAccount { .. } => "existing_account",
+        }
+    }
+}
+
+/// Send the email named by `kind`, returning the typed failure rather than
+/// reporting it.
+///
+/// Split out of [`spawn_verification_email`] so this path has a direct
+/// unit-test seam (KYO-697). The send is fire-and-forget by design — the
+/// signup response must not block on it, and must not vary with it — which
+/// previously meant the only way to observe a failure at all was to scrape
+/// the log output of a task nobody awaits.
+async fn send_verification_email_of_kind(
+    email_svc: &crate::email_service::EmailService,
+    email: &str,
+    name: &str,
+    url: &str,
+    kind: &VerificationEmailKind,
+) -> Result<(), crate::email_service::EmailSendError> {
+    match kind {
+        VerificationEmailKind::Verification => {
+            email_svc.send_verification_email(email, name, url).await
+        }
+        VerificationEmailKind::ExistingAccount { auth_methods } => {
+            email_svc
+                .send_existing_account_notice(email, name, url, auth_methods)
+                .await
+        }
+    }
+}
+
+/// Report the outcome of a verification-email send.
+///
+/// A failure is logged at `error` — not `warn` — because by the time this
+/// runs the user has already been shown "check your email" and has no way
+/// to learn otherwise; the operator's log is the only channel left, and the
+/// message that never arrived is the front door of the product.
+///
+/// Separate from [`send_verification_email_of_kind`] so both halves —
+/// "the failure is returned" and "the failure is reported" — are
+/// independently assertable.
+fn report_verification_email_outcome(
+    kind: &VerificationEmailKind,
+    email: &str,
+    result: &Result<(), crate::email_service::EmailSendError>,
+) {
+    match result {
+        Ok(()) => tracing::info!(
+            target: VERIFICATION_EMAIL_TARGET,
+            email_kind = kind.as_str(),
+            recipient = %email,
+            "Verification email sent"
+        ),
+        Err(e) => tracing::error!(
+            target: VERIFICATION_EMAIL_TARGET,
+            email_kind = kind.as_str(),
+            recipient = %email,
+            error = %e,
+            "Failed to send verification email"
+        ),
+    }
+}
+
 /// Send a verification email in a background task (fire-and-forget).
-fn spawn_verification_email(email: String, name: String, url: String) {
+///
+/// Stays `tokio::spawn`-based deliberately: the signup and recovery
+/// responses must not block on SMTP, and must stay byte-identical across
+/// account states regardless of what the mail server does.
+fn spawn_verification_email(
+    email: String,
+    name: String,
+    url: String,
+    kind: VerificationEmailKind,
+) {
     tokio::spawn(async move {
         let email_svc = crate::email_service::EmailService::from_env();
-        let sent = email_svc.send_verification_email(&email, &name, &url).await;
-        if sent {
-            tracing::info!("Verification email sent to {email}");
-        } else {
-            tracing::warn!("Failed to send verification email to {email}");
-        }
+        let result =
+            send_verification_email_of_kind(&email_svc, &email, &name, &url, &kind).await;
+        report_verification_email_outcome(&kind, &email, &result);
     });
 }
+
+
+#[cfg(test)]
+mod signup_tests;

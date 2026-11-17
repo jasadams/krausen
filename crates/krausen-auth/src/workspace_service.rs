@@ -302,7 +302,8 @@ pub async fn create_workspace_user(
     let bt = sql_compat::bool_true(is_pg);
     let sql = format!(
         "INSERT INTO workspace_users (workspace_id, user_id, role, active) \
-         VALUES ($1, $2, $3, {bt})"
+         VALUES ($1, $2, $3, {bt}) \
+         ON CONFLICT (workspace_id, user_id) DO NOTHING"
     );
     krausen_core::db_execute!(pool, &sql, workspace_id, user_id, role)?;
     Ok(())
@@ -468,7 +469,7 @@ pub async fn accept_invitation(
     let sql = format!(
         "UPDATE workspace_invitations SET \
          status = 'accepted', accepted_at = {now}, accepted_by_user_id = $1 \
-         WHERE invitation_id = $2"
+         WHERE invitation_id = $2 AND status = 'pending'"
     );
     let result = krausen_core::db_execute!(pool, &sql, user_id, invitation_id)?;
     Ok(result.rows_affected() > 0)
@@ -487,9 +488,19 @@ pub async fn accept_invitation_for_user(
         .await?
         .ok_or_else(|| krausen_core::Error::NotFound("Invitation not found".into()))?;
 
+    // CAS: atomically transition status from 'pending' to 'accepted'.
+    // If another concurrent accept already consumed this invitation,
+    // rows_affected == 0 and we bail: no duplicate membership is created.
+    let accepted = accept_invitation(pool, invitation_id, user_id).await?;
+    if !accepted {
+        return Err(krausen_core::Error::Conflict(
+            "Invitation already accepted".into(),
+        ));
+    }
+
     let db_role = invitation.role.as_ref();
     create_workspace_user(pool, &invitation.workspace_id, user_id, db_role).await?;
-    accept_invitation(pool, invitation_id, user_id).await?;
+
     Ok(())
 }
 

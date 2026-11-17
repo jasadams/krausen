@@ -37,6 +37,7 @@ totp-rs = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+krausen-test-tracing = { workspace = true }
 
 [lints]
 workspace = true

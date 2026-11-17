@@ -244,13 +244,16 @@ pub async fn invite_member(email: String, role: String) -> Result<(), ServerFnEr
     let display_role = role.clone();
     tokio::spawn(async move {
         let email_svc = krausen_auth::email_service::EmailService::from_env();
-        let sent = email_svc
+        let result = email_svc
             .send_workspace_invitation(&invite_email, &workspace_name, &inviter_name, &display_role)
             .await;
-        if sent {
-            tracing::info!("Invitation email sent to {invite_email}");
-        } else {
-            tracing::warn!("Failed to send invitation email to {invite_email}");
+        match result {
+            Ok(()) => tracing::info!("Invitation email sent to {invite_email}"),
+            Err(e) => tracing::error!(
+                recipient = %invite_email,
+                error = %e,
+                "Failed to send invitation email"
+            ),
         }
     });
 
@@ -408,8 +411,18 @@ pub async fn initiate_ownership_transfer(to_user_id: String) -> Result<(), Serve
 
         tokio::spawn(async move {
             let svc = krausen_auth::email_service::EmailService::from_env();
-            svc.send_ownership_transfer(&to_email, &workspace_name, &from_name, &to_name, "initiated").await;
-            svc.send_ownership_transfer(&from_email, &workspace_name, &from_name, &to_name, "confirmation").await;
+            for (recipient, variant) in [(&to_email, "initiated"), (&from_email, "confirmation")] {
+                if let Err(e) = svc
+                    .send_ownership_transfer(recipient, &workspace_name, &from_name, &to_name, variant)
+                    .await
+                {
+                    tracing::error!(
+                        recipient = %recipient,
+                        error = %e,
+                        "Failed to send ownership transfer email"
+                    );
+                }
+            }
         });
     }
 

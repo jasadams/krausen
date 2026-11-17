@@ -7,6 +7,7 @@ members = [
     "crates/krausen-app",
     "crates/krausen-auth",
     "crates/krausen-types",
+    "crates/krausen-test-tracing",
     "crates/krausen-ui",
     "apps/server",
 ]
@@ -82,6 +83,7 @@ krausen-auth = { path = "crates/krausen-auth" }
 krausen-ui = { path = "crates/krausen-ui" }
 krausen-server = { path = "apps/server" }
 krausen-types = { path = "crates/krausen-types" }
+krausen-test-tracing = { path = "crates/krausen-test-tracing" }
 # Async trait
 async-trait = "0.1"
 

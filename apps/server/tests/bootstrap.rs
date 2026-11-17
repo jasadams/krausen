@@ -68,7 +68,15 @@ async fn exercise(db: DbPool) {
     })
     .await
     .unwrap();
-    assert!(matches!(signup, SignupStartServiceResult::Error { .. }));
+    // A user exists and no invitation is pending for this address, so SMTP-less
+    // self-hosted signup is closed.
+    match signup {
+        SignupStartServiceResult::Error { message } => assert_eq!(
+            message,
+            "Registration is closed. Ask your administrator to invite you."
+        ),
+        _ => panic!("signup for an uninvited address must be refused once a user exists"),
+    }
     for kind in ["password", "webauthn", "totp"] {
         let sql = if db.is_postgres() {
             "INSERT INTO user_auth_methods (user_id,auth_type,auth_data) VALUES ('user-local',$1,CAST('{}' AS JSON))"
