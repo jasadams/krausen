@@ -1142,8 +1142,42 @@ pub async fn recovery_set_password_service(
         tracing::info!(user_id = %user_id, "TOTP disabled during account recovery");
     }
 
-    let sess = create_authenticated_session(db, kv, jwt_secret, &user, device).await?;
+    let sess =
+        revoke_sessions_and_mint_recovery_session(db, kv, jwt_secret, &user, device, "password")
+            .await?;
     Ok(RecoverySetPasswordServiceResult::Success(Box::new(sess)))
+}
+
+/// Recovery happens precisely because the account may be compromised —
+/// the previous authenticator lost or stolen, or the password recovery
+/// flow deliberately wresting back control (it also disables TOTP for the
+/// same reason) — so whoever held prior access must not keep a renewable
+/// session after the account owner regains control. The revoke below must
+/// run BEFORE `create_authenticated_session` — that call both mints and
+/// persists the recovering user's own new refresh token, and revoking
+/// after it would immediately log the user back out of the session they
+/// are in the middle of establishing.
+///
+/// Atomically invalidate prior browser access and refresh sessions,
+/// then reload the committed cutoff before creating the recovery session.
+async fn revoke_sessions_and_mint_recovery_session(
+    db: &DbPool,
+    kv: &KVPool,
+    jwt_secret: &str,
+    user: &krausen_core::models::User,
+    device: &DeviceInfo,
+    flow: &'static str,
+) -> krausen_core::Result<AuthenticatedSession> {
+    let revoked_count =
+        crate::token_service::revoke_all_user_sessions(db, &user.user_id).await?;
+    tracing::info!(
+        user_id = %user.user_id,
+        revoked_count,
+        recovery_flow = flow,
+        "Prior browser sessions and refresh tokens revoked during account recovery"
+    );
+
+    create_authenticated_session(db, kv, jwt_secret, user, device).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1861,4 +1895,4 @@ fn spawn_verification_email(
 
 
 #[cfg(test)]
-mod signup_tests;
+pub(crate) mod signup_tests;

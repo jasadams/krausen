@@ -51,6 +51,12 @@ pub async fn create_authenticated_session(
     user: &User,
     device_info: &DeviceInfo,
 ) -> krausen_core::Result<AuthenticatedSession> {
+    // Callers may hold a stale `User` from before a revocation event; the session
+    // must be signed against the latest cutoff, so always reload.
+    let fresh_user = user_service::get_user_by_id(db, &user.user_id)
+        .await?
+        .ok_or_else(|| krausen_core::Error::Unauthorized("User not found".into()))?;
+    let user = &fresh_user;
     let _ = kv; // Reserved for future use (e.g., session tracking)
 
     let jwt_config = &krausen_core::constants::get().jwt;
@@ -85,24 +91,30 @@ pub async fn create_authenticated_session(
     extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
     extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
     // Create access token
-    let access_token = jwt::create_access_token_str(
+    let access_token = jwt::create_session_access_token_str(
         &user.user_id,
         jwt_secret,
         jwt_config.access_token_expire_minutes,
         extra,
+        user.sessions_valid_from,
     )?;
 
     // Create refresh token with a new family
     let raw_refresh = jwt::create_refresh_token();
     let token_hash = token_service::hash_refresh_token(&raw_refresh);
     let expires_at = Utc::now() + Duration::days(jwt_config.refresh_token_expire_days);
-    token_service::store_refresh_token(
+    let issued_at_us = jwt::validate_browser_token(&access_token, jwt_secret)?
+        .claims
+        .session_iat_us
+        .ok_or_else(|| krausen_core::Error::Internal("Missing session issuance claim".into()))?;
+    token_service::store_session_refresh_token(
         db,
         &user.user_id,
         &token_hash,
         expires_at,
         device_info,
         &family_id,
+        issued_at_us,
     )
     .await?;
 

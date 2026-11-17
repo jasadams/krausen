@@ -29,7 +29,7 @@ use crate::token_service::DeviceInfo;
 
 /// A per-test database. Derefs to the `DbPool` the services take. A
 /// PostgreSQL database created for the test is dropped when this is dropped.
-struct TestDb {
+pub(crate) struct TestDb {
     pool: DbPool,
     postgres_cleanup: Option<(PgConnectOptions, String)>,
 }
@@ -71,7 +71,7 @@ impl Drop for TestDb {
     }
 }
 
-async fn sqlite_db() -> TestDb {
+pub(crate) async fn sqlite_db() -> TestDb {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -87,7 +87,7 @@ async fn sqlite_db() -> TestDb {
     }
 }
 
-async fn postgres_db() -> TestDb {
+pub(crate) async fn postgres_db() -> TestDb {
     let url =
         std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
     let admin: PgConnectOptions = url.parse().expect("parse KRAUSEN_TEST_POSTGRES_URL");
@@ -138,9 +138,10 @@ macro_rules! both_backends {
         )+
     };
 }
+pub(crate) use both_backends;
 
 /// A unique address per call, so no two tests (or two runs) ever share one.
-fn email(tag: &str) -> String {
+pub(crate) fn email(tag: &str) -> String {
     format!("{tag}-{}@example.com", uuid::Uuid::new_v4().simple())
 }
 

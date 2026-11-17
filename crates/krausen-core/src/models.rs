@@ -17,6 +17,9 @@ pub struct User {
     pub active: bool,
     pub last_login: Option<DateTime<Utc>>,
     pub last_workspace_id: Option<String>,
+    /// Browser session revocation cutoff (Unix microseconds). Sessions issued
+    /// at or before it are revoked; `None` preserves existing sessions.
+    pub sessions_valid_from: Option<i64>,
     pub oauth_data: Option<String>,
     pub extra_metadata: Option<serde_json::Value>,
     pub terms_accepted_at: Option<DateTime<Utc>>,

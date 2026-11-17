@@ -334,10 +334,11 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 **Logout all sessions:**
 13. Log in from multiple contexts
 14. Click "Logout All Sessions" (or equivalent)
-15. Verify all other sessions are invalidated
-16. Verify the current session remains active (or user is also logged out and must re-authenticate)
+15. Verify every other session is invalidated immediately: its next protected request is rejected (the access token is refused at once, not after it expires) and it cannot refresh
+16. Verify the current session is also logged out (its cookies are cleared) and must re-authenticate; a new login afterwards works
+17. Repeat step 15 after completing a password recovery for the account: recovery revokes all sessions that existed before it, and keeps only the session it creates
 
-**Expected Result:** Sessions are visible, individually revocable, and bulk logout works.
+**Expected Result:** Sessions are visible, individually revocable, and bulk logout and account recovery revoke sessions immediately.
 
 ---
 

@@ -320,7 +320,7 @@ pub async fn logout_all_sessions() -> Result<String, ServerFnError> {
     let ctx = extract_context()?;
 
     let revoked_count =
-        krausen_auth::token_service::revoke_all_user_refresh_tokens(&ctx.db, &auth.user_id)
+        krausen_auth::token_service::revoke_all_user_sessions(&ctx.db, &auth.user_id)
             .await
             .into_sfn()?;
 
