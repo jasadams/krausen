@@ -90,6 +90,17 @@ for the remaining access-token lifetime. `/mcp` also accepts a browser session. 
 unauthenticated request receives 401 with a `WWW-Authenticate` header pointing at the
 protected-resource metadata.
 
+Every response carries `X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection` and,
+on https installations, `Strict-Transport-Security`, all from `shared/constants.toml`. Page
+responses carry a Content-Security-Policy whose `script-src` allows only this origin, a
+fresh per-response nonce (stamped into the shell's inline scripts) and
+`'wasm-unsafe-eval'`; styles and images stay inline-capable, fonts come from this origin.
+Responses under `/api/`, `/ws/` and `/mcp` get a deny-all policy and the OAuth consent
+pages a scriptless one; everything else (including server-function responses and the
+discovery documents) carries the page policy. The shell is served `Cache-Control: no-cache`. Cross-origin browser
+requests are accepted only from the origins in the constants file plus `FRONTEND_URL`,
+with credentials.
+
 Browser sessions refresh transparently. A request with a missing or expired access cookie
 and a valid refresh cookie is refreshed on the server (a new access token, a rotated
 refresh token and `Set-Cookie` headers on the response) before the handler runs; if the

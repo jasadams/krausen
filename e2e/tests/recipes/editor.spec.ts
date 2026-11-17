@@ -1718,7 +1718,10 @@ test('a revoked session cannot read the retained draft until reauthentication', 
   await page.getByLabel('Recipe name', { exact: true }).fill('Draft after revocation');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
   const userId = getDefaultUserId();
+  // Sign out everywhere: advance the cutoff and revoke the refresh tokens, so the
+  // server cannot silently refresh the session either.
   db.exec(`UPDATE users SET sessions_valid_from = ${Date.now() * 1000} WHERE user_id = '${userId}'`);
+  db.exec(`UPDATE refresh_tokens SET is_active = 0 WHERE user_id = '${userId}'`);
   walCheckpoint();
   const other = await page.context().newPage();
   await other.goto('/recipe-editor/new');

@@ -22,11 +22,21 @@ pub fn static_files_service() -> ServeDir {
     ServeDir::new(dist_dir())
 }
 
+/// The shell is always revalidated: `no-cache` means "cache it, but revalidate
+/// every time" (not "don't cache"), so a new build is picked up at once.
+fn no_cache(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    response
+}
+
 /// Serve the SPA index.html from trunk dist (fallback for all routes).
 pub async fn serve() -> Response {
     let index_path = format!("{}/index.html", dist_dir());
     match tokio::fs::read_to_string(&index_path).await {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => no_cache(Html(html).into_response()),
         Err(_) => (
             StatusCode::NOT_FOUND,
             "Frontend not built. Run: cd crates/krausen-ui && trunk build",
@@ -180,6 +190,14 @@ pub async fn serve_asset_or_shell(request: Request) -> Response {
         .map(str::to_string);
     let headers = request.headers().clone();
     let uri = request.uri().clone();
+
+    // The shell is rendered by `serve()` (no validators, always a full 200):
+    // a conditional or range request answered from the dist directory would
+    // return a bodiless 304 that pairs the browser's cached shell, stamped with
+    // an old CSP nonce, with a fresh nonce in the response header.
+    if path == "/" || path == "/index.html" {
+        return serve().await;
+    }
 
     let response = static_files_service()
         .oneshot(request)
