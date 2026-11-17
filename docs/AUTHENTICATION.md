@@ -13,19 +13,6 @@ again. A revoked, expired or unbound credential is rejected even inside the grac
 period. MCP OAuth refresh tokens are unchanged and remain single use: reusing a
 consumed one revokes its credential, so the MCP client must reconnect.
 
-For an empty installation, a local operator can initialize the first owner by
-running the server binary with `bootstrap-owner EMAIL` and providing the new
-password on standard input. This operation is one-time and refuses an existing
-account. It is not exposed through an HTTP endpoint.
-
-To retain the historical automatically provisioned personal workspace, an
-operator can instead run `claim-legacy-owner EMAIL` with the new password on
-standard input. The command succeeds only for an unambiguous, uncredentialed
-legacy owner and workspace and refuses an established authentication method,
-credential or competing claim. It retains the existing IDs, ownership and
-records. Installations that do not meet these checks require operator-led
-recovery; the command will not reset or take over an account.
-
 With SMTP configured, signup sends a link; opening the link changes nothing until the
 user presses "Confirm Email", which creates the account, so mail scanners that
 prefetch links cannot consume it. An address that already has an account receives a

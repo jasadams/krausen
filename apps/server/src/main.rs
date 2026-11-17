@@ -47,31 +47,6 @@ async fn serve() {
             "native recipe migration incomplete; original records remain recoverable"
         );
     }
-    let args: Vec<String> = std::env::args().collect();
-    if matches!(
-        args.get(1).map(String::as_str),
-        Some("bootstrap-owner" | "claim-legacy-owner")
-    ) {
-        let email = args
-            .get(2)
-            .expect("usage: krausen bootstrap-owner EMAIL (password on stdin)");
-        let mut password = String::new();
-        std::io::stdin()
-            .read_line(&mut password)
-            .expect("failed to read password");
-        let password = password.trim_end_matches(['\r', '\n']);
-        if args[1] == "claim-legacy-owner" {
-            krausen_server::claim_legacy_personal_owner(&db, email, password)
-                .await
-                .expect("legacy claim failed");
-        } else {
-            krausen_server::bootstrap_owner(&db, email, password)
-                .await
-                .expect("bootstrap failed");
-        }
-        return;
-    }
-
     // KVStore
     let redis_url = config.redis_url.clone();
     let kv = krausen_core::create_kv_store(redis_url.as_deref())

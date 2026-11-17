@@ -19,7 +19,6 @@ export KRAUSEN_MODE=self_hosted PORT=41465
 export BASE_URL="http://localhost:$PORT" FRONTEND_URL="http://localhost:$PORT"
 export JWT_SECRET_KEY='test-only-jwt-secret-for-disposable-browser-fixture'
 export ENCRYPTION_KEY='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
-printf '%s\n' 'TestPassword1234' | target/debug/krausen bootstrap-owner local@localhost
 ./target/debug/krausen > "$fixture/server.log" 2>&1 &
 server_pid=$!
 attempt=0
