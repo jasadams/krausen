@@ -7,7 +7,7 @@
 //! - `GET  /api/v1/auth/config`        -> `get_auth_config()`
 //! - `POST /api/v1/auth/login`         -> `login_with_password()`
 //! - `POST /auth/signup/start`         -> `signup_start()`
-//! - `POST /auth/signup/complete`      -> `signup_complete()`
+//! - `POST /auth/signup/verify`        -> `signup_verify()`
 //! - `POST /auth/google/callback`      -> `google_oauth_callback()`
 //! - `POST /auth/signup/resend`        -> `resend_verification()`
 //!
@@ -78,14 +78,16 @@ pub enum SignupResult {
     RateLimited { retry_after_secs: u64 },
 }
 
-/// Result of completing signup (email verification token flow).
+/// Result of redeeming a signup verification token by POST (KYO-683 phase 1).
 ///
-/// Cookies are set via `ResponseOptions` for the `Success` variant.
+/// Cookies are set via `ResponseOptions` for the `Success` variant. Mirrors
+/// `SignupVerifyServiceResult` — `InvalidToken` is folded into `Error` rather
+/// than getting its own variant.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum SignupCompleteResult {
-    /// Account created and authenticated successfully.
+pub enum SignupVerifyResult {
+    /// Account established and authenticated successfully.
     Success { user_id: String },
-    /// Error during signup completion.
+    /// Error during token redemption (validation failure or invalid/expired token).
     Error { message: String },
 }
 
@@ -238,31 +240,34 @@ pub async fn signup_start(
     }
 }
 
-/// Complete the signup flow after email verification.
+/// Redeem an `"email_verification"` token by POST, establishing the account
+/// (no `users` row is written until redemption).
 ///
 /// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/signup/complete` in `apps/server/src/routes/auth_password.rs`.
 ///
-/// Delegates all orchestration to `krausen_auth::auth_service::signup_complete_service`.
+/// POST-not-GET redemption contract: Leptos `#[server]` functions are
+/// POST-only by construction (no GET encoding is configured here), so a mail
+/// scanner's automated GET-prefetch of the emailed verification link can never
+/// reach this handler, consume the token, or create the account.
+///
+/// Delegates all orchestration to `krausen_auth::auth_service::signup_verify_service`.
 #[server(prefix = "/leptos-api")]
-pub async fn signup_complete(
+pub async fn signup_verify(
     token: String,
-    name: String,
-    password: String,
+    name: Option<String>,
     terms_accepted: bool,
     marketing_consent: bool,
-) -> Result<SignupCompleteResult, ServerFnError> {
-    use krausen_auth::auth_service::{signup_complete_service, SignupCompleteServiceResult};
+) -> Result<SignupVerifyResult, ServerFnError> {
+    use krausen_auth::auth_service::{signup_verify_service, SignupVerifyServiceResult};
 
     let afc = AuthFlowContext::extract().await?;
 
-    let result = signup_complete_service(krausen_auth::auth_service::SignupCompleteParams {
+    let result = signup_verify_service(krausen_auth::auth_service::SignupVerifyParams {
         db: &afc.ctx.db,
         kv: &afc.kv,
         jwt_secret: &afc.ctx.config.jwt_secret,
         token: &token,
-        name: &name,
-        password: &password,
+        name: name.as_deref(),
         terms_accepted,
         marketing_consent,
         device: &afc.device,
@@ -272,23 +277,21 @@ pub async fn signup_complete(
     })
     .await
     .map_err(|e| {
-        tracing::error!(error = %e, "signup_complete_service error");
+        tracing::error!(error = %e, "signup_verify_service error");
         ServerFnError::new("Internal server error")
     })?;
 
     match result {
-        SignupCompleteServiceResult::Success(sess) => {
+        SignupVerifyServiceResult::Success(sess) => {
             set_session_cookies(&sess);
-            Ok(SignupCompleteResult::Success {
+            Ok(SignupVerifyResult::Success {
                 user_id: sess.user.user_id,
             })
         }
-        SignupCompleteServiceResult::InvalidToken => Ok(SignupCompleteResult::Error {
+        SignupVerifyServiceResult::InvalidToken => Ok(SignupVerifyResult::Error {
             message: "Invalid or expired signup link. Please request a new one.".to_string(),
         }),
-        SignupCompleteServiceResult::Error { message } => {
-            Ok(SignupCompleteResult::Error { message })
-        }
+        SignupVerifyServiceResult::Error { message } => Ok(SignupVerifyResult::Error { message }),
     }
 }
 
@@ -368,7 +371,8 @@ pub async fn google_oauth_callback(
 /// Public endpoint — no authentication required.
 /// Always returns `Ok(())` to prevent email enumeration.
 ///
-/// Issues another signup link, identical to the one `signup_start` sends.
+/// For an email with a pending signup (registered but not yet verified),
+/// re-sends the verification link rather than creating a new account.
 #[server(prefix = "/leptos-api")]
 pub async fn resend_verification(email: String) -> Result<(), ServerFnError> {
     let afc = AuthFlowContext::extract().await?;
@@ -379,35 +383,16 @@ pub async fn resend_verification(email: String) -> Result<(), ServerFnError> {
 
     let email = email.to_lowercase().trim().to_string();
 
-    let result = krausen_auth::auth_service::resend_verification_service(
-        &afc.ctx.db, &afc.kv, &afc.ip, &email,
+    krausen_auth::auth_service::resend_verification_service(
+        &afc.ctx.db,
+        &afc.kv,
+        &afc.ctx.config.frontend_url,
+        &afc.ip,
+        &email,
+        afc.ctx.config.self_hosted,
     )
     .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "resend_verification_service error");
-        ServerFnError::new("Internal server error")
-    })?;
-
-    if let Some(r) = result {
-        // Must match the URL `signup_start` sends: /verify-email is not a
-        // route, so the link this used to build went nowhere.
-        let verification_url = format!(
-            "{}/signup/complete?token={}",
-            afc.ctx.config.frontend_url.trim_end_matches('/'),
-            r.raw_token
-        );
-        tokio::spawn(async move {
-            let email_svc = krausen_auth::email_service::EmailService::from_env();
-            let sent = email_svc
-                .send_verification_email(&email, &r.user_name, &verification_url)
-                .await;
-            if sent {
-                tracing::info!("Verification email sent to {email}");
-            } else {
-                tracing::warn!("Failed to send verification email to {email}");
-            }
-        });
-    }
+    .into_sfn()?;
 
     Ok(())
 }
@@ -468,16 +453,30 @@ pub async fn recovery_start(email: String) -> Result<(), ServerFnError> {
             r.raw_token
         );
         let email_clone = email.to_string();
+        let self_hosted = afc.ctx.config.self_hosted;
         tokio::spawn(async move {
             let email_svc = krausen_auth::email_service::EmailService::from_env();
-            let sent = email_svc
+            let result = email_svc
                 .send_account_recovery(&email_clone, &r.user_name, &recovery_url)
                 .await;
-            if sent {
-                tracing::info!("Account recovery email sent to {email_clone}");
-            } else {
-                tracing::warn!("Failed to send account recovery email to {email_clone}");
-                tracing::info!("ACCOUNT RECOVERY LINK for {email_clone}: {recovery_url}");
+            match result {
+                Ok(()) => tracing::info!("Account recovery email sent to {email_clone}"),
+                Err(e) => {
+                    tracing::error!(
+                        recipient = %email_clone,
+                        error = %e,
+                        "Failed to send account recovery email"
+                    );
+                    tracing::info!(
+                        "{}",
+                        account_recovery_failure_log_line(
+                            self_hosted,
+                            cfg!(debug_assertions),
+                            &email_clone,
+                            &recovery_url,
+                        )
+                    );
+                }
             }
         });
     }
@@ -919,7 +918,7 @@ pub async fn passkey_recovery_verify(
 /// layer — `ResponseOptions` is a Leptos/Axum concern and cannot live in the
 /// service layer.
 #[cfg(feature = "ssr")]
-fn set_session_cookies(sess: &krausen_auth::session::AuthenticatedSession) {
+pub(crate) fn set_session_cookies(sess: &krausen_auth::session::AuthenticatedSession) {
     use leptos::prelude::expect_context;
     use leptos_axum::ResponseOptions;
 
@@ -931,65 +930,170 @@ fn set_session_cookies(sess: &krausen_auth::session::AuthenticatedSession) {
 
 /// Extract the client IP from request headers.
 ///
-/// Mirrors `apps/server/src/helpers.rs::extract_client_ip` — checks
-/// `X-Real-IP`, then `X-Forwarded-For`, falling back to `"unknown"`.
+/// Delegates to the canonical `krausen_auth::request_meta::extract_client_ip`.
 ///
-/// Note: The canonical `extract_client_ip` in `helpers.rs` also accepts a
-/// `peer_addr: Option<SocketAddr>` for TCP peer fallback. That parameter is
-/// not available in Leptos server functions without additional extractor setup.
-/// In production (behind nginx), `X-Real-IP` is always set, so this omission
-/// is safe. In local dev without a reverse proxy, rate limiting will key all
-/// requests to `"unknown"`.
+/// No peer address is available here without extending the server-fn
+/// extraction path (`leptos_axum::extract`) to pull `ConnectInfo<SocketAddr>`,
+/// so `None` is passed explicitly. In production (behind a reverse proxy),
+/// `X-Real-IP` is set, so this is safe; without a reverse proxy, rate limiting
+/// keys all requests to `"unknown"`.
 #[cfg(feature = "ssr")]
 pub(crate) fn extract_client_ip(headers: &axum::http::HeaderMap) -> String {
-    use std::net::IpAddr;
-
-    // 1. X-Real-IP — trustworthy: set by nginx from TCP peer ($remote_addr).
-    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let ip = real_ip.trim();
-        if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
-            return ip.to_string();
-        }
-    }
-
-    // 2. X-Forwarded-For — less reliable: nginx appends but doesn't replace,
-    //    so clients can inject fake first entries. Use first entry as fallback.
-    if let Some(xff) = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        && let Some(first_ip) = xff.split(',').next()
-    {
-        let ip = first_ip.trim();
-        if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
-            return ip.to_string();
-        }
-    }
-
-    "unknown".to_string()
+    krausen_auth::request_meta::extract_client_ip(headers, None)
 }
 
 /// Extract device info from request headers.
 ///
-/// Mirrors `apps/server/src/helpers.rs::extract_device_info`.
+/// Delegates to the canonical `krausen_auth::request_meta::extract_device_info`.
 #[cfg(feature = "ssr")]
 pub(crate) fn extract_device_info(headers: &axum::http::HeaderMap) -> krausen_auth::token_service::DeviceInfo {
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    krausen_auth::request_meta::extract_device_info(headers)
+}
 
-    let ip_address = extract_client_ip(headers);
+/// The one INFO line `recovery_start`'s fire-and-forget send task emits
+/// right after the KYO-697 ERROR line, when `send_account_recovery` fails.
+///
+/// The first version of this line always included the full
+/// recovery URL — the live, unhashed token, a credential equivalent to a
+/// password, since redeeming it recovers the account regardless of the
+/// owner's actual password/passkey. In a SaaS production build that log
+/// reaches an aggregated, retained stream any operator (not just the
+/// account owner) can read — turning a transient SMTP hiccup into
+/// a standing account-takeover primitive for every failed send.
+///
+/// Gated on `krausen_auth::auth_service::may_log_live_credential_link` — the
+/// same predicate every verification-link mint in `krausen-auth` uses, so
+/// this deployment-mode decision has exactly one definition. Self-hosted
+/// operators keep the full link (their own instance, their own log
+/// retention — the documented way they unblock a user whose mail server is
+/// misbehaving); a locally run `dev-server`-profile build keeps it too, so
+/// local/agent testing without a mailbox to check still works. A real SaaS
+/// production build gets the redacted line instead: it still names the
+/// recipient (to correlate with the ERROR line above it) and the safe,
+/// self-service remedy — `recovery_start_service` always mints a fresh
+/// token on the next attempt, so asking the user to retry once mail
+/// delivery is restored costs nothing.
+///
+/// Pure and takes `self_hosted`/`dev_mode` as plain `bool`s (rather than
+/// reading `ctx.config`/`cfg!` itself) so it is directly unit-testable —
+/// the fire-and-forget task around it has no DB/KV/SMTP harness at this
+/// layer to drive an end-to-end test through.
+#[cfg(feature = "ssr")]
+fn account_recovery_failure_log_line(
+    self_hosted: bool,
+    dev_mode: bool,
+    email: &str,
+    recovery_url: &str,
+) -> String {
+    if krausen_auth::auth_service::may_log_live_credential_link(self_hosted, dev_mode) {
+        format!("ACCOUNT RECOVERY LINK for {email}: {recovery_url}")
+    } else {
+        format!(
+            "Account recovery email failed to send for {email}; the live recovery link \
+             is withheld from logs in this deployment (KYO-763). Ask the user to retry \
+             via \"Forgot password?\" once mail delivery is restored — recovery_start \
+             always mints a fresh token, so a retry is safe."
+        )
+    }
+}
 
-    let country_code = headers
-        .get("cf-ipcountry")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| *s != "XX")
-        .map(|s| s.to_uppercase());
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    krausen_auth::token_service::DeviceInfo {
-        user_agent,
-        ip_address: Some(ip_address),
-        country_code,
-        oauth_client_id: None,
+    /// Pins the server-function wrapper and the canonical function it calls:
+    /// the wrapper passes no peer address, so with no IP header it returns the
+    /// shared `"unknown"`; the canonical function does use a peer address when
+    /// one is supplied.
+    #[test]
+    fn extract_client_ip_from_leptos_server_fn_path() {
+        let headers = axum::http::HeaderMap::new();
+
+        // 1. The wrapper this crate calls: no peer address is threaded through
+        //    the server-fn extraction path.
+        assert_eq!(
+            super::extract_client_ip(&headers),
+            "unknown",
+            "server-fn wrapper passes peer_addr: None, so with no IP headers \
+             this must still be the shared \"unknown\" bucket"
+        );
+
+        // 2. The canonical function honours a supplied peer address.
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), 54321);
+        assert_eq!(
+            krausen_auth::request_meta::extract_client_ip(&headers, Some(peer)),
+            "203.0.113.7"
+        );
+    }
+
+    /// Guards the wrapper's delegation to canonical header handling — the
+    /// precedence and validation rules, exercised through
+    /// `super::extract_client_ip` rather than the canonical function, so a
+    /// regression to a hand-rolled copy in this file would fail here.
+    #[test]
+    fn server_fn_wrapper_honours_canonical_header_rules() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
+        headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
+        assert_eq!(
+            super::extract_client_ip(&headers),
+            "1.2.3.4",
+            "unspoofable X-Real-IP must win over client-appendable X-Forwarded-For"
+        );
+
+        let mut bad = axum::http::HeaderMap::new();
+        bad.insert("x-real-ip", "not-an-ip".parse().unwrap());
+        assert_eq!(
+            super::extract_client_ip(&bad),
+            "unknown",
+            "malformed header values must be rejected, not stored verbatim"
+        );
+    }
+
+    const EMAIL: &str = "recovery-failure@example.com";
+    const RECOVERY_URL: &str = "https://app.example.com/account/recover/complete?token=raw-token-value";
+
+    /// The regression this ticket exists to fix: a real SaaS production
+    /// build (`self_hosted: false, dev_mode: false` — the one combination
+    /// `cfg!(debug_assertions)` can never produce inside an ordinary
+    /// `cargo test` binary, which is exactly why this function takes both
+    /// as explicit `bool`s rather than reading `cfg!` itself) must never
+    /// put the live recovery token in a log line.
+    #[test]
+    fn omits_the_link_in_saas_production() {
+        let line = super::account_recovery_failure_log_line(false, false, EMAIL, RECOVERY_URL);
+
+        assert!(
+            !line.contains(RECOVERY_URL) && !line.contains("token="),
+            "SaaS production must never log the live recovery link: {line}"
+        );
+        assert!(
+            line.contains(EMAIL),
+            "the redacted line must still name the recipient, to correlate with the \
+             ERROR line logged alongside it: {line}"
+        );
+    }
+
+    /// Self-hosted keeps the full link — the documented operator escape
+    /// valve for that deployment's own logs.
+    #[test]
+    fn logs_the_link_when_self_hosted() {
+        let line = super::account_recovery_failure_log_line(true, false, EMAIL, RECOVERY_URL);
+        assert!(
+            line.contains(RECOVERY_URL) && line.contains(EMAIL),
+            "a self-hosted deployment must still get the full link in its own logs: {line}"
+        );
+    }
+
+    /// A locally run `dev-server`-profile build keeps it too, even in
+    /// SaaS-mode config — the shape a local dev server runs under, and how
+    /// local/agent testing recovers a token with no mailbox to check.
+    #[test]
+    fn logs_the_link_in_dev_mode() {
+        let line = super::account_recovery_failure_log_line(false, true, EMAIL, RECOVERY_URL);
+        assert!(
+            line.contains(RECOVERY_URL) && line.contains(EMAIL),
+            "a locally run dev-server-profile build must still get the full link: {line}"
+        );
     }
 }

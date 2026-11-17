@@ -42,11 +42,11 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Retrieve the verification email from the test mailbox
 6. Extract the verification link from the email body
 7. Navigate to the verification link (should be `/signup/complete?token=...`)
-8. Verify the completion form is displayed (name, password, confirm password, terms checkbox)
-9. Enter display name
-10. Enter password and confirm password
-11. Check the terms acceptance checkbox
-12. Click "Create Account"
+8. Verify the confirm step is displayed (terms checkbox, "Confirm Email" button) and that loading the page alone has created no account and consumed no token
+9. Check the terms acceptance checkbox and click "Confirm Email"
+10. Verify the "Secure Your Account" step is displayed (name, optional password and confirm password, optional "Add a Passkey")
+11. Enter display name; enter password and confirm password, or add a passkey
+12. Click "Finish Setup"
 13. Verify redirect to the application (e.g., `/onboarding` or main app page)
 14. Verify the user is authenticated (user menu visible, no login redirect)
 
@@ -56,19 +56,26 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ## TC-002: Signup With Invitation
 
-**Description:** An invited user signs up with their invited email and is auto-joined to the inviting workspace.
+**Description:** An invited user signs up with their invited email and joins the inviting workspace. The path depends on whether the installation can send email.
 
-**Steps:**
+**Steps (self-hosted installation without SMTP):**
 1. As an existing workspace owner, invite a new email address via Team settings
-2. Verify invitation email is sent
-3. Open the invitation link from the email (or navigate to `/signup`)
-4. Enter the invited email address
-5. Complete the signup flow (verification email, complete form)
-6. Verify the user lands in the inviting workspace (not a personal workspace)
-7. Verify the user appears in the inviting workspace's member list
-8. Verify no separate personal workspace was created for this user
+2. Navigate to `/signup` and enter the invited email address, a name and a password
+3. Verify the account is created and signed in directly
+4. Verify the user lands in the inviting workspace and no personal workspace was created
+5. Verify the user appears in the inviting workspace's member list
 
-**Expected Result:** The invited user is automatically added to the workspace that invited them. No personal workspace is created.
+**Steps (installation with SMTP):**
+1. As an existing workspace owner, invite a new email address via Team settings
+2. Verify the invitation email is sent (its button links to `/accept-invite/{invitation id}`)
+3. Navigate to `/signup`, enter the invited email address and complete the signup flow (verification email, confirm step, credentials step)
+4. Verify the new account starts in a workspace of its own
+5. Open the invitation link from the email. While signed out, verify the browser goes to `/login?redirect=/accept-invite/{invitation id}`, sign in as the invited address and verify it returns to the invitation page
+6. Verify the page shows the workspace, inviter, role and expiry; click "Accept Invitation"
+7. Verify the success page, then the redirect into the application with the inviting workspace active
+8. Verify the user appears in the inviting workspace's member list (the invitation is also listed under Settings > Profile until answered)
+
+**Expected Result:** Without SMTP, the invited user is added to the inviting workspace at signup and no personal workspace is created. With SMTP, signup creates the account and its own workspace, and the invitation is accepted from the emailed link (or the profile settings), which switches the user into the inviting workspace.
 
 ---
 
@@ -323,16 +330,16 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 8. Click "Revoke" on the other session (not the current one)
 9. Verify it is removed from the list
 10. Switch to the second browser/context
-11. Attempt to navigate to a protected route
-12. Verify the second session is now invalid (redirected to login)
+11. Attempt to refresh the second session (its refresh token) and verify it is rejected at once; a protected route keeps working only until its current access token expires (at most 15 minutes), after which the session is redirected to login
 
 **Logout all sessions:**
 13. Log in from multiple contexts
 14. Click "Logout All Sessions" (or equivalent)
-15. Verify all other sessions are invalidated
-16. Verify the current session remains active (or user is also logged out and must re-authenticate)
+15. Verify every other session is invalidated immediately: its next protected request is rejected (the access token is refused at once, not after it expires) and it cannot refresh
+16. Verify the current session is also logged out (its cookies are cleared) and must re-authenticate; a new login afterwards works
+17. Repeat step 15 after completing a password recovery for the account: recovery revokes all sessions that existed before it, and keeps only the session it creates
 
-**Expected Result:** Sessions are visible, individually revocable, and bulk logout works.
+**Expected Result:** Sessions are visible, individually revocable (the revoked session cannot refresh and ends when its access token expires), and bulk logout and account recovery revoke sessions immediately.
 
 ---
 
@@ -367,7 +374,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Submit the invitation
 6. Verify the invited email appears in the pending invitations list (or member list as pending)
 7. Verify an invitation email is sent (check test mailbox)
-8. As the invited user, complete signup via the invitation
+8. As the invited user, complete signup (without SMTP the user joins the workspace directly; with SMTP open the invitation link from the email and accept it)
 9. Return to the owner's team settings
 10. Verify the new user now appears as an active member in the list
 
@@ -455,7 +462,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 8. Switch back to the original workspace
 9. Verify it switches back correctly
 
-**Expected Result:** Workspace switcher shows all user workspaces and switching updates the active context.
+**Expected Result:** Workspace switcher shows all user workspaces and switching updates the active context. The switch needs an active membership in the target workspace (a non-member is refused and the session unchanged) and re-mints the session cookies for it.
 
 ---
 
@@ -484,9 +491,27 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ---
 
+## TC-022a: MCP OAuth Authorization
+
+**Description:** An MCP client obtains an access token through dynamic registration, consent and the token endpoint.
+
+**Steps:**
+1. GET `/.well-known/oauth-authorization-server` and verify the issuer, `/api/v1/oauth/authorize`, `/api/v1/oauth/token` and `/api/v1/oauth/register` endpoints and `["none"]` token endpoint auth methods
+2. POST `/api/v1/oauth/register` with a loopback redirect URI and verify a public `client_id` is returned
+3. Open `/api/v1/oauth/authorize` with the client, redirect URI, `state`, an S256 `code_challenge` and `response_type=code` while signed out; verify the redirect to `/login?oauth_continue=...`
+4. Sign in; verify the consent page names the client, account, workspace and callback origin, with Allow and Deny
+5. Click Deny in one attempt and verify the callback receives `error=access_denied`; repeat and click Allow, and verify the callback receives a `code` and the original `state`
+6. POST the code with the PKCE verifier to `/api/v1/oauth/token` and verify an access token, a refresh token and scope `mcp`; verify replaying the code fails
+7. POST the refresh token to the token endpoint and verify the same refresh token returns with a new access token
+8. Call `/mcp` without a token and verify 401 with a `WWW-Authenticate` header pointing at the protected-resource metadata; call it with the access token and verify the call succeeds
+
+**Expected Result:** The client holds an MCP access token that works only on `/mcp`; signing out of the browser does not end it.
+
+---
+
 ## TC-022: MCP Endpoint
 
-**Description:** The MCP server responds to initialize, tools/list, and tools/call requests.
+**Description:** The MCP server responds to initialize, tools/list, and tools/call requests, authenticated with an MCP access token (TC-022a) sent as a Bearer token.
 
 **Steps:**
 1. Send a POST request to `/mcp` with the JSON-RPC `initialize` method:
@@ -635,19 +660,20 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ## TC-029: Token Refresh - Rotation Detection
 
-**Description:** Reusing a refresh token that has already been rotated invalidates the entire token family.
+**Description:** A refresh token that was already rotated is still accepted during the 30-second grace period (and rotates again); reusing it after the grace period invalidates the entire token family.
 
 **Steps:**
 1. Log in as an existing user
 2. Capture the current refresh token value
 3. Trigger a token refresh (manually call `POST /api/v1/auth/refresh`)
-4. Verify a new refresh token is issued (the old one is consumed)
-5. Attempt to use the OLD refresh token again (replay attack)
-6. Verify the server rejects the old token
-7. Verify the ENTIRE token family is invalidated (the new token also stops working)
-8. Verify the user must re-authenticate (next protected page request redirects to `/login`)
+4. Verify a new refresh token is issued (the old one is replaced)
+5. Within 30 seconds, present the OLD refresh token again (lost response or a second tab)
+6. Verify the server accepts it and issues another fresh refresh token
+7. After the 30-second grace period has passed, present the OLD refresh token again (replay attack)
+8. Verify the server rejects it and the ENTIRE token family is invalidated (the newest token also stops working)
+9. Verify the user must re-authenticate (next protected page request redirects to `/login`)
 
-**Expected Result:** Token reuse detection invalidates all tokens in the family, forcing re-authentication.
+**Expected Result:** Reuse inside the grace period never signs the user out; reuse after it is detected as theft and forces re-authentication.
 
 ---
 
@@ -700,7 +726,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Click "Cancel" (or equivalent) on the pending invitation
 6. Confirm the cancellation if prompted
 7. Verify the invitation is removed from the pending list
-8. (If possible) Verify that navigating to the invitation link now fails or shows an error
+8. (If possible) Verify that, signed in as the invited user, opening the invitation link shows "This invitation has already been cancelled."
 
 **Expected Result:** Pending invitations can be cancelled by the workspace owner, and cancelled invitation links no longer work.
 

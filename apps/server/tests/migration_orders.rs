@@ -5,6 +5,7 @@ use sqlx::migrate::Migrator;
 use std::borrow::Cow;
 const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
+const DROP_CREDENTIALS: i64 = 20261102020000;
 const EQUIPMENT: i64 = 20261031040000;
 const CATALOGUE: i64 = 20261031050000;
 const RECIPE_ARCHIVE: i64 = 20261031060000;
@@ -19,6 +20,7 @@ fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
                         && !(skip == Some(NATIVE)
                             && matches!(m.version, RECIPE_ARCHIVE | BREWS | BREW_EVIDENCE))
                         && !(skip == Some(BREWS) && m.version == BREW_EVIDENCE)
+                        && !(skip == Some(CREDENTIALS) && m.version == DROP_CREDENTIALS)
                 })
                 .cloned()
                 .collect(),
@@ -53,17 +55,33 @@ async fn exercise(db: DbPool, all: &Migrator, skip: Option<i64>) {
         .await
         .unwrap();
     assert_eq!(report.failed, vec![("w".into(), "legacy".into())]);
-    let count: i64 = match &db {
-        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM auth_credentials")
+    // The credential and MCP OAuth tables are gone after the full migration set.
+    for table in [
+        "auth_credentials",
+        "mcp_oauth_clients",
+        "mcp_oauth_authorization_codes",
+        "mcp_oauth_refresh_tokens",
+        "mcp_oauth_access_tokens",
+        "mcp_oauth_pending",
+    ] {
+        let present: i64 = match &db {
+            DbPool::Postgres(p) => sqlx::query_scalar(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1",
+            )
+            .bind(table)
             .fetch_one(p)
             .await
             .unwrap(),
-        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM auth_credentials")
-            .fetch_one(p)
-            .await
-            .unwrap(),
-    };
-    assert_eq!(count, 0);
+            DbPool::Sqlite(p) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $1")
+                    .bind(table)
+                    .fetch_one(p)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(present, 0, "{table} must be dropped");
+    }
     let profiles: i64 = match &db {
         DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM equipment_profiles")
             .fetch_one(p)

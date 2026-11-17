@@ -1011,8 +1011,11 @@ test('shared dialogs scroll the real long form and dispatch wrapped footer actio
   // CSS text enlargement, explicitly NOT native OS/browser zoom evidence.
   await page.addStyleTag({ content: 'html { font-size: 200%; }' });
   const actions = form.locator('.k-dialog__actions button');
-  const wraps = await actions.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
-  expect(new Set(wraps).size).toBeGreaterThan(1);
+  // The viewport change and the text enlargement reflow asynchronously: wait for
+  // the footer actions to wrap instead of measuring once, immediately.
+  await expect
+    .poll(async () => new Set(await actions.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))).size)
+    .toBeGreaterThan(1);
   for (const label of ['Back to catalogue', 'Save to library']) {
     const action = form.getByRole('button', { name: label, exact: true });
     await action.scrollIntoViewIfNeeded();

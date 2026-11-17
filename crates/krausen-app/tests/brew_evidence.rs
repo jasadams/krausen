@@ -132,7 +132,6 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
     let suffix = Uuid::new_v4().to_string();
     let user = format!("u-{suffix}");
     let workspace = format!("w-{suffix}");
-    let credential = format!("c-{suffix}");
     let email = format!("{suffix}@example.test");
     macro_rules! run {
         ($sql:expr $(, $a:expr)*) => { match db {
@@ -155,16 +154,10 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
         &workspace,
         &user
     );
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace,
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
 
@@ -1423,7 +1416,6 @@ async fn exercise(db: DbPool) {
     // Workspace scoping and current membership are rechecked even for a user
     // who belongs to more than one workspace.
     let second_workspace = format!("w2-{}", Uuid::new_v4());
-    let second_credential = format!("c2-{}", Uuid::new_v4());
     macro_rules! run {
         ($sql:expr $(, $a:expr)*) => { match &db {
             DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
@@ -1440,16 +1432,10 @@ async fn exercise(db: DbPool) {
         &second_workspace,
         &actor.actor_id
     );
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &second_credential,
-        &actor.actor_id,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let other_workspace_actor = ActorContext {
         actor_id: actor.actor_id.clone(),
         workspace_id: second_workspace,
-        credential_id: second_credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(
@@ -1476,22 +1462,15 @@ async fn exercise(db: DbPool) {
     );
 
     let outsider = format!("outsider-{}", Uuid::new_v4());
-    let outsider_credential = format!("outsider-c-{}", Uuid::new_v4());
     run!(
         "INSERT INTO users (user_id,email) VALUES ($1,$2)",
         &outsider,
         format!("{outsider}@example.test")
     );
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &outsider_credential,
-        &outsider,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let outsider_actor = ActorContext {
         actor_id: outsider,
         workspace_id: actor.workspace_id.clone(),
-        credential_id: outsider_credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(
@@ -1930,7 +1909,7 @@ async fn exercise_acceptance_cases(db: DbPool) {
         );
     }
 
-    // Expired and revoked credentials fail before recovery; a fresh credential
+    // Expired and revoked sessions fail before recovery; a fresh session
     // can replay the same request and produce the original result.
     {
         let (mut actor, brew_id, _) = fixture(&db).await;
@@ -1953,12 +1932,6 @@ async fn exercise_acceptance_cases(db: DbPool) {
             &actor.workspace_id
         );
         let past = chrono::Utc::now().timestamp() - 1;
-        run!(
-            "UPDATE auth_credentials SET expires_at = $3 WHERE credential_id = $1 AND user_id = $2",
-            &actor.credential_id,
-            &actor.actor_id,
-            past
-        );
         actor.access_expires_at = past;
         assert_eq!(
             record(&db, &actor, request.clone()).await,
@@ -1973,12 +1946,6 @@ async fn exercise_acceptance_cases(db: DbPool) {
             entries
         );
         let future = chrono::Utc::now().timestamp() + 3600;
-        run!(
-            "UPDATE auth_credentials SET expires_at = $3, revoked_at = NULL WHERE credential_id = $1 AND user_id = $2",
-            &actor.credential_id,
-            &actor.actor_id,
-            future
-        );
         actor.access_expires_at = future;
         let MeasurementOutcome::Recorded(replayed) = record(&db, &actor, request.clone()).await
         else {
@@ -1986,10 +1953,9 @@ async fn exercise_acceptance_cases(db: DbPool) {
         };
         assert_eq!(replayed.entry_id, original.entry_id);
         run!(
-            "UPDATE auth_credentials SET revoked_at = $3 WHERE credential_id = $1 AND user_id = $2",
-            &actor.credential_id,
+            "UPDATE users SET sessions_valid_from = $2 WHERE user_id = $1",
             &actor.actor_id,
-            chrono::Utc::now().timestamp()
+            actor.session_iat_us.unwrap()
         );
         assert_eq!(
             record(&db, &actor, request.clone()).await,

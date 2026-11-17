@@ -122,7 +122,7 @@ flowchart TD
 | --- | --- |
 | UI/server-function and MCP adapters | Decode input, verify transport credentials, normalize trusted principal, invoke shared operation, map result envelope |
 | `krausen-app` | Resolve effective workspace, authorize, validate, orchestrate workflows and transactional mutations |
-| `krausen-auth` | Reusable account, session, credential and membership primitives; shared security workflows below both adapters |
+| `krausen-auth` | Reusable account, session and membership primitives; shared security workflows below both adapters |
 | `krausen-brewery` | Transaction-participating persistence helpers and native-to-engine projections; no policy authority or commit ownership |
 | `krausen-calc` | Framework/database-independent deterministic calculations; no dependency on app or UI |
 | `krausen-beerxml` | Format parsing/serialization and `native` mappings between BeerXML and canonical native types; no database or transport |
@@ -167,7 +167,7 @@ errors fail closed. Recheck permission-sensitive state at the mutation boundary.
 
 Each call has one explicit effective workspace. Browser workspace selection must
 not silently retarget an unrelated concurrent MCP connection. Selection grants
-no entitlement; credential binding and current membership still apply. The browser may remember a last-workspace preference, but every shared call
+no entitlement; the session cutoff and current membership still apply. The browser may remember a last-workspace preference, but every shared call
 includes an explicit workspace. MCP arguments use that same workspace field;
 a browser preference update cannot alter another request or connection. No
 workspace privilege is embedded in the remembered selection.
@@ -175,7 +175,7 @@ workspace privilege is embedded in the remembered selection.
 Adapt Kyomi's discovery, client registration, browser login/authorization, PKCE,
 token/refresh and authenticated-handler patterns. Do not copy commercial feature
 gates or a separate agent permission system. Connection authentication,
-credential audience validation and revocation are credential lifecycle concerns;
+token validation and revocation are session/token lifecycle concerns;
 application permissions remain identical to those of the same user in the UI.
 
 Revoking a connection must prevent its next protected request, including requests
@@ -191,28 +191,30 @@ start/status/complete or pending-interaction outcomes so both interfaces support
 the same workflow; pending proof is never reported as success. Keep credentials
 out of ordinary logs and change payloads.
 
-### Installation and credential contract
+### Installation and session contract
 
 Both hosted and self-hosted installations require authenticated accounts; a
 one-member workspace is not an anonymous application mode. Retire the starter's
-login-free personal mode for protected operations. Without SMTP, installation
-setup creates the first owner only through a local operator setup command or
-single-use setup secret; once initialized, ordinary account/role rules apply.
+login-free personal mode for protected operations. Without SMTP, the first
+user and invited users sign up directly and other addresses are refused; ordinary account/role rules apply afterwards.
 No separate subscription or agent permission model is introduced.
 
-Browser sessions and MCP connections have durable credential records linked to
-one account. Every protected call verifies issuer, audience, expiry and durable
-credential/account revocation; current workspace membership is checked in shared
-operations. Authentication failures and datastore failures fail closed. Positive
+Browser sessions and MCP connections carry signed access tokens (see
+`docs/AUTHENTICATION.md`). Every protected call verifies the signature, expiry and
+the account's active state, and for browser sessions the revocation cutoff
+(`users.sessions_valid_from`, rechecked under lock in shared operations); current
+workspace membership is checked in shared operations. Authentication failures and datastore failures fail closed. Positive
 membership/revocation caches cannot extend access past a committed revocation.
-Workspace removal revokes that membership, not every credential the account owns.
+Workspace removal revokes that membership, not the account's sessions.
 
 Reuse Kyomi's installation-local browser login/authorization, PKCE and refresh
-patterns. Use exact registered redirect matching, state, S256 PKCE and one-time
-codes bound to client, user, redirect and resource audience. Refresh rotates a
-hashed token family atomically; replay revokes the family. Ordinary operations
+patterns. Use exact registered redirect matching, S256 PKCE and one-time codes bound
+to client, user and redirect. Browser refresh rotates a hashed token family atomically;
+reuse of a replaced browser token after the grace period revokes the family. MCP OAuth
+refresh tokens do not rotate: the same token returns with a new access
+token and a renewed window. Ordinary operations
 never return access/refresh tokens in retry records, logs or change events.
-Pending proof records bind account, initiating credential/session, action,
+Pending proof records bind account, initiating session, action,
 challenge, expiry and target. Completion atomically verifies and consumes the
 proof once; URL possession alone cannot complete another principal's action.
 Authorization pages require the same real identity proofs as UI entry.
@@ -240,9 +242,8 @@ client support. Unsupported versions fail explicitly.
 The newer revision has self-contained requests and no protocol-level session;
 legacy session/stream state belongs only to its adapter. Reconnect/refetch plus
 application request identity ensures correctness without durable notification
-replay. Adopt installation-local OAuth discovery and protected-resource metadata;
-validate resource audience and Origin, and keep callback/client metadata fetches
-bounded and protected against private-network SSRF. SDK updates and additional
+replay. Adopt installation-local OAuth discovery and protected-resource metadata and
+dynamic client registration; callback and client metadata are never fetched. SDK updates and additional
 clients are mechanical implementation work under this contract, not a new
 business permission design.
 
@@ -271,7 +272,7 @@ with the same shared operation, policy, validation, side effects and result.
 | Brews | Start/list/get; allowed lifecycle transitions; retrieve immutable inputs/targets | Member; atomic source-revision and snapshot checks |
 | Observations | Record/list readings and notes; correct readings; inspect correction history | Member; retain original evidence and provenance |
 | History/comparison | List recipe brews; retrieve planned snapshots and target/actual comparisons; explicitly apply brew findings | Membership; recipe/profile changes remain explicit |
-| Profile/appearance | Get/update name/theme; list pending invitations; accept/decline | User owns profile; invitation intended-recipient checks |
+| Profile/appearance | Get/update name/theme; list pending invitations; open an invitation by link (`/accept-invite/{id}`, details only to the recipient); accept (switching the session into the joined workspace)/decline | User owns profile; invitation intended-recipient, pending and expiry checks |
 | Workspace/team | Get/update settings/name; list/invite/remove members; change roles; list/cancel invitations | Ordinary member/context reads for members; admin/owner management guards |
 | Ownership | Start/list/get/cancel/accept/decline transfers | Shared owner, intended-recipient and confirmation rules |
 | Sessions/connections | List/revoke; logout current/all sessions | User/session ownership; effective revocation on subsequent protected requests |
@@ -281,6 +282,13 @@ with the same shared operation, policy, validation, side effects and result.
 This includes existing auth/context/profile/sidebar/workspace/team/ownership/
 security/onboarding/recipe families and planned brewing capabilities. Sensitive reads follow the concrete visibility rules above; grouping a family
 under administration does not make ordinary member/context reads admin-only.
+
+Page requests are authenticated before the shell is served: a hard load of any
+page outside the public set (`/login`, `/signup`, `/signup/*`, `/auth/*`,
+`/account/*`, `/welcome`, `/unsubscribe`, `/oauth-complete`) with neither an access
+nor a refresh cookie is redirected to `/login?redirect=<path>`, and sign-in returns
+to that path, so a link to a protected flow page such as an invitation survives
+sign-in.
 
 Focus, opening a menu, a browser print dialog and local undo are presentation
 behaviors. Their underlying persisted changes or export capabilities remain
@@ -320,7 +328,7 @@ standalone queries may use a pool, but every read that validates a mutation's
 source/context uses that command's transaction. SQL helpers must support both
 executors or use a small backend-specific match; the old pool-only rule is retired.
 
-PostgreSQL commands take shared locks on current account/credential and workspace
+PostgreSQL commands take shared locks on current account and workspace
 authority rows, then source/resource rows, in deterministic ID order within
 each class. Revocation or membership/role changes take exclusive locks on those
 same authority rows. Updated resource rows require exclusive locks; immutable

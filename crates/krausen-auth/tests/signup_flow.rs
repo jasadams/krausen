@@ -9,8 +9,8 @@
 //! If one of these fails, the two-phase-row shape has come back.
 
 use krausen_auth::auth_service::{
-    signup_complete_service, signup_start_service, SignupCompleteParams, SignupCompleteServiceResult,
-    SignupStartParams, SignupStartServiceResult,
+    signup_start_service, signup_verify_service, SignupStartParams, SignupStartServiceResult,
+    SignupVerifyParams, SignupVerifyServiceResult,
 };
 use krausen_core::kv_store_memory::InMemoryKVStore;
 use krausen_core::{DbPool, KVPool};
@@ -60,6 +60,25 @@ async fn start(db: &DbPool, kv: &KVPool, email: &str, ip: &str) -> SignupStartSe
     })
     .await
     .expect("signup start runs")
+}
+
+/// Redeem an emailed token by POST, as the "Confirm" button does.
+async fn redeem(db: &DbPool, kv: &KVPool, token: &str) -> SignupVerifyServiceResult {
+    signup_verify_service(SignupVerifyParams {
+        db,
+        kv,
+        jwt_secret: JWT_SECRET,
+        token,
+        name: Some("Brewer"),
+        terms_accepted: true,
+        marketing_consent: false,
+        device: &device(),
+        config: None,
+        slack_feedback_webhook_url: None,
+        support_email: "support@example.test",
+    })
+    .await
+    .expect("signup verify runs")
 }
 
 async fn count_users(db: &DbPool) -> i64 {
@@ -128,25 +147,10 @@ async fn redeeming_the_token_creates_a_verified_account() {
     start(&db, &kv, email, "198.51.100.3").await;
     let token = emailed_token(&db, email).await;
 
-    let result = signup_complete_service(SignupCompleteParams {
-        db: &db,
-        kv: &kv,
-        jwt_secret: JWT_SECRET,
-        token: &token,
-        name: "Brewer",
-        password: "long-enough-password",
-        terms_accepted: true,
-        marketing_consent: false,
-        device: &device(),
-        config: None,
-        slack_feedback_webhook_url: None,
-        support_email: "support@example.test",
-    })
-    .await
-    .expect("signup complete runs");
+    let result = redeem(&db, &kv, &token).await;
 
     assert!(
-        matches!(result, SignupCompleteServiceResult::Success(_)),
+        matches!(result, SignupVerifyServiceResult::Success(_)),
         "redeeming a valid token should sign the user in"
     );
 
@@ -170,22 +174,7 @@ async fn the_account_gets_a_workspace() {
 
     start(&db, &kv, email, "198.51.100.4").await;
     let token = emailed_token(&db, email).await;
-    signup_complete_service(SignupCompleteParams {
-        db: &db,
-        kv: &kv,
-        jwt_secret: JWT_SECRET,
-        token: &token,
-        name: "Brewer",
-        password: "long-enough-password",
-        terms_accepted: true,
-        marketing_consent: false,
-        device: &device(),
-        config: None,
-        slack_feedback_webhook_url: None,
-        support_email: "support@example.test",
-    })
-    .await
-    .expect("signup complete runs");
+    redeem(&db, &kv, &token).await;
 
     let DbPool::Sqlite(pool) = &db else { unreachable!() };
     let workspaces = sqlx::query_scalar::<_, i64>(
@@ -215,22 +204,7 @@ async fn a_second_link_does_not_make_a_second_account() {
     assert_ne!(first, second, "each request mints its own token");
 
     for token in [second, first] {
-        signup_complete_service(SignupCompleteParams {
-            db: &db,
-            kv: &kv,
-            jwt_secret: JWT_SECRET,
-            token: &token,
-            name: "Brewer",
-            password: "long-enough-password",
-            terms_accepted: true,
-            marketing_consent: false,
-            device: &device(),
-            config: None,
-            slack_feedback_webhook_url: None,
-            support_email: "support@example.test",
-        })
-        .await
-        .expect("signup complete runs");
+        redeem(&db, &kv, &token).await;
     }
 
     assert_eq!(
@@ -248,22 +222,7 @@ async fn a_known_address_is_answered_the_same_as_an_unknown_one() {
 
     start(&db, &kv, email, "198.51.100.8").await;
     let token = emailed_token(&db, email).await;
-    signup_complete_service(SignupCompleteParams {
-        db: &db,
-        kv: &kv,
-        jwt_secret: JWT_SECRET,
-        token: &token,
-        name: "Brewer",
-        password: "long-enough-password",
-        terms_accepted: true,
-        marketing_consent: false,
-        device: &device(),
-        config: None,
-        slack_feedback_webhook_url: None,
-        support_email: "support@example.test",
-    })
-    .await
-    .expect("signup complete runs");
+    redeem(&db, &kv, &token).await;
 
     // Now sign up again with the same address, and with one nobody has used.
     let registered = start(&db, &kv, email, "198.51.100.9").await;

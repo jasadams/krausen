@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = (ROOT / "crates/krausen-auth/src/email_service.rs").read_text().split("#[cfg(test)]", 1)[0]
+SOURCE = (ROOT / "crates/krausen-auth/src/email_service.rs").read_text().split("#[cfg(test)]\nmod tests", 1)[0]
 TOKENS = (ROOT / "crates/krausen-ui/style/approved-tokens.css").read_text()
 
 
@@ -44,8 +44,11 @@ class EmailBrandSourceTests(unittest.TestCase):
     def test_all_message_links_expiry_and_escaping_contracts(self):
         methods = dict(re.findall(
             r'pub async fn (send_\w+)\((.*?)(?=pub async fn |\n}\n)', SOURCE, re.S))
+        # The invitation content lives in a pure builder behind the method.
+        builder = SOURCE.split("fn build_workspace_invitation_email(", 1)[1].split("\nfn ", 1)[0]
+        methods["send_workspace_invitation"] += builder
         expected = {
-            "send_workspace_invitation": (["{frontend_url}/login",
+            "send_workspace_invitation": (["{escaped_accept_url}",
                 "{frontend_url}/unsubscribe?email={escaped_email}",
                 "{frontend_url}/privacy", "{frontend_url}/terms", "{frontend_url}"],
                 "This invitation will expire in 7 days."),
@@ -68,6 +71,8 @@ class EmailBrandSourceTests(unittest.TestCase):
             with self.subTest(escaping=name):
                 self.assertIn("html_escape(display_name)", methods[name])
                 self.assertRegex(methods[name], r'html_escape\((recovery|verification)_link\)')
+        self.assertIn('{frontend_url}/accept-invite/{invitation_id}', methods["send_workspace_invitation"])
+        self.assertIn("html_escape(&accept_url)", methods["send_workspace_invitation"])
         for field in ("email", "inviter_name", "workspace_name"):
             self.assertIn(f"html_escape({field})", methods["send_workspace_invitation"])
         for field in ("label", "value", "subject"):

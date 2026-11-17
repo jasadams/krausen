@@ -49,6 +49,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/build/target \
     cd crates/krausen-ui && trunk build --release --locked \
+    && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
     && cp target/release/krausen /build/krausen-bin
 

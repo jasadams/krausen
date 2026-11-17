@@ -72,8 +72,12 @@ async fn handle_authenticated_ws(
         }
     };
 
-    let claims = match jwt::validate_browser_token(&token, &state.config.jwt_secret) {
-        Ok(token_data) => token_data.claims,
+    let claims = match jwt::validate_token(&token, &state.config.jwt_secret) {
+        Ok(token_data) if token_data.claims.require_session().is_ok() => token_data.claims,
+        Ok(_) => {
+            close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
+            return;
+        }
         Err(e) => {
             tracing::warn!(error = %e, "WebSocket rejected: JWT validation failed");
             close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
@@ -82,20 +86,6 @@ async fn handle_authenticated_ws(
     };
 
     let user_id = claims.sub.clone();
-    let Some(credential_id) = claims
-        .extra
-        .get("credential_id")
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-    else {
-        close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
-        return;
-    };
-    if !valid_credential(&state.db, &user_id, &credential_id, claims.exp).await {
-        close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
-        return;
-    }
-
     // A valid token must not grant a socket for somebody else's user id.
     if path_user_id != user_id {
         tracing::warn!(
@@ -108,6 +98,14 @@ async fn handle_authenticated_ws(
     }
 
     match user_service::get_user_by_id(&state.db, &user_id).await {
+        Ok(Some(user))
+            if claims
+                .require_current_session(user.sessions_valid_from)
+                .is_err() =>
+        {
+            close_with_code(socket, CLOSE_AUTH_REQUIRED, "Session revoked").await;
+            return;
+        }
         Ok(Some(user)) if user.active => {}
         Ok(Some(_)) => {
             tracing::warn!(user_id = %user_id, "WebSocket rejected: account disabled");
@@ -139,9 +137,6 @@ async fn handle_authenticated_ws(
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Outbound: forward everything the manager publishes, plus keepalive pings.
-    let check_db = state.db.clone();
-    let check_user = user_id.clone();
-    let token_exp = claims.exp;
     let mut send_task = tokio::spawn(async move {
         let mut ping_interval =
             tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_SECS));
@@ -152,7 +147,6 @@ async fn handle_authenticated_ws(
                 msg = manager_rx.recv() => {
                     match msg {
                         Some(json) => {
-                            if !valid_credential(&check_db, &check_user, &credential_id, token_exp).await { break; }
                             if ws_sender.send(ws::Message::text(json)).await.is_err() {
                                 break;
                             }
@@ -161,7 +155,6 @@ async fn handle_authenticated_ws(
                     }
                 }
                 _ = ping_interval.tick() => {
-                    if !valid_credential(&check_db, &check_user, &credential_id, token_exp).await { break; }
                     if ws_sender.send(ws::Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
@@ -192,34 +185,6 @@ async fn handle_authenticated_ws(
 
     state.ws_manager.disconnect(&user_id, connection_id);
     tracing::info!(user_id = %user_id, connection_id, "WebSocket disconnected");
-}
-
-async fn valid_credential(
-    db: &krausen_core::DbPool,
-    user_id: &str,
-    credential_id: &str,
-    token_exp: i64,
-) -> bool {
-    let now = chrono::Utc::now().timestamp();
-    if token_exp <= now {
-        return false;
-    }
-    let active = krausen_core::sql_compat::bool_true(db.is_postgres());
-    let sql = format!(
-        "SELECT COUNT(*) FROM auth_credentials c JOIN users u ON u.user_id = c.user_id WHERE c.credential_id = $1 AND c.user_id = $2 AND c.kind = 'browser' AND c.issuer = $3 AND c.audience = $4 AND c.revoked_at IS NULL AND c.expires_at > $5 AND u.active = {active}"
-    );
-    krausen_core::db_fetch_scalar!(
-        db,
-        i64,
-        &sql,
-        credential_id,
-        user_id,
-        jwt::BROWSER_ISSUER,
-        jwt::BROWSER_AUDIENCE,
-        now
-    )
-    .unwrap_or(0)
-        == 1
 }
 
 /// Close the socket with an application close code before it is ever used.

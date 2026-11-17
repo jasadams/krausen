@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Run with FRONTEND_URL set to an HTTPS installation URL.
+//! Constants are read once per process, so this test sets an HTTPS installation
+//! URL itself before the first read.
 #[test]
 fn https_browser_tokens_are_secure_httponly_and_same_site() {
+    // SAFETY: the only test in this binary; no other thread reads the environment.
+    unsafe { std::env::set_var("FRONTEND_URL", "https://example.test") };
     let mut headers = axum::http::HeaderMap::new();
     krausen_auth::cookies::set_token_cookies(&mut headers, Some("access"), Some("refresh"));
     let values: Vec<_> = headers
@@ -13,6 +16,6 @@ fn https_browser_tokens_are_secure_httponly_and_same_site() {
         let value = value.to_str().unwrap();
         assert!(value.contains("; Secure"));
         assert!(value.contains("; HttpOnly"));
-        assert!(value.contains("; SameSite=Strict"));
+        assert!(value.to_ascii_lowercase().contains("; samesite=strict"));
     }
 }

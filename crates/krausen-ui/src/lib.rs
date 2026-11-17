@@ -10,6 +10,10 @@ pub mod server_fns;
 pub mod types;
 pub mod utils;
 
+/// Crate-local test-only support for source-assertion tests.
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use app::App;
 
 /// Register all server functions with the Leptos runtime.
@@ -24,7 +28,7 @@ pub fn register_server_functions() {
     register_explicit::<GetAuthConfig>();
     register_explicit::<LoginWithPassword>();
     register_explicit::<SignupStart>();
-    register_explicit::<SignupComplete>();
+    register_explicit::<SignupVerify>();
     register_explicit::<GoogleOauthCallback>();
     register_explicit::<ResendVerification>();
     register_explicit::<RecoveryStart>();
@@ -82,6 +86,7 @@ pub fn register_server_functions() {
     register_explicit::<UpdateTheme>();
     register_explicit::<AcceptInvitation>();
     register_explicit::<DeclineInvitation>();
+    register_explicit::<GetInvitationForAccept>();
 
     // Security
     use server_fns::security::*;

@@ -136,7 +136,7 @@ not checks claimed to have run during architecture adoption.
 | Same request retried after lost response | Original result/resource after current auth; no second write or post-self-write revision conflict | KRA-7/20 |
 | Same request key with different semantic payload | `RequestIdentityConflict`, no new mutation | KRA-7 |
 | Result expired but retry tombstone retained | `ResultExpired`, no re-execution | KRA-7 |
-| Membership/credential revoked during other operation | Serialized authority boundary; calls ordered after revocation fail through both adapters | KRA-7/10/11 |
+| Membership/session revoked during other operation | Serialized authority boundary; calls ordered after revocation fail through both adapters | KRA-7/10/11 |
 | User belongs to A and B, supplies B profile to A brew | Rejected despite both memberships; no copied foreign data | KRA-7/20 |
 | Correction links another brew/quantity | Rejected by shared parent checks and applicable constraints | KRA-20/21 |
 | Explicit historical revision 4 selected while head is 7 | Start 4 with accepted current equipment/context; no restore required | KRA-20 |
@@ -150,7 +150,7 @@ not checks claimed to have run during architecture adoption.
 | Late-boil sugar, extract-only and scaled fixed losses | Versioned type/timing rules and independently checked references | KRA-9/18 |
 | Imported XML has unknown data or ambiguous colour/efficiency | Original recoverable; preview choice/diagnostics explicit; edited export never restores stale source values | KRA-17 |
 | Notifications lost or connection drops after commit | Reconnect/refetch and durable request identity recover truth | KRA-7/10/13 |
-| New account uses browser after another logs out | Cannot see the other account's recovery draft or credential state | KRA-10/13 |
+| New account uses browser after another logs out | Cannot see the other account's recovery draft or session state | KRA-10/13 |
 | Schema/engine upgraded | Original versioned inputs/results readable; current recalculation separately labelled | KRA-6/9/22/24 |
 
 ## Deliberate deferrals
@@ -166,7 +166,7 @@ not checks claimed to have run during architecture adoption.
   readable stored results, not indefinite execution of obsolete code.
 - Multiple application processes: initial deployment acceptance is one process per
   installation, with either database. Future horizontal deployment must prove
-  shared credential/retry/authority state and adapter routing; no process cache may
+  shared session/retry/authority state and adapter routing; no process cache may
   become the source of correctness in the meantime.
 
 These deferrals do not change the required shared application interface or justify
@@ -181,7 +181,7 @@ Three independent reviewers assessed the revised contracts and guidance against
 | Review | Final verdict and scope |
 | --- | --- |
 | Architecture/scaling | Approved KRA-5 documentation adoption; B1/B2/B7/B8 resolved, KRA-6→7 sequencing sensible, no blocking findings. |
-| Interface/security | Approved changed contracts; same-workspace/parent constraints, shared operations, credential/proof/revocation and durable retry/transaction boundaries coherent; no blocking findings. |
+| Interface/security | Approved changed contracts; same-workspace/parent constraints, shared operations, session/proof/revocation and durable retry/transaction boundaries coherent; no blocking findings. |
 | History/calculations | Approved changed domain/calculation contracts; B2–B6 resolved and arithmetic references independently recomputed; no blocking domain or arithmetic findings. |
 
 The one nonblocking finding was a renamed BeerXML heading anchor; it is fixed.

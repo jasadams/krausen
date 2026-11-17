@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Real-browser cross-tab refresh and stale-cookie adapter regression.
+//! Real-browser cross-tab refresh regression: concurrent tabs (and a tab without
+//! Web Locks) refresh through the page pre-warm and every refresh succeeds.
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, header},
@@ -17,7 +18,7 @@ use std::{
 async fn page() -> Html<String> {
     let index = include_str!("../../../crates/krausen-ui/index.html");
     let script = index
-        .split("<script type=\"module\">")
+        .split("<script type=\"module\" nonce=\"__KRAUSEN_CSP_NONCE__\">")
         .nth(1)
         .unwrap()
         .split("</script>")
@@ -34,7 +35,7 @@ async fn probe(
     let Some(token) = krausen_auth::cookies::get_cookie_value(&headers, "access_token") else {
         return StatusCode::UNAUTHORIZED;
     };
-    if krausen_auth::jwt::validate_browser_token(token, &state.config.jwt_secret).is_ok() {
+    if krausen_auth::jwt::validate_token(token, &state.config.jwt_secret).is_ok() {
         StatusCode::OK
     } else {
         StatusCode::UNAUTHORIZED
@@ -113,6 +114,8 @@ async fn concurrent_expiry_and_browser_tabs_remain_usable() {
             .header(header::COOKIE, &cookie)
             .send()
     );
+    // The probe route is not under the refresh layer: a refresh cookie alone is
+    // not an access token.
     assert_eq!(first.unwrap().status(), StatusCode::UNAUTHORIZED);
     assert_eq!(second.unwrap().status(), StatusCode::UNAUTHORIZED);
     let mut child = Command::new("python3")
@@ -139,7 +142,7 @@ async fn concurrent_expiry_and_browser_tabs_remain_usable() {
     );
     let active: i64 = match &db {
         DbPool::Sqlite(p) => sqlx::query_scalar(
-            "SELECT COUNT(*) FROM auth_credentials WHERE user_id = $1 AND revoked_at IS NULL",
+            "SELECT COUNT(DISTINCT family_id) FROM refresh_tokens WHERE user_id = $1 AND is_active = 1",
         )
         .bind(&user.user_id)
         .fetch_one(p)

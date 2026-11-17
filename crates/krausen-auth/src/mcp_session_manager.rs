@@ -94,7 +94,9 @@ impl MCPSessionManager {
         }
         // Best-effort TTL on the workspace set: 2× session TTL so expired
         // session IDs don't accumulate indefinitely.
-        self.kv.expire(&ws_key, SESSION_TTL_SECS * 2).await.ok();
+        if let Err(e) = self.kv.expire(&ws_key, SESSION_TTL_SECS * 2).await {
+            tracing::debug!(workspace_id, error = %e, "Failed to set TTL on workspace session set");
+        }
 
         tracing::info!(
             workspace_id,
@@ -105,12 +107,33 @@ impl MCPSessionManager {
         session_id
     }
 
-    /// Validate a session ID. Returns the workspace_id if valid, None if unknown/expired.
+    /// Validate a session ID. Returns the workspace_id if the session exists
+    /// and its stored data parses cleanly. Returns `None` if the session is
+    /// unknown or expired — but also, indistinguishably to the caller, if the
+    /// KV store read failed or the stored payload was malformed. Both of
+    /// those failure cases are logged at `error!` (never the session
+    /// payload — it is auth material) so an outage or a bad deploy is
+    /// distinguishable from a genuine expiry in the logs, even though the
+    /// return value alone can't tell them apart.
     pub async fn validate_session(&self, session_id: &str) -> Option<String> {
-        let value: Option<String> = self.kv.get(&session_key(session_id)).await.ok()?;
+        let value: Option<String> = self
+            .kv
+            .get(&session_key(session_id))
+            .await
+            .map_err(|e| {
+                tracing::error!(session_id, error = %e, "Failed to read MCP session from KV store");
+            })
+            .ok()?;
 
         value.and_then(|json| {
             serde_json::from_str::<SessionData>(&json)
+                .map_err(|e| {
+                    tracing::error!(
+                        session_id,
+                        error = %e,
+                        "MCP session data is malformed (not merely absent) — treating as invalid"
+                    );
+                })
                 .ok()
                 .map(|d| d.workspace_id)
         })
@@ -123,22 +146,49 @@ impl MCPSessionManager {
             .kv
             .get(&session_key(session_id))
             .await
+            .map_err(|e| {
+                tracing::warn!(
+                    session_id,
+                    error = %e,
+                    "Failed to read MCP session from KV store during removal"
+                );
+            })
             .ok()
             .and_then(|json: Option<String>| {
                 json.and_then(|j| {
                     serde_json::from_str::<SessionData>(&j)
+                        .map_err(|e| {
+                            tracing::warn!(
+                                session_id,
+                                error = %e,
+                                "MCP session data is malformed during removal"
+                            );
+                        })
                         .ok()
                         .map(|d| d.workspace_id)
                 })
             });
 
         // Delete session key
-        let _ = self.kv.del(&session_key(session_id)).await;
+        if let Err(e) = self.kv.del(&session_key(session_id)).await {
+            tracing::warn!(
+                session_id,
+                error = %e,
+                "Failed to delete MCP session from KV store during removal — session stays live until TTL"
+            );
+        }
 
         // Remove from workspace sessions set (atomic).
         if let Some(ws_id) = &workspace_id {
             let ws_key = workspace_sessions_key(ws_id);
-            let _ = self.kv.srem(&ws_key, session_id).await;
+            if let Err(e) = self.kv.srem(&ws_key, session_id).await {
+                tracing::debug!(
+                    session_id,
+                    workspace_id = %ws_id,
+                    error = %e,
+                    "Failed to remove session from workspace set"
+                );
+            }
         }
 
         // Remove local SSE sender
@@ -169,15 +219,27 @@ impl MCPSessionManager {
         // set once per session, making concurrent calls extremely rare in practice.
         let value: Option<String> = match self.kv.get(&key).await {
             Ok(v) => v,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!(
+                    session_id,
+                    error = %e,
+                    "Failed to read MCP session from KV store while setting MCP Apps support"
+                );
+                return;
+            }
         };
 
         if let Some(json) = value
             && let Ok(mut data) = serde_json::from_str::<SessionData>(&json) {
                 data.supports_mcp_apps = supports;
-                if let Ok(updated) = serde_json::to_string(&data) {
-                    let _ = self.kv.set(&key, &updated, Some(SESSION_TTL_SECS)).await;
-                }
+                if let Ok(updated) = serde_json::to_string(&data)
+                    && let Err(e) = self.kv.set(&key, &updated, Some(SESSION_TTL_SECS)).await {
+                        tracing::warn!(
+                            session_id,
+                            error = %e,
+                            "Failed to write MCP session back to KV store after setting MCP Apps support"
+                        );
+                    }
             }
     }
 
@@ -187,7 +249,15 @@ impl MCPSessionManager {
             .kv
             .get(&session_key(session_id))
             .await
-            .unwrap_or(None);
+            .map_err(|e| {
+                tracing::warn!(
+                    session_id,
+                    error = %e,
+                    "Failed to read MCP session from KV store while checking MCP Apps support"
+                );
+            })
+            .ok()
+            .flatten();
 
         value
             .and_then(|json| serde_json::from_str::<SessionData>(&json).ok())
@@ -263,11 +333,24 @@ impl MCPSessionManager {
 
         // Delete each session key
         for session_id in &session_ids {
-            let _ = self.kv.del(&session_key(session_id)).await;
+            if let Err(e) = self.kv.del(&session_key(session_id)).await {
+                tracing::debug!(
+                    session_id = %session_id,
+                    workspace_id,
+                    error = %e,
+                    "Failed to delete session during workspace invalidation"
+                );
+            }
         }
 
         // Delete the workspace sessions set itself.
-        let _ = self.kv.sdel(&ws_key).await;
+        if let Err(e) = self.kv.sdel(&ws_key).await {
+            tracing::debug!(
+                workspace_id,
+                error = %e,
+                "Failed to delete workspace session set"
+            );
+        }
 
         // Clean up local SSE senders for these sessions
         for session_id in &session_ids {
@@ -289,7 +372,70 @@ impl MCPSessionManager {
 
 #[cfg(test)]
 mod tests {
+    use krausen_core::kv_store::KVStore;
+    use tracing::Level;
+
+    use krausen_test_tracing::capture_tracing;
+
     use super::*;
+
+    /// Minimal `KVStore` whose `get` and `del` always fail, to exercise the
+    /// KV-outage paths in `validate_session`, `supports_mcp_apps`,
+    /// `set_supports_mcp_apps`, and `remove_session` (KYO-243 extended this
+    /// beyond the original KYO-216 `get`-only double to cover `del` too, so
+    /// `remove_session`'s failed-delete `warn!` is reachable without a third
+    /// test double). Every other method is still unreached by any test that
+    /// uses this double, so they panic if called — a test that somehow hits
+    /// them should fail loudly rather than silently succeed against
+    /// unintended behaviour.
+    struct FailingKVStore;
+
+    #[async_trait::async_trait]
+    impl KVStore for FailingKVStore {
+        async fn set(&self, _key: &str, _value: &str, _ttl_secs: Option<u64>) -> krausen_core::Result<()> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn get(&self, _key: &str) -> krausen_core::Result<Option<String>> {
+            Err(krausen_core::Error::ServiceUnavailable(
+                "simulated KV outage".to_string(),
+            ))
+        }
+
+        async fn del(&self, _key: &str) -> krausen_core::Result<()> {
+            Err(krausen_core::Error::ServiceUnavailable(
+                "simulated KV outage".to_string(),
+            ))
+        }
+
+        async fn getdel(&self, _key: &str) -> krausen_core::Result<Option<String>> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn incr(&self, _key: &str) -> krausen_core::Result<i64> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn expire(&self, _key: &str, _ttl_secs: u64) -> krausen_core::Result<()> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn sadd(&self, _key: &str, _member: &str) -> krausen_core::Result<()> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn srem(&self, _key: &str, _member: &str) -> krausen_core::Result<()> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn smembers(&self, _key: &str) -> krausen_core::Result<Vec<String>> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+
+        async fn sdel(&self, _key: &str) -> krausen_core::Result<()> {
+            unimplemented!("not exercised by the KV-outage test")
+        }
+    }
 
     async fn test_manager() -> MCPSessionManager {
         let kv = krausen_core::kv_store::create_kv_store(None)
@@ -326,6 +472,101 @@ mod tests {
         cleanup(&mgr, &[&session_id], &["ws-test-1"]).await;
     }
 
+    /// The normal "no such session" path must stay silent. This is the load-
+    /// bearing counterpart to the two tests below: without it, logging
+    /// unconditionally on every `None` would pass those tests while making
+    /// the ordinary "session expired" case as noisy as a real outage.
+    #[tokio::test(flavor = "current_thread")]
+    async fn validate_session_absent_does_not_log_error() {
+        let mgr = test_manager().await;
+
+        let logs = capture_tracing();
+
+        let result = mgr.validate_session("nonexistent-session").await;
+
+        assert!(result.is_none(), "an absent session should validate to None");
+
+        let error_events = logs.events_at(Level::ERROR);
+        assert!(
+            error_events.is_empty(),
+            "a merely-absent session must not log an error; captured: {:?}",
+            logs.events()
+        );
+    }
+
+    /// A malformed (but present) session payload must return `None` exactly
+    /// like an absent session, but unlike the absent case it must log an
+    /// `error!` that identifies the data as malformed — and must never leak
+    /// the stored payload itself, since `SessionData` is auth material.
+    #[tokio::test(flavor = "current_thread")]
+    async fn validate_session_malformed_payload_logs_error() {
+        let mgr = test_manager().await;
+        let session_id = "malformed-session";
+        let bogus_payload = r#"{"totally":"not-session-data","secret":"sh-should-not-leak"}"#;
+
+        mgr.kv
+            .set(&session_key(session_id), bogus_payload, Some(60))
+            .await
+            .expect("in-memory KV set should succeed");
+
+        let logs = capture_tracing();
+
+        let result = mgr.validate_session(session_id).await;
+
+        assert!(
+            result.is_none(),
+            "malformed session data must be treated as invalid, not surfaced to the caller"
+        );
+
+        let error_events = logs.events_at(Level::ERROR);
+        assert!(
+            !error_events.is_empty(),
+            "malformed session data must emit an error!-level log; captured: {:?}",
+            logs.events()
+        );
+        assert!(
+            error_events.iter().any(|(_, message)| message.contains("malformed")),
+            "expected an error log identifying the data as malformed (not merely absent); \
+             captured: {:?}",
+            logs.events()
+        );
+        for (_, message) in &error_events {
+            assert!(
+                !message.contains(bogus_payload) && !message.contains("sh-should-not-leak"),
+                "session-data error logs must never contain the stored payload \
+                 (SessionData is auth material); got: {message}"
+            );
+        }
+
+        cleanup(&mgr, &[session_id], &[]).await;
+    }
+
+    /// A KV store outage must return `None` — the safe, fail-closed
+    /// direction — but must be logged at `error!` so it is distinguishable
+    /// from a genuine session expiry. Without this test, a Redis blip would
+    /// look identical to every client simply having an expired session, and
+    /// nothing would tell an operator the store was unreachable.
+    #[tokio::test(flavor = "current_thread")]
+    async fn validate_session_kv_error_logs_error() {
+        let mgr = MCPSessionManager::new(Arc::new(FailingKVStore));
+
+        let logs = capture_tracing();
+
+        let result = mgr.validate_session("any-session").await;
+
+        assert!(
+            result.is_none(),
+            "a KV store error must deny access (fail closed), not surface to the caller"
+        );
+
+        let error_events = logs.events_at(Level::ERROR);
+        assert!(
+            !error_events.is_empty(),
+            "a KV store error must emit an error!-level log; captured: {:?}",
+            logs.events()
+        );
+    }
+
     #[tokio::test]
     async fn remove_session_invalidates_it() {
         let mgr = test_manager().await;
@@ -341,6 +582,26 @@ mod tests {
     async fn remove_unknown_session_is_noop() {
         let mgr = test_manager().await;
         mgr.remove_session("nonexistent").await; // should not panic
+    }
+
+    /// KYO-243: `remove_session`'s `del` used to be `let _ = ...`, silently
+    /// leaving a session the user explicitly closed live until TTL. It must
+    /// now log a `warn!` when the delete fails — without changing the
+    /// fire-and-forget behaviour (the function still returns `()` and does
+    /// not panic or propagate the error).
+    #[tokio::test(flavor = "current_thread")]
+    async fn remove_session_kv_error_logs_warn_on_failed_del() {
+        let mgr = MCPSessionManager::new(Arc::new(FailingKVStore));
+
+        let logs = capture_tracing();
+
+        mgr.remove_session("any-session").await; // should not panic
+
+        assert!(
+            logs.has_message_containing(Level::WARN, "Failed to delete"),
+            "a failed delete during removal must emit a warn!-level log; captured: {:?}",
+            logs.events()
+        );
     }
 
     #[tokio::test]
@@ -420,6 +681,74 @@ mod tests {
     async fn set_mcp_apps_support_unknown_session_is_noop() {
         let mgr = test_manager().await;
         mgr.set_supports_mcp_apps("nonexistent", true).await; // should not panic
+    }
+
+    /// KYO-243: a KV store error is indistinguishable from "client doesn't
+    /// support MCP Apps" by return value alone — `false` stays the correct
+    /// fail-closed default, so a Redis blip must not flip this behaviour.
+    /// But it must now be logged, so an operator can tell an outage apart
+    /// from every client genuinely lacking the capability.
+    #[tokio::test(flavor = "current_thread")]
+    async fn supports_mcp_apps_kv_error_logs_warn_and_returns_false() {
+        let mgr = MCPSessionManager::new(Arc::new(FailingKVStore));
+
+        let logs = capture_tracing();
+
+        let result = mgr.supports_mcp_apps("any-session").await;
+
+        assert!(
+            !result,
+            "a KV store error must keep the fail-closed `false` default"
+        );
+
+        let warn_events = logs.events_at(Level::WARN);
+        assert!(
+            !warn_events.is_empty(),
+            "a KV store error must emit a warn!-level log; captured: {:?}",
+            logs.events()
+        );
+    }
+
+    /// Load-bearing negative counterpart to the test above: a naive
+    /// "log unconditionally on a `false`/`None` result" implementation
+    /// would pass `supports_mcp_apps_kv_error_logs_warn_and_returns_false`
+    /// but would also make the ordinary "session doesn't support MCP Apps"
+    /// case as noisy as a real KV outage. Only a genuine store error may log.
+    #[tokio::test(flavor = "current_thread")]
+    async fn supports_mcp_apps_absent_session_does_not_log_warn() {
+        let mgr = test_manager().await;
+
+        let logs = capture_tracing();
+
+        let result = mgr.supports_mcp_apps("nonexistent-session").await;
+
+        assert!(!result, "an absent session does not support MCP Apps");
+
+        let warn_events = logs.events_at(Level::WARN);
+        assert!(
+            warn_events.is_empty(),
+            "a merely-absent session must not log a warning; captured: {:?}",
+            logs.events()
+        );
+    }
+
+    /// KYO-243: `set_supports_mcp_apps`'s initial read used to be
+    /// `Err(_) => return`, silently giving up on recording the capability
+    /// flag with no trace. It must now log a `warn!` on that read failure.
+    #[tokio::test(flavor = "current_thread")]
+    async fn set_supports_mcp_apps_kv_error_logs_warn() {
+        let mgr = MCPSessionManager::new(Arc::new(FailingKVStore));
+
+        let logs = capture_tracing();
+
+        mgr.set_supports_mcp_apps("any-session", true).await; // should not panic
+
+        let warn_events = logs.events_at(Level::WARN);
+        assert!(
+            !warn_events.is_empty(),
+            "a KV store error while setting MCP Apps support must emit a warn!-level log; captured: {:?}",
+            logs.events()
+        );
     }
 
     #[tokio::test]

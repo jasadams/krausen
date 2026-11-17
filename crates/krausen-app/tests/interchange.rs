@@ -17,7 +17,6 @@ async fn exercise(db: DbPool) {
     let user = format!("user-{suffix}");
     let workspace = format!("workspace-{suffix}");
     let other = format!("other-{suffix}");
-    let credential = format!("credential-{suffix}");
     macro_rules! run { ($sql:expr $(, $a:expr)*) => { match &db {
         DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
         DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
@@ -39,16 +38,10 @@ async fn exercise(db: DbPool) {
             &user
         );
     }
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let intent = OperationIntent {

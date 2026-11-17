@@ -56,17 +56,10 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
-    let credential = format!("c-{suffix}");
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let expired = ActorContext {
@@ -78,17 +71,17 @@ async fn exercise(db: DbPool) {
         RecipeReadOutcome::Forbidden
     );
     run!(
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
-        chrono::Utc::now().timestamp(),
-        &actor.credential_id
+        "UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2",
+        actor.session_iat_us.unwrap(),
+        &actor.actor_id
     );
     assert_eq!(
         read(&db, &actor, "missing").await,
         RecipeReadOutcome::Forbidden
     );
     run!(
-        "UPDATE auth_credentials SET revoked_at = NULL WHERE credential_id = $1",
-        &actor.credential_id
+        "UPDATE users SET sessions_valid_from = NULL WHERE user_id = $1",
+        &actor.actor_id
     );
     let mut draft = RecipeDocumentV1 {
         title: "An incomplete recipe".into(),
@@ -104,15 +97,8 @@ async fn exercise(db: DbPool) {
         panic!("{created:?}");
     };
     assert_eq!(save(&db, &actor, None, None, &draft, key).await, created);
-    let refreshed_credential = format!("refresh-{suffix}");
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &refreshed_credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let refreshed_actor = ActorContext {
-        credential_id: refreshed_credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
         ..actor.clone()
     };
@@ -204,7 +190,6 @@ async fn exercise(db: DbPool) {
     );
     let other_user = format!("other-{suffix}");
     let other_email = format!("other-{suffix}@example.test");
-    let other_credential = format!("other-c-{suffix}");
     run!(
         "INSERT INTO users (user_id,email) VALUES ($1,$2)",
         &other_user,
@@ -215,16 +200,10 @@ async fn exercise(db: DbPool) {
         &workspace,
         &other_user
     );
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &other_credential,
-        &other_user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let other_actor = ActorContext {
         actor_id: other_user,
         workspace_id: workspace.clone(),
-        credential_id: other_credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(
@@ -468,7 +447,7 @@ async fn postgres_editor() {
 // A save must not recover a stored result or write a revision if its authority
 // expires while PostgreSQL is waiting for either resource lock.
 #[tokio::test]
-async fn postgres_resource_lock_wait_rechecks_both_expiries() {
+async fn postgres_resource_lock_wait_rechecks_access_expiry() {
     use std::str::FromStr;
     use std::time::Duration;
 
@@ -482,7 +461,6 @@ async fn postgres_resource_lock_wait_rechecks_both_expiries() {
     let suffix = Uuid::new_v4().to_string();
     let user = format!("wait-u-{suffix}");
     let workspace = format!("wait-w-{suffix}");
-    let credential = format!("wait-c-{suffix}");
     sqlx::query("INSERT INTO users (user_id,email) VALUES ($1,$2)")
         .bind(&user)
         .bind(format!("{suffix}@example.test"))
@@ -501,12 +479,10 @@ async fn postgres_resource_lock_wait_rechecks_both_expiries() {
         .execute(&control)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)")
-        .bind(&credential).bind(&user).bind(chrono::Utc::now().timestamp() + 3600).execute(&control).await.unwrap();
     let mut actor = ActorContext {
         actor_id: user,
         workspace_id: workspace.clone(),
-        credential_id: credential.clone(),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let pool = DbPool::Postgres(control.clone());
@@ -524,69 +500,51 @@ async fn postgres_resource_lock_wait_rechecks_both_expiries() {
     };
 
     for resource in ["workspace", "recipe"] {
-        for expiry in ["access", "credential"] {
-            let expires_at = chrono::Utc::now().timestamp() + 8;
-            let credential_expiry = if expiry == "credential" {
-                expires_at
-            } else {
-                expires_at + 3600
-            };
-            actor.access_expires_at = if expiry == "access" {
-                expires_at
-            } else {
-                expires_at + 3600
-            };
-            sqlx::query("UPDATE auth_credentials SET expires_at = $1 WHERE credential_id = $2")
-                .bind(credential_expiry)
-                .bind(&credential)
-                .execute(&control)
-                .await
-                .unwrap();
-            let mut lock = control.begin().await.unwrap();
-            if resource == "workspace" {
-                sqlx::query(
-                    "SELECT workspace_id FROM workspaces WHERE workspace_id = $1 FOR UPDATE",
-                )
+        let expires_at = chrono::Utc::now().timestamp() + 8;
+        actor.access_expires_at = expires_at;
+        let mut lock = control.begin().await.unwrap();
+        if resource == "workspace" {
+            sqlx::query("SELECT workspace_id FROM workspaces WHERE workspace_id = $1 FOR UPDATE")
                 .bind(&workspace)
                 .fetch_one(&mut *lock)
                 .await
                 .unwrap();
-            } else {
-                sqlx::query("SELECT recipe_id FROM recipes WHERE workspace_id = $1 AND recipe_id = $2 FOR UPDATE")
+        } else {
+            sqlx::query("SELECT recipe_id FROM recipes WHERE workspace_id = $1 AND recipe_id = $2 FOR UPDATE")
                     .bind(&workspace).bind(&recipe_id).fetch_one(&mut *lock).await.unwrap();
-            }
-            let app_name = format!("kra12-wait-{}", Uuid::new_v4().simple());
-            let options = sqlx::postgres::PgConnectOptions::from_str(&url)
-                .unwrap()
-                .application_name(&app_name);
-            let worker = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .connect_with(options)
+        }
+        let app_name = format!("kra12-wait-{}", Uuid::new_v4().simple());
+        let options = sqlx::postgres::PgConnectOptions::from_str(&url)
+            .unwrap()
+            .application_name(&app_name);
+        let worker = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let task_actor = actor.clone();
+        let task_draft = draft.clone();
+        let task_recipe = recipe_id.clone();
+        let task = tokio::spawn(async move {
+            let db = DbPool::Postgres(worker);
+            if resource == "workspace" {
+                // An existing request must not be recovered after expiry.
+                save(&db, &task_actor, None, None, &task_draft, replay_key).await
+            } else {
+                let mut changed = task_draft;
+                changed.title = "Must not be written".into();
+                save(
+                    &db,
+                    &task_actor,
+                    Some(&task_recipe),
+                    Some(1),
+                    &changed,
+                    Uuid::new_v4(),
+                )
                 .await
-                .unwrap();
-            let task_actor = actor.clone();
-            let task_draft = draft.clone();
-            let task_recipe = recipe_id.clone();
-            let task = tokio::spawn(async move {
-                let db = DbPool::Postgres(worker);
-                if resource == "workspace" {
-                    // An existing request must not be recovered after expiry.
-                    save(&db, &task_actor, None, None, &task_draft, replay_key).await
-                } else {
-                    let mut changed = task_draft;
-                    changed.title = "Must not be written".into();
-                    save(
-                        &db,
-                        &task_actor,
-                        Some(&task_recipe),
-                        Some(1),
-                        &changed,
-                        Uuid::new_v4(),
-                    )
-                    .await
-                }
-            });
-            tokio::time::timeout(Duration::from_secs(6), async {
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(6), async {
                 loop {
                     let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = $1 AND wait_event_type = 'Lock')")
                         .bind(&app_name).fetch_one(&control).await.unwrap();
@@ -594,22 +552,21 @@ async fn postgres_resource_lock_wait_rechecks_both_expiries() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
             }).await.expect("save did not reach the resource lock before expiry");
-            while chrono::Utc::now().timestamp() <= expires_at {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            lock.commit().await.unwrap();
-            assert_eq!(
-                task.await.unwrap(),
-                RecipeSaveOutcome::Forbidden,
-                "{resource} lock / {expiry} expiry"
-            );
-            let head: i64 =
-                sqlx::query_scalar("SELECT native_head_revision FROM recipes WHERE recipe_id = $1")
-                    .bind(&recipe_id)
-                    .fetch_one(&control)
-                    .await
-                    .unwrap();
-            assert_eq!(head, 1, "expired write changed recipe head");
+        while chrono::Utc::now().timestamp() <= expires_at {
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        lock.commit().await.unwrap();
+        assert_eq!(
+            task.await.unwrap(),
+            RecipeSaveOutcome::Forbidden,
+            "{resource} lock wait past access expiry"
+        );
+        let head: i64 =
+            sqlx::query_scalar("SELECT native_head_revision FROM recipes WHERE recipe_id = $1")
+                .bind(&recipe_id)
+                .fetch_one(&control)
+                .await
+                .unwrap();
+        assert_eq!(head, 1, "expired write changed recipe head");
     }
 }

@@ -1,25 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { execFileSync } from 'child_process';
-import * as path from 'path';
 import {
   DEFAULT_TEST_USER,
   createEquipmentProfile,
   getDefaultUserId,
   loginUser,
   seedWorkspace,
+  sqliteExec,
   walCheckpoint,
 } from '../../helpers/test-helpers';
 
-const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
-  ? path.resolve(process.env.KRAUSEN_E2E_DATABASE_PATH)
-  : path.resolve(__dirname, '../../../data/krausen.db');
 const VISUAL_BREW_ID = process.env.KRAUSEN_VISUAL_BREW_ID;
 
-function sqliteExec(sql: string): string {
-  return execFileSync('sqlite3', [DB_PATH, '.timeout 5000', sql], {
-    encoding: 'utf-8',
-  }).trim();
-}
 
 // The legacy `switch_workspace` server function updates only the database; the
 // signed access token keeps its workspace claim until it is refreshed, so the
@@ -69,6 +60,33 @@ async function callServerFn(
 
 function outcomeOf(body: any): any {
   return body?.Ok ?? body;
+}
+
+// Brews started from a recipe; accepts the recipe id or its editor URL.
+async function brewCount(recipe: string): Promise<number> {
+  // The database file is read from the host; flush the WAL so committed rows are visible.
+  walCheckpoint();
+  const recipeId = recipe.split('/').pop()!.split('?')[0];
+  return Number(sqliteExec(`SELECT COUNT(*) FROM brews WHERE recipe_id = '${recipeId}'`));
+}
+
+// A real response envelope (`{Ok: …}` or bare) from a side-effect-free server call,
+// reused so a controlled typed outcome has the shape the browser really receives.
+function withEnvelope(real: any, outcome: unknown): unknown {
+  return real && typeof real === 'object' && Object.prototype.hasOwnProperty.call(real, 'Ok') ? { Ok: outcome } : outcome;
+}
+
+// Saves a new head (the next revision) with a changed recipe name.
+async function saveHeadThree(page: import('@playwright/test').Page, title: string) {
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${title} head three`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
+}
+
+// The editor learns of another tab's save through its focus refetch.
+async function refreshHead(page: import('@playwright/test').Page) {
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('status').filter({ hasText: 'Updated to the current saved revision.' })).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -121,14 +139,30 @@ async function makeSavedRevisionReady(
   return profileId;
 }
 
-async function prepareAndStart(page: import('@playwright/test').Page, revision: string) {
-  await page.locator('#brew-start-revision').fill(revision);
-  await page.getByRole('button', { name: 'Prepare start' }).click();
-  await expect(
-    page.getByText('Ready to start the selected saved revision.'),
-  ).toBeVisible();
-  await page.locator('#start-brew').getByRole('button', { name: 'Start brew' }).click();
-  await expect(page.getByText('Brew started', { exact: true })).toBeVisible();
+// INT-005: Start opens a bounded review; preparation is automatic and the one
+// final Start brew follows the source, equipment and targets.
+async function reviewCurrentStart(page: import('@playwright/test').Page) {
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByTestId('start-source')).toBeVisible();
+  return dialog;
+}
+
+async function reviewHistoricalStart(page: import('@playwright/test').Page, revision: number) {
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await page.getByRole('button', { name: `Start brew from revision ${revision}` }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByTestId('start-source')).toContainText(`Revision ${revision}`);
+  return dialog;
+}
+
+async function confirmStart(dialog: import('@playwright/test').Locator) {
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByText('Brew started', { exact: true }).first()).toBeVisible();
+}
+
+async function startCurrent(page: import('@playwright/test').Page) {
+  await confirmStart(await reviewCurrentStart(page));
 }
 
 
@@ -138,8 +172,8 @@ async function startBrewAndOpenEvidence(
 ): Promise<string> {
   await importRecipe(page, title);
   await makeSavedRevisionReady(page);
-  await prepareAndStart(page, '2');
-  await page.getByRole('link', { name: 'Open brew evidence' }).click();
+  await startCurrent(page);
+  await page.getByRole('link', { name: 'Open brew' }).click();
   await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   return page.url().split('/').pop() ?? '';
 }
@@ -174,16 +208,16 @@ test('starts the prepared saved revision with frozen targets', async ({ page }) 
   const title = `Brew start ${Date.now()}`;
   await importRecipe(page, title);
   await makeSavedRevisionReady(page);
-  await prepareAndStart(page, '2');
-  await expect(page.getByText(`from revision 2`)).toBeVisible();
+  await startCurrent(page);
+  await expect(page.getByText(/Started from revision 2/)).toBeVisible();
 });
 
 test('editing a shared profile leaves a started brew frozen and changes only later previews', async ({ page }) => {
   await importRecipe(page, `Brew frozen ${Date.now()}`);
   const profileId = await makeSavedRevisionReady(page, `Frozen kettle ${Date.now()}`);
   const recipeUrl = page.url();
-  await prepareAndStart(page, '2');
-  await page.getByRole('link', { name: 'Open brew evidence' }).click();
+  await startCurrent(page);
+  await page.getByRole('link', { name: 'Open brew' }).click();
   await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   const brewUrl = page.url();
   await expect(page.getByRole('heading', { name: 'Lifecycle evidence' })).toBeVisible();
@@ -209,11 +243,535 @@ test('starts an explicitly selected historical revision without restoring it', a
   const title = `Brew historical ${Date.now()}`;
   await importRecipe(page, title);
   await makeSavedRevisionReady(page);
-  await page.getByLabel('Recipe name', { exact: true }).fill(`${title} head three`);
+  await saveHeadThree(page, title);
+  const dialog = await reviewHistoricalStart(page, 2);
+  await expect(dialog.getByTestId('start-equipment')).toContainText('E2E kettle');
+  await confirmStart(dialog);
+  await expect(dialog.getByText(/Started from revision 2/)).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Open brew' })).toBeFocused();
+  // The head is untouched: nothing was restored or silently saved.
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('tab', { name: 'Recipe', exact: true }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} head three`);
+});
+
+test('a dirty draft offers explicit choices; Use saved revision keeps the draft and never saves it', async ({ page }) => {
+  await importRecipe(page, `Brew dirty ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const sends: string[] = [];
+  const saves: string[] = [];
+  await page.route('**/leptos-api/**', async (route) => {
+    const url = route.request().url();
+    if (/start_brew/.test(url)) sends.push(url);
+    if (/save_recipe/.test(url)) saves.push(url);
+    await route.continue();
+  });
+  await page.getByLabel('Batch volume (L)').fill('21');
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const choose = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(choose.getByRole('heading', { name: 'Choose what to start' })).toBeVisible();
+  await expect(choose.getByRole('button', { name: 'Save changes and continue' })).toBeVisible();
+  await expect(choose.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await choose.getByRole('button', { name: 'Use saved revision 2' }).click();
+  const review = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(review.getByTestId('start-source')).toContainText('revision 2');
+  await expect(review.getByText('Your unsaved changes are not part of this brew.')).toBeVisible();
+  // Review precedes the single final command in DOM order.
+  const order = await review.evaluate((dialog) => {
+    const source = dialog.querySelector('[data-testid="start-source"]')!;
+    const final = [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Start brew')!;
+    return source.compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING;
+  });
+  expect(order).toBeTruthy();
+  await review.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('21');
+  expect(saves).toHaveLength(0);
+  expect(sends).toHaveLength(0);
+  // Save changes and continue: confirmed save, then a fresh read-only review.
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  await choose.getByRole('button', { name: 'Save changes and continue' }).click();
+  await expect(review.getByTestId('start-source')).toContainText('revision 3');
+  expect(saves.length).toBeGreaterThan(0);
+  expect(sends).toHaveLength(0);
+});
+
+test('a lost start response keeps the original request through dismissal and reload and creates one brew', async ({ page }) => {
+  await importRecipe(page, `Brew lost start ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const recipeUrl = page.url();
+  const sent: any[] = [];
+  let first = true;
+  await page.route('**/leptos-api/start_brew*', async (route) => {
+    const command = commandFrom(route.request());
+    sent.push(command);
+    if (first) {
+      first = false;
+      const response = await route.fetch();
+      expect(response.ok()).toBeTruthy();
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  const dialog = await reviewCurrentStart(page);
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByText('Result unconfirmed')).toBeVisible();
+  await expect(dialog).not.toContainText(/nothing was (started|created|sent)|no brew was (created|started)|was not (created|started)/i);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  const recovered = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(recovered.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+  await expect(recovered.getByText('Result unconfirmed')).toBeVisible();
+  await recovered.getByRole('button', { name: 'Check previous result' }).click();
+  await expect(recovered.getByText('Brew started', { exact: true }).first()).toBeVisible();
+  expect(sent).toHaveLength(2);
+  expect(sent[1].request_id).toBe(sent[0].request_id);
+  expect(sent[1]).toEqual(sent[0]);
+  await expect.poll(() => brewCount(sent[0].recipe_id)).toBe(1);
+  await page.goto(recipeUrl);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('a second tab holding the start lock delays the start until it is released', async ({ page }) => {
+  await importRecipe(page, `Brew locked ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const recipeId = page.url().split('/').pop()!.split('?')[0];
+  // The recipe's own workspace is the one the app scopes its lock and records to.
+  const workspace = sqliteExec(`SELECT workspace_id FROM recipes WHERE recipe_id = '${recipeId}'`);
+  const sent: any[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sent.push(commandFrom(route.request())); await route.continue(); });
+  const dialog = await reviewCurrentStart(page);
+  const holder = await page.context().newPage();
+  await holder.goto('/recipes');
+  await holder.evaluate(([account, ws, recipe]) => new Promise<void>((granted) => {
+    navigator.locks.request(`krausen-start:${account}:${ws}:${recipe}`, () => new Promise<void>((release) => {
+      (window as any).__releaseStartLock = release;
+      granted();
+    }));
+  }), [getDefaultUserId(), workspace, recipeId]);
+  const lockName = `krausen-start:${getDefaultUserId()}:${workspace}:${recipeId}`;
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  // Serialised behind the other tab: the app's request is queued on the lock,
+  // the review is still showing and nothing was dispatched.
+  await expect
+    .poll(() => holder.evaluate(async (name) => (await navigator.locks.query()).pending?.some((p) => p.name === name) ?? false, lockName))
+    .toBe(true);
+  await expect(dialog.getByRole('heading', { name: 'Review before starting' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Starting brew' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toBeDisabled();
+  expect(sent).toHaveLength(0);
+  await holder.evaluate(() => (window as any).__releaseStartLock());
+  await expect(dialog.getByText('Brew started', { exact: true }).first()).toBeVisible();
+  expect(sent).toHaveLength(1);
+  expect(await brewCount(recipeId)).toBe(1);
+  await holder.waitForLoadState('networkidle');
+  await holder.close();
+});
+
+test('without navigator.locks Start degrades to retain-then-verify and still starts once', async ({ page }) => {
+  await page.addInitScript(() => { delete (Navigator.prototype as any).locks; });
+  await importRecipe(page, `Brew no locks ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const sent: any[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sent.push(commandFrom(route.request())); await route.continue(); });
+  expect(await page.evaluate(() => 'locks' in navigator)).toBe(false);
+  const dialog = await reviewCurrentStart(page);
+  await confirmStart(dialog);
+  expect(sent).toHaveLength(1);
+  expect(await brewCount(sent[0].recipe_id)).toBe(1);
+  // The record was retained before dispatch and released once the result was known.
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('krausen-start-v1:')))).toHaveLength(0);
+});
+
+test('a rejected locks.request degrades to retain-then-verify and still starts once', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: (name: string) => {
+          ((window as any).__lockCalls ??= []).push(name);
+          return Promise.reject(new DOMException('blocked', 'SecurityError'));
+        },
+      },
+    });
+  });
+  await importRecipe(page, `Brew lock rejected ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const sent: any[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sent.push(commandFrom(route.request())); await route.continue(); });
+  const dialog = await reviewCurrentStart(page);
+  await confirmStart(dialog);
+  expect(sent).toHaveLength(1);
+  expect(await brewCount(sent[0].recipe_id)).toBe(1);
+  // The stub really was consulted (the page also asks for its session-refresh lock).
+  const lockCalls: string[] = await page.evaluate(() => (window as any).__lockCalls ?? []);
+  expect(lockCalls.filter((name) => name.startsWith('krausen-start:')).length).toBeGreaterThanOrEqual(1);
+});
+
+test('a never-granted lock times out, Start degrades, and the stale grant does not block later starts', async ({ page }) => {
+  await page.clock.install();
+  await importRecipe(page, `Brew lock timeout ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const recipeId = page.url().split('/').pop()!.split('?')[0];
+  // The recipe's own workspace is the one the app scopes its lock and records to.
+  const workspace = sqliteExec(`SELECT workspace_id FROM recipes WHERE recipe_id = '${recipeId}'`);
+  const lockName = `krausen-start:${getDefaultUserId()}:${workspace}:${recipeId}`;
+  const sent: any[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sent.push(commandFrom(route.request())); await route.continue(); });
+  const dialog = await reviewCurrentStart(page);
+  const holder = await page.context().newPage();
+  await holder.goto('/recipes');
+  await holder.evaluate((name) => new Promise<void>((granted) => {
+    navigator.locks.request(name, () => new Promise<void>((release) => {
+      (window as any).__releaseStartLock = release;
+      granted();
+    }));
+  }), lockName);
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect.poll(() => holder.evaluate(async (name) => (await navigator.locks.query()).pending?.some((p) => p.name === name) ?? false, lockName)).toBe(true);
+  expect(sent).toHaveLength(0);
+  await page.clock.fastForward(11_000);
+  await expect(dialog.getByText('Brew started', { exact: true }).first()).toBeVisible();
+  expect(sent).toHaveLength(1);
+  // The abandoned request must not keep the lock once the holder lets go.
+  await holder.evaluate(() => (window as any).__releaseStartLock());
+  await expect.poll(() => holder.evaluate(async (name) => {
+    const state = await navigator.locks.query();
+    return [...(state.held ?? []), ...(state.pending ?? [])].some((l) => l.name === name);
+  }, lockName)).toBe(false);
+  await holder.waitForLoadState('networkidle');
+  await holder.close();
+});
+
+test('a failed access confirmation before sending retains nothing and sends nothing', async ({ page }) => {
+  await importRecipe(page, `Brew access failure ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const sent: string[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sent.push(route.request().url()); await route.continue(); });
+  const dialog = await reviewCurrentStart(page);
+  await page.route('**/leptos-api/get_user_context*', (route) => route.abort('failed'));
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  // The editor itself takes over with its own access notice; nothing is dispatched or retained.
+  await expect(page.getByText('Network unavailable', { exact: true })).toBeVisible();
+  expect(sent).toHaveLength(0);
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('krausen-start-v1:')))).toHaveLength(0);
+});
+
+test('an unreadable start record store blocks starting with the unable-to-read copy', async ({ page }) => {
+  await importRecipe(page, `Brew unreadable store ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const recipeId = page.url().split('/').pop()!.split('?')[0];
+  // The recipe's own workspace is the one the app scopes its lock and records to.
+  const workspace = sqliteExec(`SELECT workspace_id FROM recipes WHERE recipe_id = '${recipeId}'`);
+  await page.evaluate(({ recipeId, workspace, account }) => {
+    localStorage.setItem('krausen-start-v1:' + JSON.stringify([location.origin, account, workspace, recipeId, 'unreadable']), '{}');
+  }, { recipeId, workspace, account: getDefaultUserId() });
+  await page.addInitScript(() => {
+    const original = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (String(key).startsWith('krausen-start-v1:')) throw new Error('storage read failed');
+      return original.call(this, key);
+    };
+  });
+  await page.reload();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+  await expect(dialog).toContainText('Unable to read start recovery');
+  await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toHaveCount(0);
+});
+
+test('browser Back across a document with an unconfirmed Start shows the native leave warning and Stay keeps the page', async ({ page }) => {
+  await importRecipe(page, `Brew back start ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  await page.route('**/leptos-api/start_brew*', async (route) => { await route.fetch(); await route.abort('failed'); });
+  const dialog = await reviewCurrentStart(page);
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  const editorUrl = page.url();
+  const kinds: string[] = [];
+  page.on('dialog', (native) => { kinds.push(native.type()); void native.dismiss(); });
+  await page.evaluate(() => history.back());
+  await expect.poll(() => kinds).toEqual(['beforeunload']);
+  await expect(page).toHaveURL(editorUrl);
+  // Staying keeps the retained request and its state.
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Start brew' }).getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+});
+
+test('an Incomplete saved recipe shows why and offers no Start brew', async ({ page }) => {
+  await importRecipe(page, `Brew incomplete ${Date.now()}`);
+  const sends: string[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sends.push(route.request().url()); await route.continue(); });
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByRole('heading', { name: 'Not ready to start' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Check again' })).toBeVisible();
+  expect(sends).toHaveLength(0);
+});
+
+test('header Start defaults to the inspected saved version and the visible review names equipment', async ({ page }) => {
+  const title = `Brew inspected ${Date.now()}`;
+  await importRecipe(page, title);
+  await makeSavedRevisionReady(page);
+  await saveHeadThree(page, title);
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await page.getByRole('button', { name: 'Inspect revision 2' }).click();
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByTestId('start-source')).toContainText('Revision 2');
+  await expect(dialog.getByTestId('start-equipment')).toContainText('E2E kettle');
+  await expect(dialog.getByTestId('start-fermenter')).toContainText('L into the fermenter');
+  await expect(dialog.getByTestId('start-overrides')).toBeVisible();
+  await expect(dialog).not.toContainText(/\d\.\d{6,}/);
+  await expect(dialog.getByRole('heading', { name: 'Review before starting' })).toBeFocused();
+});
+
+test('Escape while Starting keeps the task; the late result is shown, never a fresh review', async ({ page }) => {
+  await importRecipe(page, `Brew late ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const sent: any[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => {
+    sent.push(commandFrom(route.request()));
+    await held;
+    await route.continue();
+  });
+  const dialog = await reviewCurrentStart(page);
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Starting brew' })).toBeVisible();
+  await expect(dialog.getByTestId('start-pinned-source')).toContainText('Revision 2');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  release();
+  await expect.poll(() => sent.length).toBe(1);
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Brew started' })).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Open brew' })).toBeFocused();
+  expect(sent).toHaveLength(1);
+});
+
+test('leaving while a start is unconfirmed keeps the retained request and says so', async ({ page }) => {
+  await importRecipe(page, `Brew leave ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  await page.route('**/leptos-api/start_brew*', async (route) => { await route.fetch(); await route.abort('failed'); });
+  const dialog = await reviewCurrentStart(page);
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  // An in-app exit is guarded by the app's own dialog; browser Back is covered by the next two tests.
+  const editorUrl = page.url();
+  await page.getByRole('link', { name: 'Equipment' }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await expect(guard).toContainText('does not cancel it');
+  await expect(guard).not.toContainText(/nothing was (started|created|sent)|no brew was (created|started)/i);
+  await expect(guard.getByRole('button', { name: 'Leave and keep the retained request' })).toBeVisible();
+  await guard.getByRole('button', { name: 'Stay' }).click();
+  await expect(guard).toBeHidden();
+  await expect(page).toHaveURL(editorUrl);
+});
+
+test('an unreadable retained record blocks starting until it is explicitly discarded', async ({ page }) => {
+  await importRecipe(page, `Brew corrupt ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const recipeId = page.url().split('/').pop()!.split('?')[0];
+  // The recipe's own workspace is the one the app scopes its lock and records to.
+  const workspace = sqliteExec(`SELECT workspace_id FROM recipes WHERE recipe_id = '${recipeId}'`);
+  await page.evaluate(({ recipeId, workspace, account }) => {
+    const key = 'krausen-start-v1:' + JSON.stringify([location.origin, account, workspace, recipeId, 'corrupt']);
+    localStorage.setItem(key, '{not json');
+  }, { recipeId, workspace, account: getDefaultUserId() });
+  await page.reload();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+  await expect(dialog).toContainText('Discarding removes only records that cannot be read');
+  await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Check again' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'I checked Brews; discard this record' }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByTestId('start-source')).toBeVisible();
+});
+
+
+test('a head that moved after the review is reported, creates no brew, and needs a fresh explicit start', async ({ page }) => {
+  const title = `Brew moved head ${Date.now()}`;
+  await importRecipe(page, title);
+  await makeSavedRevisionReady(page);
+  const recipeUrl = page.url();
+  const dialog = await reviewCurrentStart(page);
+  const other = await page.context().newPage();
+  await other.goto(recipeUrl);
+  await saveHeadThree(other, title);
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
+  await other.close();
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Review again before starting' })).toBeVisible();
+  await expect(dialog).toContainText('No brew was started');
+  await refreshHead(page);
+  expect(await brewCount(recipeUrl)).toBe(0);
+  await dialog.getByRole('button', { name: 'Review again' }).click();
+  await expect(dialog.getByTestId('start-source')).toContainText('revision 3');
+  expect(await brewCount(recipeUrl)).toBe(0);
+  await confirmStart(dialog);
+  expect(await brewCount(recipeUrl)).toBe(1);
+});
+
+test('after a moved head, a start from an older revision is refused until resolved and Review again follows it', async ({ page }) => {
+  const title = `Brew moved then older ${Date.now()}`;
+  await importRecipe(page, title);
+  await makeSavedRevisionReady(page);
+  const recipeUrl = page.url();
+  const dialog = await reviewCurrentStart(page);
+  const other = await page.context().newPage();
+  await other.goto(recipeUrl);
+  await saveHeadThree(other, title);
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
+  await other.close();
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Review again before starting' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await refreshHead(page);
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await page.getByRole('button', { name: 'Start brew from revision 2' }).click();
+  await expect(dialog).toContainText('Starting revision 2 is unavailable until the previous result is resolved.');
+  await dialog.getByRole('button', { name: 'Review again' }).click();
+  await expect(dialog.getByTestId('start-source')).toContainText('Revision 2');
+  expect(await brewCount(recipeUrl)).toBe(0);
+});
+
+test('a changed equipment context is reported with refreshed targets and renewed acceptance', async ({ page }) => {
+  await importRecipe(page, `Brew moved context ${Date.now()}`);
+  const profileId = await makeSavedRevisionReady(page, `Context kettle ${Date.now()}`);
+  const recipeUrl = page.url();
+  const dialog = await reviewCurrentStart(page);
+  const other = await page.context().newPage();
+  await other.goto(`/equipment?profile=${profileId}`);
+  // Wait for the saved profile to load before editing, or the form can reset the fill.
+  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
+  await other.locator('#profile-boil-off').fill('6');
+  await other.getByRole('button', { name: 'Save profile' }).click();
+  await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
+  await other.close();
+  await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Review again before starting' })).toBeVisible();
+  await expect(dialog.getByText('Refreshed targets', { exact: true })).toBeVisible();
+  expect(await brewCount(recipeUrl)).toBe(0);
+  await dialog.getByRole('button', { name: 'Review again' }).click();
+  await expect(dialog.getByTestId('start-source')).toBeVisible();
+  expect(await brewCount(recipeUrl)).toBe(0);
+  await confirmStart(dialog);
+  expect(await brewCount(recipeUrl)).toBe(1);
+});
+
+test('a failed Save and continue returns to the choices and sends no start', async ({ page }) => {
+  await importRecipe(page, `Brew save failure ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const starts: string[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { starts.push(route.request().url()); await route.continue(); });
+  await page.route('**/leptos-api/save_recipe*', (route) => route.abort('failed'));
+  await page.getByLabel('Batch volume (L)').fill('21');
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await dialog.getByRole('button', { name: 'Save changes and continue' }).click();
+  await expect(dialog.getByRole('heading', { name: 'Choose what to start' })).toBeVisible();
+  await expect(dialog).toContainText('not saved completely');
+  await expect(dialog.getByRole('button', { name: 'Save changes and continue' })).toBeEnabled();
+  expect(starts).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('21');
+});
+
+test('an invalid number is reported by Save and continue, then fixed and continued', async ({ page }) => {
+  await importRecipe(page, `Brew invalid then fixed ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  const start = page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true });
+  await page.getByLabel('Batch volume (L)').fill('abc');
+  await start.click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await dialog.getByRole('button', { name: 'Save changes and continue' }).click();
+  await expect(dialog).toContainText(/invalid number fields/i);
+  await expect(dialog.getByRole('heading', { name: 'Choose what to start' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByLabel('Batch volume (L)').fill('21');
+  await start.click();
+  await dialog.getByRole('button', { name: 'Save changes and continue' }).click();
+  await expect(dialog.getByTestId('start-source')).toContainText('revision 3');
+});
+
+test('a new recipe is saved by Save recipe and continue before its review', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Brew new ${Date.now()}`);
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await dialog.getByRole('button', { name: 'Save recipe and continue' }).click();
+  await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+/);
+  await expect(dialog.getByRole('heading', { name: 'Not ready to start' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toHaveCount(0);
+});
+
+test('a recipe override is listed in the review with a trimmed value', async ({ page }) => {
+  await importRecipe(page, `Brew override ${Date.now()}`);
+  await makeSavedRevisionReady(page);
+  // makeSavedRevisionReady leaves this disclosure open; only open it if it is closed.
+  const equipmentSettings = page.locator('#recipe-equipment-disclosure');
+  if (!(await equipmentSettings.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await equipmentSettings.locator('summary').click();
+  }
+  await page.locator('#recipe-boil-off').fill('4.5');
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
-  await prepareAndStart(page, '2');
-  await expect(page.getByText('from revision 2')).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /Saved revision 3/ })).toBeVisible();
+  const dialog = await reviewCurrentStart(page);
+  await expect(dialog.getByTestId('start-overrides')).toContainText('1 recipe override');
+  await expect(dialog.getByTestId('start-override-list')).toContainText('Boil-off');
+  await expect(dialog.getByTestId('start-override-list')).toContainText('4.5 L/h · recipe override');
+  await expect(dialog).not.toContainText(/\d\.\d{6,}/);
+});
+
+for (const [name, body, text] of [
+  ['an expired response without a brew id', { ResultExpired: { resource_id: null } }, /brew may already exist/],
+  ['a request identity conflict', 'RequestIdentityConflict', /brew may already exist/],
+] as const) {
+  test(`${name} pins the start as unresolved and offers no fresh start`, async ({ page }) => {
+    await importRecipe(page, `Brew stuck ${Date.now()}`);
+    await makeSavedRevisionReady(page);
+    // A real, side-effect-free response (the review's own read) gives the envelope.
+    const realResponse = page.waitForResponse((r) => r.url().includes('/leptos-api/') && r.request().method() === 'POST');
+    const dialog = await reviewCurrentStart(page);
+    const real = await (await realResponse).json().catch(() => null);
+    await page.route('**/leptos-api/start_brew*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(withEnvelope(real, body)) }));
+    await dialog.getByRole('button', { name: 'Start brew', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: 'Brew start unconfirmed' })).toBeVisible();
+    await expect(dialog).toContainText(text);
+    await expect(dialog).toContainText("Discarding removes this request's record only.");
+    await expect(dialog.getByRole('button', { name: 'Start brew', exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Check again' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'I checked Brews; discard this record' }).click();
+    await expect(dialog.getByTestId('start-source')).toBeVisible();
+  });
+}
+
+test('a new recipe must be saved before a brew can start', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const sends: string[] = [];
+  await page.route('**/leptos-api/start_brew*', async (route) => { sends.push(route.request().url()); await route.continue(); });
+  await page.getByRole('group', { name: 'Recipe commands' }).getByRole('button', { name: 'Start brew', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start brew' });
+  await expect(dialog.getByRole('heading', { name: 'Save this recipe to start a brew' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Save recipe and continue' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  expect(sends).toHaveLength(0);
 });
 
 test('held Record stays locked while a real focus overview completes', async ({
@@ -265,6 +823,8 @@ test('held Record stays locked while a real focus overview completes', async ({
   releaseRecord();
   await expect(page.getByText('Measurement recorded.')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('Outcome uncertain')).toHaveCount(0);
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
   await other.close();
 });
 
@@ -447,6 +1007,8 @@ test('conflict refreshes current evidence and keeps the draft for reapply', asyn
   await expect(page.getByText(/selected actual 1\.052 SG/)).toBeVisible();
   await page.getByRole('button', { name: 'Correct selected' }).first().click();
   await expect(page.getByText('Measurement corrected.')).toBeVisible();
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
   await other.close();
 });
 
@@ -1456,7 +2018,7 @@ for (const blocker of ['expired', 'identity conflict'] as const) {
       // This is controlled transport coverage, not a claim that the unchanged
       // backend ledger actually expired or conflicted during this test.
       const outcome = blocker === 'expired' ? { ResultExpired: { resource_id: resourceId } } : 'RequestIdentityConflict';
-      const replacement = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'Ok') ? { Ok: outcome } : outcome;
+      const replacement = withEnvelope(body, outcome);
       await route.fulfill({ response, body: JSON.stringify(replacement) });
     });
     await page.locator('#measurement-gravity-original-v1').fill('1.050');
@@ -1640,6 +2202,8 @@ test('mixed confirmed cleanup and unknown evidence retain the original retry loc
   expect(commandsB).toHaveLength(2);
   expect(commandsB[1]).toEqual(commandsB[0]);
   expect(sqliteExec(`SELECT COUNT(*) FROM brew_measurement_entries WHERE workspace_id = '${workspace}' AND brew_id = '${brewId}' AND quantity_id = 'gravity.original.v1'`)).toBe('2');
+  // Let background requests finish; closing a tab cancels in-flight server calls.
+  await other.waitForLoadState('networkidle');
   await other.close();
   await inventoryOwner.close();
 });
@@ -1895,6 +2459,11 @@ test('discarding unsent evidence preserves a committed uncertain request through
   await guard.getByRole('button', { name: /^(Discard local inputs and leave|Discard and leave)$/ }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   expect(recordCommands).toHaveLength(1);
+  // A full page load while a token refresh is still in flight can abort that refresh after the
+  // server rotated the token; the browser then keeps the stale token, the next load presents it, and
+  // the server revokes the session (reuse detection), landing on /login. Let the network settle first.
+  // (Reproduced 1/5 on the unmodified base commit as well.)
+  await page.waitForLoadState('networkidle');
   await page.goto(`/brews/${brewId}`);
   await expect(page.getByRole('heading', { name: 'Brew evidence', exact: true })).toBeVisible();
   await expect(page.getByText('Outcome uncertain', { exact: true })).toBeVisible();

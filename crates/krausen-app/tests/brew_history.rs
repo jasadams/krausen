@@ -82,7 +82,6 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1, RecipeDocume
     let suffix = Uuid::new_v4().to_string();
     let user = format!("u-{suffix}");
     let workspace = format!("w-{suffix}");
-    let credential = format!("c-{suffix}");
     macro_rules! run {
         ($sql:expr $(,$arg:expr)*) => { match db {
             DbPool::Postgres(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await.unwrap().rows_affected(),
@@ -104,16 +103,10 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1, RecipeDocume
         &workspace,
         &user
     );
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace,
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let profile_id = Uuid::new_v4().to_string();

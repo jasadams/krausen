@@ -17,7 +17,7 @@ fn fixed(value: Option<f64>, digits: usize) -> String {
         .unwrap_or_else(|| "Unavailable".into())
 }
 
-fn trimmed(value: f64, digits: usize) -> String {
+pub(crate) fn trimmed(value: f64, digits: usize) -> String {
     let formatted = format!("{value:.digits$}");
     let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
     if trimmed.is_empty() {

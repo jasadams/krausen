@@ -247,6 +247,9 @@ pub fn ButtonLink(
     class: String,
     #[prop(optional, into)]
     aria_label: Option<String>,
+    /// Stable id so a task can move focus to its follow-up link.
+    #[prop(optional, into)]
+    id: Option<String>,
     children: Children,
 ) -> impl IntoView {
     let classes = format!(
@@ -258,7 +261,7 @@ pub fn ButtonLink(
     );
 
     view! {
-        <a href=href class=classes aria-label=aria_label.clone() title=aria_label>
+        <a id=id href=href class=classes aria-label=aria_label.clone() title=aria_label>
             {children()}
         </a>
     }
