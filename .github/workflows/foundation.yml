@@ -50,8 +50,9 @@ jobs:
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
       - run: cargo test -p krausen-server --test migration_orders --test drop_credentials_migration --test mcp_auth
-      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry --test auth_refresh_middleware
+      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry --test auth_refresh_middleware --test switch_workspace --test security_headers --test security_headers_http
       - run: cargo test -p krausen-server --lib route_error
+      - run: cargo test -p krausen-server --lib middleware::tests
       - run: cargo test -p krausen-server --lib middleware::auth_refresh
       - run: cargo test -p krausen-auth --lib sliding_expiry_tests
       - run: cargo test -p krausen-auth --lib request_meta
@@ -113,4 +114,6 @@ jobs:
       - run: cargo install trunk --version 0.21.14 --locked
       - run: cargo build -p krausen-server
       - run: cd crates/krausen-ui && trunk build
+      - run: sh scripts/check-dist-nonce.sh
+      - run: sh scripts/check-dist-nonce-test.sh
       - run: e2e/scripts/profile-browser.sh

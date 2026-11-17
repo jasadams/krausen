@@ -127,14 +127,18 @@ pub fn LoginPage(
     // Uses spawn_local (not Resource::new) so it doesn't consume a serialized
     // resource ID. Resource IDs must be identical between SSR and client or
     // hydration markers will be misaligned, causing a tachys panic.
+    //
+    // A hard navigation (`set_href`), not the SPA router: the destination can
+    // be a server endpoint (`/api/v1/oauth/authorize/continue`).
     #[cfg(target_arch = "wasm32")]
     {
+        use crate::server_fns::sidebar::get_sidebar_user;
         let redirect_for_check = redirect_url;
-        let nav_for_check = navigate;
-        let user_ctx = leptos::prelude::expect_context::<leptos::prelude::LocalResource<Result<crate::server_fns::context::UserContext, leptos::prelude::ServerFnError>>>();
-        Effect::new(move || {
-            if let Some(Ok(_)) = user_ctx.get() {
-                nav_for_check.get_value()(&redirect_for_check(), Default::default());
+        leptos::task::spawn_local(async move {
+            if get_sidebar_user().await.is_ok()
+                && let Some(window) = web_sys::window()
+            {
+                let _ = window.location().set_href(&redirect_for_check());
             }
         });
     }
@@ -255,8 +259,8 @@ pub fn LoginPage(
                 .await;
 
                 if let Err(e) = result {
-                    set_error.set(Some(format!("Google login failed: {e}")));
-                    set_google_loading.set(false);
+                    set_error.try_set(Some(format!("Google login failed: {e}")));
+                    set_google_loading.try_set(false);
                 }
             }
         });
@@ -273,8 +277,8 @@ pub fn LoginPage(
             let (challenge_id, request_json) = match start_result {
                 Ok(r) => (r.challenge_id, r.request_challenge),
                 Err(e) => {
-                    set_error.set(Some(format!("Failed to start passkey login: {}", e)));
-                    set_passkey_loading.set(false);
+                    set_error.try_set(Some(format!("Failed to start passkey login: {}", e)));
+                    set_passkey_loading.try_set(false);
                     return;
                 }
             };
@@ -284,8 +288,8 @@ pub fn LoginPage(
                 match crate::utils::webauthn::start_authentication(&request_json).await {
                     Ok(json) => json,
                     Err(e) => {
-                        set_error.set(Some(format!("Passkey authentication failed: {}", e)));
-                        set_passkey_loading.set(false);
+                        set_error.try_set(Some(format!("Passkey authentication failed: {}", e)));
+                        set_passkey_loading.try_set(false);
                         return;
                     }
                 };
@@ -301,26 +305,26 @@ pub fn LoginPage(
                             if let Some(window) = web_sys::window() {
                                 let _ = window.location().set_href(&dest);
                             }
-                        } else {
-                            navigate.get_value()(&dest, Default::default());
+                        } else if let Some(nav) = navigate.try_get_value() {
+                            nav(&dest, Default::default());
                         }
                     }
                 }
                 Ok(LoginResult::VerificationRequired { email }) => {
-                    set_verification_needed.set(true);
-                    set_verification_email.set(email);
-                    set_passkey_loading.set(false);
+                    set_verification_needed.try_set(true);
+                    set_verification_email.try_set(email);
+                    set_passkey_loading.try_set(false);
                 }
                 Ok(LoginResult::Error { message }) => {
-                    set_error.set(Some(message));
-                    set_passkey_loading.set(false);
+                    set_error.try_set(Some(message));
+                    set_passkey_loading.try_set(false);
                 }
                 Ok(_) => {
-                    set_passkey_loading.set(false);
+                    set_passkey_loading.try_set(false);
                 }
                 Err(e) => {
-                    set_error.set(Some(format!("Server error: {}", e)));
-                    set_passkey_loading.set(false);
+                    set_error.try_set(Some(format!("Server error: {}", e)));
+                    set_passkey_loading.try_set(false);
                 }
             }
         });
@@ -362,37 +366,37 @@ pub fn LoginPage(
                                 if let Some(window) = web_sys::window() {
                                     let _ = window.location().set_href(&dest);
                                 }
-                            } else {
-                                navigate.get_value()(&dest, Default::default());
+                            } else if let Some(nav) = navigate.try_get_value() {
+                                nav(&dest, Default::default());
                             }
                         }
                     }
                     Ok(LoginResult::TwoFactorRequired { email: user_email }) => {
-                        set_view_state.set(LoginView::TwoFactor {
+                        set_view_state.try_set(LoginView::TwoFactor {
                             email: user_email,
                         });
-                        set_error.set(None);
-                        set_loading.set(false);
+                        set_error.try_set(None);
+                        set_loading.try_set(false);
                     }
                     Ok(LoginResult::VerificationRequired { email: user_email }) => {
-                        set_verification_needed.set(true);
-                        set_verification_email.set(user_email);
-                        set_loading.set(false);
+                        set_verification_needed.try_set(true);
+                        set_verification_email.try_set(user_email);
+                        set_loading.try_set(false);
                     }
                     Ok(LoginResult::RateLimited { retry_after_secs }) => {
-                        set_error.set(Some(format!(
+                        set_error.try_set(Some(format!(
                             "Too many login attempts. Please try again in {} seconds.",
                             retry_after_secs
                         )));
-                        set_loading.set(false);
+                        set_loading.try_set(false);
                     }
                     Ok(LoginResult::Error { message }) => {
-                        set_error.set(Some(message));
-                        set_loading.set(false);
+                        set_error.try_set(Some(message));
+                        set_loading.try_set(false);
                     }
                     Err(e) => {
-                        set_error.set(Some(format!("Server error: {}", e)));
-                        set_loading.set(false);
+                        set_error.try_set(Some(format!("Server error: {}", e)));
+                        set_loading.try_set(false);
                     }
                 }
             });
@@ -448,29 +452,31 @@ pub fn LoginPage(
                     Ok(SignupResult::AccountCreated { redirect }) => {
                         // SPA navigation — keeps WASM in memory
                         #[cfg(target_arch = "wasm32")]
-                        navigate.get_value()(&redirect, Default::default());
+                        if let Some(nav) = navigate.try_get_value() {
+                            nav(&redirect, Default::default());
+                        }
                         let _ = &redirect; // Suppress unused warning on SSR
                     }
                     Ok(SignupResult::VerificationRequired { message }) => {
-                        set_success_msg.set(Some(message));
-                        set_view_state.set(LoginView::CheckEmail {
+                        set_success_msg.try_set(Some(message));
+                        set_view_state.try_set(LoginView::CheckEmail {
                             email: current_email,
                         });
                     }
                     Ok(SignupResult::Error { message }) => {
-                        set_error.set(Some(message));
+                        set_error.try_set(Some(message));
                     }
                     Ok(SignupResult::RateLimited { .. }) => {
-                        set_error.set(Some(
+                        set_error.try_set(Some(
                             "Too many signup attempts. Please try again later.".to_string(),
                         ));
                     }
                     Err(e) => {
-                        set_error.set(Some(format!("Server error: {}", e)));
+                        set_error.try_set(Some(format!("Server error: {}", e)));
                     }
                 }
 
-                set_signup_loading.set(false);
+                set_signup_loading.try_set(false);
             });
         }
     };
@@ -486,13 +492,17 @@ pub fn LoginPage(
             let result = resend_verification(ver_email).await;
 
             match result {
-                Ok(()) => set_resend_success.set(true),
-                Err(_) => set_error.set(Some(
-                    "Failed to resend verification email.".to_string(),
-                )),
+                Ok(()) => {
+                    set_resend_success.try_set(true);
+                }
+                Err(_) => {
+                    set_error.try_set(Some(
+                        "Failed to resend verification email.".to_string(),
+                    ));
+                }
             }
 
-            set_resend_loading.set(false);
+            set_resend_loading.try_set(false);
         });
     };
 
@@ -1053,8 +1063,16 @@ fn CheckEmailView(
             <p class="text-muted-foreground">
                 "Click the link in the email to complete your signup and set up your account."
             </p>
+            // The verification token this links to is minted with `None` for
+            // `expire_hours`, which resolves to `jwt.email_verification_expire_hours`
+            // in shared/constants.toml (24, as of this writing) — see
+            // `create_verification_token_with_expiry` in
+            // crates/krausen-auth/src/token_service.rs. This page runs client-side
+            // and can't read that constant directly (krausen-core is an ssr-only
+            // dependency here), so the hours are spelled out below; update this
+            // string if the constant changes.
             <p class="text-sm text-muted-foreground">
-                "The link expires in 1 hour."
+                "The link expires in 24 hours."
             </p>
             <div class="pt-4">
                 <Button

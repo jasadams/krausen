@@ -462,7 +462,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 8. Switch back to the original workspace
 9. Verify it switches back correctly
 
-**Expected Result:** Workspace switcher shows all user workspaces and switching updates the active context.
+**Expected Result:** Workspace switcher shows all user workspaces and switching updates the active context. The switch needs an active membership in the target workspace (a non-member is refused and the session unchanged) and re-mints the session cookies for it.
 
 ---
 

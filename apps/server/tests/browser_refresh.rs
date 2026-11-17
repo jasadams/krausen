@@ -18,7 +18,7 @@ use std::{
 async fn page() -> Html<String> {
     let index = include_str!("../../../crates/krausen-ui/index.html");
     let script = index
-        .split("<script type=\"module\">")
+        .split("<script type=\"module\" nonce=\"__KRAUSEN_CSP_NONCE__\">")
         .nth(1)
         .unwrap()
         .split("</script>")

@@ -27,6 +27,16 @@ uses that bucket (Kyomi's call sites are the same). Behind a reverse proxy, set
 `X-Real-IP`: the refresh limit takes the address from that header, and without it all
 clients share one bucket.
 
+Switching workspace (`switch_workspace`) requires an active membership in the target
+workspace, saves it as the account's last workspace and re-mints the browser session
+(new access and refresh cookies) for it. A protected page that finds its access token
+rejected tries one silent refresh and retries (at most 3 attempts in 30 seconds), then
+sends the browser to `/login?redirect=<path>` with a full navigation. A browser that is
+already signed in is sent from the sign-in page by full navigation, and a sign-in that
+carries an MCP `oauth_continue` token also leaves by full navigation, so the server
+endpoint that resumes the authorization is reached; an ordinary sign-in uses
+client-side navigation.
+
 Signing out everywhere and completing account recovery (password) revoke browser
 sessions immediately: each account has a revocation cutoff (`users.sessions_valid_from`,
 Unix microseconds). A browser access token carries its signed microsecond issuance and is
@@ -79,6 +89,17 @@ single-session logout does not stop a copied access cookie from approving a cons
 for the remaining access-token lifetime. `/mcp` also accepts a browser session. An
 unauthenticated request receives 401 with a `WWW-Authenticate` header pointing at the
 protected-resource metadata.
+
+Every response carries `X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection` and,
+on https installations, `Strict-Transport-Security`, all from `shared/constants.toml`. Page
+responses carry a Content-Security-Policy whose `script-src` allows only this origin, a
+fresh per-response nonce (stamped into the shell's inline scripts) and
+`'wasm-unsafe-eval'`; styles and images stay inline-capable, fonts come from this origin.
+Responses under `/api/`, `/ws/` and `/mcp` get a deny-all policy and the OAuth consent
+pages a scriptless one; everything else (including server-function responses and the
+discovery documents) carries the page policy. The shell is served `Cache-Control: no-cache`. Cross-origin browser
+requests are accepted only from the origins in the constants file plus `FRONTEND_URL`,
+with credentials.
 
 Browser sessions refresh transparently. A request with a missing or expired access cookie
 and a valid refresh cookie is refreshed on the server (a new access token, a rotated

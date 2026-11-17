@@ -42,7 +42,7 @@ COPY . .
 RUN npm ci --prefix crates/krausen-ui --ignore-scripts --no-audit --no-fund
 ENV PATH="/build/crates/krausen-ui/node_modules/.bin:${PATH}"
 RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
-RUN cd crates/krausen-ui && trunk build --release --locked
+RUN cd crates/krausen-ui && trunk build --release --locked && sh /build/scripts/check-dist-nonce.sh dist/index.html
 RUN cargo build --locked --release -p krausen-server --bin krausen
 
 FROM debian:bookworm-slim@sha256:a3bba7dc7dbcc1f37c2856c51fc9a7fac96608f50cb87b1b4e4d8b8c85ae988e AS runtime
