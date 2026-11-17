@@ -954,67 +954,24 @@ pub(crate) fn set_session_cookies(sess: &krausen_auth::session::AuthenticatedSes
 
 /// Extract the client IP from request headers.
 ///
-/// Mirrors `apps/server/src/helpers.rs::extract_client_ip` — checks
-/// `X-Real-IP`, then `X-Forwarded-For`, falling back to `"unknown"`.
+/// Delegates to the canonical `krausen_auth::request_meta::extract_client_ip`.
 ///
-/// Note: The canonical `extract_client_ip` in `helpers.rs` also accepts a
-/// `peer_addr: Option<SocketAddr>` for TCP peer fallback. That parameter is
-/// not available in Leptos server functions without additional extractor setup.
-/// In production (behind nginx), `X-Real-IP` is always set, so this omission
-/// is safe. In local dev without a reverse proxy, rate limiting will key all
-/// requests to `"unknown"`.
+/// No peer address is available here without extending the server-fn
+/// extraction path (`leptos_axum::extract`) to pull `ConnectInfo<SocketAddr>`,
+/// so `None` is passed explicitly. In production (behind a reverse proxy),
+/// `X-Real-IP` is set, so this is safe; without a reverse proxy, rate limiting
+/// keys all requests to `"unknown"`.
 #[cfg(feature = "ssr")]
 pub(crate) fn extract_client_ip(headers: &axum::http::HeaderMap) -> String {
-    use std::net::IpAddr;
-
-    // 1. X-Real-IP — trustworthy: set by nginx from TCP peer ($remote_addr).
-    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let ip = real_ip.trim();
-        if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
-            return ip.to_string();
-        }
-    }
-
-    // 2. X-Forwarded-For — less reliable: nginx appends but doesn't replace,
-    //    so clients can inject fake first entries. Use first entry as fallback.
-    if let Some(xff) = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        && let Some(first_ip) = xff.split(',').next()
-    {
-        let ip = first_ip.trim();
-        if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
-            return ip.to_string();
-        }
-    }
-
-    "unknown".to_string()
+    krausen_auth::request_meta::extract_client_ip(headers, None)
 }
 
 /// Extract device info from request headers.
 ///
-/// Mirrors `apps/server/src/helpers.rs::extract_device_info`.
+/// Delegates to the canonical `krausen_auth::request_meta::extract_device_info`.
 #[cfg(feature = "ssr")]
 pub(crate) fn extract_device_info(headers: &axum::http::HeaderMap) -> krausen_auth::token_service::DeviceInfo {
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    let ip_address = extract_client_ip(headers);
-
-    let country_code = headers
-        .get("cf-ipcountry")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| *s != "XX")
-        .map(|s| s.to_uppercase());
-
-    krausen_auth::token_service::DeviceInfo {
-        user_agent,
-        ip_address: Some(ip_address),
-        country_code,
-        oauth_client_id: None,
-    }
+    krausen_auth::request_meta::extract_device_info(headers)
 }
 
 /// The one INFO line `recovery_start`'s fire-and-forget send task emits
@@ -1066,6 +1023,57 @@ fn account_recovery_failure_log_line(
 
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    /// Pins the server-function wrapper and the canonical function it calls:
+    /// the wrapper passes no peer address, so with no IP header it returns the
+    /// shared `"unknown"`; the canonical function does use a peer address when
+    /// one is supplied.
+    #[test]
+    fn extract_client_ip_from_leptos_server_fn_path() {
+        let headers = axum::http::HeaderMap::new();
+
+        // 1. The wrapper this crate calls: no peer address is threaded through
+        //    the server-fn extraction path.
+        assert_eq!(
+            super::extract_client_ip(&headers),
+            "unknown",
+            "server-fn wrapper passes peer_addr: None, so with no IP headers \
+             this must still be the shared \"unknown\" bucket"
+        );
+
+        // 2. The canonical function honours a supplied peer address.
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), 54321);
+        assert_eq!(
+            krausen_auth::request_meta::extract_client_ip(&headers, Some(peer)),
+            "203.0.113.7"
+        );
+    }
+
+    /// Guards the wrapper's delegation to canonical header handling — the
+    /// precedence and validation rules, exercised through
+    /// `super::extract_client_ip` rather than the canonical function, so a
+    /// regression to a hand-rolled copy in this file would fail here.
+    #[test]
+    fn server_fn_wrapper_honours_canonical_header_rules() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
+        headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
+        assert_eq!(
+            super::extract_client_ip(&headers),
+            "1.2.3.4",
+            "unspoofable X-Real-IP must win over client-appendable X-Forwarded-For"
+        );
+
+        let mut bad = axum::http::HeaderMap::new();
+        bad.insert("x-real-ip", "not-an-ip".parse().unwrap());
+        assert_eq!(
+            super::extract_client_ip(&bad),
+            "unknown",
+            "malformed header values must be rejected, not stored verbatim"
+        );
+    }
+
     const EMAIL: &str = "recovery-failure@example.com";
     const RECOVERY_URL: &str = "https://app.example.com/account/recover/complete?token=raw-token-value";
 

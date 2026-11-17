@@ -14,11 +14,6 @@
 //! inert against this test RP. A request that clears the gate under test
 //! therefore always fails *later*, in real WebAuthn verification, which is
 //! what proves the gate specifically did not block it.
-//!
-//! Krausen difference from Kyomi: a browser session also carries an
-//! `auth_credentials` row (KRA-10), and the access-token extractor checks it
-//! before the session cutoff. Where a test asserts that the cutoff alone
-//! refuses an old access token, it first revives the credentials.
 
 use axum::extract::FromRequestParts;
 use krausen_core::{DbPool, KVPool};
@@ -498,18 +493,6 @@ async fn authenticate(db: &DbPool, token: &str) -> krausen_core::Result<crate::m
     crate::middleware::AuthUser::from_request_parts(&mut parts, &state).await
 }
 
-/// The KRA-10 credential row also dies on revoke-all, and the extractor checks
-/// it before the cutoff. Un-revoking it leaves only the cutoff to refuse the
-/// token.
-async fn revive_credentials(db: &DbPool, user_id: &str) {
-    krausen_core::db_execute!(
-        db,
-        "UPDATE auth_credentials SET revoked_at = NULL WHERE user_id = $1",
-        user_id
-    )
-    .expect("revive credentials");
-}
-
 /// Assert the extractor refuses `token` because of the cutoff alone.
 async fn assert_refused_by_cutoff(db: &DbPool, token: &str) {
     match authenticate(db, token).await {
@@ -543,7 +526,6 @@ async fn session_cutoff_both_recovery_flows_replace_session_immediately(db: &DbP
             .await
             .unwrap();
     authenticate(db, &passkey.access_token).await.unwrap();
-    revive_credentials(db, &user.user_id).await;
     assert_refused_by_cutoff(db, &original.access_token).await;
     crate::token_refresh::refresh_tokens(db, SECRET, &passkey.refresh_token, &device)
         .await
@@ -566,7 +548,6 @@ async fn session_cutoff_both_recovery_flows_replace_session_immediately(db: &DbP
     let RecoverySetPasswordServiceResult::Success(password) = result else {
         panic!("password recovery succeeds");
     };
-    revive_credentials(db, &user.user_id).await;
     assert_refused_by_cutoff(db, &passkey.access_token).await;
     authenticate(db, &password.access_token).await.unwrap();
     assert!(

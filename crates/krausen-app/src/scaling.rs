@@ -603,7 +603,7 @@ async fn apply_inner(
         tx.rollback().await.map_err(boundary_error)?;
         return Ok(ScaleApplyOutcome::NotFound);
     };
-    // The head lock may have waited across the credential expiry boundary.
+    // The head lock may have waited across the access-token expiry or a session revocation.
     authorize_workspace(&mut tx, actor).await?;
     if locked_archived {
         tx.rollback().await.map_err(boundary_error)?;
@@ -1085,7 +1085,6 @@ mod tests {
         let suffix = uuid::Uuid::new_v4();
         let user = format!("u-{suffix}");
         let workspace = format!("a-{suffix}");
-        let credential = format!("c-{suffix}");
         sqlx::query("INSERT INTO users (user_id,email) VALUES ($1,$2)")
             .bind(&user)
             .bind(format!("{suffix}@example.test"))
@@ -1106,18 +1105,11 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)")
-            .bind(&credential)
-            .bind(&user)
-            .bind(4102444800_i64)
-            .execute(&pool)
-            .await
-            .unwrap();
         let db = DbPool::Sqlite(pool);
         let actor = ActorContext {
             actor_id: user.clone(),
             workspace_id: workspace.clone(),
-            credential_id: credential,
+            session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
             access_expires_at: 4102444800,
         };
         let intent = OperationIntent {

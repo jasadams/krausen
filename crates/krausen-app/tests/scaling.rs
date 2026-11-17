@@ -130,7 +130,6 @@ async fn exercise(db: DbPool) {
     let user = format!("u-{suffix}");
     let a = format!("a-{suffix}");
     let b = format!("b-{suffix}");
-    let credential = format!("c-{suffix}");
     macro_rules! run {
         ($sql:expr $(,$arg:expr)*) => {
             match &db {
@@ -156,16 +155,10 @@ async fn exercise(db: DbPool) {
             &user
         );
     }
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        4102444800_i64
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: a.clone(),
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let intent = OperationIntent {

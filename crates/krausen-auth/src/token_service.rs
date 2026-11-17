@@ -65,6 +65,75 @@ pub fn generate_family_id() -> String {
     format!("fam_{}", URL_SAFE_NO_PAD.encode(random_bytes))
 }
 
+/// Store a new refresh token in the database.
+///
+/// Returns the token_id (format: `"rt_{token_urlsafe(16)}"`).
+pub async fn store_refresh_token(
+    pool: &DbPool,
+    user_id: &str,
+    token_hash: &str,
+    expires_at: DateTime<Utc>,
+    device_info: &DeviceInfo,
+    family_id: &str,
+) -> krausen_core::Result<String> {
+    let random_bytes: [u8; 16] = rand::rng().random();
+    let token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
+
+    krausen_core::db_execute!(
+        pool,
+        "INSERT INTO refresh_tokens \
+         (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id, oauth_client_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        &token_id, user_id, token_hash, &expires_at,
+        &device_info.user_agent, &device_info.ip_address,
+        &device_info.country_code, family_id, &device_info.oauth_client_id
+    )?;
+
+    Ok(token_id)
+}
+
+/// Persist a successful MCP refresh without rotating its opaque token.
+///
+/// The guarded update serializes with revocation and keeps the later expiry
+/// when concurrent requests finish out of order. Replaced tokens remain usable
+/// only within their original grace period; neither deadline is extended.
+/// Returns false if the grant stopped being usable after verification.
+pub async fn renew_oauth_refresh_token(
+    pool: &DbPool,
+    token_id: &str,
+    oauth_client_id: &str,
+    expires_at: DateTime<Utc>,
+) -> krausen_core::Result<bool> {
+    let is_pg = pool.is_postgres();
+    let bt = sql_compat::bool_true(is_pg);
+    let grace_seconds = krausen_core::constants::get().jwt.refresh_token_grace_period_seconds;
+    // SQLite stores both RFC3339 timestamps (chrono binds) and SQL datetime
+    // strings. Compare instants, not their different textual representations.
+    let (later, unexpired, within_grace) = if is_pg {
+        (
+            "expires_at < $3".to_string(),
+            "expires_at > clock_timestamp()".to_string(),
+            format!("replaced_at + INTERVAL '{grace_seconds} seconds' >= clock_timestamp()"),
+        )
+    } else {
+        (
+            "julianday(expires_at) < julianday($3)".to_string(),
+            "julianday(expires_at) > julianday('now')".to_string(),
+            format!("julianday(replaced_at) + {grace_seconds} / 86400.0 >= julianday('now')"),
+        )
+    };
+    let sql = format!(
+        "UPDATE refresh_tokens \
+         SET expires_at = CASE WHEN replaced_at IS NULL AND {later} THEN $3 ELSE expires_at END \
+         WHERE token_id = $1 AND oauth_client_id = $2 \
+           AND is_active = {bt} AND revoked_at IS NULL AND {unexpired} \
+           AND (replaced_at IS NULL OR {within_grace}) \
+           AND EXISTS (SELECT 1 FROM users u WHERE u.user_id = refresh_tokens.user_id AND u.active = {bt})"
+    );
+    let result = krausen_core::db_execute!(pool, &sql, token_id, oauth_client_id, &expires_at)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Persist a browser login's refresh token only if its signed access issuance
 /// still follows the current cutoff. Serializes with revocation so a pre-event
 /// mint cannot insert a surviving refresh token after the event commits.
@@ -103,29 +172,6 @@ pub async fn store_session_refresh_token(
             "Session revoked during login".into(),
         ));
     }
-    #[derive(sqlx::FromRow)]
-    struct ActiveUser {
-        user_id: String,
-    }
-    let account_sql = if pool.is_postgres() {
-        "SELECT user_id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
-    } else {
-        "SELECT user_id FROM users WHERE user_id = $1 AND active = 1"
-    };
-    if krausen_core::dbtx_fetch_optional!(&mut tx, ActiveUser, account_sql, user_id)?.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Account unavailable".into(),
-        ));
-    }
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "INSERT INTO auth_credentials (credential_id, user_id, kind, issuer, audience, expires_at) VALUES ($1, $2, 'browser', $3, $4, $5)",
-        family_id,
-        user_id,
-        crate::jwt::BROWSER_ISSUER,
-        crate::jwt::BROWSER_AUDIENCE,
-        expires_at.timestamp()
-    )?;
     krausen_core::dbtx_execute!(
         &mut tx,
         "INSERT INTO refresh_tokens \
@@ -147,6 +193,16 @@ pub async fn store_session_refresh_token(
     Ok(token_id)
 }
 
+// SQLite stores both RFC3339 (Chrono binds) and SQL timestamp text. Compare
+// parsed instants at SQLite millisecond precision, rather than their separators.
+fn unexpired_token_sql(is_pg: bool, column: &str) -> String {
+    if is_pg {
+        format!("{column} > NOW()")
+    } else {
+        format!("julianday({column}) > julianday('now')")
+    }
+}
+
 /// Verify a raw refresh token, handling rotation grace period and theft detection.
 pub async fn verify_refresh_token(
     pool: &DbPool,
@@ -155,7 +211,7 @@ pub async fn verify_refresh_token(
     let token_hash = hash_refresh_token(raw_token);
     let is_pg = pool.is_postgres();
     let now = sql_compat::now(is_pg);
-    let rt_unexpired = sql_compat::is_future(is_pg, "rt.expires_at");
+    let rt_unexpired = unexpired_token_sql(is_pg, "rt.expires_at");
     let bt = sql_compat::bool_true(is_pg);
 
     // Fetch the token + user data in one query (include replaced_at and family_id)
@@ -246,22 +302,32 @@ pub async fn rotate_refresh_token(
     expires_at: DateTime<Utc>,
     device_info: &DeviceInfo,
 ) -> krausen_core::Result<String> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-
-    // Mark the old token as replaced
-    let replace_sql = format!("UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1");
-    krausen_core::db_execute!(pool, &replace_sql, old_token_id)?;
-
-    // Create the new token in the same family
     let random_bytes: [u8; 16] = rand::rng().random();
     let new_token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
-
-    krausen_core::db_execute!(
-        pool,
-        "INSERT INTO refresh_tokens \
-         (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    // Lock order is always user then tokens, shared with all-session revocation.
+    // SQLite's first write obtains the database write lock; Postgres locks this row.
+    let mut tx = pool.begin_write().await?;
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE users SET sessions_valid_from = sessions_valid_from WHERE user_id = $1",
+        user_id
+    )?;
+    let is_pg = pool.is_postgres();
+    let now = sql_compat::now(is_pg);
+    let bt = sql_compat::bool_true(is_pg);
+    let unexpired = unexpired_token_sql(is_pg, "expires_at");
+    let sql = format!(
+        "UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1 AND user_id = $2 AND family_id = $3 AND is_active = {bt} AND {unexpired}"
+    );
+    let replaced = krausen_core::dbtx_execute!(&mut tx, &sql, old_token_id, user_id, family_id)?;
+    if replaced.rows_affected() == 0 {
+        return Err(krausen_core::Error::Unauthorized(
+            "Refresh token has been revoked".into(),
+        ));
+    }
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "INSERT INTO refresh_tokens (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         &new_token_id,
         user_id,
         new_token_hash,
@@ -271,7 +337,7 @@ pub async fn rotate_refresh_token(
         &device_info.country_code,
         family_id
     )?;
-
+    tx.commit().await?;
     Ok(new_token_id)
 }
 
@@ -296,13 +362,6 @@ pub async fn revoke_token_family(pool: &DbPool, family_id: &str) -> krausen_core
         "SELECT user_id FROM users WHERE user_id = $1"
     };
     let _ = krausen_core::dbtx_fetch_optional!(&mut tx, UserId, lock, &user.user_id)?;
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND user_id = $3 AND revoked_at IS NULL",
-        Utc::now().timestamp(),
-        family_id,
-        &user.user_id
-    )?;
     let false_value = sql_compat::bool_false(pg);
     let true_value = sql_compat::bool_true(pg);
     let sql = format!(
@@ -348,7 +407,6 @@ pub async fn revoke_user_refresh_token(
 /// Immediately revoke browser access sessions and all user refresh tokens.
 /// Both writes commit together even with no refresh tokens. The cutoff advances
 /// strictly under concurrent/repeated events, including wall-clock rollback.
-/// Browser credentials are revoked in the same transaction.
 pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: &str) -> krausen_core::Result<u64> {
     let mut tx = pool.begin_write().await?;
     // Sample issuance cutoff only after acquiring the serialization lock.
@@ -368,12 +426,6 @@ pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: &str) -> krausen_c
     if advanced.rows_affected() == 0 {
         return Err(krausen_core::Error::Unauthorized("User not found".into()));
     }
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE user_id = $2 AND kind = 'browser' AND revoked_at IS NULL",
-        Utc::now().timestamp(),
-        user_id
-    )?;
     let pg = pool.is_postgres();
     let false_value = sql_compat::bool_false(pg);
     let true_value = sql_compat::bool_true(pg);
@@ -396,7 +448,7 @@ pub async fn get_user_sessions(
     user_id: &str,
 ) -> krausen_core::Result<Vec<SessionInfo>> {
     let is_pg = pool.is_postgres();
-    let rt_unexpired = sql_compat::is_future(is_pg, "rt.expires_at");
+    let rt_unexpired = unexpired_token_sql(is_pg, "rt.expires_at");
     let bt = sql_compat::bool_true(is_pg);
 
     let sql = if is_pg {
@@ -503,7 +555,7 @@ pub async fn verify_verification_token(
 ) -> krausen_core::Result<Option<String>> {
     let is_pg = pool.is_postgres();
     let now = sql_compat::now(is_pg);
-    let unexpired = sql_compat::is_future(is_pg, "expires_at");
+    let unexpired = unexpired_token_sql(is_pg, "expires_at");
     let bf = sql_compat::bool_false(is_pg);
     let bt = sql_compat::bool_true(is_pg);
 
@@ -587,8 +639,7 @@ pub struct SessionInfo {
 /// A current token rotates. A token that was already replaced is still accepted
 /// inside `refresh_token_grace_period_seconds` (a lost response or another tab racing
 /// the same cookie) and rotates again so each caller gets a fresh token; reuse AFTER the
-/// grace period is theft and revokes the whole durable credential family. An old
-/// unbound token, or a revoked or expired credential, can never create a session.
+/// grace period is theft and revokes the whole token family.
 pub async fn rotate_browser_refresh(
     pool: &DbPool,
     raw_token: &str,
@@ -599,10 +650,6 @@ pub async fn rotate_browser_refresh(
         token_id: String,
         user_id: String,
         family_id: String,
-    }
-    #[derive(sqlx::FromRow)]
-    struct Id {
-        id: String,
     }
     #[derive(sqlx::FromRow)]
     struct TokenState {
@@ -626,38 +673,8 @@ pub async fn rotate_browser_refresh(
         &token.user_id
     )?;
     let pg = pool.is_postgres();
-    let account_sql = if pg {
-        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
-    } else {
-        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = 1"
-    };
-    let account = krausen_core::dbtx_fetch_optional!(&mut tx, Id, account_sql, &token.user_id)?;
-    if account.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Invalid or expired refresh token".into(),
-        ));
-    }
-    let credential_sql = if pg {
-        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3 FOR UPDATE"
-    } else {
-        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3"
-    };
-    let now_ts = Utc::now().timestamp();
-    let credential = krausen_core::dbtx_fetch_optional!(
-        &mut tx,
-        Id,
-        credential_sql,
-        &token.family_id,
-        &token.user_id,
-        now_ts
-    )?;
-    if credential.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Invalid or expired refresh token".into(),
-        ));
-    }
     let active = sql_compat::bool_true(pg);
-    let future = sql_compat::is_future(pg, "expires_at");
+    let future = unexpired_token_sql(pg, "expires_at");
     let lock = if pg { " FOR UPDATE" } else { "" };
     let sql = format!(
         "SELECT replaced_at FROM refresh_tokens WHERE token_id = $1 AND is_active = {active} AND {future}{lock}"
@@ -675,14 +692,8 @@ pub async fn rotate_browser_refresh(
             family_id = %token.family_id,
             user_id = %token.user_id,
             token_id = %token.token_id,
-            "refresh token reuse after grace period — revoking credential family (theft detection)"
+            "refresh token reuse after grace period — revoking token family (theft detection)"
         );
-        krausen_core::dbtx_execute!(
-            &mut tx,
-            "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND revoked_at IS NULL",
-            now_ts,
-            &token.family_id
-        )?;
         let false_value = sql_compat::bool_false(pg);
         let sql = format!(
             "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE family_id = $1"
@@ -725,3 +736,8 @@ pub async fn rotate_browser_refresh(
     tx.commit().await?;
     Ok((token.user_id, token.family_id, new_raw))
 }
+
+#[cfg(test)]
+mod sliding_expiry_tests;
+#[cfg(test)]
+mod unexpired_tests;

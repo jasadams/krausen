@@ -39,14 +39,23 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y socat openssl
-        timeout-minutes: 5
-      - run: cargo test -p krausen-auth --test credential_lifecycle
-      - run: FRONTEND_URL=https://example.test cargo test -p krausen-auth --test secure_cookie
-      - run: FRONTEND_URL=https://localhost cargo test -p krausen-server --test https_proxy
+      - run: cargo test -p krausen-auth --test refresh_lifecycle
+      - run: cargo test -p krausen-auth --test secure_cookie
+      - run: cargo test -p krausen-auth --test plain_http_cookie
+      - run: cargo test -p krausen-auth --test tls_provider
+      - run: cargo test -p krausen-auth --lib unexpired_tests
+      - run: cargo test -p krausen-auth --lib mcp_session_manager
+      - run: cargo test -p krausen-core --lib constants
+      - run: cargo test -p krausen-server --test startup_constants
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
-      - run: cargo test -p krausen-server --test migration_orders --test mcp_auth
+      - run: cargo test -p krausen-server --test migration_orders --test drop_credentials_migration --test mcp_auth
+      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry --test auth_refresh_middleware --test switch_workspace --test security_headers --test security_headers_http
+      - run: cargo test -p krausen-server --lib route_error
+      - run: cargo test -p krausen-server --lib middleware::tests
+      - run: cargo test -p krausen-server --lib middleware::auth_refresh
+      - run: cargo test -p krausen-auth --lib sliding_expiry_tests
+      - run: cargo test -p krausen-auth --lib request_meta
       - run: cargo test -p krausen-app --test foundation
       - run: cargo test -p krausen-app --test formulation_preview
       - run: cargo test -p krausen-app --test equipment_profiles
@@ -84,6 +93,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib printable_recipe::tests
       - run: cargo test -p krausen-ui --features ssr --lib button::tests
       - run: cargo test -p krausen-ui --features ssr --lib recovery_password_action_submits_its_form
+      - run: cargo test -p krausen-ui --features ssr --lib server_fns::auth::tests
       - run: cargo test -p krausen-ui --features ssr --lib brew_evidence_rows::tests
       - run: cargo test -p krausen-ui --features ssr --lib beerxml::tests
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
@@ -92,6 +102,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib recipe_scaling::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
+      - run: bash scripts/lint/check-client-eval-test.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -103,4 +114,6 @@ jobs:
       - run: cargo install trunk --version 0.21.14 --locked
       - run: cargo build -p krausen-server
       - run: cd crates/krausen-ui && trunk build
+      - run: sh scripts/check-dist-nonce.sh
+      - run: sh scripts/check-dist-nonce-test.sh
       - run: e2e/scripts/profile-browser.sh

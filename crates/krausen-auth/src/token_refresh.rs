@@ -86,9 +86,6 @@ async fn mint_access_token(
     extra.insert("email".into(), serde_json::json!(user_data.email));
     extra.insert("name".into(), serde_json::json!(user_data.name));
     extra.insert("roles".into(), serde_json::json!(user_data.roles));
-    extra.insert("credential_id".into(), serde_json::json!(&user_data.family_id));
-    extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
-    extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
 
     // Load workspace context (same behaviour as the REST handler: best-effort)
     if let Ok(Some((ws, wu))) =
@@ -174,15 +171,9 @@ mod tests {
             .unwrap()
     }
 
-    /// Authenticate `token` through the real extractor, with the KRA-10 credential
-    /// revived first so only the revocation cutoff can refuse it.
-    async fn refused_by_cutoff(db: &DbPool, user_id: &str, token: &str) -> bool {
-        krausen_core::db_execute!(
-            db,
-            "UPDATE auth_credentials SET revoked_at = NULL WHERE user_id = $1",
-            user_id
-        )
-        .unwrap();
+    /// Authenticate `token` through the real extractor: only the revocation
+    /// cutoff can refuse it.
+    async fn refused_by_cutoff(db: &DbPool, token: &str) -> bool {
         let state = crate::middleware::AuthState {
             jwt_secret: SECRET.into(),
             db: db.clone(),
@@ -241,7 +232,7 @@ mod tests {
             sessions.is_empty(),
             "race must not leave an active replacement refresh"
         );
-        assert!(refused_by_cutoff(db, &user.user_id, &session.access_token).await);
+        assert!(refused_by_cutoff(db, &session.access_token).await);
 
         // Reverse order: an entire real refresh commits, then the event cuts it off.
         let fresh = crate::session::create_authenticated_session(db, &kv, SECRET, &user, &device())
@@ -253,7 +244,7 @@ mod tests {
         token_service::revoke_all_user_sessions(db, &user.user_id)
             .await
             .unwrap();
-        assert!(refused_by_cutoff(db, &user.user_id, &rotated.access_token).await);
+        assert!(refused_by_cutoff(db, &rotated.access_token).await);
         assert!(
             refresh_tokens(db, SECRET, &rotated.raw_refresh_token, &device())
                 .await

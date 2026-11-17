@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
+    krausen_auth::initialize_tls_provider();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -19,6 +20,9 @@ async fn serve() {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .json()
         .init();
+
+    // Load shared constants — tries disk first, falls back to embedded copy for standalone mode
+    krausen_core::constants::load_with_fallback().expect("failed to load shared constants");
 
     let config = Config::from_env();
     let port = config.port;

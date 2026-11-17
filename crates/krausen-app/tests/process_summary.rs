@@ -235,17 +235,10 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
-    let credential = format!("c-{suffix}");
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: credential.clone(),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
 
@@ -689,9 +682,9 @@ async fn exercise(db: DbPool) {
     );
 
     run!(
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
-        chrono::Utc::now().timestamp(),
-        &credential
+        "UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2",
+        actor.session_iat_us.unwrap(),
+        &actor.actor_id
     );
     assert_eq!(
         summary(
@@ -707,8 +700,8 @@ async fn exercise(db: DbPool) {
         ProcessSummaryOutcome::Forbidden
     );
     run!(
-        "UPDATE auth_credentials SET revoked_at = NULL WHERE credential_id = $1",
-        &credential
+        "UPDATE users SET sessions_valid_from = NULL WHERE user_id = $1",
+        &actor.actor_id
     );
     let expired = ActorContext {
         access_expires_at: chrono::Utc::now().timestamp() - 1,
@@ -761,18 +754,10 @@ async fn postgres_preview_rechecks_authority_after_profile_lock_wait() {
         .execute(&control)
         .await
         .unwrap();
-    let credential = format!("lock-c-{suffix}");
-    sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)")
-        .bind(&credential)
-        .bind(&user)
-        .bind(chrono::Utc::now().timestamp() + 3600)
-        .execute(&control)
-        .await
-        .unwrap();
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace.clone(),
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 60,
     };
     let db = DbPool::Postgres(control.clone());

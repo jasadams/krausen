@@ -67,17 +67,10 @@ async fn exercise(db: DbPool) {
         &ws,
         &user
     );
-    let credential = format!("c-{id}");
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        4102444800_i64
-    );
     let actor = ActorContext {
         actor_id: user,
         workspace_id: ws,
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let intent = krausen_types::request_context::OperationIntent {

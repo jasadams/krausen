@@ -6,4 +6,5 @@ pub mod auth_google_oauth;
 pub mod auth_token;
 pub mod mcp;
 pub mod oauth;
+pub(crate) mod route_error;
 pub mod websocket;

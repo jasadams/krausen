@@ -8,7 +8,7 @@ import {
   SIGNED_OUT,
 } from '../../helpers/test-helpers';
 
-// Login rate limit: 10 requests per IP within a 300s window.
+// Login rate limit: 10 requests per IP within a 900s window.
 const LOGIN_IP_CAPACITY = 10;
 
 test.describe('TC-026: Rate Limiting (Login)', () => {
@@ -58,7 +58,7 @@ test.describe('TC-026: Rate Limiting (Login)', () => {
     test.skip(isPersonalMode(), 'No login form in personal mode');
     test.skip(!isSelfHostedNoSmtp(config), 'Requires self_hosted mode without SMTP');
 
-    // The previous test exhausted the rate limit; the 300s window is still active.
+    // The previous test exhausted the rate limit; the 900s window is still active.
     await page.goto('/login');
     await waitForWasm(page);
     await page.waitForSelector('#login-email', { timeout: 15000 });

@@ -97,7 +97,7 @@ pub(crate) fn verified_actor(
     Ok(krausen_app::ActorContext {
         actor_id: auth.user_id.clone(),
         workspace_id: workspace_id(auth)?.to_owned(),
-        credential_id: auth.credential_id.clone(),
+        session_iat_us: auth.session_iat_us,
         access_expires_at: auth
             .token_exp
             .ok_or_else(|| leptos::prelude::ServerFnError::new("Authentication required"))?,

@@ -66,7 +66,7 @@ async fn start_inner(
     authorize_workspace(&mut tx, actor).await?;
     check_intent(actor, &request.intent)?;
     lock_workspace(&mut tx, &actor.workspace_id).await?;
-    // The workspace lock may have waited across the credential boundary.
+    // The workspace lock may have waited across the access-token expiry or a session revocation.
     authorize_workspace(&mut tx, actor).await?;
 
     let payload = canonical_json::from_serializable(&(
@@ -136,7 +136,7 @@ async fn start_inner(
             Some(_) => {}
             None => return Ok(StartBrewOutcome::UnresolvedEquipmentProfile),
         }
-        // The profile lock may have waited across the credential boundary.
+        // The profile lock may have waited across the access-token expiry or a session revocation.
         authorize_workspace(&mut tx, actor).await?;
     }
 

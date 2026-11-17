@@ -15,7 +15,6 @@ async fn exercise(db: DbPool) {
     let user = format!("u-{suffix}");
     let a = format!("a-{suffix}");
     let b = format!("b-{suffix}");
-    let credential = format!("c-{suffix}");
     macro_rules! run { ($sql:expr $(,$arg:expr)*) => { match &db { DbPool::Postgres(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await.unwrap().rows_affected(), DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($arg))*.execute(p).await.unwrap().rows_affected() } }; }
     run!(
         "INSERT INTO users (user_id,email) VALUES ($1,$2)",
@@ -34,16 +33,10 @@ async fn exercise(db: DbPool) {
             &user
         );
     }
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        4102444800_i64
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: a.clone(),
-        credential_id: credential,
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let intent = OperationIntent {
@@ -293,9 +286,9 @@ async fn exercise(db: DbPool) {
     );
 
     run!(
-        "UPDATE auth_credentials SET revoked_at=$1 WHERE credential_id=$2",
-        chrono::Utc::now().timestamp(),
-        &actor.credential_id
+        "UPDATE users SET sessions_valid_from=$1 WHERE user_id=$2",
+        actor.session_iat_us.unwrap(),
+        &actor.actor_id
     );
     assert_eq!(
         recipe_library::list(&db, &actor, query).await,
