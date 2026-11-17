@@ -396,6 +396,8 @@ impl EmailService {
 
     /// Send a workspace invitation email.
     ///
+    /// The button links to the accept-invite page for `invitation_id`.
+    ///
     /// Returns `Ok(())` if sent successfully, or the reason it was not.
     pub async fn send_workspace_invitation(
         &self,
@@ -403,59 +405,15 @@ impl EmailService {
         workspace_name: &str,
         inviter_name: &str,
         role: &str,
+        invitation_id: &str,
     ) -> Result<(), EmailSendError> {
-        let role_display = if role == "admin" {
-            "an Admin"
-        } else {
-            "a Member"
-        };
-
-        let frontend_url = &self.frontend_url;
-        let subject = format!("You've been invited to join {} on Krausen", workspace_name);
-
-        let escaped_email = html_escape(email);
-        let escaped_inviter = html_escape(inviter_name);
-        let escaped_workspace = html_escape(workspace_name);
-
-        let body_html = format!(
-            r#"<h1>You're Invited!</h1>
-
-        <p><strong>{escaped_inviter}</strong> has invited you to join <strong>{escaped_workspace}</strong> as {role_display}.</p>
-
-        <p>To accept this invitation, sign in with the email address this was sent to ({escaped_email}).</p>
-
-        <div class="cta">
-            <a href="{frontend_url}/login" class="button">Accept Invitation</a>
-        </div>
-
-        <p>This invitation will expire in 7 days.</p>"#
-        );
-
-        let footer_html = format!(
-            r#"<p style="margin: 0 0 8px 0;">
-            You're receiving this because you were invited to join a workspace on Krausen.
-        </p>
-        <p style="margin: 0;">
-            <a href="{frontend_url}/unsubscribe?email={escaped_email}">Unsubscribe</a> &middot;
-            <a href="{frontend_url}/privacy">Privacy</a> &middot;
-            <a href="{frontend_url}/terms">Terms</a> &middot;
-            <a href="{frontend_url}" style="color: #a34728;">krausen.ai</a>
-        </p>"#
-        );
-
-        let html_body = email_template(frontend_url, &body_html, &footer_html);
-
-        let text_body = format!(
-            "\
-You're Invited!
-
-{inviter_name} has invited you to join {workspace_name} as {role_display}.
-
-To accept, sign in with this email address ({email}):
-{frontend_url}/login
-
-This invitation will expire in 7 days.
-",
+        let (subject, html_body, text_body) = build_workspace_invitation_email(
+            email,
+            workspace_name,
+            inviter_name,
+            role,
+            invitation_id,
+            &self.frontend_url,
         );
 
         self.send_email(email, &subject, &html_body, Some(&text_body), None, &[])
@@ -1016,6 +974,102 @@ fn admin_email_template(frontend_url: &str, subject: &str, sections_html: &str) 
     )
 }
 
+/// Pure content builder behind `send_workspace_invitation`, kept separate from
+/// `EmailService` so tests can assert on the rendered subject and bodies
+/// without SMTP. Returns `(subject, html_body, text_body)`.
+fn build_workspace_invitation_email(
+    email: &str,
+    workspace_name: &str,
+    inviter_name: &str,
+    role: &str,
+    invitation_id: &str,
+    frontend_url: &str,
+) -> (String, String, String) {
+    let role_display = if role == "admin" {
+        "an Admin"
+    } else {
+        "a Member"
+    };
+
+    let accept_url = format!("{frontend_url}/accept-invite/{invitation_id}");
+    let subject = format!("You've been invited to join {} on Krausen", workspace_name);
+
+    let escaped_email = html_escape(email);
+    let escaped_inviter = html_escape(inviter_name);
+    let escaped_workspace = html_escape(workspace_name);
+    let escaped_accept_url = html_escape(&accept_url);
+
+    let body_html = format!(
+        r#"<h1>You're Invited!</h1>
+
+    <p><strong>{escaped_inviter}</strong> has invited you to join <strong>{escaped_workspace}</strong> on Krausen as {role_display}.</p>
+
+    <p>To accept this invitation:</p>
+
+    <div class="features">
+        <div class="feature">
+            <strong>Open the invitation</strong> - Click the button below to view the invitation
+        </div>
+        <div class="feature">
+            <strong>Sign in if needed</strong> - Use the email address this invitation was sent to ({escaped_email}); you'll be brought back here afterward
+        </div>
+        <div class="feature">
+            <strong>Start collaborating</strong> - Work on recipes and brews with your team
+        </div>
+    </div>
+
+    <div class="cta">
+        <a href="{escaped_accept_url}" class="button">View Invitation</a>
+    </div>
+
+    <p>This invitation will expire in 7 days. If you have any questions, reach out to {escaped_inviter} or reply to this email.</p>
+
+    <p>Thanks,<br>The Krausen Team</p>"#
+    );
+
+    let footer_html = format!(
+        r#"<p style="margin: 0 0 8px 0;">
+        You're receiving this because you were invited to join a workspace on Krausen.
+    </p>
+    <p style="margin: 0;">
+        <a href="{frontend_url}/unsubscribe?email={escaped_email}">Unsubscribe</a> &middot;
+        <a href="{frontend_url}/privacy">Privacy</a> &middot;
+        <a href="{frontend_url}/terms">Terms</a> &middot;
+        <a href="{frontend_url}" style="color: #a34728;">krausen.ai</a>
+    </p>"#
+    );
+
+    let html_body = email_template(frontend_url, &body_html, &footer_html);
+
+    let text_body = format!(
+        "\
+You're Invited!
+
+{inviter_name} has invited you to join {workspace_name} on Krausen as {role_display}.
+
+To accept this invitation:
+
+1. Open the invitation - Visit the link below to view the invitation
+2. Sign in if needed - Use the email address this invitation was sent to ({email}); you'll be brought back here afterward
+3. Start collaborating - Work on recipes and brews with your team
+
+View invitation: {accept_url}
+
+This invitation will expire in 7 days. If you have any questions, reach out to {inviter_name} or reply to this email.
+
+Thanks,
+The Krausen Team
+
+---
+You're receiving this email because you were invited to join a workspace on Krausen.
+Unsubscribe: {frontend_url}/unsubscribe?email={email}
+{frontend_url}
+",
+    );
+
+    (subject, html_body, text_body)
+}
+
 /// Human-readable label for a `user_auth_methods.auth_type` value.
 ///
 /// Unrecognized values pass through unchanged rather than being dropped:
@@ -1319,6 +1373,42 @@ mod tests {
         assert_eq!(&LOGO_BYTES[16..24], &[0, 0, 0, 120, 0, 0, 0, 120]);
     }
 
+    /// The invitation email links to the accept-invite page for this exact
+    /// invitation in both bodies, and the id is escaped in the HTML.
+    #[test]
+    fn workspace_invitation_email_links_to_the_accept_invite_page() {
+        let (subject, html_body, text_body) = build_workspace_invitation_email(
+            "invitee@example.com",
+            "Brew <House>",
+            "Jane & Co",
+            "admin",
+            "inv-abc123",
+            "https://app.example.com",
+        );
+
+        assert_eq!(subject, "You've been invited to join Brew <House> on Krausen");
+        let link = "https://app.example.com/accept-invite/inv-abc123";
+        assert!(text_body.contains(&format!("View invitation: {link}")), "{text_body}");
+        assert!(
+            html_body.contains(&format!("href=\"{}\"", html_escape(link))),
+            "the button must link to the invitation: {html_body}"
+        );
+        assert!(html_body.contains("Brew &lt;House&gt;"), "workspace name is escaped");
+        assert!(html_body.contains("Jane &amp; Co"), "inviter name is escaped");
+        assert!(!html_body.contains("href=\"https://app.example.com/login\""));
+
+        // An id that tries to break out of the attribute stays inside it.
+        let (_, hostile, _) = build_workspace_invitation_email(
+            "invitee@example.com",
+            "W",
+            "I",
+            "member",
+            "x\"><script>",
+            "https://app.example.com",
+        );
+        assert!(!hostile.contains("<script>"), "{hostile}");
+    }
+
     #[test]
     fn humanize_auth_methods_single() {
         assert_eq!(humanize_auth_methods(&["password".to_string()]), "Password");
@@ -1411,7 +1501,13 @@ mod tests {
         let service = EmailService::unconfigured_for_tests();
 
         let err = service
-            .send_workspace_invitation("test@example.com", "My Workspace", "Jane Doe", "admin")
+            .send_workspace_invitation(
+                "test@example.com",
+                "My Workspace",
+                "Jane Doe",
+                "admin",
+                "inv-test123",
+            )
             .await
             .expect_err("an unconfigured service must not report a successful send");
 

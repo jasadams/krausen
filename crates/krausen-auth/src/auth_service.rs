@@ -1861,4 +1861,4 @@ fn spawn_verification_email(
 
 
 #[cfg(test)]
-mod signup_tests;
+pub(crate) mod signup_tests;

@@ -6,13 +6,13 @@
 //! workspace context. Single-record lookups (`get_workspace`,
 //! `get_workspace_user`) live in `user_service.rs`.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use krausen_core::enums::TransferStatus;
 use krausen_core::models::{
     OwnershipTransfer, Workspace, WorkspaceInvitation, WorkspaceUser,
 };
 use krausen_core::sql_compat;
-use krausen_core::DbPool;
+use krausen_core::{DbPool, KVPool};
 use serde::{Deserialize, Serialize};
 
 use crate::sync_log_service;
@@ -504,6 +504,90 @@ pub async fn accept_invitation_for_user(
     Ok(())
 }
 
+/// Workspace invitation enriched with workspace and inviter display names.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EnrichedInvitation {
+    pub invitation_id: String,
+    pub workspace_id: String,
+    pub email: String,
+    pub role: String,
+    pub invited_by_user_id: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
+    pub accepted_by_user_id: Option<String>,
+    pub workspace_name: Option<String>,
+    pub inviter_name: Option<String>,
+}
+
+/// Get a single invitation by ID, enriched with workspace name and inviter
+/// name via LEFT JOINs. No status filter — the caller is responsible for
+/// checking recipient/status/expiry (see `check_invitation_acceptable`).
+pub async fn get_invitation_enriched(
+    pool: &DbPool,
+    invitation_id: &str,
+) -> krausen_core::Result<Option<EnrichedInvitation>> {
+    let sql = "SELECT wi.invitation_id, wi.workspace_id, wi.email, wi.role, \
+                      wi.invited_by_user_id, wi.status, wi.created_at, \
+                      wi.expires_at, wi.accepted_at, wi.accepted_by_user_id, \
+                      w.name AS workspace_name, \
+                      u.name AS inviter_name \
+               FROM workspace_invitations wi \
+               LEFT JOIN workspaces w ON w.workspace_id = wi.workspace_id \
+               LEFT JOIN users u ON u.user_id = wi.invited_by_user_id \
+               WHERE wi.invitation_id = $1";
+    let invitation = krausen_core::db_fetch_optional!(pool, EnrichedInvitation, sql, invitation_id)?;
+    Ok(invitation)
+}
+
+/// Shared context for invitation acceptance operations.
+pub struct AcceptInvitationCtx<'a> {
+    pub db: &'a DbPool,
+    pub kv: &'a KVPool,
+    pub jwt_secret: &'a str,
+}
+
+/// Accept an invitation, then switch the user into the workspace they just
+/// joined, re-minting the session for it.
+///
+/// Acceptance (atomic CAS pending→accepted + membership creation via
+/// `accept_invitation_for_user`) is committed FIRST and its error propagates —
+/// a failed accept is a real failure. The subsequent switch is best-effort:
+/// the membership is already durably created, so a switch failure (user row
+/// missing, or `switch_active_workspace` erroring) is logged and returns
+/// `Ok(None)` rather than undoing the join. Returns `Some(session)` with fresh
+/// cookies to apply when the switch succeeded, `None` when it was skipped/failed.
+///
+/// Reuses `crate::session::switch_active_workspace` — no duplicated
+/// JWT/cookie logic.
+pub async fn accept_invitation_and_switch(
+    ctx: &AcceptInvitationCtx<'_>,
+    invitation_id: &str,
+    user_id: &str,
+    joined_workspace_id: &str,
+    device_info: &crate::token_service::DeviceInfo,
+) -> krausen_core::Result<Option<crate::session::AuthenticatedSession>> {
+    let AcceptInvitationCtx { db, kv, jwt_secret } = ctx;
+    // Acceptance first — its failure is a genuine error and must propagate.
+    accept_invitation_for_user(db, invitation_id, user_id).await?;
+
+    // Best-effort switch: acceptance is already committed, so from here we never
+    // turn a successful join into a failure.
+    let Some(user) = crate::user_service::get_user_by_id(db, user_id).await? else {
+        tracing::warn!(%user_id, "invite accepted but user row not found; skipping active-workspace switch");
+        return Ok(None);
+    };
+
+    match crate::session::switch_active_workspace(db, kv, jwt_secret, &user, joined_workspace_id, device_info).await {
+        Ok(sess) => Ok(Some(sess)),
+        Err(e) => {
+            tracing::warn!(%user_id, workspace_id = %joined_workspace_id, error = %e, "invite accepted but failed to switch active workspace; user can switch manually");
+            Ok(None)
+        }
+    }
+}
+
 // ===========================================================================
 // Phase 4D — Ownership transfer
 // ===========================================================================
@@ -883,3 +967,6 @@ pub async fn list_ownership_transfers_for_user(
     }
     Ok(result)
 }
+
+#[cfg(test)]
+mod invitation_tests;

@@ -106,7 +106,7 @@ test.describe('TC-029: Token Refresh — Rotation Detection', () => {
     await page.goto('/settings/profile');
     await waitForWasm(page);
 
-    await page.waitForURL('**/login', { timeout: 15_000 });
+    await page.waitForURL('**/login**', { timeout: 15_000 });
     expect(page.url()).toContain('/login');
   });
 

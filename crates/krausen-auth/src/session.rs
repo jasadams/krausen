@@ -128,3 +128,32 @@ pub async fn create_authenticated_session(
         workspace_roles,
     })
 }
+
+/// Switch the user's active workspace and mint a fresh session for it.
+///
+/// 1. Validates the caller has an ACTIVE membership in the target workspace
+///    (rejects with `Forbidden` otherwise).
+/// 2. Persists it as `users.last_workspace_id`.
+/// 3. Re-mints the session JWT + refresh token + cookies via
+///    `create_authenticated_session`, which now resolves the target workspace
+///    as the active context.
+pub async fn switch_active_workspace(
+    db: &DbPool,
+    kv: &KVPool,
+    jwt_secret: &str,
+    user: &User,
+    target_workspace_id: &str,
+    device_info: &DeviceInfo,
+) -> krausen_core::Result<AuthenticatedSession> {
+    // Validate active membership. `get_workspace_user` filters `active = true`,
+    // matching what `get_user_workspace_context` treats as a valid last workspace.
+    user_service::get_workspace_user(db, target_workspace_id, &user.user_id)
+        .await?
+        .ok_or_else(|| {
+            krausen_core::Error::Forbidden("You do not have access to this workspace".into())
+        })?;
+
+    user_service::update_last_workspace(db, &user.user_id, target_workspace_id).await?;
+
+    create_authenticated_session(db, kv, jwt_secret, user, device_info).await
+}

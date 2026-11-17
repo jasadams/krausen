@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod accept_invite;
 pub mod accept_ownership;
 pub mod auth;
 pub mod design_system;

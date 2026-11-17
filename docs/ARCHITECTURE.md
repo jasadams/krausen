@@ -271,7 +271,7 @@ with the same shared operation, policy, validation, side effects and result.
 | Brews | Start/list/get; allowed lifecycle transitions; retrieve immutable inputs/targets | Member; atomic source-revision and snapshot checks |
 | Observations | Record/list readings and notes; correct readings; inspect correction history | Member; retain original evidence and provenance |
 | History/comparison | List recipe brews; retrieve planned snapshots and target/actual comparisons; explicitly apply brew findings | Membership; recipe/profile changes remain explicit |
-| Profile/appearance | Get/update name/theme; list pending invitations; accept/decline | User owns profile; invitation intended-recipient checks |
+| Profile/appearance | Get/update name/theme; list pending invitations; open an invitation by link (`/accept-invite/{id}`, details only to the recipient); accept (switching the session into the joined workspace)/decline | User owns profile; invitation intended-recipient, pending and expiry checks |
 | Workspace/team | Get/update settings/name; list/invite/remove members; change roles; list/cancel invitations | Ordinary member/context reads for members; admin/owner management guards |
 | Ownership | Start/list/get/cancel/accept/decline transfers | Shared owner, intended-recipient and confirmation rules |
 | Sessions/connections | List/revoke; logout current/all sessions | User/session ownership; effective revocation on subsequent protected requests |
@@ -281,6 +281,13 @@ with the same shared operation, policy, validation, side effects and result.
 This includes existing auth/context/profile/sidebar/workspace/team/ownership/
 security/onboarding/recipe families and planned brewing capabilities. Sensitive reads follow the concrete visibility rules above; grouping a family
 under administration does not make ordinary member/context reads admin-only.
+
+Page requests are authenticated before the shell is served: a hard load of any
+page outside the public set (`/login`, `/signup`, `/signup/*`, `/auth/*`,
+`/account/*`, `/welcome`, `/unsubscribe`, `/oauth-complete`) with neither an access
+nor a refresh cookie is redirected to `/login?redirect=<path>`, and sign-in returns
+to that path, so a link to a protected flow page such as an invitation survives
+sign-in.
 
 Focus, opening a menu, a browser print dialog and local undo are presentation
 behaviors. Their underlying persisted changes or export capabilities remain
