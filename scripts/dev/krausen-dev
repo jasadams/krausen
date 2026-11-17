@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Local, isolated Krausen for development and Playwright runs.
+#
+#   scripts/dev/krausen-dev build      build the image (BuildKit cache mounts; reuses compiled crates)
+#   scripts/dev/krausen-dev up         fresh disposable database + server on 127.0.0.1 only
+#   scripts/dev/krausen-dev check      prove 127.0.0.1 answers and the LAN address does not
+#   scripts/dev/krausen-dev env        print the exports the e2e suite needs (use: eval "$(... env)")
+#   scripts/dev/krausen-dev browsers   install Playwright's headless Chromium (with an unzip fallback)
+#   scripts/dev/krausen-dev down       remove the containers and the database volume
+#
+# The database lives on a Docker volume inside Docker's VM and is reached by tests only
+# through the generated `sqlite3` shim, because a SQLite file shared between the host and
+# the VM loses writes. Everything here is disposable and uses test-only secrets.
+set -euo pipefail
+
+IMAGE="${KRAUSEN_DEV_IMAGE:-krausen-dev:local}"
+PORT="${KRAUSEN_DEV_PORT:-41465}"
+STATE="${KRAUSEN_DEV_STATE:-$HOME/.cache/krausen-dev}"
+SERVER=krausen-dev-server
+SQLITE=krausen-dev-sqlite
+VOLUME=krausen-dev-data
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+die() { echo "krausen-dev: $*" >&2; exit 1; }
+need_docker() { docker info >/dev/null 2>&1 || die "Docker is not running"; }
+
+server_env() {
+  SERVER_ENV=(
+    -e DATABASE_URL=sqlite:///data/krausen.db
+    -e KRAUSEN_MODE=self_hosted
+    -e PORT="$PORT"
+    -e BASE_URL="http://localhost:$PORT"
+    -e FRONTEND_URL="http://localhost:$PORT"
+    -e JWT_SECRET_KEY=test-only-jwt-secret-for-disposable-browser-fixture
+    -e ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  )
+}
+
+cmd_build() {
+  need_docker
+  DOCKER_BUILDKIT=1 docker build --build-arg CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" -t "$IMAGE" "$ROOT"
+}
+
+cmd_down() {
+  need_docker
+  docker rm -f "$SERVER" "$SQLITE" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+}
+
+write_shim() {
+  mkdir -p "$STATE/shim"
+  cat > "$STATE/shim/sqlite3" <<SHIM
+#!/bin/sh
+# The e2e helpers call: sqlite3 <db path> <args...>. The database is in the sqlite helper container.
+shift
+exec docker exec -i $SQLITE sqlite3 /data/krausen.db "\$@"
+SHIM
+  chmod +x "$STATE/shim/sqlite3"
+}
+
+cmd_up() {
+  need_docker
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE not found; run: $0 build"
+  cmd_down
+  server_env
+  docker volume create "$VOLUME" >/dev/null
+  # The server runs as uid 1000; a new volume is owned by root.
+  docker run --rm --user 0 -v "$VOLUME:/data" --entrypoint chown "$IMAGE" 1000:1000 /data
+  printf '%s\n' 'TestPassword1234' | docker run --rm -i -v "$VOLUME:/data" "${SERVER_ENV[@]}" \
+    --entrypoint /app/krausen "$IMAGE" bootstrap-owner local@localhost >/dev/null
+  # Published on loopback only: never -p PORT:PORT.
+  docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
+    -p "127.0.0.1:$PORT:$PORT" -v "$VOLUME:/data" "${SERVER_ENV[@]}" "$IMAGE" >/dev/null
+  docker run -d --name "$SQLITE" --user 1000:1000 --cpus 1 --memory 256m -v "$VOLUME:/data" \
+    --entrypoint sleep keinos/sqlite3 infinity >/dev/null
+  write_shim
+  for _ in $(seq 1 90); do
+    curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/login" && { echo "ready: http://localhost:$PORT (owner local@localhost / TestPassword1234)"; return 0; }
+    sleep 1
+  done
+  docker logs "$SERVER" | tail -20
+  die "server did not become ready"
+}
+
+cmd_check() {
+  local lan code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/login" || true)
+  echo "127.0.0.1:$PORT -> $code"
+  lan=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
+  [ -n "$lan" ] || die "could not determine the LAN address"
+  if curl -s -o /dev/null --max-time 5 "http://$lan:$PORT/login"; then
+    die "$lan:$PORT IS reachable: the server is exposed on the network"
+  fi
+  echo "$lan:$PORT -> refused (not exposed)"
+  docker port "$SERVER"
+}
+
+cmd_env() {
+  cat <<ENV
+export PATH="$STATE/shim:\$PATH"
+export BASE_URL=http://localhost:$PORT
+export KRAUSEN_E2E_DATABASE_PATH=/data/krausen.db
+export KRAUSEN_MODE=self_hosted
+ENV
+}
+
+cmd_browsers() {
+  local e2e="$ROOT/e2e" cache="$HOME/Library/Caches/ms-playwright"
+  [ -x "$e2e/node_modules/.bin/playwright" ] || (cd "$e2e" && npm ci)
+  # Playwright's own extractor can hang; if it does, unzip the download ourselves.
+  if (cd "$e2e" && timeout 180 ./node_modules/.bin/playwright install chromium chromium-headless-shell); then return 0; fi
+  echo "krausen-dev: Playwright install did not finish; trying a manual unzip" >&2
+  pkill -f "playwright install" || true
+  rm -rf "$cache/__dirlock"
+  local zip rev dest
+  for zip in "${TMPDIR:-/tmp}"/playwright-download-*/playwright-download-*.zip /var/folders/*/*/T/playwright-download-*/playwright-download-*.zip; do
+    [ -f "$zip" ] || continue
+    case "$zip" in *headless-shell*) kind=chromium_headless_shell ;; *) kind=chromium ;; esac
+    rev=$(echo "$zip" | sed -E 's/.*-([0-9]+)\.zip$/\1/')
+    dest="$cache/$kind-$rev"
+    rm -rf "$dest"; mkdir -p "$dest"
+    unzip -q "$zip" -d "$dest" && touch "$dest/INSTALLATION_COMPLETE" && echo "unpacked $dest"
+  done
+}
+
+case "${1:-}" in
+  build) cmd_build ;;
+  up) cmd_up ;;
+  down) cmd_down ;;
+  check) cmd_check ;;
+  env) cmd_env ;;
+  browsers) cmd_browsers ;;
+  *) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

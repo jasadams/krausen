@@ -42,15 +42,22 @@ COPY . .
 RUN npm ci --prefix crates/krausen-ui --ignore-scripts --no-audit --no-fund
 ENV PATH="/build/crates/krausen-ui/node_modules/.bin:${PATH}"
 RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
-RUN cd crates/krausen-ui && trunk build --release --locked
-RUN cargo build --locked --release -p krausen-server --bin krausen
+# Cache mounts keep the cargo registry and compiled crates between builds, so a
+# rebuild after a small change recompiles only what changed. The binary is copied
+# out because the cache mount is not part of the image.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    cd crates/krausen-ui && trunk build --release --locked \
+    && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
+    && cp target/release/krausen /build/krausen-bin
 
 FROM debian:bookworm-slim@sha256:a3bba7dc7dbcc1f37c2856c51fc9a7fac96608f50cb87b1b4e4d8b8c85ae988e AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin krausen
 WORKDIR /app
-COPY --from=builder /build/target/release/krausen /app/krausen
+COPY --from=builder /build/krausen-bin /app/krausen
 COPY --from=builder /build/crates/krausen-ui/dist /app/dist
 ENV PORT=8003 TRUNK_DIST_DIR=/app/dist HOME=/tmp TMPDIR=/tmp
 EXPOSE 8003
