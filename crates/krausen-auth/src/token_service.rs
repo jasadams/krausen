@@ -193,6 +193,16 @@ pub async fn store_session_refresh_token(
     Ok(token_id)
 }
 
+// SQLite stores both RFC3339 (Chrono binds) and SQL timestamp text. Compare
+// parsed instants at SQLite millisecond precision, rather than their separators.
+fn unexpired_token_sql(is_pg: bool, column: &str) -> String {
+    if is_pg {
+        format!("{column} > NOW()")
+    } else {
+        format!("julianday({column}) > julianday('now')")
+    }
+}
+
 /// Verify a raw refresh token, handling rotation grace period and theft detection.
 pub async fn verify_refresh_token(
     pool: &DbPool,
@@ -201,7 +211,7 @@ pub async fn verify_refresh_token(
     let token_hash = hash_refresh_token(raw_token);
     let is_pg = pool.is_postgres();
     let now = sql_compat::now(is_pg);
-    let rt_unexpired = sql_compat::is_future(is_pg, "rt.expires_at");
+    let rt_unexpired = unexpired_token_sql(is_pg, "rt.expires_at");
     let bt = sql_compat::bool_true(is_pg);
 
     // Fetch the token + user data in one query (include replaced_at and family_id)
@@ -292,22 +302,32 @@ pub async fn rotate_refresh_token(
     expires_at: DateTime<Utc>,
     device_info: &DeviceInfo,
 ) -> krausen_core::Result<String> {
-    let is_pg = pool.is_postgres();
-    let now = sql_compat::now(is_pg);
-
-    // Mark the old token as replaced
-    let replace_sql = format!("UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1");
-    krausen_core::db_execute!(pool, &replace_sql, old_token_id)?;
-
-    // Create the new token in the same family
     let random_bytes: [u8; 16] = rand::rng().random();
     let new_token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
-
-    krausen_core::db_execute!(
-        pool,
-        "INSERT INTO refresh_tokens \
-         (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    // Lock order is always user then tokens, shared with all-session revocation.
+    // SQLite's first write obtains the database write lock; Postgres locks this row.
+    let mut tx = pool.begin_write().await?;
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE users SET sessions_valid_from = sessions_valid_from WHERE user_id = $1",
+        user_id
+    )?;
+    let is_pg = pool.is_postgres();
+    let now = sql_compat::now(is_pg);
+    let bt = sql_compat::bool_true(is_pg);
+    let unexpired = unexpired_token_sql(is_pg, "expires_at");
+    let sql = format!(
+        "UPDATE refresh_tokens SET replaced_at = {now} WHERE token_id = $1 AND user_id = $2 AND family_id = $3 AND is_active = {bt} AND {unexpired}"
+    );
+    let replaced = krausen_core::dbtx_execute!(&mut tx, &sql, old_token_id, user_id, family_id)?;
+    if replaced.rows_affected() == 0 {
+        return Err(krausen_core::Error::Unauthorized(
+            "Refresh token has been revoked".into(),
+        ));
+    }
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "INSERT INTO refresh_tokens (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         &new_token_id,
         user_id,
         new_token_hash,
@@ -317,7 +337,7 @@ pub async fn rotate_refresh_token(
         &device_info.country_code,
         family_id
     )?;
-
+    tx.commit().await?;
     Ok(new_token_id)
 }
 
@@ -428,7 +448,7 @@ pub async fn get_user_sessions(
     user_id: &str,
 ) -> krausen_core::Result<Vec<SessionInfo>> {
     let is_pg = pool.is_postgres();
-    let rt_unexpired = sql_compat::is_future(is_pg, "rt.expires_at");
+    let rt_unexpired = unexpired_token_sql(is_pg, "rt.expires_at");
     let bt = sql_compat::bool_true(is_pg);
 
     let sql = if is_pg {
@@ -535,7 +555,7 @@ pub async fn verify_verification_token(
 ) -> krausen_core::Result<Option<String>> {
     let is_pg = pool.is_postgres();
     let now = sql_compat::now(is_pg);
-    let unexpired = sql_compat::is_future(is_pg, "expires_at");
+    let unexpired = unexpired_token_sql(is_pg, "expires_at");
     let bf = sql_compat::bool_false(is_pg);
     let bt = sql_compat::bool_true(is_pg);
 
@@ -654,7 +674,7 @@ pub async fn rotate_browser_refresh(
     )?;
     let pg = pool.is_postgres();
     let active = sql_compat::bool_true(pg);
-    let future = sql_compat::is_future(pg, "expires_at");
+    let future = unexpired_token_sql(pg, "expires_at");
     let lock = if pg { " FOR UPDATE" } else { "" };
     let sql = format!(
         "SELECT replaced_at FROM refresh_tokens WHERE token_id = $1 AND is_active = {active} AND {future}{lock}"
@@ -719,3 +739,5 @@ pub async fn rotate_browser_refresh(
 
 #[cfg(test)]
 mod sliding_expiry_tests;
+#[cfg(test)]
+mod unexpired_tests;

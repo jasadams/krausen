@@ -16,6 +16,17 @@ Revoking a refresh family or signing out one session does not end an access toke
 already issued; it ends at its 15-minute expiry. Only signing out everywhere or recovery
 (below) ends access tokens at once.
 
+Token lifetimes, cookie settings, rate-limit buckets, key-value key prefixes and TTLs come
+from `shared/constants.toml`, which is also embedded in the binary. Browser cookies are
+always `SameSite=Strict` and `HttpOnly`; `Secure` is dropped only when `FRONTEND_URL` is
+not `https`. Rate limits are fixed windows per client address: sign-in 10 per 900
+seconds, sign-up 5 per 3600 seconds and refresh 30 per 300 seconds. Per-account values
+(5, 1 and 20) and the API-call bucket (1000 per address and 500 per account in 60
+seconds) are configured but not enforced, because no call site passes a user id or
+uses that bucket (Kyomi's call sites are the same). Behind a reverse proxy, set
+`X-Real-IP`: the refresh limit takes the address from that header, and without it all
+clients share one bucket.
+
 Signing out everywhere and completing account recovery (password) revoke browser
 sessions immediately: each account has a revocation cutoff (`users.sessions_valid_from`,
 Unix microseconds). A browser access token carries its signed microsecond issuance and is

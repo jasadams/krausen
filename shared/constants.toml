@@ -1,0 +1,94 @@
+# Krausen shared constants
+#
+# Single source of truth for the values the server and its crates share.
+# NEVER hardcode these values elsewhere.
+#
+# Secrets (JWT secret, encryption key, DB URLs) are NOT here — they stay in env vars.
+
+[api]
+version = "0.1.0"
+
+[jwt]
+algorithm = "HS256"
+access_token_expire_minutes = 15
+refresh_token_expire_days = 7
+password_reset_expire_minutes = 15
+email_verification_expire_hours = 24
+refresh_token_prefix = "rt_"
+refresh_token_min_length = 40
+refresh_token_grace_period_seconds = 30
+
+[cookies]
+access_token_name = "access_token"
+refresh_token_name = "refresh_token"
+httponly = true
+secure = true
+samesite = "strict"
+path = "/"
+
+# Krausen has no hosted origin: the deployment's own FRONTEND_URL is added at
+# runtime (see `apply_runtime_overrides`).
+[cors]
+allowed_origins = []
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+allow_credentials = true
+
+[security_headers]
+x_frame_options = "DENY"
+x_content_type_options = "nosniff"
+x_xss_protection = "1; mode=block"
+hsts = "max-age=31536000; includeSubDomains"
+content_security_policy = "default-src 'none'; frame-ancestors 'none'"
+
+[redis.key_prefixes]
+websocket_user = "ws:user:{user_id}"
+oauth_state = "oauth:{provider}:state:{state}"
+pending_signup = "auth:pending_signup:{token}"
+pending_terms = "auth:pending_terms:{token}"
+totp_setup = "auth:totp_setup:{user_id}"
+webauthn_challenge = "auth:webauthn_challenge:{challenge_id}"
+recovery_session = "auth:recovery_session:{session_id}"
+rate_limit_ip = "ratelimit:ip:{ip}:{endpoint}"
+rate_limit_user = "ratelimit:user:{user_id}:{endpoint}"
+
+[redis.ttls]
+oauth_state = 300
+pending_signup = 3600
+totp_setup = 600
+webauthn_challenge = 300
+recovery_session = 900
+
+# The `*_refill_interval` values are carried for parity with Kyomi's file and are
+# not applied: the limiter is a fixed window (`window_seconds`) per address and,
+# when a user id is passed, per account (no call site passes one today).
+[rate_limits.login]
+ip_capacity = 10
+ip_refill_interval = 60           # 1 token every 60s (1/min)
+user_capacity = 5
+user_refill_interval = 300        # 1 token every 300s (1/5min)
+window_seconds = 900
+
+[rate_limits.register]
+ip_capacity = 5
+ip_refill_interval = 3600         # 1 token every 3600s (1/hour)
+user_capacity = 1
+user_refill_interval = 86400      # 1 token every 86400s (1/day)
+window_seconds = 3600
+
+[rate_limits.refresh]
+ip_capacity = 30
+ip_refill_interval = 60           # 1 token every 60s (1/min)
+user_capacity = 20
+user_refill_interval = 30         # 1 token every 30s
+window_seconds = 300
+
+[rate_limits.api_call]
+ip_capacity = 1000
+ip_refill_interval = 1            # 1 token every 1s
+user_capacity = 500
+user_refill_interval = 1          # 1 token every 1s
+window_seconds = 60
+
+[workspace.roles]
+admin = "workspace_admin"
+user = "workspace_user"
