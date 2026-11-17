@@ -57,6 +57,14 @@ pub fn build_router(state: state::AppState) -> Router {
         .route("/login", axum::routing::get(leptos_frontend::serve_leptos_shell))
         .route("/signup", axum::routing::get(leptos_frontend::serve_leptos_shell))
         .fallback(leptos_frontend::serve_asset_or_shell)
+        // Transparent access-token auto-refresh — must be applied BEFORE
+        // `.with_state()` so it can access `AppState` via `from_fn_with_state`.
+        // On requests without any auth cookies this is a cheap no-op, so it is
+        // safe to layer globally.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth_refresh_middleware,
+        ))
         .with_state(state)
         .layer(axum::middleware::from_fn(middleware::security_headers))
         .layer(middleware::cors_layer())

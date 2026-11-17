@@ -58,6 +58,7 @@ web-sys = { version = "0.3", features = [
     "Element", "EventTarget", "Node", "NodeList",
     "KeyboardEvent", "MouseEvent", "BeforeUnloadEvent", "PopStateEvent", "HtmlAnchorElement", "DomTokenList", "MediaQueryList", "Location",
     "Navigator", "Storage", "StorageEvent", "History",
+    "RequestCredentials", "RequestInit", "Response",
     "CredentialsContainer", "Credential", "PublicKeyCredential",
     "AuthenticatorResponse", "AuthenticatorAttestationResponse",
     "AuthenticatorAssertionResponse",
