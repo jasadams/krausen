@@ -492,6 +492,24 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ---
 
+## TC-021b: Account Recovery (Lost Passkey)
+
+**Description:** A user who lost their authenticator re-registers a passkey through an emailed recovery link.
+
+**Steps:**
+1. Navigate to `/auth/recover-passkey`
+2. Enter the account email address and submit
+3. Verify a "check your email" message is displayed (identical for known and unknown addresses)
+4. Open the passkey recovery link from the email (it expires in 15 minutes)
+5. Verify the page offers to register a new passkey; complete the registration with a virtual authenticator
+6. Verify the user is signed in and every session that existed before the recovery (another browser context) is rejected on its next request
+7. Verify the password and TOTP methods of the account were left unchanged
+8. Verify the same link cannot be used a second time
+
+**Expected Result:** A new passkey is registered and a session is established; all earlier sessions are revoked.
+
+---
+
 ## TC-022: MCP Endpoint
 
 **Description:** The MCP server responds to initialize, tools/list, and tools/call requests.

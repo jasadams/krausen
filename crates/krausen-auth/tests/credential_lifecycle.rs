@@ -7,6 +7,17 @@ use krausen_auth::{
 };
 use krausen_core::DbPool;
 
+const REGISTER_CREDENTIAL_JSON: &str = r#"
+    {
+        "id":"0xYE4bQ_HZM51-XYwp7WHJu8RfeA2Oz3_9HnNIZAKqRTz9gsUlF3QO7EqcJ0pgLSwDcq6cL1_aQpTtKLeGu6Ig",
+        "rawId":"0xYE4bQ_HZM51-XYwp7WHJu8RfeA2Oz3_9HnNIZAKqRTz9gsUlF3QO7EqcJ0pgLSwDcq6cL1_aQpTtKLeGu6Ig",
+        "response":{
+             "attestationObject":"o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjc2lnWEcwRQIhALjRb43YFcbJ3V9WiYPpIrZkhgzAM6KTR8KIjwCXejBCAiAO5Lvp1VW4dYBhBDv7HZIrxZb1SwKKYOLfFRXykRxMqGN4NWOBWQLBMIICvTCCAaWgAwIBAgIEGKxGwDANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkwNDAwMDAwMFowbjELMAkGA1UEBhMCU0UxEjAQBgNVBAoMCVl1YmljbyBBQjEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEnMCUGA1UEAwweWXViaWNvIFUyRiBFRSBTZXJpYWwgNDEzOTQzNDg4MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeeo7LHxJcBBiIwzSP-tg5SkxcdSD8QC-hZ1rD4OXAwG1Rs3Ubs_K4-PzD4Hp7WK9Jo1MHr03s7y-kqjCrutOOqNsMGowIgYJKwYBBAGCxAoCBBUxLjMuNi4xLjQuMS40MTQ4Mi4xLjcwEwYLKwYBBAGC5RwCAQEEBAMCBSAwIQYLKwYBBAGC5RwBAQQEEgQQy2lIHo_3QDmT7AonKaFUqDAMBgNVHRMBAf8EAjAAMA0GCSqGSIb3DQEBCwUAA4IBAQCXnQOX2GD4LuFdMRx5brr7Ivqn4ITZurTGG7tX8-a0wYpIN7hcPE7b5IND9Nal2bHO2orh_tSRKSFzBY5e4cvda9rAdVfGoOjTaCW6FZ5_ta2M2vgEhoz5Do8fiuoXwBa1XCp61JfIlPtx11PXm5pIS2w3bXI7mY0uHUMGvxAzta74zKXLslaLaSQibSKjWKt9h-SsXy4JGqcVefOlaQlJfXL1Tga6wcO0QTu6Xq-Uw7ZPNPnrpBrLauKDd202RlN4SP7ohL3d9bG6V5hUz_3OusNEBZUn5W3VmPj1ZnFavkMB3RkRMOa58MZAORJT4imAPzrvJ0vtv94_y71C6tZ5aGF1dGhEYXRhWMQSyhe0mvIolDbzA-AWYDCiHlJdJm4gkmdDOAGo_UBxoEEAAAAAAAAAAAAAAAAAAAAAAAAAAABA0xYE4bQ_HZM51-XYwp7WHJu8RfeA2Oz3_9HnNIZAKqRTz9gsUlF3QO7EqcJ0pgLSwDcq6cL1_aQpTtKLeGu6IqUBAgMmIAEhWCCe1KvqpcVWN416_QZc8vJynt3uo3_WeJ2R4uj6kJbaiiJYIDC5ssxxummKviGgLoP9ZLFb836A9XfRO7op18QY3i5m",
+             "clientDataJSON":"eyJjaGFsbGVuZ2UiOiJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwiY2xpZW50RXh0ZW5zaW9ucyI6e30sImhhc2hBbGdvcml0aG0iOiJTSEEtMjU2Iiwib3JpZ2luIjoiaHR0cDovLzEyNy4wLjAuMTo4MDgwIiwidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSJ9"
+        },
+        "type":"public-key"}
+    "#;
+
 async fn exercise(db: DbPool) {
     let _ = krausen_core::constants::load_with_fallback();
     let suffix = uuid::Uuid::new_v4();
@@ -38,30 +49,8 @@ async fn exercise(db: DbPool) {
         &url::Url::parse("http://localhost").unwrap(),
     )
     .unwrap();
-    for claimed_email in [email.as_str(), "new-unverified@example.test"] {
-        let result = krausen_auth::auth_service::passkey_register_start_service(
-            krausen_auth::auth_service::PasskeyRegisterStartParams {
-                db: &db,
-                kv: &kv,
-                webauthn: &webauthn,
-                email: claimed_email,
-                name: "Claimed",
-                device_name: "Device",
-                ip: "test",
-                self_hosted: true,
-                smtp_configured: false,
-                frontend_url: "http://localhost",
-            },
-        )
-        .await;
-        assert!(result.is_err());
-    }
-    assert!(
-        user_service::get_user_by_email(&db, "new-unverified@example.test")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    // A challenge with no purpose, however plausible its user_id, cannot be
+    // completed through the authenticated add-device path.
     krausen_auth::redis_ops::store_webauthn_challenge(
         &kv,
         "old-unbound",
@@ -69,18 +58,20 @@ async fn exercise(db: DbPool) {
     )
     .await
     .unwrap();
+    let credential: webauthn_rs::prelude::RegisterPublicKeyCredential =
+        serde_json::from_str(REGISTER_CREDENTIAL_JSON).unwrap();
+    let rejected = krausen_auth::security_service::complete_passkey_registration(
+        &db,
+        &kv,
+        &webauthn,
+        &user.user_id,
+        "old-unbound",
+        &credential,
+    )
+    .await;
     assert!(
-        krausen_auth::auth_service::passkey_register_complete_service(
-            &db,
-            &kv,
-            "test-secret-at-least-32-bytes-long",
-            &webauthn,
-            "old-unbound",
-            "{}",
-            &device
-        )
-        .await
-        .is_err()
+        matches!(rejected, Err(krausen_core::Error::Internal(ref m)) if m == "Invalid or expired challenge"),
+        "an unbound challenge must be rejected as invalid or expired"
     );
     assert!(
         user_service::get_passkey_credentials(&db, &user.user_id)

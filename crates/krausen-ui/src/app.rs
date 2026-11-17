@@ -15,7 +15,7 @@ use crate::pages::auth::{
     account_recovery::AccountRecoveryPage, account_recovery_complete::AccountRecoveryCompletePage,
     google_callback::GoogleCallbackPage, login::LoginPage, oauth_complete::OAuthCompletePage,
     passkey_recovery::PasskeyRecoveryPage, passkey_recovery_complete::PasskeyRecoveryCompletePage,
-    passkey_signup_complete::PasskeySignupCompletePage, signup_complete::SignupCompletePage,
+    signup_complete::SignupCompletePage,
 };
 use crate::pages::beerxml::BeerXmlPage;
 use crate::pages::brew_evidence::BrewEvidencePage;
@@ -91,7 +91,6 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/auth/google/callback") view=GoogleCallbackPage/>
                 <Route path=path!("/account/recover") view=AccountRecoveryPage/>
                 <Route path=path!("/account/recover/complete") view=AccountRecoveryCompletePage/>
-                <Route path=path!("/auth/passkey-signup") view=PasskeySignupCompletePage/>
                 <Route path=path!("/auth/recover-passkey") view=PasskeyRecoveryPage/>
                 <Route path=path!("/auth/recover-passkey/complete") view=PasskeyRecoveryCompletePage/>
                 <Route path=path!("/oauth-complete") view=OAuthCompletePage/>

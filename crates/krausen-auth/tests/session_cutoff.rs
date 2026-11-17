@@ -370,6 +370,32 @@ async fn user_lookup_error_fails_closed(db: &DbPool) {
     );
 }
 
+/// A recovery-session token carries no browser issuer, audience or credential,
+/// so the extractor refuses it as an invalid browser credential. (The refusal
+/// comes from the browser-token validation, not from the `scope` claim.)
+async fn a_recovery_session_token_is_refused_as_a_browser_credential(db: &DbPool) {
+    let u = user(db).await;
+    let token = jwt::create_access_token_str(
+        &u.user_id,
+        SECRET,
+        15,
+        [
+            ("scope".into(), serde_json::json!("passkey_recovery")),
+            ("email".into(), serde_json::json!(u.email)),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+    match authenticate(db, &token).await {
+        Err(krausen_core::Error::Unauthorized(msg)) => {
+            assert_eq!(msg, "Invalid browser credential")
+        }
+        Err(other) => panic!("expected Unauthorized, got {other:?}"),
+        Ok(_) => panic!("a recovery-session token must not authenticate as a browser session"),
+    }
+}
+
 async fn sqlite() -> DbPool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -430,4 +456,5 @@ on_both_backends!(
     grace_rerotation_after_revoke_all_is_rejected,
     workspace_lookup_error_fails_closed,
     user_lookup_error_fails_closed,
+    a_recovery_session_token_is_refused_as_a_browser_credential,
 );

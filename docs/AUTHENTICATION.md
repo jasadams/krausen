@@ -50,5 +50,14 @@ without cross-tab locks cannot silently refresh and must sign in again when its
 access token expires; this can affect HTTP LAN origins where the browser does
 not expose secure-context APIs. Configure HTTPS for normal browser use.
 
-Public passkey enrollment is temporarily unavailable until account ownership
-can be proven. Existing authenticated passkey management is unchanged.
+There is no public passkey signup. A passkey is added by a signed-in account (Settings >
+Security) or re-registered through passkey recovery: a verified account requests a recovery
+link by email (`/auth/recover-passkey`), the link opens a 15-minute recovery session, and
+completing it registers a new passkey and revokes every session that existed before, as
+password recovery does. WebAuthn challenges are bound to the flow that minted them (login,
+recovery, add-device), so a challenge from one flow cannot be completed in another, and a
+user cannot remove their last remaining sign-in method: the shared removal guard refuses to
+deactivate the last active password, passkey or Google sign-in method (TOTP is a second
+factor and is never blocked). There is no Google unlink flow yet; it would use the same guard.
+Passkey recovery, like password recovery, needs email; without SMTP an administrator must
+be asked.

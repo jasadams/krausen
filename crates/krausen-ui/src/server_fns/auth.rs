@@ -484,6 +484,62 @@ pub async fn recovery_start(email: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+/// Start the passkey recovery flow by sending a recovery email.
+///
+/// Public endpoint — no authentication required.
+///
+/// KYO-285: this is the passkey-recovery counterpart to `recovery_start`
+/// above — `/auth/recover-passkey` was previously wired to `recovery_start`
+/// itself, which mints an *account/password* recovery token. Completing that
+/// flow adds a password auth method and silently strips TOTP via
+/// `recover_set_password_service`, without ever getting the user a new
+/// passkey. This calls `passkey_recovery_start_service` instead, which mints
+/// a `"passkey_recovery"` token (15-minute expiry) and sends
+/// `send_passkey_recovery` rather than the account recovery email.
+///
+/// Enumeration-resistant: whether the account exists, is unverified, or
+/// token minting failed are all indistinguishable to the caller — every one
+/// of those cases returns `Ok(())` with no email sent (see
+/// `krausen_auth::auth_service::passkey_recovery_start_service`). The two
+/// exceptions that do return `Err` are rate-limiting (on the
+/// `passkey_recovery` bucket) and the self-hosted SMTP-not-configured
+/// precondition above, both of which fire before any account lookup and so
+/// leak nothing about a specific email. Delegates token minting + email
+/// dispatch to `passkey_recovery_start_service`.
+#[server(prefix = "/leptos-api")]
+pub async fn passkey_recovery_start(email: String) -> Result<(), ServerFnError> {
+    let ctx = extract_context()?;
+
+    if ctx.config.self_hosted && !ctx.config.smtp_configured() {
+        return Err(ServerFnError::new(
+            "Passkey recovery requires email. Ask your administrator to configure SMTP.",
+        ));
+    }
+
+    let headers: axum::http::HeaderMap = leptos_axum::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
+
+    let ip = extract_client_ip(&headers);
+    let email = email.to_lowercase();
+    let email = email.trim();
+
+    krausen_auth::auth_service::passkey_recovery_start_service(
+        &ctx.db,
+        &kv,
+        &ip,
+        email,
+        &ctx.config.frontend_url,
+        ctx.config.self_hosted,
+    )
+    .await
+    .into_sfn()
+}
+
 /// Verify a recovery token and create a short-lived recovery session.
 ///
 /// Public endpoint — no authentication required.
@@ -586,21 +642,9 @@ pub struct PasskeyLoginStartResult {
     pub request_challenge: String,
 }
 
-/// Result of starting a passkey registration challenge.
-///
-/// Contains the challenge_id (to correlate start/complete) and the serialized
-/// `PublicKeyCredentialCreationOptions` for the browser.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PasskeyRegisterStartResult {
-    pub challenge_id: String,
-    /// JSON string of PublicKeyCredentialCreationOptions for `navigator.credentials.create()`.
-    pub creation_challenge: String,
-}
-
 /// Start passkey login — generate a WebAuthn assertion challenge.
 ///
 /// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/login/start` in `apps/server/src/routes/auth_passkeys.rs`.
 ///
 /// Uses discoverable credential flow (empty `allowCredentials`) so the browser
 /// presents all available passkeys. If an email is provided and the user has
@@ -608,8 +652,16 @@ pub struct PasskeyRegisterStartResult {
 #[server(prefix = "/leptos-api")]
 pub async fn passkey_login_start() -> Result<PasskeyLoginStartResult, ServerFnError> {
     let ctx = extract_context()?;
-    let webauthn = ctx.webauthn()?;
-    let kv = ctx.kv()?;
+
+    let webauthn = ctx
+        .webauthn
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("WebAuthn not configured"))?;
+
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
 
     // Use discoverable credential flow — no email required.
     // The browser will show all available passkeys for this relying party.
@@ -627,6 +679,7 @@ pub async fn passkey_login_start() -> Result<PasskeyLoginStartResult, ServerFnEr
     let challenge_data = serde_json::json!({
         "discoverable_state": disc_state_json,
         "discoverable": true,
+        "purpose": krausen_auth::webauthn_challenge_purpose::PASSKEY_LOGIN,
     });
     krausen_auth::redis_ops::store_webauthn_challenge(&kv, &challenge_id, &challenge_data)
         .await
@@ -644,7 +697,6 @@ pub async fn passkey_login_start() -> Result<PasskeyLoginStartResult, ServerFnEr
 /// Complete passkey login — verify the WebAuthn assertion.
 ///
 /// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/login/complete` in `apps/server/src/routes/auth_passkeys.rs`.
 ///
 /// Delegates all orchestration to `krausen_auth::auth_service::passkey_login_complete_service`.
 #[server(prefix = "/leptos-api")]
@@ -654,18 +706,30 @@ pub async fn passkey_login_complete(
 ) -> Result<LoginResult, ServerFnError> {
     use krausen_auth::auth_service::{passkey_login_complete_service, PasskeyLoginServiceResult};
 
-    let afc = AuthFlowContext::extract().await?;
-    let webauthn = afc.ctx.webauthn()?;
+    let ctx = extract_context()?;
+    let webauthn = ctx
+        .webauthn
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("WebAuthn not configured"))?;
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
+    let headers: axum::http::HeaderMap = leptos_axum::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let ip = extract_client_ip(&headers);
+    let device = extract_device_info(&headers);
 
     let result = passkey_login_complete_service(krausen_auth::auth_service::PasskeyLoginCompleteParams {
-        db: &afc.ctx.db,
-        kv: &afc.kv,
-        jwt_secret: &afc.ctx.config.jwt_secret,
+        db: &ctx.db,
+        kv: &kv,
+        jwt_secret: &ctx.config.jwt_secret,
         webauthn,
         challenge_id: &challenge_id,
         assertion_json: &assertion_json,
-        ip: &afc.ip,
-        device: &afc.device,
+        ip: &ip,
+        device: &device,
     })
     .await
     .map_err(|e| {
@@ -700,112 +764,6 @@ pub async fn passkey_login_complete(
     }
 }
 
-/// Start passkey registration — create or find user and generate a WebAuthn challenge.
-///
-/// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/register/start` in `apps/server/src/routes/auth_passkeys.rs`.
-///
-/// Delegates all orchestration to `krausen_auth::auth_service::passkey_register_start_service`.
-/// For existing unverified users: resends verification email.
-#[server(prefix = "/leptos-api")]
-pub async fn passkey_register_start(
-    email: String,
-    name: Option<String>,
-    device_name: String,
-) -> Result<PasskeyRegisterStartResult, ServerFnError> {
-    use krausen_auth::auth_service::{
-        passkey_register_start_service, PasskeyRegisterStartServiceResult,
-    };
-
-    let afc = AuthFlowContext::extract().await?;
-    let webauthn = afc.ctx.webauthn()?;
-
-    let email_lower = email.to_lowercase();
-    let email_trimmed = email_lower.trim();
-    let name_str = name.unwrap_or_default();
-    let device_name_str = if device_name.trim().is_empty() {
-        "Unknown Device".to_string()
-    } else {
-        device_name.trim().to_string()
-    };
-
-    let result = passkey_register_start_service(krausen_auth::auth_service::PasskeyRegisterStartParams {
-        db: &afc.ctx.db,
-        kv: &afc.kv,
-        webauthn,
-        email: email_trimmed,
-        name: &name_str,
-        device_name: &device_name_str,
-        ip: &afc.ip,
-        self_hosted: afc.ctx.config.self_hosted,
-        smtp_configured: afc.ctx.config.smtp_configured(),
-        frontend_url: &afc.ctx.config.frontend_url,
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "passkey_register_start_service error");
-        ServerFnError::new("Internal server error")
-    })?;
-
-    match result {
-        PasskeyRegisterStartServiceResult::Success {
-            challenge_id,
-            creation_challenge,
-        } => Ok(PasskeyRegisterStartResult {
-            challenge_id,
-            creation_challenge,
-        }),
-        PasskeyRegisterStartServiceResult::RateLimited { retry_after_secs } => {
-            Err(ServerFnError::new(format!(
-                "Rate limited. Try again in {retry_after_secs} seconds"
-            )))
-        }
-        PasskeyRegisterStartServiceResult::UnverifiedEmail => Err(ServerFnError::new(
-            "Please verify your email before registering a passkey.",
-        )),
-        PasskeyRegisterStartServiceResult::VerificationEmailSent => Err(ServerFnError::new(
-            "Please check your email to verify your account before registering a passkey.",
-        )),
-    }
-}
-
-/// Complete passkey registration — verify the browser credential and store it.
-///
-/// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/register/complete` in `apps/server/src/routes/auth_passkeys.rs`.
-///
-/// Delegates all orchestration to `krausen_auth::auth_service::passkey_register_complete_service`.
-#[server(prefix = "/leptos-api")]
-pub async fn passkey_register_complete(
-    challenge_id: String,
-    credential_json: String,
-) -> Result<LoginResult, ServerFnError> {
-    let afc = AuthFlowContext::extract().await?;
-    let webauthn = afc.ctx.webauthn()?;
-
-    let sess = krausen_auth::auth_service::passkey_register_complete_service(
-        &afc.ctx.db,
-        &afc.kv,
-        &afc.ctx.config.jwt_secret,
-        webauthn,
-        &challenge_id,
-        &credential_json,
-        &afc.device,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "passkey_register_complete_service error");
-        ServerFnError::new("Internal server error")
-    })?;
-
-    set_session_cookies(&sess);
-    Ok(LoginResult::Success {
-        user_id: sess.user.user_id,
-        email: sess.user.email,
-        name: sess.user.name.unwrap_or_default(),
-    })
-}
-
 /// Result of verifying a passkey recovery token.
 ///
 /// On success, returns the WebAuthn challenge for creating a new passkey,
@@ -823,56 +781,13 @@ pub enum PasskeyRecoveryVerifyResult {
     },
 }
 
-/// Verify a passkey signup token and generate a WebAuthn registration challenge.
-///
-/// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/signup/complete`.
-///
-/// Delegates all orchestration to `krausen_auth::auth_service::passkey_signup_complete_service`.
-#[server(prefix = "/leptos-api")]
-pub async fn passkey_signup_complete(
-    token: String,
-    name: String,
-    terms_accepted: bool,
-    marketing_consent: bool,
-) -> Result<PasskeyRegisterStartResult, ServerFnError> {
-    let ctx = extract_context()?;
-    let webauthn = ctx.webauthn()?;
-    let kv = ctx.kv()?;
-
-    let result = krausen_auth::auth_service::passkey_signup_complete_service(
-        krausen_auth::auth_service::PasskeySignupCompleteParams {
-            db: &ctx.db,
-            kv: &kv,
-            webauthn,
-            token: &token,
-            name: &name,
-            terms_accepted,
-            marketing_consent,
-            config: Some(&ctx.config),
-            slack_feedback_webhook_url: ctx.config.slack_feedback_webhook_url.as_deref(),
-            support_email: &ctx.config.support_email,
-        },
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "passkey_signup_complete_service error");
-        ServerFnError::new("Internal server error")
-    })?;
-
-    match result {
-        Ok((challenge_id, creation_challenge)) => Ok(PasskeyRegisterStartResult {
-            challenge_id,
-            creation_challenge,
-        }),
-        Err(message) => Err(ServerFnError::new(message)),
-    }
-}
-
 /// Verify a passkey recovery token and generate a WebAuthn registration challenge.
 ///
 /// Public endpoint — no authentication required.
-/// Mirrors `POST /auth/passkeys/recovery/verify`.
+/// Mirrors `POST /auth/passkeys/recovery/verify` from the React backend.
+///
+/// Also sets the HttpOnly `recovery_session` cookie (KYO-284) — binds the
+/// eventual `passkey_recovery_complete` call to this same browser session.
 ///
 /// Delegates all orchestration to `krausen_auth::auth_service::passkey_recovery_verify_service`.
 #[server(prefix = "/leptos-api")]
@@ -880,12 +795,19 @@ pub async fn passkey_recovery_verify(
     token: String,
 ) -> Result<PasskeyRecoveryVerifyResult, ServerFnError> {
     let ctx = extract_context()?;
-    let webauthn = ctx.webauthn()?;
-    let kv = ctx.kv()?;
+    let webauthn = ctx
+        .webauthn
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("WebAuthn not configured"))?;
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
 
     let result = krausen_auth::auth_service::passkey_recovery_verify_service(
         &ctx.db,
         &kv,
+        &ctx.config.jwt_secret,
         webauthn,
         &token,
     )
@@ -896,7 +818,24 @@ pub async fn passkey_recovery_verify(
     })?;
 
     match result {
-        Ok((challenge_id, creation_challenge, email)) => {
+        Ok(krausen_auth::auth_service::PasskeyRecoveryVerifySuccess {
+            challenge_id,
+            creation_challenge,
+            email,
+            recovery_session_jwt,
+        }) => {
+            // Set the HttpOnly recovery_session cookie so the eventual
+            // passkey_recovery_complete call can prove it's the same
+            // browser session that redeemed the recovery token (KYO-284).
+            let response_options =
+                leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
+            let mut cookie_headers = axum::http::HeaderMap::new();
+            krausen_auth::cookies::set_recovery_session_cookie(
+                &mut cookie_headers,
+                &recovery_session_jwt,
+            );
+            append_set_cookie_headers(&response_options, &cookie_headers);
+
             Ok(PasskeyRecoveryVerifyResult::Success {
                 challenge_id,
                 creation_challenge,
@@ -907,9 +846,94 @@ pub async fn passkey_recovery_verify(
     }
 }
 
+/// Complete passkey account *recovery* — verify the browser credential,
+/// bind it to the recovery session that redeemed the recovery token, and
+/// store it.
+///
+/// Public endpoint — no authentication required at the server_fn boundary,
+/// but requires the HttpOnly `recovery_session` cookie set by
+/// `passkey_recovery_verify` above (KYO-284).
+///
+/// Delegates all orchestration to
+/// `krausen_auth::auth_service::passkey_recovery_complete_service`.
+#[server(prefix = "/leptos-api")]
+pub async fn passkey_recovery_complete(
+    challenge_id: String,
+    credential_json: String,
+) -> Result<LoginResult, ServerFnError> {
+    let ctx = extract_context()?;
+    let webauthn = ctx
+        .webauthn
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("WebAuthn not configured"))?;
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
+    let headers: axum::http::HeaderMap = leptos_axum::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let device = extract_device_info(&headers);
+    let recovery_session_token =
+        krausen_auth::cookies::get_cookie_value(&headers, "recovery_session");
+
+    let sess = krausen_auth::auth_service::passkey_recovery_complete_service(
+        krausen_auth::auth_service::PasskeyRecoveryCompleteParams {
+            db: &ctx.db,
+            kv: &kv,
+            jwt_secret: &ctx.config.jwt_secret,
+            webauthn,
+            challenge_id: &challenge_id,
+            credential_json: &credential_json,
+            device: &device,
+            recovery_session_token,
+        },
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "passkey_recovery_complete_service error");
+        ServerFnError::new("Internal server error")
+    })?;
+
+    set_session_cookies(&sess);
+
+    // Clear the recovery session cookie now that recovery has completed —
+    // it must not be reusable for a second completion attempt.
+    let response_options = leptos::prelude::expect_context::<leptos_axum::ResponseOptions>();
+    let mut clear_headers = axum::http::HeaderMap::new();
+    krausen_auth::cookies::clear_recovery_session_cookie(&mut clear_headers);
+    append_set_cookie_headers(&response_options, &clear_headers);
+
+    Ok(LoginResult::Success {
+        user_id: sess.user.user_id,
+        email: sess.user.email,
+        name: sess.user.name.unwrap_or_default(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers (server-only)
 // ---------------------------------------------------------------------------
+
+/// Forward every `Set-Cookie` header in `headers` into the current HTTP
+/// response via `ResponseOptions`.
+///
+/// Shared by every call site that builds a throwaway `HeaderMap` via a
+/// `krausen_auth::cookies::*` setter and needs those headers to actually
+/// reach the client: `set_session_cookies` below, `passkey_recovery_verify`
+/// setting the `recovery_session` cookie, and `passkey_recovery_complete`
+/// clearing it (KYO-284). Before this extraction each call site duplicated
+/// the same "build a `HeaderMap`, call a setter, loop `SET_COOKIE` values
+/// into `ResponseOptions`" sequence.
+#[cfg(feature = "ssr")]
+fn append_set_cookie_headers(
+    opts: &leptos_axum::ResponseOptions,
+    headers: &axum::http::HeaderMap,
+) {
+    for value in headers.get_all(axum::http::header::SET_COOKIE) {
+        opts.append_header(axum::http::header::SET_COOKIE, value.clone());
+    }
+}
 
 /// Apply session cookies to the current HTTP response.
 ///
