@@ -635,19 +635,20 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ## TC-029: Token Refresh - Rotation Detection
 
-**Description:** Reusing a refresh token that has already been rotated invalidates the entire token family.
+**Description:** A refresh token that was already rotated is still accepted during the 30-second grace period (and rotates again); reusing it after the grace period invalidates the entire token family.
 
 **Steps:**
 1. Log in as an existing user
 2. Capture the current refresh token value
 3. Trigger a token refresh (manually call `POST /api/v1/auth/refresh`)
-4. Verify a new refresh token is issued (the old one is consumed)
-5. Attempt to use the OLD refresh token again (replay attack)
-6. Verify the server rejects the old token
-7. Verify the ENTIRE token family is invalidated (the new token also stops working)
-8. Verify the user must re-authenticate (next protected page request redirects to `/login`)
+4. Verify a new refresh token is issued (the old one is replaced)
+5. Within 30 seconds, present the OLD refresh token again (lost response or a second tab)
+6. Verify the server accepts it and issues another fresh refresh token
+7. After the 30-second grace period has passed, present the OLD refresh token again (replay attack)
+8. Verify the server rejects it and the ENTIRE token family is invalidated (the newest token also stops working)
+9. Verify the user must re-authenticate (next protected page request redirects to `/login`)
 
-**Expected Result:** Token reuse detection invalidates all tokens in the family, forcing re-authentication.
+**Expected Result:** Reuse inside the grace period never signs the user out; reuse after it is detected as theft and forces re-authentication.
 
 ---
 

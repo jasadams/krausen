@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use krausen_auth::{jwt, session, token_refresh, token_service::DeviceInfo, user_service};
+use krausen_auth::{
+    jwt, session,
+    token_refresh::{self, RefreshedTokens},
+    token_service::{self, DeviceInfo},
+    user_service,
+};
 use krausen_core::DbPool;
 
 async fn exercise(db: DbPool) {
@@ -124,6 +129,18 @@ async fn exercise(db: DbPool) {
         jwt::validate_browser_token(&rotated.access_token, "test-secret-at-least-32-bytes-long")
             .is_ok()
     );
+    // Inside the grace period the replaced token is still accepted (it rotates again).
+    token_refresh::refresh_tokens(
+        &db,
+        "test-secret-at-least-32-bytes-long",
+        &issued.refresh_token,
+        &device,
+    )
+    .await
+    .unwrap();
+    // Reuse AFTER the grace period is theft: it is rejected and revokes the family.
+    let old_hash = krausen_auth::token_service::hash_refresh_token(&issued.refresh_token);
+    age_replaced_token(&db, &old_hash, grace_seconds() + 1).await;
     assert!(
         token_refresh::refresh_tokens(
             &db,
@@ -477,8 +494,7 @@ async fn exercise_oauth(db: &DbPool, actor: &krausen_app::ActorContext) {
     );
 }
 
-#[tokio::test]
-async fn sqlite_browser_credential_lifecycle() {
+async fn sqlite() -> DbPool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -488,11 +504,10 @@ async fn sqlite_browser_credential_lifecycle() {
         .run(&pool)
         .await
         .unwrap();
-    exercise(DbPool::Sqlite(pool)).await;
+    DbPool::Sqlite(pool)
 }
 
-#[tokio::test]
-async fn postgres_browser_credential_lifecycle() {
+async fn postgres() -> DbPool {
     let url =
         std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL URL required");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
@@ -500,5 +515,216 @@ async fn postgres_browser_credential_lifecycle() {
         .run(&pool)
         .await
         .unwrap();
-    exercise(DbPool::Postgres(pool)).await;
+    DbPool::Postgres(pool)
+}
+
+#[tokio::test]
+async fn sqlite_browser_credential_lifecycle() {
+    exercise(sqlite().await).await;
+}
+
+#[tokio::test]
+async fn postgres_browser_credential_lifecycle() {
+    exercise(postgres().await).await;
+}
+
+/// Pretend the refresh token with this hash was replaced `seconds` ago.
+async fn age_replaced_token(db: &DbPool, hash: &str, seconds: i64) {
+    let sql = if db.is_postgres() {
+        format!(
+            "UPDATE refresh_tokens SET replaced_at = NOW() - INTERVAL '{seconds} seconds' WHERE token_hash = $1"
+        )
+    } else {
+        format!(
+            "UPDATE refresh_tokens SET replaced_at = datetime('now', '-{seconds} seconds') WHERE token_hash = $1"
+        )
+    };
+    krausen_core::db_execute!(db, &sql, hash).unwrap();
+}
+
+// Refresh grace period (Kyomi parity): reuse inside it rotates again; reuse after it revokes.
+const SECRET: &str = "test-secret-at-least-32-bytes-long";
+
+fn grace_seconds() -> i64 {
+    krausen_core::constants::get()
+        .jwt
+        .refresh_token_grace_period_seconds
+}
+
+struct Fixture {
+    db: DbPool,
+    device: DeviceInfo,
+    refresh_token: String,
+    credential_id: String,
+}
+
+async fn fixture(db: DbPool) -> Fixture {
+    let _ = krausen_core::constants::load_with_fallback();
+    let email = format!("{}@example.test", uuid::Uuid::new_v4());
+    let user = user_service::create_user(&db, &email, Some("Brewer"), true)
+        .await
+        .unwrap();
+    user_service::create_workspace_for_user(&db, &user.user_id, Some("Brewer"), &email, None)
+        .await
+        .unwrap();
+    let device = DeviceInfo {
+        user_agent: None,
+        ip_address: None,
+        country_code: None,
+        oauth_client_id: None,
+    };
+    let kv = krausen_core::kv_store_memory::InMemoryKVStore::new_pool();
+    let issued = session::create_authenticated_session(&db, &kv, SECRET, &user, &device)
+        .await
+        .unwrap();
+    let credential_id = jwt::validate_browser_token(&issued.access_token, SECRET)
+        .unwrap()
+        .claims
+        .extra["credential_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    Fixture {
+        db,
+        device,
+        refresh_token: issued.refresh_token,
+        credential_id,
+    }
+}
+
+impl Fixture {
+    async fn refresh(&self, raw: &str) -> krausen_core::Result<RefreshedTokens> {
+        token_refresh::refresh_tokens(&self.db, SECRET, raw, &self.device).await
+    }
+
+    /// Pretend the token was replaced `seconds` ago.
+    async fn replaced_ago(&self, raw: &str, seconds: i64) {
+        age_replaced_token(&self.db, &token_service::hash_refresh_token(raw), seconds).await;
+    }
+
+    async fn credential_revoked(&self) -> bool {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            revoked: i64,
+        }
+        let row = krausen_core::db_fetch_optional!(
+            &self.db,
+            Row,
+            "SELECT CAST(CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END AS BIGINT) AS revoked FROM auth_credentials WHERE credential_id = $1",
+            &self.credential_id
+        )
+        .unwrap()
+        .unwrap();
+        row.revoked == 1
+    }
+}
+
+fn is_unauthorized<T>(result: &krausen_core::Result<T>) -> bool {
+    matches!(result, Err(krausen_core::Error::Unauthorized(_)))
+}
+
+/// Reuse of a replaced token inside the grace period succeeds and rotates again.
+async fn reuse_inside_grace_succeeds_and_rotates_again(db: DbPool) {
+    let f = fixture(db).await;
+    let first = f.refresh(&f.refresh_token).await.unwrap();
+    let second = f.refresh(&f.refresh_token).await.unwrap();
+    assert_ne!(first.raw_refresh_token, second.raw_refresh_token);
+    assert!(jwt::validate_browser_token(&second.access_token, SECRET).is_ok());
+    // Each tab holds its own fresh token and both stay usable.
+    f.refresh(&first.raw_refresh_token).await.unwrap();
+    f.refresh(&second.raw_refresh_token).await.unwrap();
+    assert!(!f.credential_revoked().await);
+}
+
+/// Reuse after the grace period is theft: the family and credential are revoked.
+async fn reuse_after_grace_revokes_the_family(db: DbPool) {
+    let f = fixture(db).await;
+    let first = f.refresh(&f.refresh_token).await.unwrap();
+    f.replaced_ago(&f.refresh_token, grace_seconds() + 1).await;
+    let reuse = f.refresh(&f.refresh_token).await;
+    assert!(
+        is_unauthorized(&reuse),
+        "reuse after grace must be rejected"
+    );
+    assert!(f.credential_revoked().await, "the credential is revoked");
+    // The token rotated from it is part of the revoked family too.
+    assert!(is_unauthorized(&f.refresh(&first.raw_refresh_token).await));
+}
+
+/// The grace period boundary: replaced 29 s ago is accepted, 31 s ago is theft.
+async fn grace_boundary(db: DbPool) {
+    let f = fixture(db).await;
+    f.refresh(&f.refresh_token).await.unwrap();
+    f.replaced_ago(&f.refresh_token, grace_seconds() - 1).await;
+    f.refresh(&f.refresh_token).await.unwrap();
+    assert!(!f.credential_revoked().await);
+    f.replaced_ago(&f.refresh_token, grace_seconds() + 1).await;
+    assert!(is_unauthorized(&f.refresh(&f.refresh_token).await));
+    assert!(f.credential_revoked().await);
+}
+
+/// The rotation committed but its response was dropped: retrying with the old token
+/// inside the grace period succeeds, so a lost response never signs the user out.
+async fn lost_response_replay_succeeds(db: DbPool) {
+    let f = fixture(db).await;
+    drop(f.refresh(&f.refresh_token).await.unwrap());
+    let retry = f.refresh(&f.refresh_token).await.unwrap();
+    assert!(jwt::validate_browser_token(&retry.access_token, SECRET).is_ok());
+    assert!(!f.credential_revoked().await);
+}
+
+/// A revoked or expired credential is rejected even inside the grace period.
+async fn revoked_or_expired_credential_is_rejected_inside_grace(db: DbPool) {
+    let revoked = fixture(db.clone()).await;
+    revoked.refresh(&revoked.refresh_token).await.unwrap();
+    krausen_core::db_execute!(
+        &revoked.db,
+        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
+        chrono::Utc::now().timestamp(),
+        &revoked.credential_id
+    )
+    .unwrap();
+    assert!(is_unauthorized(
+        &revoked.refresh(&revoked.refresh_token).await
+    ));
+
+    let expired = fixture(db).await;
+    expired.refresh(&expired.refresh_token).await.unwrap();
+    krausen_core::db_execute!(
+        &expired.db,
+        "UPDATE auth_credentials SET expires_at = $1 WHERE credential_id = $2",
+        chrono::Utc::now().timestamp() - 10,
+        &expired.credential_id
+    )
+    .unwrap();
+    assert!(is_unauthorized(
+        &expired.refresh(&expired.refresh_token).await
+    ));
+}
+
+/// Two simultaneous rotations of the same current token both succeed with distinct tokens.
+async fn concurrent_rotations_of_one_token_both_succeed(db: DbPool) {
+    let f = fixture(db).await;
+    let (a, b) = tokio::join!(f.refresh(&f.refresh_token), f.refresh(&f.refresh_token));
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.raw_refresh_token, b.raw_refresh_token);
+    assert!(!f.credential_revoked().await);
+}
+
+macro_rules! on_both_backends {
+    ($($scenario:ident => $sqlite:ident, $postgres:ident;)+) => {$(
+        #[tokio::test]
+        async fn $sqlite() { $scenario(sqlite().await).await; }
+        #[tokio::test]
+        async fn $postgres() { $scenario(postgres().await).await; }
+    )+};
+}
+
+on_both_backends! {
+    reuse_inside_grace_succeeds_and_rotates_again => reuse_inside_grace_sqlite, reuse_inside_grace_postgres;
+    reuse_after_grace_revokes_the_family => reuse_after_grace_sqlite, reuse_after_grace_postgres;
+    grace_boundary => grace_boundary_sqlite, grace_boundary_postgres;
+    lost_response_replay_succeeds => lost_response_replay_sqlite, lost_response_replay_postgres;
+    concurrent_rotations_of_one_token_both_succeed => concurrent_sqlite, concurrent_postgres;
+    revoked_or_expired_credential_is_rejected_inside_grace => revoked_or_expired_sqlite, revoked_or_expired_postgres;
 }
