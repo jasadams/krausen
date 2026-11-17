@@ -66,7 +66,7 @@ async fn exercise(db: DbPool) {
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let expired = ActorContext {
@@ -112,7 +112,7 @@ async fn exercise(db: DbPool) {
         chrono::Utc::now().timestamp() + 3600
     );
     let refreshed_actor = ActorContext {
-        credential_id: refreshed_credential,
+        credential_id: Some(refreshed_credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
         ..actor.clone()
     };
@@ -224,7 +224,7 @@ async fn exercise(db: DbPool) {
     let other_actor = ActorContext {
         actor_id: other_user,
         workspace_id: workspace.clone(),
-        credential_id: other_credential,
+        credential_id: Some(other_credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(
@@ -506,7 +506,7 @@ async fn postgres_resource_lock_wait_rechecks_both_expiries() {
     let mut actor = ActorContext {
         actor_id: user,
         workspace_id: workspace.clone(),
-        credential_id: credential.clone(),
+        credential_id: Some(credential.clone()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let pool = DbPool::Postgres(control.clone());

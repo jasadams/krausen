@@ -12,7 +12,9 @@ pub mod recipe_migration;
 pub struct ActorContext {
     pub actor_id: String,
     pub workspace_id: String,
-    pub credential_id: String,
+    /// Browser sessions are still bound to a durable credential row (rechecked
+    /// under lock); MCP actors authenticate with a signed JWT and carry none.
+    pub credential_id: Option<String>,
     /// Expiry of the verified access token, rechecked after acquiring authority locks.
     pub access_expires_at: i64,
 }
@@ -224,16 +226,17 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
     } else {
         "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3"
     };
-    if scalar!(
-        tx,
-        String,
-        credential_sql,
-        &actor.credential_id,
-        &actor.actor_id,
-        chrono::Utc::now().timestamp()
-    )
-    .map_err(db_error)?
-    .is_none()
+    if let Some(credential_id) = &actor.credential_id
+        && scalar!(
+            tx,
+            String,
+            credential_sql,
+            credential_id,
+            &actor.actor_id,
+            chrono::Utc::now().timestamp()
+        )
+        .map_err(db_error)?
+        .is_none()
     {
         return Err(Error::Forbidden);
     }
@@ -247,12 +250,15 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
         .ok_or(Error::Forbidden)?;
     // Lock waits can cross either expiry boundary. Re-read with the current
     // clock after acquiring authority locks.
-    if actor.access_expires_at <= chrono::Utc::now().timestamp()
-        || scalar!(
+    if actor.access_expires_at <= chrono::Utc::now().timestamp() {
+        return Err(Error::Forbidden);
+    }
+    if let Some(credential_id) = &actor.credential_id
+        && scalar!(
             tx,
             String,
             credential_sql,
-            &actor.credential_id,
+            credential_id,
             &actor.actor_id,
             chrono::Utc::now().timestamp()
         )

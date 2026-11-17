@@ -103,7 +103,7 @@ mod tests {
         let actor = krausen_app::ActorContext {
             actor_id: "u".into(),
             workspace_id: "w".into(),
-            credential_id: "c".into(),
+            credential_id: Some("c".into()),
             access_expires_at: 4102444800,
         };
         let request = uuid::Uuid::new_v4().to_string();

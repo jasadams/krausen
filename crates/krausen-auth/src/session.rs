@@ -169,3 +169,13 @@ pub async fn switch_active_workspace(
 
     create_authenticated_session(db, kv, jwt_secret, user, device_info).await
 }
+
+/// Validate session authority at handlers that do not use an auth extractor.
+/// These handlers have no existing user lookup; perform one fresh lookup and
+/// enforce the same cutoff as the shared middleware.
+pub async fn require_current_browser_session(db: &DbPool, claims: &jwt::Claims) -> krausen_core::Result<()> {
+    claims.require_session()?;
+    let user = user_service::get_user_by_id(db, &claims.sub).await?
+        .ok_or_else(|| krausen_core::Error::Unauthorized("User not found".into()))?;
+    claims.require_current_session(user.sessions_valid_from)
+}

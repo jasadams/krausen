@@ -258,3 +258,16 @@ fn extract_token(parts: &Parts) -> krausen_core::Result<String> {
 // Identity impl — when the state IS AuthState directly.
 // (Axum's FromRef blanket impl handles this for types that impl Clone.)
 // The AppState → AuthState impl is in apps/server/src/state.rs.
+
+/// The authenticated caller of the MCP endpoint.
+///
+/// An MCP OAuth access token is a signed JWT (`purpose = mcp`) and carries no
+/// session authority, so `credential_id` is `None`; a browser session used on
+/// the same endpoint carries its credential (until browser sessions stop being
+/// bound to one).
+#[derive(Debug, Clone)]
+pub struct Principal {
+    pub user_id: String,
+    pub credential_id: Option<String>,
+    pub access_expires_at: i64,
+}

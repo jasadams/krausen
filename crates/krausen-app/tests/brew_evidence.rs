@@ -164,7 +164,7 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace,
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
 
@@ -1449,7 +1449,7 @@ async fn exercise(db: DbPool) {
     let other_workspace_actor = ActorContext {
         actor_id: actor.actor_id.clone(),
         workspace_id: second_workspace,
-        credential_id: second_credential,
+        credential_id: Some(second_credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(
@@ -1491,7 +1491,7 @@ async fn exercise(db: DbPool) {
     let outsider_actor = ActorContext {
         actor_id: outsider,
         workspace_id: actor.workspace_id.clone(),
-        credential_id: outsider_credential,
+        credential_id: Some(outsider_credential),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     assert_eq!(

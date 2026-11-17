@@ -138,13 +138,13 @@ async fn exercise(db: DbPool) {
     let actor_a = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace_a.clone(),
-        credential_id: cred.clone(),
+        credential_id: Some(cred.clone()),
         access_expires_at: 4102444800,
     };
     let actor_b = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace_b.clone(),
-        credential_id: cred.clone(),
+        credential_id: Some(cred.clone()),
         access_expires_at: 4102444800,
     };
     let intent_a = OperationIntent {

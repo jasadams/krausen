@@ -15,6 +15,7 @@ pub mod onboarding_service;
 pub mod password;
 pub mod rate_limiter;
 pub mod redis_ops;
+pub mod request_meta;
 pub mod security_service;
 pub mod session;
 pub mod sync_log_service;
@@ -34,4 +35,3 @@ pub fn http_client() -> krausen_core::Result<reqwest::Client> {
         .map_err(|e| krausen_core::Error::Internal(format!("Failed to build HTTP client: {e}")))
 }
 
-pub mod oauth_service;

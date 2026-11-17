@@ -77,7 +77,7 @@ async fn exercise(db: DbPool) {
     let actor = ActorContext {
         actor_id: user,
         workspace_id: ws,
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: 4102444800,
     };
     let intent = krausen_types::request_context::OperationIntent {

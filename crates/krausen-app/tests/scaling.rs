@@ -165,7 +165,7 @@ async fn exercise(db: DbPool) {
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: a.clone(),
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: 4102444800,
     };
     let intent = OperationIntent {

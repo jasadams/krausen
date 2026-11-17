@@ -9,7 +9,10 @@ use axum::{
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
-use krausen_auth::oauth_service::{self, Principal};
+use krausen_auth::{
+    jwt,
+    middleware::{AuthUser, Principal},
+};
 use krausen_types::operations;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
@@ -1451,17 +1454,13 @@ impl ServerHandler for McpHandler {
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let db = state.db.clone();
-    let base = url::Url::parse(&state.config.base_url).expect("valid BASE_URL for MCP");
-    let front = url::Url::parse(&state.config.frontend_url).expect("valid FRONTEND_URL for MCP");
-    let host = base.host_str().expect("BASE_URL host");
-    let mut config = StreamableHttpServerConfig::default();
-    config.legacy_session_mode = true;
-    config.allowed_hosts = vec![match base.port() {
-        Some(port) => format!("{host}:{port}"),
-        None => host.to_owned(),
-    }];
-    config.allowed_origins = vec![front.origin().ascii_serialization()];
-    config = config.enforce_origin_validation();
+    // The bearer token is the authority on /mcp. rmcp's default loopback host
+    // allow-list would refuse any real hostname, so rmcp's transport-level Host
+    // and Origin checks are switched off.
+    let config = StreamableHttpServerConfig::default()
+        .with_legacy_session_mode(true)
+        .disable_allowed_hosts()
+        .disable_allowed_origins();
     let service = StreamableHttpService::new(
         move || Ok(McpHandler { db: db.clone() }),
         Arc::new(LocalSessionManager::default()),
@@ -1469,77 +1468,153 @@ pub fn routes(state: AppState) -> Router<AppState> {
     );
     Router::new()
         .route_service("/", service)
-        .layer(middleware::from_fn_with_state(state, authenticate))
+        .layer(middleware::from_fn_with_state(state.clone(), authenticate))
+        .layer(middleware::from_fn_with_state(state, mcp_www_authenticate_layer))
+        .route(
+            "/.well-known/openid-configuration",
+            axum::routing::get(super::oauth::mcp_openid_configuration),
+        )
 }
-async fn authenticate(
+
+/// Response layer that adds `WWW-Authenticate` to 401 responses per RFC 6750.
+///
+/// MCP clients use this header to discover OAuth endpoints and distinguish
+/// "online, requires auth" from "broken/offline". The `resource_metadata`
+/// parameter points to the RFC 9728 protected resource metadata endpoint,
+/// which in turn references the authorization server.
+async fn mcp_www_authenticate_layer(
     State(state): State<AppState>,
-    mut request: Request<Body>,
+    request: Request<Body>,
     next: Next,
 ) -> Response {
-    let base = state.config.base_url.trim_end_matches('/');
-    if !super::oauth::secure_external_origin(base) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    let Ok(base_url) = url::Url::parse(base) else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    // Capture the request's host/scheme before passing ownership to `next`.
+    let base_url = {
+        let headers = request.headers();
+        let scheme = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("https");
+        let host = headers
+            .get("host")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_else(|| {
+                state
+                    .config
+                    .base_url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+            });
+        format!("{scheme}://{host}")
     };
-    let Some(host) = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-    else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let actual = url::Url::parse(&format!("{}://{host}/", base_url.scheme()));
-    if actual.as_ref().map(|u| u.origin()).ok() != Some(base_url.origin())
-        || actual.as_ref().is_ok_and(|u| {
-            !u.username().is_empty()
-                || u.password().is_some()
-                || u.path() != "/"
-                || u.query().is_some()
-                || u.fragment().is_some()
-        })
-    {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if let Some(origin) = request.headers().get(header::ORIGIN) {
-        let permitted = origin
-            .to_str()
-            .ok()
-            .and_then(|v| url::Url::parse(v).ok())
-            .zip(url::Url::parse(&state.config.frontend_url).ok())
-            .is_some_and(|(a, b)| a.origin() == b.origin());
-        if !permitted {
-            return StatusCode::FORBIDDEN.into_response();
+
+    let mut response = next.run(request).await;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let www_auth = format!(
+            r#"Bearer realm="OAuth", resource_metadata="{base_url}/.well-known/oauth-protected-resource", error="invalid_token", error_description="Missing or invalid access token""#
+        );
+        if let Ok(val) = www_auth.parse() {
+            response.headers_mut().insert("www-authenticate", val);
         }
     }
-    let audience = format!("{base}/mcp");
-    let token = request
-        .headers()
+
+    response
+}
+
+/// Authenticate the caller of `/mcp`: an MCP OAuth access token (signed JWT,
+/// `purpose = mcp`), or a browser session. Anything else is a 401.
+async fn authenticate(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let (mut parts, body) = request.into_parts();
+    let bearer = parts
+        .headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|v| v.split_once(' '))
         .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("bearer").then_some(value));
-    let principal = match token {
-        Some(token) => oauth_service::verify_access(&state.db, base, &audience, token)
-            .await
-            .ok(),
-        None => None,
+    let mcp_claims = bearer
+        .and_then(|token| jwt::validate_token(token, &state.config.jwt_secret).ok())
+        .map(|data| data.claims)
+        .filter(|claims| claims.purpose == Some(jwt::TokenPurpose::Mcp));
+
+    let principal = match mcp_claims {
+        Some(claims) => mcp_principal(&state, &claims).await,
+        None => {
+            use axum::extract::FromRequestParts;
+            AuthUser::from_request_parts(&mut parts, &state)
+                .await
+                .map(|user| Principal {
+                    user_id: user.user_id,
+                    credential_id: Some(user.credential_id),
+                    access_expires_at: user.token_exp.unwrap_or_default(),
+                })
+        }
     };
-    let Some(principal) = principal else {
-        let challenge =
-            format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\"");
-        let Ok(challenge) = header::HeaderValue::from_str(&challenge) else {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        };
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, challenge)],
-        )
-            .into_response();
+    // Authentication failures are 401; a backend failure is a 500 with the
+    // shared JSON error body, so a transient database error never makes a
+    // client discard a valid token.
+    let principal = match principal {
+        Ok(principal) => principal,
+        Err(error) => return error.into_response(),
     };
-    request.extensions_mut().insert(principal);
-    next.run(request).await
+    parts.extensions.insert(principal);
+    next.run(Request::from_parts(parts, body)).await
+}
+
+/// An MCP access token names its user; the account must still exist and be
+/// active and, when the token names a workspace, still a member of it. The token
+/// has no session authority, so the browser session cutoff does not apply to it.
+async fn mcp_principal(
+    state: &AppState,
+    claims: &jwt::Claims,
+) -> Result<Principal, krausen_core::Error> {
+    let user = krausen_auth::user_service::get_user_by_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| {
+            tracing::error!("database error loading user: {e}");
+            krausen_core::Error::Internal("database error".into())
+        })?
+        .ok_or_else(|| krausen_core::Error::Unauthorized("User not found".into()))?;
+    if !user.active {
+        return Err(krausen_core::Error::Unauthorized(
+            "User account is inactive".into(),
+        ));
+    }
+    // As the browser extractor: a member removed from the token's workspace is
+    // refused (401); a lookup failure is a 500, never a fall-through.
+    if let Some(ws_id) = claims.extra.get("workspace_id").and_then(|v| v.as_str()) {
+        match krausen_auth::user_service::get_workspace(&state.db, ws_id).await {
+            Ok(Some(_)) => {
+                match krausen_auth::user_service::get_workspace_user(&state.db, ws_id, &user.user_id)
+                    .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return Err(krausen_core::Error::Unauthorized(
+                            "Workspace membership revoked. Please log in again.".into(),
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::error!("database error loading workspace membership: {e}");
+                        return Err(krausen_core::Error::Internal("database error".into()));
+                    }
+                }
+            }
+            Ok(None) => tracing::warn!("workspace {ws_id} not found"),
+            Err(e) => {
+                tracing::error!("database error loading workspace: {e}");
+                return Err(krausen_core::Error::Internal("database error".into()));
+            }
+        }
+    }
+    Ok(Principal {
+        user_id: user.user_id,
+        credential_id: None,
+        access_expires_at: claims.exp,
+    })
 }
 
 #[cfg(test)]

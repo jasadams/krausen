@@ -65,7 +65,7 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
     let actor = ActorContext {
         actor_id: "kra20-baseline-user".into(),
         workspace_id: "kra20-baseline-workspace".into(),
-        credential_id: "kra20-baseline-credential".into(),
+        credential_id: Some("kra20-baseline-credential".into()),
         access_expires_at: 4102444800,
     };
     let intent = OperationIntent {

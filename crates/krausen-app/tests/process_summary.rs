@@ -245,7 +245,7 @@ async fn exercise(db: DbPool) {
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: credential.clone(),
+        credential_id: Some(credential.clone()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
 
@@ -772,7 +772,7 @@ async fn postgres_preview_rechecks_authority_after_profile_lock_wait() {
     let actor = ActorContext {
         actor_id: user,
         workspace_id: workspace.clone(),
-        credential_id: credential,
+        credential_id: Some(credential),
         access_expires_at: chrono::Utc::now().timestamp() + 60,
     };
     let db = DbPool::Postgres(control.clone());

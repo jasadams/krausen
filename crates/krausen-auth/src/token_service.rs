@@ -65,6 +65,75 @@ pub fn generate_family_id() -> String {
     format!("fam_{}", URL_SAFE_NO_PAD.encode(random_bytes))
 }
 
+/// Store a new refresh token in the database.
+///
+/// Returns the token_id (format: `"rt_{token_urlsafe(16)}"`).
+pub async fn store_refresh_token(
+    pool: &DbPool,
+    user_id: &str,
+    token_hash: &str,
+    expires_at: DateTime<Utc>,
+    device_info: &DeviceInfo,
+    family_id: &str,
+) -> krausen_core::Result<String> {
+    let random_bytes: [u8; 16] = rand::rng().random();
+    let token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
+
+    krausen_core::db_execute!(
+        pool,
+        "INSERT INTO refresh_tokens \
+         (token_id, user_id, token_hash, expires_at, user_agent, ip_address, country_code, family_id, oauth_client_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        &token_id, user_id, token_hash, &expires_at,
+        &device_info.user_agent, &device_info.ip_address,
+        &device_info.country_code, family_id, &device_info.oauth_client_id
+    )?;
+
+    Ok(token_id)
+}
+
+/// Persist a successful MCP refresh without rotating its opaque token.
+///
+/// The guarded update serializes with revocation and keeps the later expiry
+/// when concurrent requests finish out of order. Replaced tokens remain usable
+/// only within their original grace period; neither deadline is extended.
+/// Returns false if the grant stopped being usable after verification.
+pub async fn renew_oauth_refresh_token(
+    pool: &DbPool,
+    token_id: &str,
+    oauth_client_id: &str,
+    expires_at: DateTime<Utc>,
+) -> krausen_core::Result<bool> {
+    let is_pg = pool.is_postgres();
+    let bt = sql_compat::bool_true(is_pg);
+    let grace_seconds = krausen_core::constants::get().jwt.refresh_token_grace_period_seconds;
+    // SQLite stores both RFC3339 timestamps (chrono binds) and SQL datetime
+    // strings. Compare instants, not their different textual representations.
+    let (later, unexpired, within_grace) = if is_pg {
+        (
+            "expires_at < $3".to_string(),
+            "expires_at > clock_timestamp()".to_string(),
+            format!("replaced_at + INTERVAL '{grace_seconds} seconds' >= clock_timestamp()"),
+        )
+    } else {
+        (
+            "julianday(expires_at) < julianday($3)".to_string(),
+            "julianday(expires_at) > julianday('now')".to_string(),
+            format!("julianday(replaced_at) + {grace_seconds} / 86400.0 >= julianday('now')"),
+        )
+    };
+    let sql = format!(
+        "UPDATE refresh_tokens \
+         SET expires_at = CASE WHEN replaced_at IS NULL AND {later} THEN $3 ELSE expires_at END \
+         WHERE token_id = $1 AND oauth_client_id = $2 \
+           AND is_active = {bt} AND revoked_at IS NULL AND {unexpired} \
+           AND (replaced_at IS NULL OR {within_grace}) \
+           AND EXISTS (SELECT 1 FROM users u WHERE u.user_id = refresh_tokens.user_id AND u.active = {bt})"
+    );
+    let result = krausen_core::db_execute!(pool, &sql, token_id, oauth_client_id, &expires_at)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Persist a browser login's refresh token only if its signed access issuance
 /// still follows the current cutoff. Serializes with revocation so a pre-event
 /// mint cannot insert a surviving refresh token after the event commits.
@@ -725,3 +794,6 @@ pub async fn rotate_browser_refresh(
     tx.commit().await?;
     Ok((token.user_id, token.family_id, new_raw))
 }
+
+#[cfg(test)]
+mod sliding_expiry_tests;
