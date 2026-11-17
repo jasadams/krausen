@@ -382,12 +382,12 @@ test.describe('TC-005: Logout', () => {
     await signOutButton.click();
 
     // Should redirect to /login
-    await page.waitForURL('**/login', { timeout: 15_000 });
+    await page.waitForURL('**/login**', { timeout: 15_000 });
     expect(page.url()).toContain('/login');
 
     // Attempting to visit a protected route should redirect back to /login
     await page.goto('/settings/profile');
-    await page.waitForURL('**/login', { timeout: 15_000 });
+    await page.waitForURL('**/login**', { timeout: 15_000 });
     expect(page.url()).toContain('/login');
   });
 
@@ -417,7 +417,7 @@ test.describe('TC-006: Auth Guard (Unauthenticated Access)', () => {
         await page.goto(route);
         await waitForWasm(page);
 
-        await page.waitForURL('**/login', { timeout: 15_000 });
+        await page.waitForURL('**/login**', { timeout: 15_000 });
         expect(page.url()).toContain('/login');
       }
     } finally {

@@ -67,13 +67,15 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 **Steps (installation with SMTP):**
 1. As an existing workspace owner, invite a new email address via Team settings
-2. Verify the invitation email is sent (it links to `/login`)
+2. Verify the invitation email is sent (its button links to `/accept-invite/{invitation id}`)
 3. Navigate to `/signup`, enter the invited email address and complete the signup flow (verification email, confirm step, credentials step)
 4. Verify the new account starts in a workspace of its own
-5. Open Settings > Profile and verify the pending invitation is listed; accept it
-6. Verify the user appears in the inviting workspace's member list
+5. Open the invitation link from the email. While signed out, verify the browser goes to `/login?redirect=/accept-invite/{invitation id}`, sign in as the invited address and verify it returns to the invitation page
+6. Verify the page shows the workspace, inviter, role and expiry; click "Accept Invitation"
+7. Verify the success page, then the redirect into the application with the inviting workspace active
+8. Verify the user appears in the inviting workspace's member list (the invitation is also listed under Settings > Profile until answered)
 
-**Expected Result:** Without SMTP, the invited user is added to the inviting workspace at signup and no personal workspace is created. With SMTP, signup creates the account and its own workspace, and the invitation is accepted from the profile settings.
+**Expected Result:** Without SMTP, the invited user is added to the inviting workspace at signup and no personal workspace is created. With SMTP, signup creates the account and its own workspace, and the invitation is accepted from the emailed link (or the profile settings), which switches the user into the inviting workspace.
 
 ---
 
@@ -372,7 +374,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Submit the invitation
 6. Verify the invited email appears in the pending invitations list (or member list as pending)
 7. Verify an invitation email is sent (check test mailbox)
-8. As the invited user, complete signup via the invitation
+8. As the invited user, complete signup (without SMTP the user joins the workspace directly; with SMTP open the invitation link from the email and accept it)
 9. Return to the owner's team settings
 10. Verify the new user now appears as an active member in the list
 
@@ -705,7 +707,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Click "Cancel" (or equivalent) on the pending invitation
 6. Confirm the cancellation if prompted
 7. Verify the invitation is removed from the pending list
-8. (If possible) Verify that navigating to the invitation link now fails or shows an error
+8. (If possible) Verify that, signed in as the invited user, opening the invitation link shows "This invitation has already been cancelled."
 
 **Expected Result:** Pending invitations can be cancelled by the workspace owner, and cancelled invitation links no longer work.
 

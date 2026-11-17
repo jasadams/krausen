@@ -24,6 +24,7 @@ const NON_RETURN_PREFIXES: &[&str] = &[
     "/oauth-complete",
     "/settings",
     "/accept-ownership",
+    "/accept-invite",
 ];
 
 /// Percent-encodes everything outside the RFC 3986 unreserved set.
@@ -232,7 +233,7 @@ mod tests {
             "", "recipes", "//evil.example", "/\\evil.example", "https://evil.example/x",
             "javascript:alert(1)", "/recipes\n", "/a b", "/../etc", "/a//b", "/settings/profile",
             "/login", "/auth/google/callback", "/account/recover", "/%2f%2fevil", "/x%5cevil",
-            "/oauth-complete", "/accept-ownership/1",
+            "/oauth-complete", "/accept-ownership/1", "/accept-invite/inv-1",
         ] {
             assert_eq!(safe_return(bad), None, "{bad}");
         }
