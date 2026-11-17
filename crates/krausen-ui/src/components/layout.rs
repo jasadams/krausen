@@ -662,18 +662,8 @@ impl EditorGuard {
                             "Workspace change completed, but newer work prevents the old page reload. Your local work remains retained.",
                         )
                     } else {
-                        // The browser's access token still carries the old
-                        // workspace until the existing refresh endpoint re-mints
-                        // it from the server-side choice. Without this the new
-                        // context can never be verified.
-                        #[cfg(target_arch = "wasm32")]
-                        let refreshed = crate::utils::auth_refresh::try_refresh().await;
-                        #[cfg(not(target_arch = "wasm32"))]
-                        let refreshed = false;
-                        if !refreshed {
-                            self.transition_failed(navigation, "The workspace choice was saved, but this session could not be refreshed. The result is unconfirmed; check the current context before trying again. Your work remains retained.");
-                            return;
-                        }
+                        // The switch re-minted the session cookies for the new
+                        // workspace; confirm the new context before leaving.
                         let verified = if let Some(account_id) = original_account.clone() {
                             crate::pages::recipe_editor::current_context_matches(
                                 &krausen_types::request_context::OperationIntent {
@@ -804,7 +794,12 @@ fn focus_arrival_heading() {
 /// Main authenticated layout with sidebar and content area.
 #[component]
 pub fn Layout() -> impl IntoView {
-    let user_info = LocalResource::new(get_sidebar_user);
+    // Bumped after a silent token refresh to refetch `user_info`.
+    let (auth_retry, set_auth_retry) = signal(0u32);
+    let user_info = LocalResource::new(move || {
+        let _retry = auth_retry.get();
+        get_sidebar_user()
+    });
     let mobile_sidebar_open = RwSignal::new(false);
     let editor_guard = expect_context::<EditorGuard>();
     let location = leptos_router::hooks::use_location();
@@ -1072,16 +1067,120 @@ pub fn Layout() -> impl IntoView {
         }
     });
 
+    // Auth guard: `auth_confirmed` becomes true once `user_info` resolves
+    // successfully, and the layout renders a loading state until then.
     let auth_confirmed = RwSignal::new(false);
-    let nav = leptos_router::hooks::use_navigate();
 
-    Effect::new(move || match user_info.get() {
-        Some(Ok(_)) => auth_confirmed.set(true),
-        Some(Err(_)) => {
-            nav("/login", Default::default());
-        }
-        None => {}
-    });
+    // Tracks whether a token refresh is already in-flight (prevents duplicate refreshes).
+    #[cfg(target_arch = "wasm32")]
+    let (refreshing, set_refreshing) = signal(false);
+
+    // Retry budget: timestamps (ms since epoch) of each refresh attempt within a
+    // sliding window. Prevents infinite refresh loops when the server keeps
+    // returning auth errors even after a successful /auth/refresh call. Separate
+    // concern from `refreshing`, which guards concurrency; this guards total
+    // attempts over time.
+    #[cfg(target_arch = "wasm32")]
+    const REFRESH_BUDGET_WINDOW_MS: f64 = 30_000.0; // 30 seconds
+    #[cfg(target_arch = "wasm32")]
+    const REFRESH_BUDGET_MAX_ATTEMPTS: usize = 3;
+    #[cfg(target_arch = "wasm32")]
+    let refresh_timestamps: RwSignal<Vec<f64>> = RwSignal::new(Vec::new());
+
+    // When `user_info` resolves, either confirm auth or redirect to /login. On
+    // WASM an auth failure first tries a silent token refresh and refetches the
+    // resource (no page reload); if refresh also fails, redirect to /login. On
+    // SSR effects do not run, so `auth_confirmed` stays false and the client
+    // handles the redirect after hydration.
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::utils::auth_refresh;
+        Effect::new(move || {
+            match user_info.get() {
+                Some(Ok(user)) => {
+                    // Apply the user's saved theme preference and sync to localStorage.
+                    // Server is source of truth for cross-device consistency.
+                    crate::components::theme::set_theme(&user.theme_preference);
+                    crate::components::theme::save_theme_to_local_storage(&user.theme_preference);
+                    // Auth succeeded — reset the retry budget so future token
+                    // expirations start with a fresh allowance.
+                    refresh_timestamps.set(Vec::new());
+                    auth_confirmed.set(true);
+                }
+                Some(Err(e)) => {
+                    let msg = e.to_string();
+                    if auth_refresh::is_auth_error(&msg) {
+                        // Don't start a second refresh while one is in-flight
+                        if refreshing.get_untracked() {
+                            return;
+                        }
+
+                        // Check the sliding-window retry budget before attempting
+                        // another refresh. If the budget is exhausted, redirect to
+                        // /login immediately instead of looping forever.
+                        let now = js_sys::Date::now();
+                        let window_start = now - REFRESH_BUDGET_WINDOW_MS;
+                        let recent: Vec<f64> = refresh_timestamps
+                            .get_untracked()
+                            .into_iter()
+                            .filter(|&t| t >= window_start)
+                            .collect();
+
+                        if recent.len() >= REFRESH_BUDGET_MAX_ATTEMPTS {
+                            // Budget exhausted — stop retrying and send the user
+                            // back to /login to re-authenticate from scratch.
+                            if let Some(win) = web_sys::window() {
+                                let path = win.location().pathname().unwrap_or_default();
+                                let url = if path.is_empty() || path == "/" {
+                                    "/login".to_string()
+                                } else {
+                                    format!("/login?redirect={path}")
+                                };
+                                let _ = win.location().set_href(&url);
+                            }
+                            return;
+                        }
+
+                        // Record this attempt and proceed with the refresh.
+                        let mut updated = recent;
+                        updated.push(now);
+                        refresh_timestamps.set(updated);
+
+                        set_refreshing.set(true);
+                        // Silent token refresh: call /api/v1/auth/refresh, then
+                        // bump the trigger signal to refetch get_sidebar_user —
+                        // no visible page reload.
+                        leptos::task::spawn_local(async move {
+                            let ok = auth_refresh::try_refresh().await;
+                            set_refreshing.try_set(false);
+                            if ok {
+                                // Cookies refreshed — refetch the resource
+                                set_auth_retry.try_update(|n| *n += 1);
+                            } else {
+                                // Refresh token also invalid — redirect to login
+                                if let Some(win) = web_sys::window() {
+                                    let path = win.location().pathname().unwrap_or_default();
+                                    let url = if path.is_empty() || path == "/" {
+                                        "/login".to_string()
+                                    } else {
+                                        format!("/login?redirect={path}")
+                                    };
+                                    let _ = win.location().set_href(&url);
+                                }
+                            }
+                        });
+                    } else if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_href("/login");
+                    }
+                }
+                None => {
+                    // Resource still loading — keep waiting
+                }
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = set_auth_retry;
 
     view! {
         <Show

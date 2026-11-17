@@ -85,15 +85,39 @@ pub async fn list_user_workspaces() -> Result<Vec<UserWorkspace>, ServerFnError>
         .collect())
 }
 
-/// Switch the user's active workspace.
+/// Switch the caller's active workspace and re-mint their session.
 #[server(prefix = "/leptos-api")]
 pub async fn switch_workspace(workspace_id: String) -> Result<(), ServerFnError> {
-    let ctx = super::extract_context()?;
     let auth = super::extract_auth().await?;
+    let ctx = super::extract_context()?;
 
-    krausen_auth::user_service::update_last_workspace(&ctx.db, &auth.user_id, &workspace_id)
+    let user = krausen_auth::user_service::get_user_by_id(&ctx.db, &auth.user_id)
         .await
-        .into_sfn()?;
+        .into_sfn()?
+        .ok_or_else(|| ServerFnError::new("User not found"))?;
 
+    let headers: axum::http::HeaderMap = leptos_axum::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let device = super::auth::extract_device_info(&headers);
+
+    let kv = ctx
+        .kv
+        .clone()
+        .ok_or_else(|| ServerFnError::new("KV store not available"))?;
+
+    let sess = krausen_auth::session::switch_active_workspace(
+        &ctx.db,
+        &kv,
+        &ctx.config.jwt_secret,
+        &user,
+        &workspace_id,
+        &device,
+    )
+    .await
+    .into_sfn()?;
+
+    // Apply the new session cookies so middleware sees the new workspace next request.
+    super::auth::set_session_cookies(&sess);
     Ok(())
 }

@@ -27,6 +27,16 @@ uses that bucket (Kyomi's call sites are the same). Behind a reverse proxy, set
 `X-Real-IP`: the refresh limit takes the address from that header, and without it all
 clients share one bucket.
 
+Switching workspace (`switch_workspace`) requires an active membership in the target
+workspace, saves it as the account's last workspace and re-mints the browser session
+(new access and refresh cookies) for it. A protected page that finds its access token
+rejected tries one silent refresh and retries (at most 3 attempts in 30 seconds), then
+sends the browser to `/login?redirect=<path>` with a full navigation. A browser that is
+already signed in is sent from the sign-in page by full navigation, and a sign-in that
+carries an MCP `oauth_continue` token also leaves by full navigation, so the server
+endpoint that resumes the authorization is reached; an ordinary sign-in uses
+client-side navigation.
+
 Signing out everywhere and completing account recovery (password) revoke browser
 sessions immediately: each account has a revocation cutoff (`users.sessions_valid_from`,
 Unix microseconds). A browser access token carries its signed microsecond issuance and is
