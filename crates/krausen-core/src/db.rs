@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use tracing::Instrument;
 
 /// Runtime-selected database pool.
 ///
@@ -48,7 +49,32 @@ impl DbPool {
     pub async fn begin_write(&self) -> crate::Result<DbTx<'_>> {
         Ok(match self {
             Self::Postgres(pool) => DbTx::Postgres(pool.begin().await?),
-            Self::Sqlite(pool) => DbTx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?),
+            Self::Sqlite(pool) => {
+                // sqlx's custom-statement `begin_with` awaits again after `BEGIN IMMEDIATE` has
+                // run and before the `Transaction` guard exists. A caller dropped there (an axum
+                // handler is dropped when its client disconnects) would leave the pool's only
+                // connection inside an open transaction with nothing to roll it back, and every
+                // later `begin_write` would fail with "non-zero transaction depth" until restart.
+                // Running the begin on its own task lets it always finish; if nobody is waiting
+                // any more the finished guard is simply dropped, which rolls back normally.
+                //
+                // Caveat, accepted: a caller dropped while still QUEUED for the single
+                // connection leaves its spawned begin in the pool's queue. It later takes the
+                // connection, runs `BEGIN IMMEDIATE` and the finished guard is dropped, which
+                // rolls back immediately. That wasted work is short and bounded by the pool's
+                // acquire timeout (30 s default, sqlx `acquire_timeout`) for a task that never
+                // got a connection. Aborting the task instead would reintroduce the bug
+                // whenever the abort lands between BEGIN and the guard's creation.
+                let pool = pool.clone();
+                let begun = tokio::spawn(
+                    async move { pool.begin_with("BEGIN IMMEDIATE").await }.in_current_span(),
+                )
+                .await
+                .map_err(|error| {
+                    crate::Error::Internal(format!("write transaction task failed: {error}"))
+                })?;
+                DbTx::Sqlite(begun?)
+            }
         })
     }
     /// Connect to the database. The composition root runs migrations.
@@ -274,4 +300,59 @@ pub fn in_clause_placeholders(count: usize, start_idx: usize) -> (String, usize)
     let placeholders: Vec<String> = (0..count).map(|i| format!("${}", start_idx + i)).collect();
     let clause = format!("({})", placeholders.join(", "));
     (clause, start_idx + count)
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The request future that owns `begin_write` is dropped when a client disconnects.
+    /// Dropping it at ANY point must leave the pool usable: the single SQLite connection
+    /// must never be handed back while still inside the `BEGIN IMMEDIATE` it started.
+    ///
+    /// The future is polled by hand: after `polls` polls (letting the connection's worker
+    /// thread run for `pause` between polls) it is dropped, which is exactly what axum does
+    /// to a handler when the client goes away.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_begin_write_never_leaves_the_pooled_connection_in_a_transaction() {
+        let db = DbPool::connect("sqlite::memory:").await.unwrap();
+        let mut cancelled_midway = 0;
+        for polls in 1..=8 {
+            for pause_micros in [0_u64, 5, 20, 50, 100, 250, 500, 1_000] {
+                for _ in 0..5 {
+                    let mut begin = Box::pin(db.begin_write());
+                    let mut finished = false;
+                    for _ in 0..polls {
+                        if let std::task::Poll::Ready(result) = futures_util::poll!(begin.as_mut()) {
+                            result.unwrap().rollback().await.unwrap();
+                            finished = true;
+                            break;
+                        }
+                        // Deliberately blocking: the connection's worker is an OS thread, and the
+                        // window being probed is microseconds wide. `tokio::time::sleep` has ~1 ms
+                        // granularity and would only ever cancel outside it; blocking this worker
+                        // (the test runs on a multi-thread runtime, so nothing else depends on it)
+                        // lets the worker thread run for exactly `pause_micros` between polls.
+                        std::thread::sleep(Duration::from_micros(pause_micros));
+                    }
+                    if !finished {
+                        cancelled_midway += 1;
+                    }
+                    drop(begin);
+                    let next = tokio::time::timeout(Duration::from_secs(5), db.begin_write())
+                        .await
+                        .expect("the pool must not hang after a cancelled begin_write");
+                    match next {
+                        Ok(tx) => tx.rollback().await.unwrap(),
+                        Err(error) => panic!(
+                            "begin_write failed after one cancelled after {polls} poll(s) \
+                             with {pause_micros}us pauses: {error}"
+                        ),
+                    }
+                }
+            }
+        }
+        assert!(cancelled_midway > 0, "the test never actually cancelled a begin_write");
+    }
 }

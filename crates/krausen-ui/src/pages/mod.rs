@@ -12,6 +12,7 @@ pub mod welcome;
 pub mod recipe_draft;
 mod library_recovery;
 mod recipe_recovery;
+mod start_recovery;
 
 pub mod beerxml;
 mod beerxml_recovery;

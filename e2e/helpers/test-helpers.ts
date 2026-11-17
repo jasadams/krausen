@@ -17,7 +17,7 @@ const DB_PATH = process.env.KRAUSEN_E2E_DATABASE_PATH
  * failed with "invalid hash format". Anything holding a `$`, a backtick or a
  * quote has the same problem.
  */
-function sqliteExec(sql: string): string {
+export function sqliteExec(sql: string): string {
   return execFileSync('sqlite3', [DB_PATH, '.timeout 5000', sql], {
     encoding: 'utf-8',
   }).trim();

@@ -7,7 +7,7 @@ use crate::{
 };
 use krausen_types::{
     brewery::RecipeDocumentV1,
-    recipe_library::{HistoryPage, HistoryQuery, LibraryCommand, LibraryOutcome, RevisionQuery},
+    recipe_library::{HistoryPage, HistoryQuery, LibraryCommand, LibraryOutcome, RevisionQuery, RevisionSummary},
     request_context::OperationIntent,
 };
 use leptos::prelude::*;
@@ -87,11 +87,22 @@ pub fn RecipeRevisionHistory(
     selected_revision: Signal<Option<i64>>,
     /// Requests a different selection; the host owns encoding it in the URL.
     on_select: Callback<Option<i64>>,
+    /// Starts a brew from this exact saved version (no restore); the host owns the task.
+    #[prop(optional)]
+    on_start: Option<Callback<RevisionSummary>>,
+    /// Mirrors the loaded saved-version summaries so other tasks can label a selection.
+    #[prop(optional)]
+    loaded: Option<RwSignal<Vec<RevisionSummary>>>,
 ) -> impl IntoView {
     let intent = StoredValue::new(intent);
     let recipe_id = StoredValue::new(recipe_id);
     let page = RwSignal::new(None::<HistoryPage>);
     let selected = RwSignal::new(None::<(i64, RecipeDocumentV1)>);
+    Effect::new(move |_| {
+        if let Some(loaded) = loaded {
+            loaded.set(page.with(|p| p.as_ref().map(|h| h.items.clone()).unwrap_or_default()));
+        }
+    });
     let generation = RwSignal::new(0_u64);
     let detail_generation = RwSignal::new(0_u64);
     let loading = RwSignal::new(false);
@@ -188,7 +199,8 @@ pub fn RecipeRevisionHistory(
                     {empty.then(|| view! { <p>"No saved versions."</p> })}
                     <ul>{history.items.into_iter().map(|entry| {
                         let revision = entry.revision;
-                        view! { <li>{format!("Revision {revision}")}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}{move || (selected_revision.get() == Some(revision)).then_some(" · Inspecting")}<Button variant=ButtonVariant::Ghost aria_label=format!("Inspect revision {revision}") on:click=move |_| on_select.run(Some(revision))>"Inspect"</Button></li> }
+                        let start_entry = entry.clone();
+                        view! { <li>{format!("Revision {revision}")}{entry.saved_at.map(|date| format!(" · {date}")).unwrap_or_default()}{entry.restored_from_revision.map(|r| format!(" · restored from {r}")).unwrap_or_default()}{move || (selected_revision.get() == Some(revision)).then_some(" · Inspecting")}<Button variant=ButtonVariant::Ghost aria_label=format!("Inspect revision {revision}") on:click=move |_| on_select.run(Some(revision))>"Inspect"</Button>{on_start.map(|on_start| { let entry = start_entry.clone(); view! { <Button variant=ButtonVariant::Ghost aria_label=format!("Start brew from revision {revision}") on:click=move |_| on_start.run(entry.clone())>"Start brew"</Button> } })}</li> }
                     }).collect_view()}</ul>
                     {cursor.map(|cursor| view! { <Button variant=ButtonVariant::Secondary disabled=loading on:click=move |_| load.run(Some(cursor.clone()))>"Load more revisions"</Button> })}
                 }

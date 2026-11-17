@@ -166,6 +166,52 @@ static CHILLING_SPECS: [ChillingSpec; 3] = [
         write: |s, v| if let Some(ChillingV1::Counterflow { litres_per_minute }) = &mut s.chilling { *litres_per_minute = v } } },
 ];
 
+/// Effective equipment values for a review, each marked with where it comes from:
+/// a recipe override, the saved profile, or the recipe's own settings when no
+/// profile is selected. `overrides` are the recipe's own `equipment_overrides`.
+pub fn effective_lines(
+    effective: &EquipmentSettingsV1,
+    overrides: &EquipmentSettingsV1,
+    has_profile: bool,
+) -> Vec<(String, bool)> {
+    let origin = |overridden: bool| {
+        if overridden {
+            "recipe override"
+        } else if has_profile {
+            "from profile"
+        } else {
+            "recipe setting"
+        }
+    };
+    let mut lines: Vec<(String, bool)> = SPECS
+        .iter()
+        .filter_map(|spec| {
+            let value = (spec.read)(effective)?;
+            let overridden = (spec.read)(overrides).is_some();
+            Some((
+                format!("{}: {} {} · {}", spec.label, shown(value, spec.scale), spec.unit, origin(overridden)),
+                overridden,
+            ))
+        })
+        .collect();
+    // Chilling is one override whose mode decides which values exist.
+    if effective.chilling.is_some() {
+        let overridden = overrides.chilling.is_some();
+        let mode = chilling_mode(&effective.chilling);
+        let mode = if mode.is_empty() { "natural" } else { mode };
+        lines.push((format!("Chilling: {mode} · {}", origin(overridden)), overridden));
+        for chilling in CHILLING_SPECS.iter().filter(|c| c.mode == mode) {
+            if let Some(value) = (chilling.read)(effective) {
+                lines.push((
+                    format!("{}: {} {} · {}", chilling.label, shown(value, chilling.scale), chilling.unit, origin(overridden)),
+                    overridden,
+                ));
+            }
+        }
+    }
+    lines
+}
+
 fn shown(value: f64, scale: f64) -> String {
     (((value * scale) * 1e6).round() / 1e6).to_string()
 }
@@ -471,5 +517,35 @@ mod tests {
         );
         assert_eq!(override_hint("%", 100.0, Some(0.7), None, None, false), "Overridden for this recipe: effective 70 %. Inherited: no profile selected.");
         assert!(override_hint("L", 1.0, None, None, Some("Garage"), false).contains("not available"));
+    }
+
+    fn lines(chilling: ChillingV1, overridden: bool) -> Vec<String> {
+        let effective = EquipmentSettingsV1 { chilling: Some(chilling.clone()), ..Default::default() };
+        let overrides = EquipmentSettingsV1 { chilling: overridden.then_some(chilling), ..Default::default() };
+        effective_lines(&effective, &overrides, true).into_iter().map(|(line, _)| line).collect()
+    }
+
+    #[test]
+    fn natural_chilling_lists_its_mode_and_origin() {
+        assert_eq!(lines(ChillingV1::Natural, false), vec!["Chilling: natural · from profile"]);
+    }
+
+    #[test]
+    fn forced_chilling_lists_mode_and_values_attributed_to_the_override() {
+        let found = lines(ChillingV1::Forced { rate_per_minute: Some(1.5), plateau_c: Some(20.0) }, true);
+        assert_eq!(
+            found,
+            vec![
+                "Chilling: forced · recipe override",
+                "Cooling rate: 1.5 per min · recipe override",
+                "Cooling plateau: 20 °C · recipe override",
+            ]
+        );
+    }
+
+    #[test]
+    fn counterflow_chilling_lists_its_flow() {
+        let found = lines(ChillingV1::Counterflow { litres_per_minute: Some(4.0) }, false);
+        assert_eq!(found, vec!["Chilling: counterflow · from profile", "Counterflow rate: 4 L/min · from profile"]);
     }
 }
