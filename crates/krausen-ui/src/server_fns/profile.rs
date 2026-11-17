@@ -108,11 +108,45 @@ pub async fn update_theme(theme: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+/// Verify an invitation can be accepted/declined by the authenticated user.
+///
+/// Pure and DB-free so it's directly unit-testable. Checked in this order:
+/// recipient match, then status, then expiry, so the first error surfaced
+/// always matches the first thing actually wrong with the invitation.
+#[cfg(feature = "ssr")]
+fn check_invitation_acceptable(
+    inv: &krausen_core::models::WorkspaceInvitation,
+    auth_email: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), String> {
+    if !inv.email.eq_ignore_ascii_case(auth_email) {
+        return Err("This invitation is addressed to a different account".into());
+    }
+    if inv.status != krausen_core::enums::InvitationStatus::Pending {
+        return Err("This invitation is no longer pending".into());
+    }
+    if inv.expires_at < now {
+        return Err("This invitation has expired".into());
+    }
+    Ok(())
+}
+
 /// Accept a workspace invitation.
+///
+/// Validates the invitation is addressed to the authenticated user's email,
+/// still pending, and not expired before accepting; without that check any
+/// authenticated user could accept any invitation by ID.
 #[server(prefix = "/leptos-api")]
 pub async fn accept_invitation(invitation_id: String) -> Result<(), ServerFnError> {
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
+
+    let inv = krausen_auth::workspace_service::get_invitation(&ctx.db, &invitation_id)
+        .await
+        .into_sfn()?
+        .ok_or_else(|| ServerFnError::new("Invitation not found"))?;
+    check_invitation_acceptable(&inv, &auth.email, chrono::Utc::now())
+        .map_err(ServerFnError::new)?;
 
     krausen_auth::workspace_service::accept_invitation_for_user(
         &ctx.db,
@@ -126,10 +160,20 @@ pub async fn accept_invitation(invitation_id: String) -> Result<(), ServerFnErro
 }
 
 /// Decline a workspace invitation.
+///
+/// Same recipient/state validation as `accept_invitation`: without it any
+/// authenticated user could decline any invitation by ID.
 #[server(prefix = "/leptos-api")]
 pub async fn decline_invitation(invitation_id: String) -> Result<(), ServerFnError> {
-    let _auth = extract_auth().await?; // verify authenticated
+    let auth = extract_auth().await?;
     let ctx = extract_context()?;
+
+    let inv = krausen_auth::workspace_service::get_invitation(&ctx.db, &invitation_id)
+        .await
+        .into_sfn()?
+        .ok_or_else(|| ServerFnError::new("Invitation not found"))?;
+    check_invitation_acceptable(&inv, &auth.email, chrono::Utc::now())
+        .map_err(ServerFnError::new)?;
 
     krausen_auth::workspace_service::update_invitation_status(
         &ctx.db,
@@ -145,3 +189,81 @@ pub async fn decline_invitation(invitation_id: String) -> Result<(), ServerFnErr
 // Helpers — delegate to shared extractors in parent module
 #[cfg(feature = "ssr")]
 use super::{extract_auth, extract_context, IntoServerFnError};
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    //! Rejection-path coverage for `check_invitation_acceptable`: the guard
+    //! that stops any authenticated user accepting or declining any invitation
+    //! by ID.
+    use super::check_invitation_acceptable;
+    use krausen_core::enums::InvitationStatus;
+    use krausen_core::models::WorkspaceInvitation;
+
+    fn base_invitation(
+        status: InvitationStatus,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> WorkspaceInvitation {
+        WorkspaceInvitation {
+            invitation_id: "inv-test123".to_string(),
+            workspace_id: "ws-test123".to_string(),
+            email: "recipient@example.com".to_string(),
+            role: "workspace_user".to_string(),
+            invited_by_user_id: "user-inviter".to_string(),
+            status,
+            created_at: chrono::Utc::now(),
+            expires_at,
+            accepted_at: None,
+            accepted_by_user_id: None,
+        }
+    }
+
+    #[test]
+    fn accepts_valid_pending_invite_for_recipient() {
+        let now = chrono::Utc::now();
+        let inv = base_invitation(InvitationStatus::Pending, now + chrono::Duration::days(1));
+        assert_eq!(
+            check_invitation_acceptable(&inv, "recipient@example.com", now),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_recipient() {
+        let now = chrono::Utc::now();
+        let inv = base_invitation(InvitationStatus::Pending, now + chrono::Duration::days(1));
+        assert_eq!(
+            check_invitation_acceptable(&inv, "attacker@example.com", now),
+            Err("This invitation is addressed to a different account".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_expired() {
+        let now = chrono::Utc::now();
+        let inv = base_invitation(InvitationStatus::Pending, now - chrono::Duration::days(1));
+        assert_eq!(
+            check_invitation_acceptable(&inv, "recipient@example.com", now),
+            Err("This invitation has expired".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_already_accepted() {
+        let now = chrono::Utc::now();
+        let inv = base_invitation(InvitationStatus::Accepted, now + chrono::Duration::days(1));
+        assert_eq!(
+            check_invitation_acceptable(&inv, "recipient@example.com", now),
+            Err("This invitation is no longer pending".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_cancelled() {
+        let now = chrono::Utc::now();
+        let inv = base_invitation(InvitationStatus::Cancelled, now + chrono::Duration::days(1));
+        assert_eq!(
+            check_invitation_acceptable(&inv, "recipient@example.com", now),
+            Err("This invitation is no longer pending".to_string())
+        );
+    }
+}

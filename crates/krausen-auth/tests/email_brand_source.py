@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = (ROOT / "crates/krausen-auth/src/email_service.rs").read_text().split("#[cfg(test)]", 1)[0]
+SOURCE = (ROOT / "crates/krausen-auth/src/email_service.rs").read_text().split("#[cfg(test)]\nmod tests", 1)[0]
 TOKENS = (ROOT / "crates/krausen-ui/style/approved-tokens.css").read_text()
 
 

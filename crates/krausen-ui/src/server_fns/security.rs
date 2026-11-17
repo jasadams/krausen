@@ -54,7 +54,7 @@ pub async fn has_password() -> Result<bool, ServerFnError> {
 
 /// Set a password for a user who does not yet have one (e.g. OAuth-only users).
 ///
-/// Mirrors the validation in `apps/server/src/routes/auth_password.rs::set_password`:
+/// Validation rules:
 /// - Password must be at least 8 characters.
 /// - User must NOT already have a password.
 #[server(prefix = "/leptos-api")]
@@ -62,28 +62,7 @@ pub async fn set_password(new_password: String) -> Result<String, ServerFnError>
     let auth = extract_auth().await?;
     let ctx = extract_context()?;
 
-    // Validate password length
-    if new_password.len() < 8 {
-        return Err(ServerFnError::new(
-            "Password must be at least 8 characters",
-        ));
-    }
-
-    // Check user does NOT already have a password
-    let has_pw = krausen_auth::user_service::has_password(&ctx.db, &auth.user_id)
-        .await
-        .into_sfn()?;
-    if has_pw {
-        return Err(ServerFnError::new(
-            "Password already set. Use change-password to update it.",
-        ));
-    }
-
-    // Hash and store
-    let hash = krausen_auth::password::hash_password(&new_password)
-        .into_sfn()?;
-    let auth_data = serde_json::json!({"hash": hash});
-    krausen_auth::user_service::upsert_auth_method(&ctx.db, &auth.user_id, "password", &auth_data)
+    krausen_auth::security_service::set_password(&ctx.db, &auth.user_id, &new_password)
         .await
         .into_sfn()?;
 

@@ -42,11 +42,11 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 5. Retrieve the verification email from the test mailbox
 6. Extract the verification link from the email body
 7. Navigate to the verification link (should be `/signup/complete?token=...`)
-8. Verify the completion form is displayed (name, password, confirm password, terms checkbox)
-9. Enter display name
-10. Enter password and confirm password
-11. Check the terms acceptance checkbox
-12. Click "Create Account"
+8. Verify the confirm step is displayed (terms checkbox, "Confirm Email" button) and that loading the page alone has created no account and consumed no token
+9. Check the terms acceptance checkbox and click "Confirm Email"
+10. Verify the "Secure Your Account" step is displayed (name, optional password and confirm password, optional "Add a Passkey")
+11. Enter display name; enter password and confirm password, or add a passkey
+12. Click "Finish Setup"
 13. Verify redirect to the application (e.g., `/onboarding` or main app page)
 14. Verify the user is authenticated (user menu visible, no login redirect)
 
@@ -56,19 +56,24 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 
 ## TC-002: Signup With Invitation
 
-**Description:** An invited user signs up with their invited email and is auto-joined to the inviting workspace.
+**Description:** An invited user signs up with their invited email and joins the inviting workspace. The path depends on whether the installation can send email.
 
-**Steps:**
+**Steps (self-hosted installation without SMTP):**
 1. As an existing workspace owner, invite a new email address via Team settings
-2. Verify invitation email is sent
-3. Open the invitation link from the email (or navigate to `/signup`)
-4. Enter the invited email address
-5. Complete the signup flow (verification email, complete form)
-6. Verify the user lands in the inviting workspace (not a personal workspace)
-7. Verify the user appears in the inviting workspace's member list
-8. Verify no separate personal workspace was created for this user
+2. Navigate to `/signup` and enter the invited email address, a name and a password
+3. Verify the account is created and signed in directly
+4. Verify the user lands in the inviting workspace and no personal workspace was created
+5. Verify the user appears in the inviting workspace's member list
 
-**Expected Result:** The invited user is automatically added to the workspace that invited them. No personal workspace is created.
+**Steps (installation with SMTP):**
+1. As an existing workspace owner, invite a new email address via Team settings
+2. Verify the invitation email is sent (it links to `/login`)
+3. Navigate to `/signup`, enter the invited email address and complete the signup flow (verification email, confirm step, credentials step)
+4. Verify the new account starts in a workspace of its own
+5. Open Settings > Profile and verify the pending invitation is listed; accept it
+6. Verify the user appears in the inviting workspace's member list
+
+**Expected Result:** Without SMTP, the invited user is added to the inviting workspace at signup and no personal workspace is created. With SMTP, signup creates the account and its own workspace, and the invitation is accepted from the profile settings.
 
 ---
 

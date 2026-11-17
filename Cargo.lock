@@ -2099,6 +2099,7 @@ dependencies = [
  "jsonwebtoken",
  "krausen-app",
  "krausen-core",
+ "krausen-test-tracing",
  "krausen-types",
  "lettre",
  "rand 0.9.4",
@@ -2223,6 +2224,14 @@ dependencies = [
  "url",
  "uuid",
  "webauthn-rs",
+]
+
+[[package]]
+name = "krausen-test-tracing"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

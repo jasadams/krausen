@@ -26,9 +26,12 @@ credential or competing claim. It retains the existing IDs, ownership and
 records. Installations that do not meet these checks require operator-led
 recovery; the command will not reset or take over an account.
 
-Public email-only signup and email-only invitation acceptance are unavailable
-when email verification is not configured. Possession of an email address alone
-does not establish ownership.
+With SMTP configured, signup sends a link; opening the link changes nothing until the
+user presses "Confirm Email", which creates the account, so mail scanners that
+prefetch links cannot consume it. An address that already has an account receives a
+notice email and no link, so a signup link can never change an existing account's
+password or sign-in methods. Without SMTP on a self-hosted install, the first user
+and invited users sign up directly; any other address is refused.
 
 The installation publishes OAuth authorization and protected-resource metadata.
 Public clients use authorization code with S256 PKCE; confidential clients use

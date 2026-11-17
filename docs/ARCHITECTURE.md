@@ -195,9 +195,8 @@ out of ordinary logs and change payloads.
 
 Both hosted and self-hosted installations require authenticated accounts; a
 one-member workspace is not an anonymous application mode. Retire the starter's
-login-free personal mode for protected operations. Without SMTP, installation
-setup creates the first owner only through a local operator setup command or
-single-use setup secret; once initialized, ordinary account/role rules apply.
+login-free personal mode for protected operations. Without SMTP, the first
+user and invited users sign up directly and other addresses are refused; ordinary account/role rules apply afterwards.
 No separate subscription or agent permission model is introduced.
 
 Browser sessions and MCP connections have durable credential records linked to
