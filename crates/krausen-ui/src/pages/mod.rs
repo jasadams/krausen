@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod accept_invite;
 pub mod accept_ownership;
 pub mod auth;
 pub mod design_system;
@@ -12,6 +13,7 @@ pub mod welcome;
 pub mod recipe_draft;
 mod library_recovery;
 mod recipe_recovery;
+mod start_recovery;
 
 pub mod beerxml;
 mod beerxml_recovery;

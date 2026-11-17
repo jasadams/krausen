@@ -9,6 +9,7 @@ use leptos_router::{
     path,
 };
 
+use crate::pages::accept_invite::AcceptInvitePage;
 use crate::pages::accept_ownership::AcceptOwnershipPage;
 use crate::pages::auth::{
     account_recovery::AccountRecoveryPage, account_recovery_complete::AccountRecoveryCompletePage,
@@ -95,6 +96,9 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/auth/recover-passkey/complete") view=PasskeyRecoveryCompletePage/>
                 <Route path=path!("/oauth-complete") view=OAuthCompletePage/>
                 <Route path=path!("/welcome") view=WelcomePage/>
+                // Flow page: no sidebar, requires auth (the server sends a
+                // signed-out visit to /login?redirect=… and back).
+                <Route path=path!("/accept-invite/:invitation_id") view=AcceptInvitePage/>
 
                 // ── Authenticated routes (Layout provides sidebar + auth guard) ────
                 <ParentRoute path=path!("") view=Layout>

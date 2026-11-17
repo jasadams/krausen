@@ -154,6 +154,24 @@ pub struct RateLimitBucket {
     pub window_seconds: u64,
 }
 
+/// Map a stored DB workspace-role token (e.g. `workspace_admin`) to a
+/// human-readable display label (e.g. `"Admin"`).
+///
+/// Any value that doesn't match a known role constant falls back to
+/// `"Member"`, mirroring the generic non-admin wording the invitation
+/// email uses (note: `krausen-auth::email_service` matches on a separate
+/// UI-level role string, so it shares the outcome, not this mechanism).
+/// This fallback is also what absorbs any stray legacy `workspace_viewer`
+/// value left over from a role that no longer exists.
+pub fn humanize_workspace_role(role: &str) -> &'static str {
+    let roles = &get().workspace.roles;
+    if role == roles.admin {
+        "Admin"
+    } else {
+        "Member"
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceConstants {
     pub roles: WorkspaceRoles,
@@ -171,5 +189,27 @@ impl Default for WorkspaceRoles {
             admin: "workspace_admin".into(),
             user: "workspace_user".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn humanize_workspace_role_maps_known_roles() {
+        let _ = load_with_fallback();
+        let roles = &get().workspace.roles;
+
+        assert_eq!(humanize_workspace_role(&roles.admin), "Admin");
+        assert_eq!(humanize_workspace_role(&roles.user), "Member");
+    }
+
+    #[test]
+    fn humanize_workspace_role_falls_back_to_member_for_unknown_value() {
+        let _ = load_with_fallback();
+
+        assert_eq!(humanize_workspace_role("some_unrecognized_role"), "Member");
+        assert_eq!(humanize_workspace_role("workspace_viewer"), "Member");
     }
 }

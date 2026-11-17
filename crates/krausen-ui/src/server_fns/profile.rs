@@ -5,6 +5,7 @@
 //! Each function calls the same service-layer code as the existing REST routes.
 
 use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::types::{InvitationData, ProfileData};
 
@@ -148,13 +149,56 @@ pub async fn accept_invitation(invitation_id: String) -> Result<(), ServerFnErro
     check_invitation_acceptable(&inv, &auth.email, chrono::Utc::now())
         .map_err(ServerFnError::new)?;
 
-    krausen_auth::workspace_service::accept_invitation_for_user(
-        &ctx.db,
-        &invitation_id,
-        &auth.user_id,
-    )
-    .await
-    .into_sfn()?;
+    // Accept, then drop the user into the workspace they just joined.
+    // Switching re-mints the session JWT for the new workspace; the client
+    // hard-navigates afterward, so the fresh cookie takes effect on the next
+    // request. Acceptance errors propagate; the switch is best-effort: a
+    // failure there must not surface as an accept failure, since the
+    // membership is already committed and the user can switch manually. See
+    // `accept_invitation_and_switch` for the full contract.
+    let headers: axum::http::HeaderMap = leptos_axum::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Failed to extract headers: {e}")))?;
+    let device = super::auth::extract_device_info(&headers);
+
+    let session = match ctx.kv.clone() {
+        Some(kv) => {
+            let accept_ctx = krausen_auth::workspace_service::AcceptInvitationCtx {
+                db: &ctx.db,
+                kv: &kv,
+                jwt_secret: &ctx.config.jwt_secret,
+            };
+            krausen_auth::workspace_service::accept_invitation_and_switch(
+                &accept_ctx,
+                &invitation_id,
+                &auth.user_id,
+                &inv.workspace_id,
+                &device,
+            )
+            .await
+            .into_sfn()?
+        }
+        None => {
+            // No KV (single-instance/test) — still accept the invite; just can't
+            // re-mint a session for the new workspace.
+            tracing::warn!(
+                user_id = %auth.user_id,
+                "invite accepted but KV store unavailable; skipping active-workspace switch"
+            );
+            krausen_auth::workspace_service::accept_invitation_for_user(
+                &ctx.db,
+                &invitation_id,
+                &auth.user_id,
+            )
+            .await
+            .into_sfn()?;
+            None
+        }
+    };
+
+    if let Some(session) = session {
+        super::auth::set_session_cookies(&session);
+    }
 
     Ok(())
 }
@@ -184,6 +228,49 @@ pub async fn decline_invitation(invitation_id: String) -> Result<(), ServerFnErr
     .into_sfn()?;
 
     Ok(())
+}
+
+/// Invitation details for display on the accept-invite page.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InvitationDisplay {
+    pub invitation_id: String,
+    pub workspace_name: String,
+    pub inviter_name: String,
+    pub role: String,
+    pub expires_at: String,
+    pub status: String,
+}
+
+/// Fetch invitation details for the accept-invite page.
+///
+/// Returns `Ok(None)` both when the invitation doesn't exist AND when it
+/// exists but isn't addressed to the authenticated user — the latter case
+/// must not leak invitation existence to a non-recipient.
+#[server(prefix = "/leptos-api")]
+pub async fn get_invitation_for_accept(
+    invitation_id: String,
+) -> Result<Option<InvitationDisplay>, ServerFnError> {
+    let auth = extract_auth().await?;
+    let ctx = extract_context()?;
+
+    let inv = krausen_auth::workspace_service::get_invitation_enriched(&ctx.db, &invitation_id)
+        .await
+        .into_sfn()?;
+    let Some(inv) = inv else {
+        return Ok(None);
+    };
+    if !inv.email.eq_ignore_ascii_case(&auth.email) {
+        return Ok(None);
+    }
+
+    Ok(Some(InvitationDisplay {
+        invitation_id: inv.invitation_id,
+        workspace_name: inv.workspace_name.unwrap_or_default(),
+        inviter_name: inv.inviter_name.unwrap_or_default(),
+        role: krausen_core::constants::humanize_workspace_role(&inv.role).to_string(),
+        expires_at: inv.expires_at.to_rfc3339(),
+        status: inv.status,
+    }))
 }
 
 // Helpers — delegate to shared extractors in parent module

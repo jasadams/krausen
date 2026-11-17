@@ -86,6 +86,7 @@ pub fn register_server_functions() {
     register_explicit::<UpdateTheme>();
     register_explicit::<AcceptInvitation>();
     register_explicit::<DeclineInvitation>();
+    register_explicit::<GetInvitationForAccept>();
 
     // Security
     use server_fns::security::*;
