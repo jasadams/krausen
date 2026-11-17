@@ -4,8 +4,7 @@
 //! ported from Kyomi's `token_sliding_expiry_tests.rs` and run on SQLite and
 //! PostgreSQL through the shared both-backends harness.
 //!
-//! Differences forced by Krausen: a browser refresh needs a real durable
-//! credential family (`auth_credentials`), so the browser half logs in through
+//! Differences forced by Krausen: the browser half logs in through
 //! `session::create_authenticated_session` instead of storing a bare token; and
 //! revocation goes through `revoke_user_refresh_token` (Krausen has no
 //! per-token-id-only revoke; every stored fixture is its own family).
@@ -219,7 +218,7 @@ async fn browser_rotation_and_replaced_oauth_grace(db: &DbPool) {
         .await
         .unwrap();
     assert_ne!(rotated.raw_refresh_token, raw);
-    assert!(jwt::validate_browser_token(&rotated.access_token, secret).is_ok());
+    assert!(jwt::validate_token(&rotated.access_token, secret).is_ok());
     let old = state(db, &old_id).await;
     assert_eq!(old.expires_at, expiry, "browser rotation must not slide expiry");
     let replaced = old.replaced_at.unwrap();

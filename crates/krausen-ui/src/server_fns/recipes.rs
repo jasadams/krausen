@@ -292,7 +292,6 @@ mod principal_tests {
         sqlx::query("INSERT INTO workspaces (workspace_id, name, owner_user_id) VALUES ('workspace-local', 'Local', 'user-local')").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('workspace-local', 'user-local', 'workspace_admin')").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO recipes (workspace_id, recipe_id, name, document, native_migration_error) VALUES ('workspace-local', 'broken', 'Broken', 'original', 'Recovery required')").execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('c','user-local','browser','krausen-browser','krausen-ui',4102444800)").execute(&pool).await.unwrap();
         let db = DbPool::Sqlite(pool);
         let secret = "test-only-jwt-secret-for-principal-boundary";
         let personal = AuthState {
@@ -310,15 +309,6 @@ mod principal_tests {
         );
         let mut claims = std::collections::HashMap::new();
         claims.insert("workspace_id".into(), serde_json::json!("workspace-local"));
-        claims.insert("credential_id".into(), serde_json::json!("c"));
-        claims.insert(
-            "iss".into(),
-            serde_json::json!(krausen_auth::jwt::BROWSER_ISSUER),
-        );
-        claims.insert(
-            "aud".into(),
-            serde_json::json!(krausen_auth::jwt::BROWSER_AUDIENCE),
-        );
         let token =
             krausen_auth::jwt::create_access_token_str("user-local", secret, 10, claims).unwrap();
         let state = AuthState {

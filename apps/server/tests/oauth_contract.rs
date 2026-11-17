@@ -6,14 +6,13 @@
 //! asserts the exact status and body.
 //!
 //! Differences from Kyomi, all forced by Krausen:
-//! - browser sessions are Krausen credentialed sessions
-//!   (`session::create_authenticated_session`);
+//! - browser sessions come from `session::create_authenticated_session`;
 //! - there is no access-token auto-refresh middleware, so Kyomi's "a refreshed
 //!   access JWT preserves consent" case becomes "an expired access cookie is
 //!   refused with 401 Invalid session";
 //! - "ordinary REST" is the authenticated server function `get_sessions`;
-//! - a browser refresh needs a real credential family, so the "unbound refresh
-//!   token" is a real browser login's refresh token.
+//! - the "unbound refresh token" (no OAuth client) is a real browser login's
+//!   refresh token.
 
 mod common;
 

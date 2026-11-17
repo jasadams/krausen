@@ -10,10 +10,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Internal browser-token issuer/audience; MCP uses its resource URI instead.
-pub const BROWSER_ISSUER: &str = "krausen-browser";
-pub const BROWSER_AUDIENCE: &str = "krausen-ui";
-
 /// Claims embedded in every JWT access token.
 ///
 /// Unknown claims are preserved via `extra` so externally-issued tokens
@@ -232,25 +228,6 @@ pub fn validate_token(token: &str, secret: &str) -> krausen_core::Result<TokenDa
     })
 }
 
-/// Reject legacy unbound browser tokens and require the intended issuer/audience.
-pub fn validate_browser_token(
-    token: &str,
-    secret: &str,
-) -> krausen_core::Result<TokenData<Claims>> {
-    let mut validation = Validation::default();
-    validation.set_issuer(&[BROWSER_ISSUER]);
-    validation.set_audience(&[BROWSER_AUDIENCE]);
-    validation
-        .required_spec_claims
-        .extend(["iss".into(), "aud".into()]);
-    jsonwebtoken::decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|_| krausen_core::Error::Unauthorized("Invalid browser credential".into()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,11 +298,11 @@ mod tests {
     }
 
     #[test]
-    fn mcp_token_is_refused_by_browser_validation() {
-        // No browser issuer/audience: the browser validator must refuse it.
+    fn mcp_token_has_no_browser_session_authority() {
         let token =
             create_mcp_access_token_str("user-1", "secret", 15, Default::default()).unwrap();
-        assert!(validate_browser_token(&token, "secret").is_err());
+        let claims = validate_token(&token, "secret").unwrap().claims;
+        assert!(claims.require_session().is_err());
     }
 
     #[test]

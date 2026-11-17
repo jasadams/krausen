@@ -27,17 +27,10 @@ async fn exercise(db: DbPool) {
         &workspace,
         &user
     );
-    let credential = format!("c-{suffix}");
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &credential,
-        &user,
-        chrono::Utc::now().timestamp() + 3600
-    );
     let actor = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace.clone(),
-        credential_id: Some(credential),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: chrono::Utc::now().timestamp() + 3600,
     };
     let expired_actor = ActorContext {
@@ -216,17 +209,17 @@ async fn exercise(db: DbPool) {
                 .fetch_one(&mut **t)
                 .await
                 .unwrap();
-            sqlx::query("UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2")
-                .bind(chrono::Utc::now().timestamp())
-                .bind(&actor.credential_id)
+            sqlx::query("UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2")
+                .bind(actor.session_iat_us.unwrap())
+                .bind(&actor.actor_id)
                 .execute(&mut **t)
                 .await
                 .unwrap();
         }
         krausen_core::DbTx::Sqlite(t) => {
-            sqlx::query("UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2")
-                .bind(chrono::Utc::now().timestamp())
-                .bind(&actor.credential_id)
+            sqlx::query("UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2")
+                .bind(actor.session_iat_us.unwrap())
+                .bind(&actor.actor_id)
                 .execute(&mut **t)
                 .await
                 .unwrap();
@@ -338,6 +331,106 @@ async fn postgres_foundation() {
         .await
         .unwrap();
     exercise(DbPool::Postgres(pool)).await;
+}
+
+async fn session_cutoff(db: DbPool) {
+    let suffix = Uuid::new_v4().to_string();
+    let user = format!("sc-u-{suffix}");
+    let workspace = format!("sc-w-{suffix}");
+    macro_rules! run { ($sql:expr $(, $a:expr)*) => { match &db {
+        DbPool::Postgres(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+        DbPool::Sqlite(p) => sqlx::query($sql)$(.bind($a))*.execute(p).await.unwrap().rows_affected(),
+    } }; }
+    run!(
+        "INSERT INTO users (user_id,email) VALUES ($1,$2)",
+        &user,
+        format!("{suffix}@example.test")
+    );
+    run!(
+        "INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ($1,$2)",
+        &workspace,
+        &user
+    );
+    run!(
+        "INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,'workspace_admin')",
+        &workspace,
+        &user
+    );
+    let issued = chrono::Utc::now().timestamp_micros();
+    let browser = ActorContext {
+        actor_id: user.clone(),
+        workspace_id: workspace.clone(),
+        session_iat_us: Some(issued),
+        access_expires_at: chrono::Utc::now().timestamp() + 3600,
+    };
+    let mcp = ActorContext {
+        session_iat_us: None,
+        ..browser.clone()
+    };
+    macro_rules! cutoff { ($v:expr) => { run!(
+        "UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2",
+        $v,
+        &user
+    ) }; }
+
+    // No cutoff: allowed.
+    assert!(krausen_app::workspace_snapshot(&db, &browser).await.is_ok());
+    // Cutoff before issuance: allowed.
+    cutoff!(Some(issued - 1));
+    assert!(krausen_app::workspace_snapshot(&db, &browser).await.is_ok());
+    // Cutoff exactly at issuance and after it: the session is cut off.
+    cutoff!(Some(issued));
+    assert!(matches!(
+        krausen_app::workspace_snapshot(&db, &browser).await,
+        Err(Error::Forbidden)
+    ));
+    cutoff!(Some(issued + 1));
+    assert!(matches!(
+        krausen_app::workspace_snapshot(&db, &browser).await,
+        Err(Error::Forbidden)
+    ));
+    // A session issued after the cutoff is allowed.
+    let newer = ActorContext {
+        session_iat_us: Some(issued + 2),
+        ..browser.clone()
+    };
+    assert!(krausen_app::workspace_snapshot(&db, &newer).await.is_ok());
+    // MCP actors carry no browser session and are exempt, even from a far-future cutoff.
+    cutoff!(Some(i64::MAX / 2));
+    assert!(krausen_app::workspace_snapshot(&db, &mcp).await.is_ok());
+    assert!(matches!(
+        krausen_app::workspace_snapshot(&db, &browser).await,
+        Err(Error::Forbidden)
+    ));
+    // Clearing the cutoff restores the browser session.
+    cutoff!(None::<i64>);
+    assert!(krausen_app::workspace_snapshot(&db, &browser).await.is_ok());
+}
+
+#[tokio::test]
+async fn sqlite_session_cutoff() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../../apps/server/migrations-sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    session_cutoff(DbPool::Sqlite(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_session_cutoff() {
+    let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
+        .expect("KRAUSEN_TEST_POSTGRES_URL is required for PostgreSQL tests");
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("../../apps/server/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    session_cutoff(DbPool::Postgres(pool)).await;
 }
 
 #[test]

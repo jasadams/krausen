@@ -85,7 +85,6 @@ async fn exercise(db: DbPool) {
     let user = format!("u-{suffix}");
     let workspace_a = format!("a-{suffix}");
     let workspace_b = format!("b-{suffix}");
-    let cred = format!("c-{suffix}");
     macro_rules! run {
         ($sql:expr $(,$arg:expr)*) => {
             match &db {
@@ -129,22 +128,16 @@ async fn exercise(db: DbPool) {
             &user
         );
     }
-    run!(
-        "INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ($1,$2,'browser','test','test',$3)",
-        &cred,
-        &user,
-        4102444800_i64
-    );
     let actor_a = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace_a.clone(),
-        credential_id: Some(cred.clone()),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let actor_b = ActorContext {
         actor_id: user.clone(),
         workspace_id: workspace_b.clone(),
-        credential_id: Some(cred.clone()),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let intent_a = OperationIntent {
@@ -1109,15 +1102,15 @@ async fn exercise(db: DbPool) {
         assert!(catalogue::search(&db, &actor_a, &replay_shown).await.is_ok());
     }
 
-    // --- Context intent and credential revocation fail closed ---
+    // --- Context intent and session revocation fail closed ---
     assert!(matches!(
         catalogue::search(&db, &actor_a, &search(&intent_b, "", CatalogueFilter::All)).await,
         Err(Error::ContextChanged)
     ));
     run!(
-        "UPDATE auth_credentials SET revoked_at=$1 WHERE credential_id=$2",
-        chrono::Utc::now().timestamp(),
-        &actor_a.credential_id
+        "UPDATE users SET sessions_valid_from=$1 WHERE user_id=$2",
+        actor_a.session_iat_us.unwrap(),
+        &actor_a.actor_id
     );
     assert!(matches!(
         catalogue::search(&db, &actor_a, &search(&intent_a, "", CatalogueFilter::All)).await,

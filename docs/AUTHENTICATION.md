@@ -1,23 +1,28 @@
 # Installation authentication
 
-Browser access requires an active account and a durable credential; MCP access
-requires an active account and an MCP access token (below). On
-upgrade, existing browser access and refresh tokens without a credential binding
-are rejected; users must sign in again. Existing accounts, workspace ownership,
-recipes and password or passkey methods are retained. Browser refresh tokens
+Browser access requires an active account and a valid signed access token; there is no
+per-session credential record. MCP access requires an active account and an MCP access
+token (below). On upgrade, existing browser access tokens (which carry credential
+claims) are rejected and users refresh or sign in again; MCP OAuth grants made before
+the upgrade are removed and MCP clients must reconnect. Existing accounts, workspace
+ownership, recipes and password or passkey methods are retained. Browser refresh tokens
 rotate with a grace period: a token that was just
 replaced is still accepted for `refresh_token_grace_period_seconds` (30 seconds)
 and rotates again, so a lost refresh response or several tabs holding the same
 cookie never sign the user out. A replaced token presented after the grace period
-is treated as theft: its credential family is revoked and the user must sign in
-again. A revoked, expired or unbound credential is rejected even inside the grace
-period.
+is treated as theft: its refresh-token family is revoked and the user must sign in
+again. A revoked or expired refresh token is rejected even inside the grace period.
+Revoking a refresh family or signing out one session does not end an access token
+already issued; it ends at its 15-minute expiry. Only signing out everywhere or recovery
+(below) ends access tokens at once.
 
 Signing out everywhere and completing account recovery (password) revoke browser
 sessions immediately: each account has a revocation cutoff (`users.sessions_valid_from`,
 Unix microseconds). A browser access token carries its signed microsecond issuance and is
 rejected on the next request, WebSocket connection or refresh once its issuance is at or
 before the cutoff, and the account's refresh tokens are revoked in the same transaction.
+A WebSocket is checked only when it connects: an already-open socket is not closed by
+signing out everywhere or by its token expiring, and ends only when it closes.
 The cutoff only moves forward, including under concurrent events and clock rollback.
 Failures to load the account, workspace or membership during authentication reject the
 request rather than continuing with a default context.
@@ -58,7 +63,7 @@ or when the account is deactivated. A token that names a workspace is refused (4
 user is removed from that workspace, and every tool call is also authorized against the
 workspace it names.
 Consent is approved by the signed-in browser session (its access cookie, the session
-cutoff and the active account); until the browser credential binding is removed, a
+cutoff and the active account); a
 single-session logout does not stop a copied access cookie from approving a consent
 for the remaining access-token lifetime. `/mcp` also accepts a browser session. An
 unauthenticated request receives 401 with a `WWW-Authenticate` header pointing at the

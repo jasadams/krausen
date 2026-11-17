@@ -221,7 +221,7 @@ async fn oauth_authorize(
     let cookie_name = &krausen_core::constants::get().cookies.access_token_name;
     let token = krausen_auth::cookies::get_cookie_value(&headers, cookie_name);
     if let Some(token) = token
-        && let Ok(session) = jwt::validate_browser_token(token, &state.config.jwt_secret)
+        && let Ok(session) = jwt::validate_token(token, &state.config.jwt_secret)
         && session.claims.require_session().is_ok()
     {
         match krausen_auth::session::require_current_browser_session(&state.db, &session.claims).await {
@@ -374,7 +374,7 @@ async fn oauth_authorize_continue(
     let cookie_name = &krausen_core::constants::get().cookies.access_token_name;
     let token = krausen_auth::cookies::get_cookie_value(&headers, cookie_name)
         .ok_or_else(|| RouteError::from((StatusCode::UNAUTHORIZED, "Not logged in")))?;
-    let session = jwt::validate_browser_token(token, &state.config.jwt_secret)
+    let session = jwt::validate_token(token, &state.config.jwt_secret)
         .map_err(|_| RouteError::from((StatusCode::UNAUTHORIZED, "Invalid session")))?;
     krausen_auth::session::require_current_browser_session(&state.db, &session.claims)
         .await.map_err(|error| match error {
@@ -418,7 +418,7 @@ async fn oauth_consent_decision(
     let cookie_name = &krausen_core::constants::get().cookies.access_token_name;
     let token = krausen_auth::cookies::get_cookie_value(&headers, cookie_name)
         .ok_or_else(|| RouteError::from((StatusCode::UNAUTHORIZED, "Not logged in")))?;
-    let session = jwt::validate_browser_token(token, &state.config.jwt_secret)
+    let session = jwt::validate_token(token, &state.config.jwt_secret)
         .map_err(|_| RouteError::from((StatusCode::UNAUTHORIZED, "Invalid session")))?;
     krausen_auth::session::require_current_browser_session(&state.db, &session.claims)
         .await.map_err(|error| match error {

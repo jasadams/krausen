@@ -34,7 +34,7 @@ async fn probe(
     let Some(token) = krausen_auth::cookies::get_cookie_value(&headers, "access_token") else {
         return StatusCode::UNAUTHORIZED;
     };
-    if krausen_auth::jwt::validate_browser_token(token, &state.config.jwt_secret).is_ok() {
+    if krausen_auth::jwt::validate_token(token, &state.config.jwt_secret).is_ok() {
         StatusCode::OK
     } else {
         StatusCode::UNAUTHORIZED
@@ -139,7 +139,7 @@ async fn concurrent_expiry_and_browser_tabs_remain_usable() {
     );
     let active: i64 = match &db {
         DbPool::Sqlite(p) => sqlx::query_scalar(
-            "SELECT COUNT(*) FROM auth_credentials WHERE user_id = $1 AND revoked_at IS NULL",
+            "SELECT COUNT(DISTINCT family_id) FROM refresh_tokens WHERE user_id = $1 AND is_active = 1",
         )
         .bind(&user.user_id)
         .fetch_one(p)

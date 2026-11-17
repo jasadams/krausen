@@ -39,11 +39,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p krausen-auth --test credential_lifecycle
+      - run: cargo test -p krausen-auth --test refresh_lifecycle
       - run: FRONTEND_URL=https://example.test cargo test -p krausen-auth --test secure_cookie
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
-      - run: cargo test -p krausen-server --test migration_orders --test mcp_auth
+      - run: cargo test -p krausen-server --test migration_orders --test drop_credentials_migration --test mcp_auth
       - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry
       - run: cargo test -p krausen-server --lib route_error
       - run: cargo test -p krausen-auth --lib sliding_expiry_tests

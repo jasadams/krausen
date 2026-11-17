@@ -53,7 +53,6 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
     sqlx::query("INSERT INTO users (user_id,email) VALUES ('kra20-baseline-user','kra20-baseline-user@example.test')").execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ('kra20-baseline-workspace','kra20-baseline-user')").execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ('kra20-baseline-workspace','kra20-baseline-user','workspace_member')").execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO auth_credentials (credential_id,user_id,kind,issuer,audience,expires_at) VALUES ('kra20-baseline-credential','kra20-baseline-user','browser','test','test',4102444800)").execute(&pool).await.unwrap();
     let profile_id = profile["profile_id"].as_str().unwrap();
     sqlx::query("INSERT INTO equipment_profiles (workspace_id,profile_id,name,current_revision,metadata_revision,archived) VALUES ($1,$2,$3,1,1,0)")
         .bind("kra20-baseline-workspace").bind(profile_id).bind(profile["name"].as_str().unwrap()).execute(&pool).await.unwrap();
@@ -65,7 +64,7 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
     let actor = ActorContext {
         actor_id: "kra20-baseline-user".into(),
         workspace_id: "kra20-baseline-workspace".into(),
-        credential_id: Some("kra20-baseline-credential".into()),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
         access_expires_at: 4102444800,
     };
     let intent = OperationIntent {

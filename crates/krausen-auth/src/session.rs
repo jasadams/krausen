@@ -85,11 +85,7 @@ pub async fn create_authenticated_session(
         workspace_roles = vec![wu.role];
     }
 
-    // Bind this access token to the durable refresh-family credential.
     let family_id = token_service::generate_family_id();
-    extra.insert("credential_id".into(), serde_json::json!(&family_id));
-    extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
-    extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
     // Create access token
     let access_token = jwt::create_session_access_token_str(
         &user.user_id,
@@ -103,7 +99,7 @@ pub async fn create_authenticated_session(
     let raw_refresh = jwt::create_refresh_token();
     let token_hash = token_service::hash_refresh_token(&raw_refresh);
     let expires_at = Utc::now() + Duration::days(jwt_config.refresh_token_expire_days);
-    let issued_at_us = jwt::validate_browser_token(&access_token, jwt_secret)?
+    let issued_at_us = jwt::validate_token(&access_token, jwt_secret)?
         .claims
         .session_iat_us
         .ok_or_else(|| krausen_core::Error::Internal("Missing session issuance claim".into()))?;
