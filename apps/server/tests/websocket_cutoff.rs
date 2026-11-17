@@ -114,8 +114,8 @@ async fn exercise(db: DbPool) {
         "a current session stays connected"
     );
 
-    // Move the cutoff past this session without touching its credential, so the
-    // cutoff itself is what refuses the socket.
+    // Move the cutoff past this session, so the cutoff itself is what refuses the
+    // socket.
     let cutoff = chrono::Utc::now().timestamp_micros() + 10_000_000;
     match &db {
         DbPool::Postgres(p) => {

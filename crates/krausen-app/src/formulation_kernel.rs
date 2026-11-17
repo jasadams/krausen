@@ -63,7 +63,7 @@ pub(crate) fn policy_source_hash() -> String {
 
 /// Resolve and calculate on the caller's transaction. Authorization and intent
 /// are checked here; the profile lock is followed by a second authorization
-/// because it may wait across the credential expiry boundary. This function
+/// because it may wait across the access-token expiry or a session revocation. This function
 /// never begins, commits or rolls back a transaction.
 pub(crate) async fn resolve_in_tx(
     tx: &mut DbTx<'_>,
@@ -83,7 +83,7 @@ pub(crate) async fn resolve_in_tx(
     } else {
         None
     };
-    // A profile row lock may have waited across the credential expiry boundary.
+    // A profile row lock may have waited across the access-token expiry or a session revocation.
     authorize_workspace(tx, actor).await?;
     let style = match &request.draft.style {
         Some(reference) => match crate::style_reference::resolve(reference) {

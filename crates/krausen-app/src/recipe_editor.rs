@@ -119,7 +119,7 @@ async fn save_inner(
         "SELECT revision FROM workspaces WHERE workspace_id = $1 AND status = 'active'"
     };
     let workspace = scalar!(&mut tx, i64, ws_sql, &actor.workspace_id).map_err(db_error)?;
-    // The row lock can wait past access or credential expiry. Recheck under
+    // The row lock can wait past access expiry or a session revocation. Recheck under
     // the same transaction before returning a stored result or writing.
     authorize_workspace(&mut tx, actor).await?;
     if workspace.is_none() {
@@ -147,7 +147,7 @@ async fn save_inner(
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)
                 .await
                 .map_err(boundary_error)?;
-        // The source row lock can wait past the verified credential's expiry.
+        // The source row lock can wait past the verified access token's expiry or a session revocation.
         authorize_workspace(&mut tx, actor).await?;
         if !profile.is_some_and(|profile| !profile.archived) {
             return Ok(RecipeSaveOutcome::UnresolvedEquipmentProfile);
@@ -174,7 +174,7 @@ async fn save_inner(
                 return Ok(RecipeSaveOutcome::UnresolvedIngredientSource);
             }
             // Resolving workspace sources took aggregate row locks that can
-            // wait past the verified credential's expiry.
+            // wait past the verified access token's expiry or a session revocation.
             authorize_workspace(&mut tx, actor).await?;
             let id = uuid::Uuid::new_v4().to_string();
             native_store::create(
@@ -223,7 +223,7 @@ async fn save_inner(
             {
                 return Ok(RecipeSaveOutcome::UnresolvedIngredientSource);
             }
-            // Source row locks can wait past the verified credential's expiry.
+            // Source row locks can wait past the verified access token's expiry or a session revocation.
             authorize_workspace(&mut tx, actor).await?;
             let saved = native_store::save(
                 &mut tx,

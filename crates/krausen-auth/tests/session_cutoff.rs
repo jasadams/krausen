@@ -76,17 +76,6 @@ async fn cutoff(db: &DbPool, user_id: &str) -> Option<i64> {
         .sessions_valid_from
 }
 
-/// The KRA-10 credential row also dies on revoke-all, and the extractor checks it
-/// before the cutoff. Un-revoking it leaves only the cutoff to refuse the token.
-async fn revive_credentials(db: &DbPool, user_id: &str) {
-    krausen_core::db_execute!(
-        db,
-        "UPDATE auth_credentials SET revoked_at = NULL WHERE user_id = $1",
-        user_id
-    )
-    .unwrap();
-}
-
 /// Assert the extractor refuses `token` because of the cutoff alone.
 async fn assert_refused_by_cutoff(db: &DbPool, token: &str) {
     match authenticate(db, token).await {
@@ -109,7 +98,7 @@ async fn new_user_has_no_cutoff(db: &DbPool) {
 async fn login_signs_session_issuance_and_authenticates(db: &DbPool) {
     let u = user(db).await;
     let sess = login(db, &u).await;
-    let claims = jwt::validate_browser_token(&sess.access_token, SECRET).unwrap().claims;
+    let claims = jwt::validate_token(&sess.access_token, SECRET).unwrap().claims;
     assert!(claims.session_iat_us.is_some());
     assert!(authenticate(db, &sess.access_token).await.is_ok());
 }
@@ -125,7 +114,6 @@ async fn revoke_all_sessions_invalidates_access_and_refresh(db: &DbPool) {
     assert_eq!(revoked, 1, "one refresh token was active");
     assert!(cutoff(db, &u.user_id).await.is_some());
 
-    revive_credentials(db, &u.user_id).await;
     assert_refused_by_cutoff(db, &old.access_token).await;
     assert!(
         token_refresh::refresh_tokens(db, SECRET, &old.refresh_token, &device())
@@ -196,7 +184,6 @@ async fn password_recovery_evicts_prior_sessions(db: &DbPool) {
         panic!("recovery should succeed")
     };
 
-    revive_credentials(db, &u.user_id).await;
     assert_refused_by_cutoff(db, &before.access_token).await;
     assert!(
         token_refresh::refresh_tokens(db, SECRET, &before.refresh_token, &device())
@@ -221,7 +208,6 @@ async fn refreshed_access_token_follows_the_cutoff(db: &DbPool) {
         .unwrap();
     assert!(authenticate(db, &refreshed.access_token).await.is_ok());
     token_service::revoke_all_user_sessions(db, &u.user_id).await.unwrap();
-    revive_credentials(db, &u.user_id).await;
     assert_refused_by_cutoff(db, &refreshed.access_token).await;
 }
 
@@ -246,7 +232,7 @@ async fn membership_lookup_error_fails_closed(db: &DbPool) {
 async fn legacy_token_without_issuance_is_rejected_by_whole_second(db: &DbPool) {
     let u = user(db).await;
     let sess = login(db, &u).await;
-    let mut claims = jwt::validate_browser_token(&sess.access_token, SECRET).unwrap().claims;
+    let mut claims = jwt::validate_token(&sess.access_token, SECRET).unwrap().claims;
     claims.session_iat_us = None;
     let cutoff_us = (claims.iat + 1) * 1_000_000;
     assert!(claims.require_current_session(Some(cutoff_us)).is_err());
@@ -340,7 +326,6 @@ async fn grace_rerotation_after_revoke_all_is_rejected(db: &DbPool) {
             "no token of a revoked session may re-rotate, grace or not"
         );
     }
-    revive_credentials(db, &u.user_id).await;
     assert_refused_by_cutoff(db, &first.access_token).await;
 }
 
@@ -371,14 +356,13 @@ async fn user_lookup_error_fails_closed(db: &DbPool) {
 }
 
 /// KYO-571 port: an MCP JWT is refused by the browser extractor (`AuthUser`),
-/// so it cannot reach any non-`/mcp` route. Without browser issuer/audience the
-/// validator refuses it first, with the same message as any foreign token.
+/// so it cannot reach any non-`/mcp` route: it has no session authority.
 async fn mcp_token_is_refused_by_the_browser_extractor(db: &DbPool) {
     let u = user(db).await;
     let mcp = jwt::create_mcp_access_token_str(&u.user_id, SECRET, 15, Default::default()).unwrap();
     match authenticate(db, &mcp).await {
         Err(krausen_core::Error::Unauthorized(msg)) => {
-            assert_eq!(msg, "Invalid browser credential")
+            assert_eq!(msg, "Token is not a browser session")
         }
         Err(other) => panic!("expected Unauthorized, got {other:?}"),
         Ok(_) => panic!("an MCP token must not authenticate as a browser session"),
@@ -388,19 +372,17 @@ async fn mcp_token_is_refused_by_the_browser_extractor(db: &DbPool) {
     assert!(authenticate(db, &sess.access_token).await.is_ok());
 }
 
-/// Even an MCP-purpose token that carries a live browser credential id and the
-/// browser issuer/audience (everything else the extractor checks) is refused
-/// because the purpose claim means it has no browser authority.
+/// Even an MCP-purpose token that carries a browser session's claims (everything
+/// else the extractor checks) is refused because the purpose claim means it has
+/// no browser authority.
 async fn mcp_purpose_with_browser_claims_is_still_refused(db: &DbPool) {
     let u = user(db).await;
     let sess = login(db, &u).await;
-    let browser = jwt::validate_browser_token(&sess.access_token, SECRET)
+    let browser = jwt::validate_token(&sess.access_token, SECRET)
         .unwrap()
         .claims;
-    let mut extra = browser.extra.clone();
-    extra.insert("iss".into(), serde_json::json!(jwt::BROWSER_ISSUER));
-    extra.insert("aud".into(), serde_json::json!(jwt::BROWSER_AUDIENCE));
-    assert!(extra.contains_key("credential_id"), "fixture carries a live credential");
+    let extra = browser.extra.clone();
+    assert!(extra.contains_key("user_id"), "fixture carries a browser session's claims");
     let forged = jwt::create_mcp_access_token_str(&u.user_id, SECRET, 15, extra).unwrap();
     match authenticate(db, &forged).await {
         Err(krausen_core::Error::Unauthorized(msg)) => {
@@ -409,6 +391,88 @@ async fn mcp_purpose_with_browser_claims_is_still_refused(db: &DbPool) {
         Err(other) => panic!("expected Unauthorized, got {other:?}"),
         Ok(_) => panic!("a purpose token must never authenticate as a browser session"),
     }
+}
+
+/// Signing out one browser session revokes its refresh-token family only: the
+/// family cannot refresh and has no active row, while an access token already
+/// issued authenticates until it expires (it is not bound to any stored record).
+async fn single_session_logout_ends_refresh_not_access_token(db: &DbPool) {
+    let u = user(db).await;
+    let sess = login(db, &u).await;
+    let hash = token_service::hash_refresh_token(&sess.refresh_token);
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        token_id: String,
+        family_id: String,
+    }
+    let row = krausen_core::db_fetch_one!(
+        db,
+        Row,
+        "SELECT token_id, family_id FROM refresh_tokens WHERE token_hash = $1",
+        &hash
+    )
+    .unwrap();
+    assert!(
+        token_service::revoke_user_refresh_token(db, &u.user_id, &row.token_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        token_refresh::refresh_tokens(db, SECRET, &sess.refresh_token, &device())
+            .await
+            .is_err(),
+        "the revoked family cannot refresh"
+    );
+    let active = krausen_core::sql_compat::bool_true(db.is_postgres());
+    let sql = format!(
+        "SELECT COUNT(*) FROM refresh_tokens WHERE family_id = $1 AND is_active = {active}"
+    );
+    assert_eq!(
+        krausen_core::db_fetch_scalar!(db, i64, &sql, &row.family_id).unwrap(),
+        0,
+        "the family has no active row"
+    );
+    assert!(
+        authenticate(db, &sess.access_token).await.is_ok(),
+        "the access token authenticates until it expires"
+    );
+    assert_eq!(cutoff(db, &u.user_id).await, None, "no cutoff was set");
+}
+
+/// Upgrade path: an access token minted before the credential removal carries
+/// `iss`/`aud` claims and is refused by `validate_token` (InvalidAudience); a
+/// refresh family that has no credential row (the pre-migration data is gone)
+/// still rotates, and the new access token authenticates.
+async fn legacy_iss_aud_token_is_rejected_and_a_bare_refresh_family_rotates(db: &DbPool) {
+    let u = user(db).await;
+    let mut extra = std::collections::HashMap::new();
+    extra.insert("iss".to_string(), serde_json::json!("krausen-browser"));
+    extra.insert("aud".to_string(), serde_json::json!("krausen-ui"));
+    extra.insert("credential_id".to_string(), serde_json::json!("old-credential"));
+    let legacy =
+        jwt::create_session_access_token_str(&u.user_id, SECRET, 15, extra, u.sessions_valid_from)
+            .unwrap();
+    assert!(jwt::validate_token(&legacy, SECRET).is_err());
+    assert!(matches!(
+        authenticate(db, &legacy).await,
+        Err(krausen_core::Error::Unauthorized(_))
+    ));
+
+    let raw = jwt::create_refresh_token();
+    token_service::store_refresh_token(
+        db,
+        &u.user_id,
+        &token_service::hash_refresh_token(&raw),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        &device(),
+        &token_service::generate_family_id(),
+    )
+    .await
+    .unwrap();
+    let refreshed = token_refresh::refresh_tokens(db, SECRET, &raw, &device())
+        .await
+        .unwrap();
+    assert!(authenticate(db, &refreshed.access_token).await.is_ok());
 }
 
 async fn sqlite() -> DbPool {
@@ -473,4 +537,6 @@ on_both_backends!(
     grace_rerotation_after_revoke_all_is_rejected,
     workspace_lookup_error_fails_closed,
     user_lookup_error_fails_closed,
+    single_session_logout_ends_refresh_not_access_token,
+    legacy_iss_aud_token_is_rejected_and_a_bare_refresh_family_rotates,
 );

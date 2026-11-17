@@ -1713,12 +1713,12 @@ test('save and leave waits for a successful revision before navigating', async (
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${name}' AND native_head_revision = 1`)).toBe('1');
 });
 
-test('revoked credentials cannot read the retained draft until reauthentication', async ({ page }) => {
+test('a revoked session cannot read the retained draft until reauthentication', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill('Draft after revocation');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('krausen-draft-v1:')))).toBe(true);
   const userId = getDefaultUserId();
-  db.exec(`UPDATE auth_credentials SET revoked_at = ${Math.floor(Date.now() / 1000)} WHERE user_id = '${userId}' AND revoked_at IS NULL`);
+  db.exec(`UPDATE users SET sessions_valid_from = ${Date.now() * 1000} WHERE user_id = '${userId}'`);
   walCheckpoint();
   const other = await page.context().newPage();
   await other.goto('/recipe-editor/new');

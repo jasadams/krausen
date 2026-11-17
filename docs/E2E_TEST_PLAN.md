@@ -330,8 +330,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 8. Click "Revoke" on the other session (not the current one)
 9. Verify it is removed from the list
 10. Switch to the second browser/context
-11. Attempt to navigate to a protected route
-12. Verify the second session is now invalid (redirected to login)
+11. Attempt to refresh the second session (its refresh token) and verify it is rejected at once; a protected route keeps working only until its current access token expires (at most 15 minutes), after which the session is redirected to login
 
 **Logout all sessions:**
 13. Log in from multiple contexts
@@ -340,7 +339,7 @@ Comprehensive test plan for the Krausen app starter template. Covers all user-fa
 16. Verify the current session is also logged out (its cookies are cleared) and must re-authenticate; a new login afterwards works
 17. Repeat step 15 after completing a password recovery for the account: recovery revokes all sessions that existed before it, and keeps only the session it creates
 
-**Expected Result:** Sessions are visible, individually revocable, and bulk logout and account recovery revoke sessions immediately.
+**Expected Result:** Sessions are visible, individually revocable (the revoked session cannot refresh and ends when its access token expires), and bulk logout and account recovery revoke sessions immediately.
 
 ---
 

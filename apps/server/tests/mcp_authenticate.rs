@@ -142,13 +142,13 @@ async fn expired_mcp_jwt_is_401(srv: &TestServer) {
     assert_unauthorized(srv, Some(&expired), "expired MCP token").await;
 }
 
-/// A validly signed token without the MCP purpose is not an MCP credential, and
-/// without the browser issuer/audience it is not a browser session either.
-async fn signed_token_without_mcp_purpose_or_browser_binding_is_401(srv: &TestServer) {
+/// A validly signed token without a purpose is a browser session: a valid access
+/// token is enough (there is no credential row to bind it to).
+async fn signed_session_token_is_accepted_without_a_credential_row(srv: &TestServer) {
     let who = account(srv).await;
     let unbound =
         jwt::create_access_token_str(&who.user_id, &srv.secret, 15, Default::default()).unwrap();
-    assert_unauthorized(srv, Some(&unbound), "purpose-less unbound token").await;
+    assert_eq!(post_mcp(&srv.base, Some(&unbound)).await.status(), StatusCode::OK);
     let session = jwt::create_session_access_token_str(
         &who.user_id,
         &srv.secret,
@@ -157,7 +157,7 @@ async fn signed_token_without_mcp_purpose_or_browser_binding_is_401(srv: &TestSe
         None,
     )
     .unwrap();
-    assert_unauthorized(srv, Some(&session), "purpose-less session without browser binding").await;
+    assert_eq!(post_mcp(&srv.base, Some(&session)).await.status(), StatusCode::OK);
 }
 
 async fn browser_access_token_is_accepted(srv: &TestServer) {
@@ -166,15 +166,6 @@ async fn browser_access_token_is_accepted(srv: &TestServer) {
         post_mcp(&srv.base, Some(&who.access_token)).await.status(),
         StatusCode::OK
     );
-    // A browser credential that is revoked or expired is refused like any other.
-    krausen_core::db_execute!(
-        &srv.db,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE user_id = $2",
-        &chrono::Utc::now().timestamp(),
-        &who.user_id
-    )
-    .unwrap();
-    assert_unauthorized(srv, Some(&who.access_token), "revoked browser credential").await;
 }
 
 /// Revoke-all ends browser sessions on `/mcp`; the OAuth grant has its own
@@ -329,7 +320,7 @@ common::both_backends!(
     mcp_jwt_for_an_unknown_user_is_401,
     mcp_jwt_signed_with_the_wrong_secret_is_401,
     expired_mcp_jwt_is_401,
-    signed_token_without_mcp_purpose_or_browser_binding_is_401,
+    signed_session_token_is_accepted_without_a_credential_row,
     browser_access_token_is_accepted,
     revoke_all_sessions_ends_browser_access_but_not_the_mcp_grant,
     browser_cookie_is_accepted_and_mcp_token_in_a_cookie_is_not,

@@ -100,7 +100,7 @@ async fn exercise(db: DbPool) {
     )
     .await
     .unwrap();
-    let claims = krausen_auth::jwt::validate_browser_token(
+    let claims = krausen_auth::jwt::validate_token(
         &browser.access_token,
         "test-secret-at-least-32-bytes-long",
     )
@@ -108,7 +108,7 @@ async fn exercise(db: DbPool) {
     .claims;
     let principal = Principal {
         user_id: user.user_id.clone(),
-        credential_id: Some(claims.extra["credential_id"].as_str().unwrap().into()),
+        session_iat_us: claims.session_iat_us,
         access_expires_at: claims.exp,
     };
     let redirect = "http://127.0.0.1:34567/callback";
@@ -393,7 +393,7 @@ async fn exercise(db: DbPool) {
     // same shared preview and style operations for this account/workspace.
     let browser_actor = krausen_app::ActorContext {
         actor_id: principal.user_id.clone(),
-        credential_id: principal.credential_id.clone(),
+        session_iat_us: principal.session_iat_us,
         access_expires_at: principal.access_expires_at,
         workspace_id: ws.clone(),
     };
@@ -439,7 +439,7 @@ async fn exercise(db: DbPool) {
         krausen_ui::server_fns::formulation::execute_preview(&db, &browser_actor, request.clone())
             .await;
     // Exercise the actual browser server-function endpoint using the verified
-    // browser credential, not just its transport-independent helper.
+    // browser session, not just its transport-independent helper.
     use leptos::server_fn::ServerFn;
     let ui_path = <krausen_ui::server_fns::formulation::PreviewFormulation as ServerFn>::PATH;
     let ui_response = reqwest::Client::new()
@@ -1132,7 +1132,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(native_result["outcome"]["Saved"]["revision"], 1);
     let actor_for_recipe = krausen_app::ActorContext {
         actor_id: principal.user_id.clone(),
-        credential_id: principal.credential_id.clone(),
+        session_iat_us: principal.session_iat_us,
         access_expires_at: principal.access_expires_at,
         workspace_id: ws.clone(),
     };
@@ -2384,7 +2384,7 @@ async fn exercise(db: DbPool) {
     let actor = krausen_app::ActorContext {
         actor_id: principal.user_id.clone(),
         workspace_id: ws.clone(),
-        credential_id: principal.credential_id.clone(),
+        session_iat_us: principal.session_iat_us,
         access_expires_at: principal.access_expires_at,
     };
     assert!(matches!(
@@ -2434,9 +2434,9 @@ async fn exercise(db: DbPool) {
     krausen_core::db_execute!(&db, "UPDATE users SET active = TRUE WHERE user_id = $1", &principal.user_id).unwrap();
     krausen_core::db_execute!(
         &db,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2",
-        chrono::Utc::now().timestamp(),
-        &browser_actor.credential_id
+        "UPDATE users SET sessions_valid_from = $1 WHERE user_id = $2",
+        browser_actor.session_iat_us.unwrap(),
+        &browser_actor.actor_id
     )
     .unwrap();
     assert!(matches!(

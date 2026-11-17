@@ -18,7 +18,7 @@ navigation/composition examples, while backend contracts retain their ownership.
 | [Information architecture](INFORMATION_ARCHITECTURE.md) | Authoritative IA- requirements: destinations, account/workspace navigation, route preservation, inheritance and deferred capabilities |
 | [UX design](UX_DESIGN.md) | Authoritative UX-/INT-/VIS-/ACC- requirements: editor/task states, full control migration, six-review disposition and mandatory verification/review gate |
 | [Adoption record](ADOPTION.md) | Review resolutions, delivery dependencies and required implementation acceptance |
-| [Installation authentication](AUTHENTICATION.md) | Credential cutover, local owner setup and supported MCP authorization |
+| [Installation authentication](AUTHENTICATION.md) | Session and token model, local owner setup and supported MCP authorization |
 | [Architecture](ARCHITECTURE.md) | Shared UI/MCP operations, transaction/auth/tenant and crate boundaries |
 | [Data model](DATA_MODEL.md) | Versioned native records, immutable plans, readings/corrections and lifecycle |
 | [Calculations](CALCULATIONS.md) | Versioned formula/input/context, equipment, scaling and preservation contracts |

@@ -12,9 +12,10 @@ pub mod recipe_migration;
 pub struct ActorContext {
     pub actor_id: String,
     pub workspace_id: String,
-    /// Browser sessions are still bound to a durable credential row (rechecked
-    /// under lock); MCP actors authenticate with a signed JWT and carry none.
-    pub credential_id: Option<String>,
+    /// Issuance (µs) of the browser session that authenticated this actor,
+    /// rechecked under lock against `users.sessions_valid_from`. MCP actors
+    /// authenticate with a signed JWT that has no session authority and carry none.
+    pub session_iat_us: Option<i64>,
     /// Expiry of the verified access token, rechecked after acquiring authority locks.
     pub access_expires_at: i64,
 }
@@ -205,9 +206,34 @@ pub async fn record_change(
     Ok(())
 }
 
+/// A browser session issued at or before the user's revocation cutoff has no
+/// authority (`users.sessions_valid_from`, advanced by revoke-all).
+async fn ensure_session_current(tx: &mut DbTx<'_>, actor: &ActorContext) -> Result<(), Error> {
+    let Some(issued) = actor.session_iat_us else {
+        return Ok(());
+    };
+    let cutoff = scalar!(
+        tx,
+        Option<i64>,
+        "SELECT sessions_valid_from FROM users WHERE user_id = $1",
+        &actor.actor_id
+    )
+    .map_err(db_error)?
+    .flatten();
+    if cutoff.is_some_and(|cutoff| issued <= cutoff) {
+        return Err(Error::Forbidden);
+    }
+    Ok(())
+}
+
 /// Lock and recheck current authority inside the caller's write transaction.
-/// The adapter is responsible for verifying the credential before constructing
-/// this context; a workspace ID alone never grants authority.
+/// The adapter is responsible for verifying the access token before constructing
+/// this context; a workspace ID alone never grants authority. A browser session
+/// is also rechecked here against `users.sessions_valid_from` (Krausen
+/// authorizes under lock; Kyomi checks the cutoff only at its extractor). A
+/// purpose-less token that lacks `session_iat_us` would carry `None` and skip
+/// that recheck; every token Krausen mints sets it, and the only tokens without
+/// it predate the cutoff and expired within 15 minutes of that deployment.
 pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Result<String, Error> {
     let pg = matches!(tx, DbTx::Postgres(_));
     let account_sql = if pg {
@@ -221,25 +247,7 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
     {
         return Err(Error::Forbidden);
     }
-    let credential_sql = if pg {
-        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3 FOR SHARE"
-    } else {
-        "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > $3"
-    };
-    if let Some(credential_id) = &actor.credential_id
-        && scalar!(
-            tx,
-            String,
-            credential_sql,
-            credential_id,
-            &actor.actor_id,
-            chrono::Utc::now().timestamp()
-        )
-        .map_err(db_error)?
-        .is_none()
-    {
-        return Err(Error::Forbidden);
-    }
+    ensure_session_current(tx, actor).await?;
     let member_sql = if pg {
         "SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2 AND active = TRUE FOR SHARE"
     } else {
@@ -253,20 +261,7 @@ pub async fn authorize_workspace(tx: &mut DbTx<'_>, actor: &ActorContext) -> Res
     if actor.access_expires_at <= chrono::Utc::now().timestamp() {
         return Err(Error::Forbidden);
     }
-    if let Some(credential_id) = &actor.credential_id
-        && scalar!(
-            tx,
-            String,
-            credential_sql,
-            credential_id,
-            &actor.actor_id,
-            chrono::Utc::now().timestamp()
-        )
-        .map_err(db_error)?
-        .is_none()
-    {
-        return Err(Error::Forbidden);
-    }
+    ensure_session_current(tx, actor).await?;
     Ok(role)
 }
 

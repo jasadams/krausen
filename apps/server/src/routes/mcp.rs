@@ -557,7 +557,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid BeerXML preview", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -581,7 +581,7 @@ impl ServerHandler for McpHandler {
                 };
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -602,7 +602,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid BeerXML export", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -625,7 +625,7 @@ impl ServerHandler for McpHandler {
                 })?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -658,7 +658,7 @@ impl ServerHandler for McpHandler {
                     ($workspace:expr) => {
                         krausen_app::ActorContext {
                             actor_id: principal.user_id.clone(),
-                            credential_id: principal.credential_id.clone(),
+                            session_iat_us: principal.session_iat_us,
                             access_expires_at: principal.access_expires_at,
                             workspace_id: $workspace,
                         }
@@ -718,7 +718,7 @@ impl ServerHandler for McpHandler {
                     ($workspace:expr) => {
                         krausen_app::ActorContext {
                             actor_id: principal.user_id.clone(),
-                            credential_id: principal.credential_id.clone(),
+                            session_iat_us: principal.session_iat_us,
                             access_expires_at: principal.access_expires_at,
                             workspace_id: $workspace,
                         }
@@ -812,7 +812,7 @@ impl ServerHandler for McpHandler {
                     ($workspace:expr) => {
                         krausen_app::ActorContext {
                             actor_id: principal.user_id.clone(),
-                            credential_id: principal.credential_id.clone(),
+                            session_iat_us: principal.session_iat_us,
                             access_expires_at: principal.access_expires_at,
                             workspace_id: $workspace,
                         }
@@ -873,7 +873,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid formulation preview", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -899,7 +899,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid style query", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -922,7 +922,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace query", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -940,7 +940,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid workspace rename", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -971,7 +971,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid recovery query", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -997,7 +997,7 @@ impl ServerHandler for McpHandler {
                 let _ = input.beerxml;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1018,7 +1018,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid recipe query", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1048,7 +1048,7 @@ impl ServerHandler for McpHandler {
                 };
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1079,7 +1079,7 @@ impl ServerHandler for McpHandler {
                 })?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1101,7 +1101,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid scaling preview", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1128,7 +1128,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid scaling apply", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1150,7 +1150,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid recipe duplicate", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1172,7 +1172,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew start", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1193,7 +1193,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew evidence view", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1215,7 +1215,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew measurement", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1241,7 +1241,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew note", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1267,7 +1267,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew actual", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1291,7 +1291,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew lifecycle", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1313,7 +1313,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew archive", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1335,7 +1335,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew history", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1357,7 +1357,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew comparison", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1381,7 +1381,7 @@ impl ServerHandler for McpHandler {
                     })?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1404,7 +1404,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew feedback apply", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1428,7 +1428,7 @@ impl ServerHandler for McpHandler {
                     .map_err(|_| ErrorData::invalid_params("Invalid brew print", None))?;
                 let actor = krausen_app::ActorContext {
                     actor_id: principal.user_id.clone(),
-                    credential_id: principal.credential_id.clone(),
+                    session_iat_us: principal.session_iat_us,
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
@@ -1548,7 +1548,7 @@ async fn authenticate(
                 .await
                 .map(|user| Principal {
                     user_id: user.user_id,
-                    credential_id: Some(user.credential_id),
+                    session_iat_us: user.session_iat_us,
                     access_expires_at: user.token_exp.unwrap_or_default(),
                 })
         }
@@ -1612,7 +1612,7 @@ async fn mcp_principal(
     }
     Ok(Principal {
         user_id: user.user_id,
-        credential_id: None,
+        session_iat_us: None,
         access_expires_at: claims.exp,
     })
 }

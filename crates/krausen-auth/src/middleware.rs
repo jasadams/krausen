@@ -43,7 +43,9 @@ pub struct WorkspaceContext {
 pub struct AuthUser {
     /// User ID from the database (String, not UUID).
     pub user_id: String,
-    pub credential_id: String,
+    /// Session issuance (µs) from the access token: the instant compared with
+    /// the user's `sessions_valid_from` cutoff.
+    pub session_iat_us: Option<i64>,
     /// User's email address.
     pub email: String,
     /// User's display name.
@@ -74,7 +76,7 @@ where
         // Try Authorization header first, then cookie
         let token = extract_token(parts)?;
 
-        let token_data = jwt::validate_browser_token(&token, &auth_state.jwt_secret)?;
+        let token_data = jwt::validate_token(&token, &auth_state.jwt_secret)?;
         token_data.claims.require_session()?;
 
         // Get user_id from claims — carried in the `extra` map as "user_id"
@@ -85,35 +87,6 @@ where
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| token_data.claims.sub.clone());
-        if user_id != token_data.claims.sub {
-            return Err(krausen_core::Error::Unauthorized(
-                "Invalid browser credential".into(),
-            ));
-        }
-        let credential_id = token_data
-            .claims
-            .extra
-            .get("credential_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| krausen_core::Error::Unauthorized("Browser credential required".into()))?
-            .to_string();
-        let credential = krausen_core::db_fetch_optional!(
-            &auth_state.db,
-            CredentialIdRow,
-            "SELECT credential_id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND issuer = $3 AND audience = $4 AND revoked_at IS NULL AND expires_at > $5",
-            &credential_id,
-            &user_id,
-            jwt::BROWSER_ISSUER,
-            jwt::BROWSER_AUDIENCE,
-            Utc::now().timestamp()
-        )?;
-        if credential.as_ref().map(|row| row.credential_id.as_str()) != Some(credential_id.as_str())
-        {
-            return Err(krausen_core::Error::Unauthorized(
-                "Browser credential revoked or expired".into(),
-            ));
-        }
-
         // Load user from database
         let user = crate::user_service::get_user_by_id(&auth_state.db, &user_id)
             .await
@@ -190,7 +163,7 @@ where
         let roles = user.roles();
         Ok(AuthUser {
             user_id: user.user_id,
-            credential_id,
+            session_iat_us: token_data.claims.session_iat_us,
             email: user.email,
             name: user.name,
             roles,
@@ -201,11 +174,6 @@ where
             token_jti,
         })
     }
-}
-
-#[derive(sqlx::FromRow)]
-struct CredentialIdRow {
-    credential_id: String,
 }
 
 impl AuthUser {
@@ -262,12 +230,11 @@ fn extract_token(parts: &Parts) -> krausen_core::Result<String> {
 /// The authenticated caller of the MCP endpoint.
 ///
 /// An MCP OAuth access token is a signed JWT (`purpose = mcp`) and carries no
-/// session authority, so `credential_id` is `None`; a browser session used on
-/// the same endpoint carries its credential (until browser sessions stop being
-/// bound to one).
+/// session authority, so `session_iat_us` is `None` and the session cutoff does
+/// not apply; a browser session used on the same endpoint carries its issuance.
 #[derive(Debug, Clone)]
 pub struct Principal {
     pub user_id: String,
-    pub credential_id: Option<String>,
+    pub session_iat_us: Option<i64>,
     pub access_expires_at: i64,
 }

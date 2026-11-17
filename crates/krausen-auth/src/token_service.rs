@@ -172,29 +172,6 @@ pub async fn store_session_refresh_token(
             "Session revoked during login".into(),
         ));
     }
-    #[derive(sqlx::FromRow)]
-    struct ActiveUser {
-        user_id: String,
-    }
-    let account_sql = if pool.is_postgres() {
-        "SELECT user_id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
-    } else {
-        "SELECT user_id FROM users WHERE user_id = $1 AND active = 1"
-    };
-    if krausen_core::dbtx_fetch_optional!(&mut tx, ActiveUser, account_sql, user_id)?.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Account unavailable".into(),
-        ));
-    }
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "INSERT INTO auth_credentials (credential_id, user_id, kind, issuer, audience, expires_at) VALUES ($1, $2, 'browser', $3, $4, $5)",
-        family_id,
-        user_id,
-        crate::jwt::BROWSER_ISSUER,
-        crate::jwt::BROWSER_AUDIENCE,
-        expires_at.timestamp()
-    )?;
     krausen_core::dbtx_execute!(
         &mut tx,
         "INSERT INTO refresh_tokens \
@@ -365,13 +342,6 @@ pub async fn revoke_token_family(pool: &DbPool, family_id: &str) -> krausen_core
         "SELECT user_id FROM users WHERE user_id = $1"
     };
     let _ = krausen_core::dbtx_fetch_optional!(&mut tx, UserId, lock, &user.user_id)?;
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND user_id = $3 AND revoked_at IS NULL",
-        Utc::now().timestamp(),
-        family_id,
-        &user.user_id
-    )?;
     let false_value = sql_compat::bool_false(pg);
     let true_value = sql_compat::bool_true(pg);
     let sql = format!(
@@ -417,7 +387,6 @@ pub async fn revoke_user_refresh_token(
 /// Immediately revoke browser access sessions and all user refresh tokens.
 /// Both writes commit together even with no refresh tokens. The cutoff advances
 /// strictly under concurrent/repeated events, including wall-clock rollback.
-/// Browser credentials are revoked in the same transaction.
 pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: &str) -> krausen_core::Result<u64> {
     let mut tx = pool.begin_write().await?;
     // Sample issuance cutoff only after acquiring the serialization lock.
@@ -437,12 +406,6 @@ pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: &str) -> krausen_c
     if advanced.rows_affected() == 0 {
         return Err(krausen_core::Error::Unauthorized("User not found".into()));
     }
-    krausen_core::dbtx_execute!(
-        &mut tx,
-        "UPDATE auth_credentials SET revoked_at = $1 WHERE user_id = $2 AND kind = 'browser' AND revoked_at IS NULL",
-        Utc::now().timestamp(),
-        user_id
-    )?;
     let pg = pool.is_postgres();
     let false_value = sql_compat::bool_false(pg);
     let true_value = sql_compat::bool_true(pg);
@@ -656,8 +619,7 @@ pub struct SessionInfo {
 /// A current token rotates. A token that was already replaced is still accepted
 /// inside `refresh_token_grace_period_seconds` (a lost response or another tab racing
 /// the same cookie) and rotates again so each caller gets a fresh token; reuse AFTER the
-/// grace period is theft and revokes the whole durable credential family. An old
-/// unbound token, or a revoked or expired credential, can never create a session.
+/// grace period is theft and revokes the whole token family.
 pub async fn rotate_browser_refresh(
     pool: &DbPool,
     raw_token: &str,
@@ -668,10 +630,6 @@ pub async fn rotate_browser_refresh(
         token_id: String,
         user_id: String,
         family_id: String,
-    }
-    #[derive(sqlx::FromRow)]
-    struct Id {
-        id: String,
     }
     #[derive(sqlx::FromRow)]
     struct TokenState {
@@ -695,36 +653,6 @@ pub async fn rotate_browser_refresh(
         &token.user_id
     )?;
     let pg = pool.is_postgres();
-    let account_sql = if pg {
-        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"
-    } else {
-        "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = 1"
-    };
-    let account = krausen_core::dbtx_fetch_optional!(&mut tx, Id, account_sql, &token.user_id)?;
-    if account.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Invalid or expired refresh token".into(),
-        ));
-    }
-    let credential_sql = if pg {
-        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3 FOR UPDATE"
-    } else {
-        "SELECT credential_id AS id FROM auth_credentials WHERE credential_id = $1 AND user_id = $2 AND kind = 'browser' AND revoked_at IS NULL AND expires_at > $3"
-    };
-    let now_ts = Utc::now().timestamp();
-    let credential = krausen_core::dbtx_fetch_optional!(
-        &mut tx,
-        Id,
-        credential_sql,
-        &token.family_id,
-        &token.user_id,
-        now_ts
-    )?;
-    if credential.is_none() {
-        return Err(krausen_core::Error::Unauthorized(
-            "Invalid or expired refresh token".into(),
-        ));
-    }
     let active = sql_compat::bool_true(pg);
     let future = sql_compat::is_future(pg, "expires_at");
     let lock = if pg { " FOR UPDATE" } else { "" };
@@ -744,14 +672,8 @@ pub async fn rotate_browser_refresh(
             family_id = %token.family_id,
             user_id = %token.user_id,
             token_id = %token.token_id,
-            "refresh token reuse after grace period — revoking credential family (theft detection)"
+            "refresh token reuse after grace period — revoking token family (theft detection)"
         );
-        krausen_core::dbtx_execute!(
-            &mut tx,
-            "UPDATE auth_credentials SET revoked_at = $1 WHERE credential_id = $2 AND revoked_at IS NULL",
-            now_ts,
-            &token.family_id
-        )?;
         let false_value = sql_compat::bool_false(pg);
         let sql = format!(
             "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE family_id = $1"
