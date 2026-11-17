@@ -75,6 +75,7 @@ where
         let token = extract_token(parts)?;
 
         let token_data = jwt::validate_browser_token(&token, &auth_state.jwt_secret)?;
+        token_data.claims.require_session()?;
 
         // Get user_id from claims — carried in the `extra` map as "user_id"
         let user_id = token_data
@@ -122,6 +123,10 @@ where
             })?
             .ok_or_else(|| krausen_core::Error::Unauthorized("User not found".into()))?;
 
+        token_data
+            .claims
+            .require_current_session(user.sessions_valid_from)?;
+
         if !user.active {
             return Err(krausen_core::Error::Unauthorized(
                 "User account is inactive".into(),
@@ -158,7 +163,10 @@ where
                             ));
                         }
                         Err(e) => {
-                            tracing::warn!("could not load workspace user: {e}");
+                            // Fail closed: a DB error here must not fall through to
+                            // the default WorkspaceContext.
+                            tracing::error!("database error loading workspace membership: {e}");
+                            return Err(krausen_core::Error::Internal("database error".into()));
                         }
                     }
                 }
@@ -166,7 +174,9 @@ where
                     tracing::warn!("workspace {ws_id} not found");
                 }
                 Err(e) => {
-                    tracing::warn!("could not load workspace: {e}");
+                    // Same fail-closed reasoning as the membership lookup above.
+                    tracing::error!("database error loading workspace: {e}");
+                    return Err(krausen_core::Error::Internal("database error".into()));
                 }
             }
         }

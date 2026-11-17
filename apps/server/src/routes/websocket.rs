@@ -73,7 +73,11 @@ async fn handle_authenticated_ws(
     };
 
     let claims = match jwt::validate_browser_token(&token, &state.config.jwt_secret) {
-        Ok(token_data) => token_data.claims,
+        Ok(token_data) if token_data.claims.require_session().is_ok() => token_data.claims,
+        Ok(_) => {
+            close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
+            return;
+        }
         Err(e) => {
             tracing::warn!(error = %e, "WebSocket rejected: JWT validation failed");
             close_with_code(socket, CLOSE_AUTH_REQUIRED, "Authentication failed").await;
@@ -108,6 +112,14 @@ async fn handle_authenticated_ws(
     }
 
     match user_service::get_user_by_id(&state.db, &user_id).await {
+        Ok(Some(user))
+            if claims
+                .require_current_session(user.sessions_valid_from)
+                .is_err() =>
+        {
+            close_with_code(socket, CLOSE_AUTH_REQUIRED, "Session revoked").await;
+            return;
+        }
         Ok(Some(user)) if user.active => {}
         Ok(Some(_)) => {
             tracing::warn!(user_id = %user_id, "WebSocket rejected: account disabled");

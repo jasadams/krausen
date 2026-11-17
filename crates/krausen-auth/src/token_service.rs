@@ -65,21 +65,44 @@ pub fn generate_family_id() -> String {
     format!("fam_{}", URL_SAFE_NO_PAD.encode(random_bytes))
 }
 
-/// Store a new refresh token in the database.
+/// Persist a browser login's refresh token only if its signed access issuance
+/// still follows the current cutoff. Serializes with revocation so a pre-event
+/// mint cannot insert a surviving refresh token after the event commits.
 ///
 /// Returns the token_id (format: `"rt_{token_urlsafe(16)}"`).
-pub async fn store_refresh_token(
+pub async fn store_session_refresh_token(
     pool: &DbPool,
     user_id: &str,
     token_hash: &str,
     expires_at: DateTime<Utc>,
     device_info: &DeviceInfo,
     family_id: &str,
+    issued_at_us: i64,
 ) -> krausen_core::Result<String> {
     let random_bytes: [u8; 16] = rand::rng().random();
     let token_id = format!("rt_{}", URL_SAFE_NO_PAD.encode(random_bytes));
 
     let mut tx = pool.begin_write().await?;
+    // Lock order is always user then tokens, shared with all-session
+    // revocation. SQLite's first write obtains the database write lock;
+    // PostgreSQL locks this row.
+    #[derive(sqlx::FromRow)]
+    struct Cutoff {
+        sessions_valid_from: Option<i64>,
+    }
+    let cutoff = krausen_core::dbtx_fetch_optional!(
+        &mut tx,
+        Cutoff,
+        "UPDATE users SET sessions_valid_from = sessions_valid_from WHERE user_id = $1 RETURNING sessions_valid_from",
+        user_id
+    )?
+    .ok_or_else(|| krausen_core::Error::Unauthorized("Account unavailable".into()))?
+    .sessions_valid_from;
+    if cutoff.is_some_and(|cutoff| issued_at_us <= cutoff) {
+        return Err(krausen_core::Error::Unauthorized(
+            "Session revoked during login".into(),
+        ));
+    }
     #[derive(sqlx::FromRow)]
     struct ActiveUser {
         user_id: String,
@@ -137,7 +160,7 @@ pub async fn verify_refresh_token(
 
     // Fetch the token + user data in one query (include replaced_at and family_id)
     let sql = format!(
-        "SELECT rt.token_id, rt.user_id, rt.family_id, rt.replaced_at, \
+        "SELECT rt.token_id, rt.user_id, rt.family_id, rt.replaced_at, rt.oauth_client_id, \
                 u.email, u.name, u.extra_metadata, u.active as user_active \
          FROM refresh_tokens rt \
          JOIN users u ON u.user_id = rt.user_id \
@@ -164,6 +187,7 @@ pub async fn verify_refresh_token(
         .unwrap_or_else(|| vec!["user".to_string()]);
 
     let user_data = RefreshTokenUserData {
+        oauth_client_id: row.oauth_client_id,
         user_id: row.user_id.clone(),
         email: row.email,
         name: row.name,
@@ -321,25 +345,28 @@ pub async fn revoke_user_refresh_token(
     Ok(count > 0)
 }
 
-/// Revoke ALL refresh tokens for a user. Returns count of revoked tokens.
-pub async fn revoke_all_user_refresh_tokens(
-    pool: &DbPool,
-    user_id: &str,
-) -> krausen_core::Result<u64> {
-    #[derive(sqlx::FromRow)]
-    struct UserId {
-        user_id: String,
-    }
+/// Immediately revoke browser access sessions and all user refresh tokens.
+/// Both writes commit together even with no refresh tokens. The cutoff advances
+/// strictly under concurrent/repeated events, including wall-clock rollback.
+/// Browser credentials are revoked in the same transaction.
+pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: &str) -> krausen_core::Result<u64> {
     let mut tx = pool.begin_write().await?;
-    let pg = pool.is_postgres();
-    let lock = if pg {
-        "SELECT user_id FROM users WHERE user_id = $1 FOR UPDATE"
-    } else {
-        "SELECT user_id FROM users WHERE user_id = $1"
-    };
-    let user = krausen_core::dbtx_fetch_optional!(&mut tx, UserId, lock, user_id)?;
-    if user.is_none() {
-        return Ok(0);
+    // Sample issuance cutoff only after acquiring the serialization lock.
+    // A queued event must include sessions minted while it was waiting.
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE users SET sessions_valid_from = sessions_valid_from WHERE user_id = $1",
+        user_id
+    )?;
+    let candidate = Utc::now().timestamp_micros();
+    let advanced = krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE users SET sessions_valid_from = CASE WHEN sessions_valid_from >= $1 THEN sessions_valid_from + 1 ELSE $1 END WHERE user_id = $2",
+        candidate,
+        user_id
+    )?;
+    if advanced.rows_affected() == 0 {
+        return Err(krausen_core::Error::Unauthorized("User not found".into()));
     }
     krausen_core::dbtx_execute!(
         &mut tx,
@@ -347,14 +374,15 @@ pub async fn revoke_all_user_refresh_tokens(
         Utc::now().timestamp(),
         user_id
     )?;
+    let pg = pool.is_postgres();
     let false_value = sql_compat::bool_false(pg);
     let true_value = sql_compat::bool_true(pg);
     let sql = format!(
         "UPDATE refresh_tokens SET is_active = {false_value}, revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND is_active = {true_value}"
     );
-    let result = krausen_core::dbtx_execute!(&mut tx, &sql, user_id)?;
+    let count = krausen_core::dbtx_execute!(&mut tx, &sql, user_id)?.rows_affected();
     tx.commit().await?;
-    Ok(result.rows_affected())
+    Ok(count)
 }
 
 /// Get all active sessions (refresh tokens) for a user.
@@ -511,6 +539,8 @@ pub async fn verify_verification_token(
 /// User data returned by refresh token verification.
 #[derive(Debug, Clone)]
 pub struct RefreshTokenUserData {
+    /// Set when the token was issued to an OAuth client rather than a browser.
+    pub oauth_client_id: Option<String>,
     pub user_id: String,
     pub email: String,
     pub name: Option<String>,
@@ -522,6 +552,7 @@ pub struct RefreshTokenUserData {
 /// Internal query result for refresh token + user join.
 #[derive(Debug, sqlx::FromRow)]
 struct RefreshTokenWithUser {
+    oauth_client_id: Option<String>,
     token_id: String,
     user_id: String,
     family_id: String,
@@ -586,6 +617,14 @@ pub async fn rotate_browser_refresh(
         &hash
     )?
     .ok_or_else(|| krausen_core::Error::Unauthorized("Invalid or expired refresh token".into()))?;
+    // Lock order is always user then tokens, shared with all-session revocation
+    // and login persistence. SQLite's first write obtains the database write
+    // lock; PostgreSQL locks this row.
+    krausen_core::dbtx_execute!(
+        &mut tx,
+        "UPDATE users SET sessions_valid_from = sessions_valid_from WHERE user_id = $1",
+        &token.user_id
+    )?;
     let pg = pool.is_postgres();
     let account_sql = if pg {
         "SELECT user_id AS id FROM users WHERE user_id = $1 AND active = TRUE FOR SHARE"

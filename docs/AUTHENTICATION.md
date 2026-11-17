@@ -13,6 +13,15 @@ again. A revoked, expired or unbound credential is rejected even inside the grac
 period. MCP OAuth refresh tokens are unchanged and remain single use: reusing a
 consumed one revokes its credential, so the MCP client must reconnect.
 
+Signing out everywhere and completing account recovery (password) revoke browser
+sessions immediately: each account has a revocation cutoff (`users.sessions_valid_from`,
+Unix microseconds). A browser access token carries its signed microsecond issuance and is
+rejected on the next request, WebSocket connection or refresh once its issuance is at or
+before the cutoff, and the account's refresh tokens are revoked in the same transaction.
+The cutoff only moves forward, including under concurrent events and clock rollback.
+Failures to load the account, workspace or membership during authentication reject the
+request rather than continuing with a default context.
+
 With SMTP configured, signup sends a link; opening the link changes nothing until the
 user presses "Confirm Email", which creates the account, so mail scanners that
 prefetch links cannot consume it. An address that already has an account receives a
