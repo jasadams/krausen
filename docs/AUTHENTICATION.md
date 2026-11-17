@@ -80,10 +80,16 @@ for the remaining access-token lifetime. `/mcp` also accepts a browser session. 
 unauthenticated request receives 401 with a `WWW-Authenticate` header pointing at the
 protected-resource metadata.
 
-Browser refresh is coordinated across tabs with the Web Locks API. A browser
-without cross-tab locks cannot silently refresh and must sign in again when its
-access token expires; this can affect HTTP LAN origins where the browser does
-not expose secure-context APIs. Configure HTTPS for normal browser use.
+Browser sessions refresh transparently. A request with a missing or expired access cookie
+and a valid refresh cookie is refreshed on the server (a new access token, a rotated
+refresh token and `Set-Cookie` headers on the response) before the handler runs; if the
+refresh fails the request continues unchanged and receives the usual 401. Logout requests
+are never refreshed. The page also posts to `/api/v1/auth/refresh` before the application
+starts. There is no cross-tab lock: tabs that refresh the same cookie at once all
+succeed because a replaced refresh token stays valid for the grace period above, so
+sessions also refresh on origins without `navigator.locks` (plain-HTTP LAN addresses).
+The client address recorded for a session and used for rate limits comes from `X-Real-IP`,
+then the first `X-Forwarded-For` entry, and is `unknown` when neither is a valid address.
 
 Public passkey enrollment is temporarily unavailable until account ownership
 can be proven. Existing authenticated passkey management is unchanged.

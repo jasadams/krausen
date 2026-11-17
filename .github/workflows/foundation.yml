@@ -50,8 +50,9 @@ jobs:
       - run: cargo test -p krausen-server --test browser_refresh
       - run: cargo test -p krausen-server --lib security_tests
       - run: cargo test -p krausen-server --test migration_orders --test drop_credentials_migration --test mcp_auth
-      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry
+      - run: cargo test -p krausen-server --test oauth_contract --test mcp_authenticate --test mcp_refresh_expiry --test auth_refresh_middleware
       - run: cargo test -p krausen-server --lib route_error
+      - run: cargo test -p krausen-server --lib middleware::auth_refresh
       - run: cargo test -p krausen-auth --lib sliding_expiry_tests
       - run: cargo test -p krausen-auth --lib request_meta
       - run: cargo test -p krausen-app --test foundation
@@ -91,6 +92,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib printable_recipe::tests
       - run: cargo test -p krausen-ui --features ssr --lib button::tests
       - run: cargo test -p krausen-ui --features ssr --lib recovery_password_action_submits_its_form
+      - run: cargo test -p krausen-ui --features ssr --lib server_fns::auth::tests
       - run: cargo test -p krausen-ui --features ssr --lib brew_evidence_rows::tests
       - run: cargo test -p krausen-ui --features ssr --lib beerxml::tests
       - run: cargo test -p krausen-ui --features ssr --lib brewery_kit::tests
@@ -99,6 +101,7 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib recipe_scaling::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
+      - run: bash scripts/lint/check-client-eval-test.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

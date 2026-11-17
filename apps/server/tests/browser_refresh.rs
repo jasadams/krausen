@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Real-browser cross-tab refresh and stale-cookie adapter regression.
+//! Real-browser cross-tab refresh regression: concurrent tabs (and a tab without
+//! Web Locks) refresh through the page pre-warm and every refresh succeeds.
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, header},
@@ -113,6 +114,8 @@ async fn concurrent_expiry_and_browser_tabs_remain_usable() {
             .header(header::COOKIE, &cookie)
             .send()
     );
+    // The probe route is not under the refresh layer: a refresh cookie alone is
+    // not an access token.
     assert_eq!(first.unwrap().status(), StatusCode::UNAUTHORIZED);
     assert_eq!(second.unwrap().status(), StatusCode::UNAUTHORIZED);
     let mut child = Command::new("python3")

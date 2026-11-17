@@ -41,18 +41,7 @@ async fn refresh_token(
     .to_string();
 
     // Rate limit check
-    let device = krausen_auth::token_service::DeviceInfo {
-        user_agent: headers
-            .get("user-agent")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string()),
-        ip_address: headers
-            .get("x-real-ip")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string()),
-        country_code: None,
-        oauth_client_id: None,
-    };
+    let device = krausen_auth::request_meta::extract_device_info(&headers);
     let ip = device.ip_address.as_deref().unwrap_or("0.0.0.0");
     let rate_result = rate_limiter::check_rate_limit(&state.kv, ip, "refresh", None).await?;
     if !rate_result.allowed {
