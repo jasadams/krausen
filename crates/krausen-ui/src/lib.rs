@@ -32,14 +32,13 @@ pub fn register_server_functions() {
     register_explicit::<GoogleOauthCallback>();
     register_explicit::<ResendVerification>();
     register_explicit::<RecoveryStart>();
+    register_explicit::<PasskeyRecoveryStart>();
     register_explicit::<RecoveryVerify>();
     register_explicit::<RecoverySetPassword>();
     register_explicit::<PasskeyLoginStart>();
     register_explicit::<PasskeyLoginComplete>();
-    register_explicit::<PasskeyRegisterStart>();
-    register_explicit::<PasskeyRegisterComplete>();
-    register_explicit::<PasskeySignupComplete>();
     register_explicit::<PasskeyRecoveryVerify>();
+    register_explicit::<PasskeyRecoveryComplete>();
 
     // Context
     use server_fns::context::*;

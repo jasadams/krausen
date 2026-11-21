@@ -443,12 +443,97 @@ pub async fn has_totp_enabled(pool: &DbPool, user_id: &str) -> krausen_core::Res
     Ok(count > 0)
 }
 
+/// Auth types that can, on their own, complete a sign-in.
+///
+/// `totp` is deliberately excluded: it is a second factor that must always
+/// be paired with one of these three, and can never authenticate a user by
+/// itself. This list — not "every row in `user_auth_methods`" — is what
+/// [`remove_auth_method`]'s last-method guard counts against, so a user who
+/// still holds an active `totp` row is not treated as having a way to sign
+/// in, and a user who holds only `totp` is never blocked from removing it.
+///
+/// Adding a fifth auth type means deciding which side of this line it falls
+/// on: can it complete a login unaided (add it here), or is it a factor
+/// like `totp` that only ever supplements one of these (leave it out).
+const SIGN_IN_AUTH_TYPES: [&str; 3] = ["password", "webauthn", "google_oauth"];
+
+/// Whether Google is the user's only active sign-in-capable method.
+/// This is an affordance hint for the UI; removal is still enforced by
+/// [`guard_last_sign_in_method`].
+pub async fn google_is_only_sign_in_method(
+    pool: &DbPool,
+    user_id: &str,
+) -> krausen_core::Result<bool> {
+    let active_types = list_active_auth_types(pool, user_id).await?;
+    Ok(active_types.iter().any(|t| t == "google_oauth")
+        && !active_types
+            .iter()
+            .any(|t| t != "google_oauth" && SIGN_IN_AUTH_TYPES.contains(&t.as_str())))
+}
+
+/// Count of a user's active sign-in-capable auth methods — active rows in
+/// `user_auth_methods` whose `auth_type` is in [`SIGN_IN_AUTH_TYPES`].
+/// Inactive rows and non-sign-in types (`totp`) are never counted.
+async fn count_active_sign_in_methods(pool: &DbPool, user_id: &str) -> krausen_core::Result<i64> {
+    let is_pg = pool.is_postgres();
+    let bt = sql_compat::bool_true(is_pg);
+    let type_list = SIGN_IN_AUTH_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT COUNT(*) as count FROM user_auth_methods \
+         WHERE user_id = $1 AND active = {bt} AND auth_type IN ({type_list})"
+    );
+    let count: i64 = krausen_core::db_fetch_scalar!(pool, i64, &sql, user_id)?;
+    Ok(count)
+}
+
+/// Refuse a removal that would leave a user with no active sign-in-capable
+/// auth method.
+///
+/// A no-op for any `auth_type` outside [`SIGN_IN_AUTH_TYPES`] (e.g. `totp`)
+/// — removing a second factor never strands anyone, so it's never blocked.
+/// For a sign-in-capable type, refuses when the user has at most one active
+/// sign-in method left (i.e. the one about to be removed).
+///
+/// Called by [`remove_auth_method`], the one removal path here. A flow that
+/// must reach the same decision before changing anything outside this
+/// database (such as revoking a Google grant) would call this predicate
+/// first, so the decision cannot drift.
+pub(crate) async fn guard_last_sign_in_method(
+    pool: &DbPool,
+    user_id: &str,
+    auth_type: &str,
+) -> krausen_core::Result<()> {
+    if !SIGN_IN_AUTH_TYPES.contains(&auth_type) {
+        return Ok(());
+    }
+    let active_sign_in_methods = count_active_sign_in_methods(pool, user_id).await?;
+    if active_sign_in_methods <= 1 {
+        return Err(krausen_core::Error::Conflict(
+            "This is your only way to sign in — add a password or a passkey under \
+             Settings → Security before removing it."
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Remove an auth method (set active = false).
+///
+/// Refuses to remove a user's last active sign-in-capable auth method (see
+/// [`guard_last_sign_in_method`]) — otherwise a user who, say, signed up
+/// with Google and never added a password or passkey could deactivate their
+/// only way in and be locked out with no warning.
 pub async fn remove_auth_method(
     pool: &DbPool,
     user_id: &str,
     auth_type: &str,
 ) -> krausen_core::Result<bool> {
+    guard_last_sign_in_method(pool, user_id, auth_type).await?;
+
     let is_pg = pool.is_postgres();
     let bf = sql_compat::bool_false(is_pg);
     let bt = sql_compat::bool_true(is_pg);
@@ -896,3 +981,6 @@ pub async fn delete_user(pool: &DbPool, user_id: &str) -> krausen_core::Result<b
     Ok(result.rows_affected() > 0)
 }
 
+
+#[cfg(test)]
+mod sign_in_guard_tests;

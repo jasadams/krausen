@@ -475,6 +475,31 @@ async fn legacy_iss_aud_token_is_rejected_and_a_bare_refresh_family_rotates(db: 
     assert!(authenticate(db, &refreshed.access_token).await.is_ok());
 }
 
+/// Kyomi parity: the extractor only refuses MCP-purpose tokens (`require_session`),
+/// so a `scope = passkey_recovery` token presented as a bearer authenticates like
+/// any signed session token (and is exempt from the session cutoff, see
+/// `passkey_recovery_scope_is_exempt_from_the_session_cutoff`). The recovery
+/// token normally lives only in an HttpOnly cookie the extractor does not read.
+async fn a_recovery_scope_token_authenticates_like_any_signed_session_token(db: &DbPool) {
+    let u = user(db).await;
+    let token = jwt::create_access_token_str(
+        &u.user_id,
+        SECRET,
+        15,
+        [
+            ("scope".into(), serde_json::json!("passkey_recovery")),
+            ("email".into(), serde_json::json!(u.email)),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+    let auth = authenticate(db, &token)
+        .await
+        .expect("a signed recovery-scope token authenticates (Kyomi behaviour)");
+    assert_eq!(auth.user_id, u.user_id);
+}
+
 async fn sqlite() -> DbPool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -539,4 +564,5 @@ on_both_backends!(
     user_lookup_error_fails_closed,
     single_session_logout_ends_refresh_not_access_token,
     legacy_iss_aud_token_is_rejected_and_a_bare_refresh_family_rotates,
+    a_recovery_scope_token_authenticates_like_any_signed_session_token,
 );

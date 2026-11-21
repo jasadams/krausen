@@ -107,13 +107,34 @@ pub fn AccountRecoveryCompletePage() -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let initial_token: Option<String> = None;
 
-    // spawn_local compiles on both targets; the extracted function ensures
-    // the compiler sees all PageState variants constructed.
-    leptos::task::spawn_local(async move {
-        set_page_state.set(verify_recovery_token(initial_token).await);
+    // ── Token verification action ────────────────────────────────────────
+    // Converts the spawn_local on mount to an Action dispatched once via
+    // Effect. The action runs the pure server fn verify_recovery_token which
+    // has no !Send browser APIs, so Action is safe to use here.
+    let verify_action = Action::new(move |token: &Option<String>| {
+        let token = token.clone();
+        async move { verify_recovery_token(token).await }
+    });
+
+    // Dispatch the verify action exactly once on mount (Effect fires on first
+    // reactive evaluation). The result drives the page state via a second Effect.
+    Effect::new(move |already_ran: Option<()>| {
+        if already_ran.is_none() {
+            verify_action.dispatch(initial_token.clone());
+        }
+    });
+
+    // React to the verify action result: transition page state.
+    Effect::new(move |_| {
+        if let Some(new_state) = verify_action.value().get() {
+            set_page_state.set(new_state);
+        }
     });
 
     // ── Form submit handler ──────────────────────────────────────────────
+    // Cannot use Action for the submit: gloo_timers::future::TimeoutFuture
+    // is !Send on wasm32. Signal writes inside the async block use try_set
+    // for deferred-write safety.
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
 
@@ -151,26 +172,28 @@ pub fn AccountRecoveryCompletePage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match recovery_set_password(recovery_session_id.clone(), current_password).await {
                 Ok(RecoverySetPasswordResult::Success) => {
-                    set_page_state.set(PageState::Success);
+                    set_page_state.try_set(PageState::Success);
 
-                    // Navigate to home after 2 seconds (keeps WASM in memory)
+                    // Navigate to home after 2 seconds (keeps WASM in memory).
+                    // gloo_timers::future::TimeoutFuture is !Send — must stay
+                    // in spawn_local.
                     #[cfg(target_arch = "wasm32")]
                     {
-                        let nav = navigate.get_value();
+                        let Some(nav) = navigate.try_get_value() else { return };
                         gloo_timers::future::TimeoutFuture::new(2000).await;
                         nav("/", Default::default());
                     }
                 }
                 Ok(RecoverySetPasswordResult::Error { message }) => {
-                    set_error.set(Some(message));
-                    set_page_state.set(PageState::Ready {
+                    set_error.try_set(Some(message));
+                    set_page_state.try_set(PageState::Ready {
                         recovery_session_id,
                         has_passkeys,
                     });
                 }
                 Err(e) => {
-                    set_error.set(Some(format!("Failed to set password. Please try again. ({})", e)));
-                    set_page_state.set(PageState::Ready {
+                    set_error.try_set(Some(format!("Failed to set password. Please try again. ({})", e)));
+                    set_page_state.try_set(PageState::Ready {
                         recovery_session_id,
                         has_passkeys,
                     });
@@ -242,7 +265,7 @@ pub fn AccountRecoveryCompletePage() -> impl IntoView {
 fn verifying_view() -> impl IntoView {
     view! {
         <div class="text-center space-y-4">
-            // Branded moment (auth page)
+            // Branded moment (auth page) — DESIGN.md Loading State Pattern
             <img src="/public/krausen_animated_logo.svg" alt="Processing" class="w-12 h-12 mx-auto"/>
         </div>
     }
@@ -341,7 +364,13 @@ where
                     </div>
 
                     // Submit button
-                    <Button button_type="submit" size=ButtonSize::Lg class="w-full" disabled=btn_disabled>
+                    //
+                    // `button_type="submit"` is required: `Button` defaults to
+                    // `type="button"` so buttons don't accidentally submit, but
+                    // this one is the submit control for the `on:submit` form
+                    // above. Without it the handler never fires and the button
+                    // is silently inert (KYO-281).
+                    <Button size=ButtonSize::Lg class="w-full" disabled=btn_disabled button_type="submit">
                         {if is_submitting {
                             view! {
                                 <div class="flex items-center justify-center space-x-2">
@@ -377,7 +406,7 @@ fn success_view() -> impl IntoView {
                     <Icon icon=phosphor_leptos::CHECK attr:class="w-8 h-8 text-success-foreground"/>
                 </div>
             </div>
-            // Branded moment (auth page)
+            // Branded moment (auth page) — DESIGN.md Loading State Pattern
             <img src="/public/krausen_animated_logo.svg" alt="Processing" class="w-8 h-8 mx-auto"/>
         </div>
     }
