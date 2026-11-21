@@ -134,7 +134,13 @@ async fn serve() {
     let router = krausen_server::build_router(state);
     let app = krausen_server::wrap_service(router);
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+    // `BIND_ADDR` (an IP address, default `0.0.0.0`) lets a developer listen on
+    // loopback only, e.g. `BIND_ADDR=127.0.0.1`. Deployments keep the default.
+    let bind_ip: std::net::IpAddr = match std::env::var("BIND_ADDR") {
+        Ok(value) => value.parse().expect("BIND_ADDR must be an IP address"),
+        Err(_) => std::net::Ipv4Addr::UNSPECIFIED.into(),
+    };
+    let listener = tokio::net::TcpListener::bind(std::net::SocketAddr::new(bind_ip, port))
         .await
         .expect("failed to bind");
 
@@ -143,7 +149,7 @@ async fn serve() {
     eprintln!("  URL: http://localhost:{port}");
     eprintln!();
 
-    tracing::info!("Krausen listening on port {port}");
+    tracing::info!("Krausen listening on {bind_ip}:{port}");
 
     axum::serve(listener, app).await.expect("server error");
 }
