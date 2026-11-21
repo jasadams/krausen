@@ -69,16 +69,17 @@ only, with a throwaway database on a Docker volume and test-only secrets:
 
 ```bash
 scripts/dev/krausen-dev build      # image; BuildKit cache mounts reuse compiled crates
-scripts/dev/krausen-dev up         # fresh database, owner local@localhost / TestPassword1234
-scripts/dev/krausen-dev check      # proves 127.0.0.1 answers and the LAN address does not
+scripts/dev/krausen-dev up         # fresh empty database and server; the e2e global setup signs up local@localhost
+scripts/dev/krausen-dev check      # fails unless 127.0.0.1 answers 200 and the LAN address does not
 eval "$(scripts/dev/krausen-dev env)"   # PATH shim, BASE_URL, KRAUSEN_E2E_DATABASE_PATH
-scripts/dev/krausen-dev browsers   # Playwright headless Chromium (unzip fallback if it hangs)
-scripts/dev/krausen-dev down       # remove containers and the volume
+scripts/dev/krausen-dev browsers   # Playwright headless-shell Chromium
+scripts/dev/krausen-dev down       # remove containers, the volume and the sqlite3 shim
 ```
 
 The e2e helpers call `sqlite3 <path>`; with the exported `PATH` that goes to a helper
 container next to the server. Do not open the database file from the host: a SQLite file
-shared between the host and Docker's VM loses writes. For a native run set
+shared between the host and Docker's VM loses writes. `down` deletes the `sqlite3` shim, so a
+shell that already ran the `env` exports needs `up` again (or a new shell) afterwards. For a native run set
 `BIND_ADDR=127.0.0.1` so the server listens on loopback only (default `0.0.0.0`).
 
 ## Running in Development

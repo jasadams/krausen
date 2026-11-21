@@ -15,10 +15,7 @@ cd "$root"
 touch "$fixture/krausen.db"
 export DATABASE_URL="sqlite://$fixture/krausen.db"
 export KRAUSEN_E2E_DATABASE_PATH="$fixture/krausen.db"
-export KRAUSEN_MODE=self_hosted PORT=41465
-export BASE_URL="http://localhost:$PORT" FRONTEND_URL="http://localhost:$PORT"
-export JWT_SECRET_KEY='test-only-jwt-secret-for-disposable-browser-fixture'
-export ENCRYPTION_KEY='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+. "$root/e2e/scripts/test-env.sh"
 ./target/debug/krausen > "$fixture/server.log" 2>&1 &
 server_pid=$!
 attempt=0
