@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Local, isolated Krausen for development and Playwright runs.
+#
+#   scripts/dev/krausen-dev build      build the image (BuildKit cache mounts; reuses compiled crates)
+#   scripts/dev/krausen-dev up         fresh disposable database + server on 127.0.0.1 only
+#   scripts/dev/krausen-dev check      prove 127.0.0.1 answers 200 and the LAN address does not
+#   scripts/dev/krausen-dev env        print the exports the e2e suite needs (use: eval "$(... env)")
+#   scripts/dev/krausen-dev browsers   install Playwright's headless-shell Chromium
+#   scripts/dev/krausen-dev down       remove the containers, the database volume and the sqlite3 shim
+#
+# The database lives on a Docker volume inside Docker's VM and is reached by tests only
+# through the generated `sqlite3` shim, because a SQLite file shared between the host and
+# the VM loses writes. The shim starts the helper container if Docker restarted it away.
+# `down` deletes the shim: a shell that already ran `eval "$(krausen-dev env)"` keeps the
+# shim directory on PATH, so run `up` again (or open a new shell) after `down`.
+# The server starts with no users; the e2e global setup signs `local@localhost` up through
+# the UI. Everything here is disposable and uses test-only secrets.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# One definition of the disposable installation, shared with e2e/scripts/profile-browser.sh.
+PORT="${KRAUSEN_DEV_PORT:-41465}"
+. "$ROOT/e2e/scripts/test-env.sh"
+
+IMAGE="${KRAUSEN_DEV_IMAGE:-krausen-dev:local}"
+STATE="${KRAUSEN_DEV_STATE:-$HOME/.cache/krausen-dev}"
+SERVER=krausen-dev-server
+SQLITE=krausen-dev-sqlite
+VOLUME=krausen-dev-data
+# The sqlite3 helper image, pinned like every Dockerfile base.
+SQLITE_IMAGE='keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66'
+
+die() { echo "krausen-dev: $*" >&2; exit 1; }
+need_docker() { docker info >/dev/null 2>&1 || die "Docker is not running"; }
+
+cmd_build() {
+  need_docker
+  DOCKER_BUILDKIT=1 docker build --build-arg CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" -t "$IMAGE" "$ROOT"
+}
+
+cmd_down() {
+  need_docker
+  docker rm -f "$SERVER" "$SQLITE" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+  rm -f "$STATE/shim/sqlite3"
+}
+
+write_shim() {
+  mkdir -p "$STATE/shim"
+  cat > "$STATE/shim/sqlite3" <<SHIM
+#!/bin/sh
+# The e2e helpers call: sqlite3 <db path> <args...>. The database is in the sqlite helper container.
+shift
+docker start $SQLITE >/dev/null
+exec docker exec -i $SQLITE sqlite3 /data/krausen.db "\$@"
+SHIM
+  chmod +x "$STATE/shim/sqlite3"
+}
+
+cmd_up() {
+  need_docker
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE not found; run: $0 build"
+  cmd_down
+  trap 'echo "krausen-dev: up failed; run \`$0 down\` to clean up" >&2' EXIT
+  docker volume create "$VOLUME" >/dev/null
+  # The server runs as uid 1000; a new volume is owned by root.
+  docker run --rm --user 0 -v "$VOLUME:/data" --entrypoint chown "$IMAGE" 1000:1000 /data
+  # Published on loopback only: never -p PORT:PORT.
+  docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
+    -p "127.0.0.1:$PORT:$PORT" -v "$VOLUME:/data" \
+    -e DATABASE_URL=sqlite:///data/krausen.db \
+    -e KRAUSEN_MODE -e PORT -e BASE_URL -e FRONTEND_URL -e JWT_SECRET_KEY -e ENCRYPTION_KEY \
+    "$IMAGE" >/dev/null
+  docker run -d --name "$SQLITE" --user 1000:1000 --cpus 1 --memory 256m -v "$VOLUME:/data" \
+    --entrypoint sleep "$SQLITE_IMAGE" infinity >/dev/null
+  write_shim
+  for _ in $(seq 1 90); do
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/login"; then
+      trap - EXIT
+      echo "ready: http://localhost:$PORT (no users yet; the e2e global setup signs up local@localhost)"
+      return 0
+    fi
+    sleep 1
+  done
+  docker logs "$SERVER" | tail -20
+  die "server did not become ready"
+}
+
+# The IPv4 address of this machine's default-route interface (macOS).
+lan_address() {
+  local iface
+  iface=$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')
+  [ -n "$iface" ] || die "no default network route: cannot determine the LAN address"
+  ipconfig getifaddr "$iface" 2>/dev/null || die "interface $iface has no IPv4 address"
+}
+
+cmd_check() {
+  need_docker
+  [ "$(docker inspect -f '{{.State.Running}}' "$SERVER" 2>/dev/null || true)" = true ] \
+    || die "container $SERVER is not running; run: $0 up"
+  local lan code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/login" || true)
+  echo "127.0.0.1:$PORT -> $code"
+  [ "$code" = 200 ] || die "127.0.0.1:$PORT did not answer 200"
+  lan=$(lan_address)
+  if curl -s -o /dev/null --max-time 5 "http://$lan:$PORT/login"; then
+    die "$lan:$PORT IS reachable: the server is exposed on the network"
+  fi
+  echo "$lan:$PORT -> refused (not exposed)"
+  docker port "$SERVER"
+}
+
+cmd_env() {
+  cat <<ENV
+export PATH="$STATE/shim:\$PATH"
+export BASE_URL=$BASE_URL
+export KRAUSEN_E2E_DATABASE_PATH=/data/krausen.db
+export KRAUSEN_MODE=$KRAUSEN_MODE
+ENV
+}
+
+cmd_browsers() {
+  local e2e="$ROOT/e2e"
+  [ -x "$e2e/node_modules/.bin/playwright" ] || (cd "$e2e" && npm ci)
+  (cd "$e2e" && ./node_modules/.bin/playwright install chromium-headless-shell)
+}
+
+case "${1:-}" in
+  build) cmd_build ;;
+  up) cmd_up ;;
+  down) cmd_down ;;
+  check) cmd_check ;;
+  env) cmd_env ;;
+  browsers) cmd_browsers ;;
+  *) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

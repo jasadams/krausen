@@ -62,6 +62,26 @@ Additional application instances are future deployment work requiring shared
 credential/retry state and transport checks; no horizontal scalability has been
 benchmarked or promised by the design review.
 
+## Local isolated run (development and Playwright)
+
+`scripts/dev/krausen-dev` runs a disposable Krausen in Docker, published on `127.0.0.1`
+only, with a throwaway database on a Docker volume and test-only secrets:
+
+```bash
+scripts/dev/krausen-dev build      # image; BuildKit cache mounts reuse compiled crates
+scripts/dev/krausen-dev up         # fresh empty database and server; the e2e global setup signs up local@localhost
+scripts/dev/krausen-dev check      # fails unless 127.0.0.1 answers 200 and the LAN address does not
+eval "$(scripts/dev/krausen-dev env)"   # PATH shim, BASE_URL, KRAUSEN_E2E_DATABASE_PATH
+scripts/dev/krausen-dev browsers   # Playwright headless-shell Chromium
+scripts/dev/krausen-dev down       # remove containers, the volume and the sqlite3 shim
+```
+
+The e2e helpers call `sqlite3 <path>`; with the exported `PATH` that goes to a helper
+container next to the server. Do not open the database file from the host: a SQLite file
+shared between the host and Docker's VM loses writes. `down` deletes the `sqlite3` shim, so a
+shell that already ran the `env` exports needs `up` again (or a new shell) afterwards. For a native run set
+`BIND_ADDR=127.0.0.1` so the server listens on loopback only (default `0.0.0.0`).
+
 ## Running in Development
 
 ### Prerequisites
