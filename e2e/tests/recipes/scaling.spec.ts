@@ -194,6 +194,9 @@ test('Scale is a real modal: focus is contained and the page behind is inert', a
   expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
   expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
   await expectTabContainment(page, 'dialog#scale-dialog', 12);
+  // The trace may end with focus handed to the browser UI; Escape is the user's
+  // action from inside the dialog.
+  await dialog.getByRole('button', { name: 'Cancel' }).focus();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: 'Recipe actions' })).toBeFocused();
@@ -276,3 +279,32 @@ test('a lost Duplicate response survives reload and replays to exactly one new r
   expect(replayed[0]).toBe(sent[0]);
   expect(Number(sqliteExec('SELECT COUNT(*) FROM recipes'))).toBe(before + 1);
 });
+
+for (const [width, height] of [[320, 568], [390, 844], [844, 390]]) {
+  test(`recipe task dialogs stay reachable without document overflow at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await createScalableRecipe(page, `Narrow ${width} ${Date.now()}`);
+    for (const [action, dialogName, primary] of [
+      ['Scale…', 'Scale batch', 'Preview scaling'],
+      ['Duplicate…', 'Duplicate recipe', 'Duplicate'],
+      ['Export…', 'Export BeerXML', 'Close'],
+    ]) {
+      await page.getByRole('button', { name: 'Recipe actions' }).click();
+      await page.getByRole('button', { name: action }).click();
+      const dialog = page.getByRole('dialog', { name: dialogName });
+      await expect(dialog).toBeVisible();
+      const box = await dialog.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width + 0.5);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(height + 0.5);
+      const button = dialog.getByRole('button', { name: primary, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      const action_box = await button.boundingBox();
+      expect(action_box!.y + action_box!.height).toBeLessThanOrEqual(height + 0.5);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await dialog.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
+      await expect(dialog).toBeHidden();
+    }
+  });
+}

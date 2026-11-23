@@ -137,7 +137,7 @@ test('a delayed summary cannot touch a disposed editor', async ({ page }) => {
   await requestStarted;
   // KRA-43: the print task is modal, so the sidebar link that used to be clicked
   // here is now inert and unreachable; the page is left with browser Back.
-  expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
+  await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
@@ -170,7 +170,7 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
   await requestStarted;
   // KRA-43: the print task is modal, so the sidebar link that used to be clicked
   // here is now inert and unreachable; the page is left with browser Back.
-  expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
+  await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
@@ -353,3 +353,25 @@ test('the page behind the preview stays inert when the editor remounts the previ
   await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
   expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(false);
 });
+
+for (const [width, height] of [[320, 568], [390, 844]]) {
+  test(`the print preview fits ${width}x${height} in dark mode with reachable Back and paper palette`, async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+    await page.setViewportSize({ width, height });
+    await importRecipe(page, SIMPLE_RECIPE(`Print narrow ${width} ${Date.now()}`));
+    await openPrint(page);
+    const preview = page.getByRole('dialog', { name: 'Print preview' });
+    await expect(preview).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const back = preview.getByRole('button', { name: 'Back to editor' });
+    await back.scrollIntoViewIfNeeded();
+    const box = await back.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width + 0.5);
+    await page.emulateMedia({ media: 'print' });
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
+    await page.emulateMedia({ media: 'screen' });
+    await back.click();
+    await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+  });
+}

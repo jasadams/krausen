@@ -13,7 +13,10 @@ import { expect, type Page } from '@playwright/test';
 export async function expectTabContainment(page: Page, containerSelector: string, steps: number) {
   type Step = { inside: boolean; body: boolean; wasLast: boolean; label: string };
   let left = false;
+  const container = page.locator(containerSelector);
   for (let index = 0; index < steps; index++) {
+    // The editor may remount a preview while it revalidates after a focus change.
+    await container.waitFor();
     await page.evaluate((selector) => {
       const container = document.querySelector(selector)!;
       const tabbable = [...container.querySelectorAll<HTMLElement>(
@@ -23,6 +26,7 @@ export async function expectTabContainment(page: Page, containerSelector: string
       (window as unknown as { __last?: Element | null }).__last = tabbable[tabbable.length - 1] ?? null;
     }, containerSelector);
     await page.keyboard.press('Tab');
+    await container.waitFor();
     const step: Step = await page.evaluate((selector) => {
       const w = window as unknown as { __previous?: Element | null; __last?: Element | null };
       const container = document.querySelector(selector)!;
