@@ -157,8 +157,8 @@ pub fn RecipeHeader(
     on_style: Callback<String>,
     actions: RecipeActionSlots,
     actions_open: RwSignal<bool>,
-    /// Batch-into-fermenter and boil-time fields; raw-input behavior stays with the editor.
-    /// Boil time keeps this single owner until the process stages take it over.
+    /// Batch-into-fermenter field; raw-input behavior stays with the editor. Boil
+    /// time belongs to the Boil & whirlpool process section.
     children: Children,
 ) -> impl IntoView {
     let saved = Signal::derive(move || revision.get().is_some());

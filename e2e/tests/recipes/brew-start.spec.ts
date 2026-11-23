@@ -128,7 +128,6 @@ async function makeSavedRevisionReady(
   await page.locator('#equipment-profile-select').selectOption(profileId);
   await page.getByText('Addition details', { exact: true }).first().click();
   await page.locator('#fermentables-fermentable-1-stage').selectOption('mash');
-  await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.locator('#recipe-attenuation').fill('78');
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');

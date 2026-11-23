@@ -191,10 +191,10 @@ test('populated recipe uses compact two-row fermentables and keeps Hops in view'
   expect(viewportStart.ancestorsAtTop).toBe(true);
   expect(viewportStart.unclipped).toBe(true);
   const batchBox = await page.getByLabel('Batch volume (L)', { exact: true }).boundingBox();
-  const boilBox = await page.getByLabel('Boil time (min)', { exact: true }).boundingBox();
   expect(batchBox).not.toBeNull();
-  expect(boilBox).not.toBeNull();
-  expect(Math.abs(batchBox!.y - boilBox!.y)).toBeLessThanOrEqual(8);
+  // UX-004: boil minutes has one owner, the Boil & whirlpool section, not the identity header.
+  await expect(page.locator('#recipe-section-boil').getByLabel('Boil time (min)', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Boil time (min)', { exact: true })).toHaveCount(1);
   const grainHeading = await page.getByRole('heading', { name: 'Fermentables' }).boundingBox();
   expect(grainHeading).not.toBeNull();
   expect(grainHeading!.y).toBeGreaterThanOrEqual(0);
@@ -251,7 +251,8 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(page.locator('.recipe-editor__preview-details').getByText('28.9')).toBeVisible();
   await expect(previewSummary.locator('.beer-portrait')).toBeVisible();
 
-  await expect(previewDetails.getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await expect(previewDetails.getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
   await expect(previewDetails.getByRole('heading', { name: 'Your equipment' })).toBeVisible();
   await expect(previewDetails.getByText('Grainfather G30 · revision 1')).toBeVisible();
   await expect(previewDetails.getByText('Mash efficiency')).toBeVisible();
@@ -276,7 +277,8 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(previewSummary.getByRole('heading', { name: 'The beer, at a glance' })).toBeVisible();
   await expect(previewSummary.getByText('Estimates use the current draft.')).toBeVisible();
   await expect(previewSummary.getByText('Ready', { exact: true })).toBeVisible();
-  await expect(previewDetails.getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await expect(previewDetails.getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
   await expect(previewDetails.getByRole('heading', { name: 'Your equipment' })).toBeVisible();
   await expect(previewSummary.locator('.beer-portrait')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
