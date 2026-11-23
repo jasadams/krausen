@@ -2,8 +2,9 @@
 //! Recipe editor over the shared, authorized recipe operations.
 use crate::{
     components::{
-        BreweryDisclosure, BreweryDraftField, BreweryNotice, BreweryPanel, BreweryTabs, Button,
-        ButtonVariant, SelectedSavedRevision, printable_recipe::diagnostic_message,
+        BreweryDisclosure, BreweryDraftField, BreweryNotice, BreweryPanel, BreweryStale, BreweryTabs,
+        Button, ButtonVariant, SelectedSavedRevision,
+        printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
     pages::recipe_header::{EditorStatus, RecipeActionSlots, RecipeHeader},
@@ -1918,35 +1919,72 @@ fn FormulationPreview(
         if draft.with(|d| d.generation) != message_generation.get()
             || matches!(text.as_str(), "Calculating…" | "Awaiting preview.") { String::new() } else { text }
     });
+    // The last accepted estimate keeps the reference rows (labels, style bands,
+    // source and assumptions) in place while a replacement is calculated, so the
+    // phone summary keeps one height. Its values stay (dimmed, hidden from
+    // assistive technology) while recalculating and become dashes once the draft
+    // settles without an estimate, matching the shared KRA-38 stale pattern.
+    let last_preview = RwSignal::new(None::<Preview>);
+    Effect::new(move |_| {
+        if let Some(next) = accepted.get() {
+            last_preview.set(Some(next));
+        }
+    });
+    let current_phase = Signal::derive(move || if draft.with(|d| d.generation) == message_generation.get() { phase.get() } else { crate::pages::recipe_process::EstimatePhase::Calculating });
     provide_context(crate::pages::recipe_process::AcceptedPreview {
         preview: accepted,
-        phase: Signal::derive(move || if draft.with(|d| d.generation) == message_generation.get() { phase.get() } else { crate::pages::recipe_process::EstimatePhase::Calculating }),
+        phase: current_phase,
     });
-    view! { <div class="recipe-editor__preview-summary"><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true presentation=crate::components::PanelPresentation::Summary>
-        <p>{move || if draft.with(|d| d.generation) == message_generation.get() && message.get() == "Calculating…" { "Calculating…" } else { "" }}</p>
-        <p role="status">{move || settled_message.get()}</p>
-        <Show when=move || retry_available.get() && context_visible.get()>
-            <Button variant=ButtonVariant::Secondary on:click=move |_| retry_generation.update(|generation| *generation = generation.checked_add(1).expect("preview retry generation exhausted"))>"Retry calculation"</Button>
-        </Show>
+    view! { <div class="recipe-editor__preview-summary" class:recipe-editor__preview-summary--stale=move || accepted.get().is_none()><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true presentation=crate::components::PanelPresentation::Summary>
+        <div class="recipe-editor__estimate-outcome">
+            <p>{move || if draft.with(|d| d.generation) == message_generation.get() && message.get() == "Calculating…" { "Calculating…" } else { "" }}</p>
+            <p role="status">{move || settled_message.get()}</p>
+            <Show when=move || retry_available.get() && context_visible.get()>
+                <Button variant=ButtonVariant::Secondary aria_label="Retry calculation" on:click=move |_| retry_generation.update(|generation| *generation = generation.checked_add(1).expect("preview retry generation exhausted"))>
+                    <span class="recipe-editor__estimate-retry-wide">"Retry calculation"</span>
+                    <span class="recipe-editor__estimate-retry-compact">"Retry"</span>
+                </Button>
+            </Show>
+        </div>
         <crate::components::BreweryBeerPortrait/>
-        {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview.clone()/><PreviewSource preview=preview draft=draft revision=revision/> })}
+        {move || accepted.get().or(last_preview.get()).map(|preview| {
+            let current = accepted.get().is_some();
+            let stale = !current && current_phase.get() == crate::pages::recipe_process::EstimatePhase::Calculating;
+            let metrics = view! { <PreviewMetrics preview=preview.clone() current=current || stale/> }.into_any();
+            let source = view! { <PreviewSource preview=preview draft=draft revision=revision/> }.into_any();
+            view! { <div class="recipe-editor__estimate-content">
+                {if stale { view! { <BreweryStale stale=Signal::derive(|| true)>{metrics}</BreweryStale> }.into_any() } else { metrics }}
+                {source}
+            </div> }
+        })}
         <div>{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 
 #[component]
-fn PreviewMetrics(preview: krausen_types::formulation::Preview) -> impl IntoView {
+fn PreviewMetrics(
+    preview: krausen_types::formulation::Preview,
+    /// Show the values in `preview`; false renders a dash in every cell (the
+    /// draft settled without an estimate). The caller keeps the labels and style
+    /// reference rows either way so the phone summary keeps one height.
+    #[prop(default = true)] current: bool,
+) -> impl IntoView {
     let style = preview.style.as_ref();
     let comparison = preview.style_comparison.as_ref();
     // The fermenter batch is the draft that was actually calculated; it is a
     // different quantity from total water, which belongs to the water plan.
-    let fermenter = preview.context.as_ref().and_then(|context| context.draft.batch_size_l);
+    let fermenter = current
+        .then(|| preview.context.as_ref().and_then(|context| context.draft.batch_size_l))
+        .flatten();
+    let value = |pick: fn(&krausen_types::formulation::Targets) -> Option<f64>| {
+        current.then(|| pick(&preview.targets)).flatten()
+    };
     view! { <div class="recipe-editor__metrics">
-        {preview_metric("Original gravity", preview.targets.original_sg, style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline)}
-        {preview_metric("Final gravity", preview.targets.final_sg, style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline)}
-        {preview_metric("Alcohol", preview.targets.abv_percent, style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline)}
-        {preview_metric("Bitterness", preview.targets.ibu, style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline)}
-        {preview_metric("Colour", preview.targets.colour_ebc, style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Original gravity", value(|t| t.original_sg), style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline)}
+        {preview_metric("Final gravity", value(|t| t.final_sg), style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline)}
+        {preview_metric("Alcohol", value(|t| t.abv_percent), style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Bitterness", value(|t| t.ibu), style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric("Colour", value(|t| t.colour_ebc), style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline)}
         {preview_metric("Into fermenter", fermenter, None, None, "L", 1, crate::components::MetricDensity::Headline)}
     </div> }
 }
