@@ -14,7 +14,7 @@ use crate::components::{
 use leptos::prelude::*;
 use phosphor_leptos::Icon;
 
-fn printable_example() -> krausen_types::process_summary::ProcessSummary {
+pub(crate) fn printable_example() -> krausen_types::process_summary::ProcessSummary {
     use krausen_types::{
         brewery::{ChillingV1, EquipmentSettingsV1, StyleReference},
         formulation::Targets,
@@ -199,11 +199,11 @@ fn printable_example() -> krausen_types::process_summary::ProcessSummary {
 
 /// Example diagnostics that point at real showcase fields, in both severities
 /// plus an uneditable explanation.
-fn diagnostics_example() -> Signal<Vec<crate::pages::recipe_diagnostics::Presented>> {
+fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::pages::recipe_diagnostics::Presented>> {
     use crate::pages::recipe_diagnostics::{Presented, Route};
     use krausen_types::validation::Readiness;
     let item = |key: &str, severity, message: &str, route| Presented {
-        key: key.into(),
+        key: format!("{prefix}-{key}"),
         path: key.into(),
         code: "example".into(),
         severity,
@@ -220,7 +220,7 @@ fn diagnostics_example() -> Signal<Vec<crate::pages::recipe_diagnostics::Present
 
 #[component]
 pub fn DesignSystemPage() -> impl IntoView {
-    provide_context(crate::pages::recipe_diagnostics::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
+    provide_context(crate::components::diagnostic_list::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
         #[cfg(target_arch = "wasm32")]
         request_animation_frame(move || crate::pages::recipe_editor::jump_to_diagnostic(&target, &explanation));
         #[cfg(not(target_arch = "wasm32"))]
@@ -356,7 +356,9 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div role="tabpanel" id="show-tabs-panel-brews" aria-labelledby="show-tabs-tab-brews" hidden=move || active_tab.get() != "brews">"Brews section"</div>
                 </BreweryPanel>
                 <BreweryPanel title="Diagnostics" eyebrow="Component / Diagnostic summary" description="Each message names its field and row; a link moves focus to that control. Preserved data this editor cannot edit is explained, never linked.">
-                    <crate::pages::recipe_diagnostics::DiagnosticList items=diagnostics_example()/>
+                    <crate::components::diagnostic_list::DiagnosticList items=diagnostics_example("current") heading_id="show-diagnostics-heading"/>
+                    <p class="note-caption">"While the draft has moved on and no check has run yet, the same list is dimmed and says it is out of date."</p>
+                    <crate::components::diagnostic_list::DiagnosticList items=diagnostics_example("stale") stale=true heading_id="show-diagnostics-stale-heading"/>
                 </BreweryPanel>
                 <BreweryPanel title="Feedback" description="Status is expressed in words as well as colour.">
                     <BreweryNotice title="Example save failed" body="Keep this page open and retry when the connection is available. Your local values remain editable." tone=NoticeTone::Error/>

@@ -564,6 +564,5 @@
 .k-diagnostics__title, .k-diagnostics__heading { margin: 0; font-size: var(--k-font-sm); font-weight: 600; }
 .k-diagnostics__list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--k-space-1); }
 .k-diagnostics__list > li { font-size: var(--k-font-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.k-diagnostics.k-stale--active .k-diagnostics__list { opacity: .7; }
 .k-diagnostics__list > li:focus-visible { outline: 2px solid var(--k-color-ring); outline-offset: 2px; }
-/* Whole 44px touch target; a long ingredient name wraps instead of overflowing. */
-.k-diagnostics__list > li > button, .k-diagnostics__link { display: inline-flex; align-items: center; min-height: 44px; height: auto; max-width: 100%; padding-block: var(--k-space-2); text-align: left; white-space: normal; overflow-wrap: anywhere; }

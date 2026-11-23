@@ -11,15 +11,15 @@ use crate::pages::{
     ingredient_addition::{
         AdditionCategory, category_for_head, diagnostic_field, diagnostic_row_field, field_label,
     },
-    recipe_equipment::diagnostic_spec,
-    recipe_process::diagnostic_step,
+    recipe_equipment::{chilling_control_hidden, diagnostic_spec},
+    recipe_process::{diagnostic_step, show_kettle_top_up, show_manual_mash_water},
 };
-use crate::components::{Button, ButtonVariant};
 use crate::pages::recipe_draft::RecipeDraft;
 use krausen_types::{
     brewery::RecipeDocumentV1,
     validation::{Diagnostic, Readiness, Validation},
 };
+use crate::components::diagnostic_list::DiagnosticList;
 use leptos::prelude::*;
 
 /// Where a diagnostic can be repaired.
@@ -116,6 +116,8 @@ struct Located {
     row: Option<String>,
     label: String,
     route: Route,
+    /// Why the link goes to a governing control instead of the named field.
+    note: Option<String>,
 }
 
 fn fixed_field(path: &str) -> Option<(&'static str, &'static str)> {
@@ -133,39 +135,75 @@ fn fixed_field(path: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
+/// A control that is only rendered in some states links to the control that
+/// governs it instead, never to an input that is not on the page.
+fn governed(draft: &RecipeDraft, mut located: Located) -> Located {
+    let Route::Field { dom_id } = &located.route else { return located };
+    let doc = draft.document();
+    let (governing, note) = match dom_id.as_str() {
+        "recipe-mash-water" if !show_manual_mash_water(draft) => ("recipe-mash-method", "Change Mash water method to adjust it."),
+        "recipe-top-up" if !show_kettle_top_up(draft) => ("recipe-mash-method", "Choose a Mash water method to enter it."),
+        id if chilling_control_hidden(doc, id) => ("recipe-chilling", "Set Chilling for this recipe to enter it."),
+        _ => return located,
+    };
+    located.route = Route::Field { dom_id: governing.into() };
+    located.note = Some(note.into());
+    located
+}
+
+fn explain() -> Located {
+    Located { row: None, label: String::new(), route: Route::Explain, note: None }
+}
+
 /// `Err(())` means the path addresses a row that no longer exists: stale.
-fn locate(doc: &RecipeDocumentV1, path: &str, code: &str) -> Result<Located, ()> {
+fn locate(draft: &RecipeDraft, path: &str, code: &str) -> Result<Located, ()> {
+    let doc = draft.document();
+    let field = |row: Option<String>, label: &str, dom_id: &str| Located { row, label: label.into(), route: Route::Field { dom_id: dom_id.into() }, note: None };
     if code == "empty_fermentables" {
-        return Ok(Located {
-            row: None,
-            label: "Fermentables".into(),
-            route: Route::Field { dom_id: AdditionCategory::Fermentable.add_button_id() },
-        });
+        return Ok(field(None, "Fermentables", &AdditionCategory::Fermentable.add_button_id()));
     }
     if let Some((label, dom_id)) = fixed_field(path) {
-        return Ok(Located { row: None, label: label.into(), route: Route::Field { dom_id: dom_id.into() } });
+        return Ok(governed(draft, field(None, label, dom_id)));
     }
     if path.starts_with("process.mash_steps[") || path.starts_with("process.fermentation_steps[") {
         return match diagnostic_step(doc, path) {
-            Some(step) => Ok(Located { row: Some(step.row_label), label: step.label.into(), route: Route::Field { dom_id: step.dom_id } }),
-            None if path.ends_with(".row_id") => Ok(Located { row: None, label: String::new(), route: Route::Explain }),
+            Some(step) => Ok(field(Some(step.row_label), step.label, &step.dom_id)),
+            None if path.ends_with(".row_id") => Ok(explain()),
             None => Err(()),
         };
     }
     if let Some((dom_id, label)) = diagnostic_spec(path) {
-        return Ok(Located { row: None, label: label.into(), route: Route::Field { dom_id: dom_id.into() } });
+        return Ok(governed(draft, field(None, label, dom_id)));
     }
     if let Some((head, rest)) = path.split_once('[') {
         if rest.ends_with("].row_id") {
-            return Ok(Located { row: None, label: String::new(), route: Route::Explain });
+            return Ok(explain());
         }
         return match diagnostic_field(doc, path) {
-            Some(opening) => Ok(Located { row: Some(opening.row_label), label: opening.label.into(), route: Route::Field { dom_id: opening.dom_id } }),
+            Some(opening) => Ok(field(Some(opening.row_label), opening.label, &opening.dom_id)),
             None if matches!(head, "fermentables" | "hops" | "yeast" | "other_ingredients" | "ingredients") => Err(()),
-            None => Ok(Located { row: None, label: String::new(), route: Route::Explain }),
+            None => Ok(explain()),
         };
     }
-    Ok(Located { row: None, label: String::new(), route: Route::Explain })
+    Ok(explain())
+}
+
+/// The path the validator reports for a raw-input path. The two vocabularies
+/// differ for yeast/other amounts, yeast attenuation and equipment overrides.
+pub fn validator_paths(raw: &str) -> Vec<String> {
+    let mut paths = vec![raw.to_owned()];
+    if let Some((head, rest)) = raw.split_once('[') {
+        if let Some((id, tail)) = rest.split_once("].") {
+            match (head, tail) {
+                ("yeast" | "other_ingredients", "amount") => paths.push(format!("ingredients[{id}].amount")),
+                ("yeast", "attenuation") => paths.push(format!("yeast[{id}].specification.attenuation_fraction")),
+                _ => (),
+            }
+        }
+    } else if let Some(field) = raw.strip_prefix("equipment_overrides.") {
+        paths.push(format!("equipment.{field}"));
+    }
+    paths
 }
 
 fn key_for(path: &str, code: &str) -> String {
@@ -173,12 +211,18 @@ fn key_for(path: &str, code: &str) -> String {
     format!("diagnostic-{clean}")
 }
 
-fn present_one(doc: &RecipeDocumentV1, diagnostic: &Diagnostic) -> Option<Presented> {
-    let located = locate(doc, &diagnostic.path, &diagnostic.code).ok()?;
+fn present_one(draft: &RecipeDraft, diagnostic: &Diagnostic) -> Option<Presented> {
+    let located = locate(draft, &diagnostic.path, &diagnostic.code).ok()?;
     let message = match &located.route {
         Route::Explain => explanation(&diagnostic.path, &diagnostic.code),
         Route::Field { .. } if diagnostic.code == "empty_fermentables" => "Add at least one fermentable.".to_owned(),
-        Route::Field { .. } => sentence(located.row.as_deref(), &located.label, &diagnostic.code),
+        Route::Field { .. } => {
+            let base = sentence(located.row.as_deref(), &located.label, &diagnostic.code);
+            match &located.note {
+                Some(note) => format!("{base} {note}"),
+                None => base,
+            }
+        }
     };
     Some(Presented {
         key: key_for(&diagnostic.path, &diagnostic.code),
@@ -215,13 +259,14 @@ fn order(doc: &RecipeDocumentV1, path: &str) -> (u8, usize) {
 /// Distinctness is the (path, code) pair, never the message text, so two rows
 /// with the same problem stay two entries. A diagnostic for a row that has since
 /// been removed is dropped rather than linked to nothing.
-pub fn present_all(doc: &RecipeDocumentV1, diagnostics: &[Diagnostic]) -> Vec<Presented> {
+pub fn present_all(draft: &RecipeDraft, diagnostics: &[Diagnostic]) -> Vec<Presented> {
+    let doc = draft.document();
     let mut seen = std::collections::BTreeSet::new();
     let mut presented: Vec<(usize, Presented)> = diagnostics
         .iter()
         .enumerate()
         .filter(|(_, d)| seen.insert((d.path.clone(), d.code.clone())))
-        .filter_map(|(index, d)| present_one(doc, d).map(|p| (index, p)))
+        .filter_map(|(index, d)| present_one(draft, d).map(|p| (index, p)))
         .collect();
     presented.sort_by_key(|(index, p)| (order(doc, &p.path), *index));
     presented.into_iter().map(|(_, p)| p).collect()
@@ -267,6 +312,51 @@ pub fn plain_message(diagnostic: &Diagnostic) -> String {
     explanation(path, &diagnostic.code)
 }
 
+/// Wording for a printed or reviewed summary: the same sentence as
+/// [`plain_message`], preceded by the row it is about (name, group, stage and
+/// position) so two rows with the same problem read differently.
+pub fn summary_message(summary: &krausen_types::process_summary::ProcessSummary, diagnostic: &Diagnostic) -> String {
+    use krausen_types::process_summary::{SummaryIngredient, SummaryStep};
+    let plain = plain_message(diagnostic);
+    let Some((head, rest)) = diagnostic.path.split_once('[') else { return plain };
+    let Some((id, _)) = rest.split_once(']') else { return plain };
+    let ingredient = |rows: &[SummaryIngredient], noun: &str| -> Option<String> {
+        let position = rows.iter().position(|row| row.row_id == id)?;
+        let row = &rows[position];
+        let mut parts = vec![match row.name.as_deref().filter(|name| !name.trim().is_empty()) {
+            Some(name) => format!("{name}, {noun}"),
+            None => format!("Unnamed {noun}"),
+        }];
+        if let Some(stage) = row.stage.as_deref().filter(|stage| !stage.is_empty()) {
+            parts.push(capitalized(&stage.replace('_', " ")));
+        }
+        parts.push(format!("{} of {}", position + 1, rows.len()));
+        Some(parts.join(", "))
+    };
+    let step = |rows: &[SummaryStep], noun: &str| -> Option<String> {
+        let position = rows.iter().position(|row| row.row_id == id)?;
+        let base = format!("{noun} {} of {}", position + 1, rows.len());
+        Some(match rows[position].name.as_deref().filter(|name| !name.is_empty()) {
+            Some(name) => format!("{base}, {name}"),
+            None => base,
+        })
+    };
+    let row = match head {
+        "fermentables" => ingredient(&summary.fermentables, "fermentable"),
+        "hops" => ingredient(&summary.hops, "hop"),
+        "yeast" => ingredient(&summary.yeast, "yeast"),
+        "other_ingredients" => ingredient(&summary.other_ingredients, "other ingredient"),
+        "ingredients" => ingredient(&summary.yeast, "yeast").or_else(|| ingredient(&summary.other_ingredients, "other ingredient")),
+        "process.mash_steps" => step(&summary.process.mash_steps, "Mash step"),
+        "process.fermentation_steps" => step(&summary.process.fermentation_steps, "Fermentation step"),
+        _ => None,
+    };
+    match row {
+        Some(row) => format!("{row}: {plain}"),
+        None => plain,
+    }
+}
+
 /// One concise settled readiness announcement: the count, never the list.
 pub fn readiness_summary(validation: &Validation) -> String {
     let count = |severity: Readiness| {
@@ -288,13 +378,17 @@ pub fn readiness_summary(validation: &Validation) -> String {
 }
 
 /// First control a brewer must correct before the recipe can be saved: a
-/// malformed number still in the draft, else the first Invalid diagnostic.
+/// malformed number whose format feedback is already showing, else the first
+/// Invalid diagnostic of the current draft. A first character such as "-" is
+/// transitional and never counts, and diagnostics from an earlier draft are not
+/// presented as current.
 pub fn first_invalid(draft: &RecipeDraft) -> Option<Presented> {
     let doc = draft.document();
-    let malformed = draft.unfinished_inputs().into_iter().filter_map(|(path, _)| {
-        let located = locate(doc, &path, "").ok()?;
+    let malformed = draft.settled_malformed().into_iter().filter_map(|path| {
+        let validator = validator_paths(&path).pop().unwrap_or_else(|| path.clone());
+        let located = locate(draft, &validator, "").ok()?;
         let Route::Field { dom_id } = located.route else { return None };
-        Some((order(doc, &path), Presented {
+        Some((order(doc, &validator), Presented {
             key: key_for(&path, "malformed"),
             path,
             code: "malformed".into(),
@@ -304,65 +398,19 @@ pub fn first_invalid(draft: &RecipeDraft) -> Option<Presented> {
         }))
     });
     malformed.min_by_key(|(order, _)| *order).map(|(_, p)| p).or_else(|| {
-        present_all(doc, draft.diagnostics()).into_iter().find(|p| p.severity == Readiness::Invalid)
+        if !draft.diagnostics_current() {
+            return None;
+        }
+        present_all(draft, draft.diagnostics()).into_iter().find(|p| p.severity == Readiness::Invalid)
     })
 }
 
-/// Moves to a control on the user's explicit request: the editor selects the
-/// Recipe tab, opens collapsed ancestors, waits for the render, then focuses the
-/// control, or the explanation with the second id when the control is absent.
-#[derive(Clone, Copy)]
-pub struct DiagnosticJump(pub Callback<(String, String)>);
-
-/// The detailed list of what is wrong. Deliberately not a live region: the one
-/// concise readiness status announces the settled count (ACC-005).
+/// The summary for the recipe editor: what the draft's last settled check found.
 #[component]
 pub fn DiagnosticSummary(draft: RwSignal<RecipeDraft>) -> impl IntoView {
-    let items = Memo::new(move |_| draft.with(|d| present_all(d.document(), d.diagnostics())));
-    view! { <DiagnosticList items=Signal::from(items)/> }
-}
-
-/// Presentation of already-resolved diagnostics; the recipe editor and the design
-/// system showcase render the same list.
-#[component]
-pub fn DiagnosticList(items: Signal<Vec<Presented>>) -> impl IntoView {
-    let jump = use_context::<DiagnosticJump>();
-    let group = move |severity: Readiness, heading: &'static str| {
-        move || {
-            let list: Vec<Presented> = items.get().into_iter().filter(|p| p.severity == severity).collect();
-            (!list.is_empty()).then(|| {
-                let count = list.len();
-                view! {
-                    <h4 class="k-diagnostics__heading">{format!("{heading} ({count})")}</h4>
-                    <ul class="k-diagnostics__list">
-                        {list.into_iter().map(|p| {
-                            let Presented { key, message, route, .. } = p;
-                            let body = match (route, jump) {
-                                (Route::Field { dom_id }, Some(DiagnosticJump(jump))) => {
-                                    let fallback = key.clone();
-                                    view! { <Button variant=ButtonVariant::Link on:click=move |_| jump.run((dom_id.clone(), fallback.clone()))>{message}</Button> }.into_any()
-                                }
-                                (Route::Field { dom_id }, None) => {
-                                    view! { <a class="k-diagnostics__link" href=format!("#{dom_id}")>{message}</a> }.into_any()
-                                }
-                                (Route::Explain, _) => view! { <span>{message}</span> }.into_any(),
-                            };
-                            view! { <li id=key tabindex="-1">{body}</li> }
-                        }).collect_view()}
-                    </ul>
-                }
-            })
-        }
-    };
-    view! {
-        <Show when=move || items.with(|list| !list.is_empty())>
-            <section class="k-diagnostics" aria-labelledby="recipe-diagnostics-heading">
-                <h3 id="recipe-diagnostics-heading" class="k-diagnostics__title">"Recipe issues"</h3>
-                {group(Readiness::Invalid, "Correct before saving")}
-                {group(Readiness::Incomplete, "Needed to start a brew")}
-            </section>
-        </Show>
-    }
+    let items = Memo::new(move |_| draft.with(|d| present_all(d, d.diagnostics())));
+    let stale = Signal::derive(move || draft.with(|d| !d.diagnostics_current()));
+    view! { <DiagnosticList items=Signal::from(items) stale=stale/> }
 }
 
 #[cfg(test)]
@@ -395,7 +443,7 @@ mod tests {
     #[test]
     fn two_hops_with_the_same_problem_stay_distinct_and_name_their_rows() {
         let doc = doc();
-        let list = present_all(&doc, &[
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
             diag("hops[h1].specification.alpha_fraction", "missing", Readiness::Incomplete),
             diag("hops[h2].specification.alpha_fraction", "missing", Readiness::Incomplete),
         ]);
@@ -411,7 +459,7 @@ mod tests {
     fn identical_path_and_code_are_one_entry_but_other_codes_on_it_are_kept() {
         let doc = doc();
         let alpha = "hops[h1].specification.alpha_fraction";
-        let list = present_all(&doc, &[
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
             diag(alpha, "missing", Readiness::Incomplete),
             diag(alpha, "missing", Readiness::Incomplete),
             diag(alpha, "out_of_range", Readiness::Invalid),
@@ -423,7 +471,7 @@ mod tests {
     fn a_removed_row_is_dropped_not_linked_to_nothing() {
         let mut doc = doc();
         doc.hops.remove(0);
-        let list = present_all(&doc, &[
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
             diag("hops[h1].amount_g", "missing", Readiness::Incomplete),
             diag("hops[h2].amount_g", "missing", Readiness::Incomplete),
         ]);
@@ -435,7 +483,7 @@ mod tests {
     fn rows_are_resolved_by_id_after_an_insert_changes_every_position() {
         let mut doc = doc();
         doc.hops.insert(0, hop("h0", "Saaz", "boil", 30.0));
-        let list = present_all(&doc, &[diag("hops[h2].amount_g", "missing", Readiness::Incomplete)]);
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[diag("hops[h2].amount_g", "missing", Readiness::Incomplete)]);
         assert_eq!(list[0].route, Route::Field { dom_id: "hops-h2-amount".into() });
         assert!(list[0].message.contains("3 of 3"), "{list:?}");
     }
@@ -444,7 +492,7 @@ mod tests {
     fn preserved_data_gets_an_explanation_and_no_link() {
         let doc = doc();
         for (path, code) in [("schema_version", "unsupported_schema"), ("process.unsupported", "unsupported_process"), ("hops[h1].row_id", "invalid_row_id")] {
-            let list = present_all(&doc, &[diag(path, code, Readiness::Invalid)]);
+            let list = present_all(&RecipeDraft::new(doc.clone()), &[diag(path, code, Readiness::Invalid)]);
             assert_eq!(list.len(), 1, "{path}");
             assert_eq!(list[0].route, Route::Explain, "{path}");
             assert!(list[0].message.contains("cannot"), "{}", list[0].message);
@@ -455,7 +503,7 @@ mod tests {
     fn selects_and_process_fields_resolve_to_their_stable_ids() {
         let mut doc = doc();
         doc.process.mash_steps.push(krausen_types::brewery::ProcessStep { row_id: "m1".into(), name: Some("Rest".into()), time_minutes: None, temperature_c: None, volume_l: None, extensions: Default::default() });
-        let list = present_all(&doc, &[
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
             diag("process.mash_water_method", "missing_or_unsupported_mash_water_method", Readiness::Incomplete),
             diag("process.mash_steps[m1].time_minutes", "negative", Readiness::Invalid),
             diag("hops[h1].stage", "unsupported_hop_stage", Readiness::Incomplete),
@@ -467,14 +515,102 @@ mod tests {
         assert!(ids.contains(&"recipe-mash-method") && ids.contains(&"process.mash_steps-m1-time_minutes"));
         assert!(ids.contains(&"hops-h1-stage"), "{ids:?}");
         assert!(ids.contains(&"recipe-chilling") && ids.contains(&"fermentables-add"), "{ids:?}");
-        assert!(ids.contains(&"recipe-kettle-opening") || ids.iter().any(|id| id.contains("opening")), "{ids:?}");
+        assert!(ids.contains(&"recipe-opening"), "{ids:?}");
+    }
+
+    fn field_id(p: &Presented) -> &str {
+        match &p.route { Route::Field { dom_id } => dom_id, Route::Explain => "-" }
+    }
+
+    #[test]
+    fn an_empty_draft_links_add_at_least_one_fermentable_to_the_add_control() {
+        let list = present_all(&RecipeDraft::new(RecipeDocumentV1::default()), &[diag("fermentables", "empty_fermentables", Readiness::Incomplete)]);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].message, "Add at least one fermentable.");
+        assert_eq!(field_id(&list[0]), "fermentables-add");
+    }
+
+    #[test]
+    fn several_invalid_entries_of_one_category_stay_separate_and_in_order() {
+        let doc = doc();
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
+            diag("hops[h2].amount_g", "negative", Readiness::Invalid),
+            diag("hops[h1].amount_g", "negative", Readiness::Invalid),
+            diag("hops[h1].contact_minutes", "exposure_exceeds_boil", Readiness::Invalid),
+        ]);
+        let ids: Vec<_> = list.iter().map(field_id).collect();
+        assert_eq!(ids, ["hops-h1-amount", "hops-h1-colour-time", "hops-h2-amount"].map(|s| s));
+        assert_eq!(list.iter().map(|p| p.message.as_str()).collect::<std::collections::BTreeSet<_>>().len(), 3);
+    }
+
+    #[test]
+    fn a_conditional_control_that_is_not_rendered_links_to_the_control_that_governs_it() {
+        let mut doc = doc();
+        doc.process.mash_water_method = Some("profile_thickness".into());
+        let sparge = [diag("process.mash_water_l", "negative_sparge", Readiness::Invalid)];
+        let list = present_all(&RecipeDraft::new(doc.clone()), &sparge);
+        assert_eq!(field_id(&list[0]), "recipe-mash-method", "mash water is only on the page for the manual method");
+        doc.process.mash_water_method = Some("manual".into());
+        assert_eq!(field_id(&present_all(&RecipeDraft::new(doc.clone()), &sparge)[0]), "recipe-mash-water");
+
+        use krausen_types::brewery::ChillingV1;
+        let rate = [diag("equipment.chilling.rate_per_minute", "missing", Readiness::Incomplete)];
+        let inherited = present_all(&RecipeDraft::new(doc.clone()), &rate);
+        assert_eq!(field_id(&inherited[0]), "recipe-chilling", "no chilling override: the rate field is not rendered");
+        assert!(inherited[0].message.contains("Set Chilling for this recipe"), "{}", inherited[0].message);
+        doc.equipment_overrides.chilling = Some(ChillingV1::Forced { rate_per_minute: None, plateau_c: None });
+        assert_eq!(field_id(&present_all(&RecipeDraft::new(doc), &rate)[0]), "recipe-chilling-rate");
+    }
+
+    #[test]
+    fn raw_and_validator_paths_are_mapped_both_ways() {
+        assert_eq!(validator_paths("yeast[y1].amount"), ["yeast[y1].amount", "ingredients[y1].amount"]);
+        assert_eq!(validator_paths("other_ingredients[o1].amount"), ["other_ingredients[o1].amount", "ingredients[o1].amount"]);
+        assert_eq!(validator_paths("yeast[y1].attenuation"), ["yeast[y1].attenuation", "yeast[y1].specification.attenuation_fraction"]);
+        assert_eq!(validator_paths("equipment_overrides.kettle_opening_cm"), ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]);
+        assert_eq!(validator_paths("batch_size_l"), ["batch_size_l"]);
+    }
+
+    #[test]
+    fn review_ignores_a_transitional_first_character_and_finds_a_settled_malformed_yeast_attenuation() {
+        use krausen_types::brewery::{IngredientAddition, IngredientSpecification};
+        let mut doc = RecipeDocumentV1::default();
+        doc.yeast.push(IngredientAddition { row_id: "y1".into(), amount: None, unit: None, specification: IngredientSpecification { name: Some("US-05".into()), producer: None, attenuation_fraction: None, extensions: Default::default() }, source: None });
+        let mut draft = RecipeDraft::new(doc);
+        draft.edit_number("yeast[y1].attenuation", "-".into(), |_, _| {});
+        assert!(first_invalid(&draft).is_none(), "typing the first character is not an error");
+        draft.edit_number("yeast[y1].attenuation", "7x".into(), |_, _| {});
+        assert!(first_invalid(&draft).is_none(), "not settled until blur or an explicit review");
+        draft.settle_number("yeast[y1].attenuation");
+        let first = first_invalid(&draft).expect("settled malformed text is a highlighted field");
+        assert_eq!(field_id(&first), "yeast-y1-attenuation");
+    }
+
+    #[test]
+    fn diagnostics_from_an_earlier_draft_are_not_presented_as_current() {
+        use krausen_types::validation::Validation;
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        let generation = draft.generation;
+        draft.apply_validation(generation, Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] });
+        assert!(draft.diagnostics_current());
+        assert_eq!(first_invalid(&draft).map(|p| p.path), Some("batch_size_l".into()));
+        draft.edit(|doc| doc.title = "moved on".into());
+        assert!(!draft.diagnostics_current());
+        assert_eq!(draft.diagnostics().len(), 1, "still shown, marked out of date");
+        assert!(first_invalid(&draft).is_none(), "but never counted by Review");
+        let mut restored = RecipeDraft::new(RecipeDocumentV1::default());
+        let generation = restored.generation;
+        restored.apply_validation(generation, Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] });
+        let contents = restored.recovery();
+        restored.restore(contents);
+        assert!(!restored.diagnostics_current(), "a recovery restore replaces the document");
     }
 
     #[test]
     fn summary_reads_in_editor_order() {
         let mut doc = doc();
         doc.process.mash_steps.clear();
-        let list = present_all(&doc, &[
+        let list = present_all(&RecipeDraft::new(doc.clone()), &[
             diag("process.mash_water_l", "missing", Readiness::Incomplete),
             diag("hops[h2].amount_g", "missing", Readiness::Incomplete),
             diag("batch_size_l", "missing", Readiness::Incomplete),

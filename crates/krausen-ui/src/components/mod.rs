@@ -13,6 +13,7 @@ pub mod button;
 pub mod card;
 pub mod checkbox;
 pub mod confirm_dialog;
+pub mod diagnostic_list;
 pub mod empty_state;
 pub mod input;
 pub mod label;

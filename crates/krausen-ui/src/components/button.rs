@@ -49,6 +49,9 @@ pub enum ButtonSize {
     Xs,
     /// Pill sub-tab size: compact padding, xs font.
     Pill,
+    /// Whole-row link target: at least 44px tall, left-aligned, and a long label
+    /// wraps instead of overflowing (diagnostic summary entries).
+    Wrap,
 }
 
 /// Base classes shared by all button variants.
@@ -108,6 +111,7 @@ fn size_classes(size: ButtonSize) -> &'static str {
         ButtonSize::Xs => "px-3 py-1 text-[13px]",
         // Pill sub-tab: compact padding, xs font, rounded
         ButtonSize::Pill => "px-3 py-1 text-xs rounded",
+        ButtonSize::Wrap => "inline-flex h-auto min-h-[44px] max-w-full justify-start px-0 py-2 text-left whitespace-normal [overflow-wrap:anywhere]",
     }
 }
 

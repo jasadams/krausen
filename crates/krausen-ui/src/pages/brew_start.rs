@@ -258,14 +258,15 @@ fn may_start(phase: &Phase, has_pending: bool) -> bool {
     !has_pending && matches!(phase, Phase::Review { .. })
 }
 
-/// One reason per distinct diagnostic. Identity is the structured (path, code), so
-/// two rows with the same problem stay two reasons; message text never decides it.
-fn distinct_reasons(diagnostics: &[Diagnostic]) -> Vec<String> {
+/// One reason per distinct diagnostic, each naming its row. Identity is the
+/// structured (path, code), so two rows with the same problem stay two reasons.
+fn distinct_reasons(summary: &krausen_types::process_summary::ProcessSummary) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    diagnostics
+    summary
+        .diagnostics
         .iter()
         .filter(|d| seen.insert((d.path.as_str(), d.code.as_str())))
-        .map(diagnostic_text)
+        .map(|d| crate::pages::recipe_diagnostics::summary_message(summary, d))
         .collect()
 }
 
@@ -687,7 +688,7 @@ pub fn StartBrewTask(
                     let ready =
                         found.readiness == Readiness::Ready && found.context.digest.is_some();
                     if !ready {
-                        let reasons = distinct_reasons(&found.diagnostics);
+                        let reasons = distinct_reasons(&found);
                         phase.set(Phase::Blocked(if reasons.is_empty() {
                             "This revision is not Ready. Add the missing inputs and save a new revision.".into()
                         } else {
@@ -1522,19 +1523,23 @@ mod regression_tests {
     }
 
     #[test]
-    fn blocking_reasons_are_distinct_by_row_and_code_not_by_text() {
+    fn blocking_reasons_name_their_rows_and_two_rows_stay_two_reasons() {
         let d = |path: &str, code: &str| Diagnostic { code: code.into(), path: path.into(), severity: Readiness::Incomplete, affected_targets: vec![] };
-        let found = [
-            d("hops[a].specification.alpha_fraction", "missing"),
-            d("hops[a].specification.alpha_fraction", "missing"),
-            d("hops[b].specification.alpha_fraction", "missing"),
+        let mut summary = crate::pages::design_system::printable_example();
+        summary.diagnostics = vec![
+            d("fermentables[grain-1].specification.yield_fraction", "missing"),
+            d("fermentables[grain-1].specification.yield_fraction", "missing"),
+            d("fermentables[grain-2].specification.yield_fraction", "missing"),
             d("batch_size_l", "missing"),
         ];
-        assert_eq!(
-            distinct_reasons(&found),
-            vec!["Hop alpha acid is missing.", "Hop alpha acid is missing.", "Batch volume is missing."]
-        );
-        assert!(distinct_reasons(&[]).is_empty());
+        let reasons = distinct_reasons(&summary);
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert_ne!(reasons[0], reasons[1], "two rows with the same problem read differently");
+        assert!(reasons[0].starts_with("Pilsner malt, fermentable") && reasons[0].contains("1 of 2"), "{}", reasons[0]);
+        assert!(reasons[1].starts_with("Vienna malt, fermentable") && reasons[1].contains("2 of 2"), "{}", reasons[1]);
+        assert_eq!(reasons[2], "Batch volume is missing.");
+        summary.diagnostics.clear();
+        assert!(distinct_reasons(&summary).is_empty());
     }
 
     #[test]

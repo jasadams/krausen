@@ -50,6 +50,8 @@ pub struct RecipeDraft {
     malformed: BTreeMap<String, String>,
     settled_numbers: BTreeSet<String>,
     diagnostics: Vec<krausen_types::validation::Diagnostic>,
+    /// The draft generation `diagnostics` were computed for.
+    diagnostics_generation: u64,
     /// Server readiness for exactly one draft generation; never carried across edits.
     readiness: Option<(u64, krausen_types::validation::Readiness)>,
     baseline: DraftContents,
@@ -75,6 +77,7 @@ impl RecipeDraft {
             malformed: BTreeMap::new(),
             settled_numbers: BTreeSet::new(),
             diagnostics: Vec::new(),
+            diagnostics_generation: 0,
             readiness: None,
             baseline,
             undo: Vec::new(),
@@ -213,7 +216,8 @@ impl RecipeDraft {
         self.remember();
         // Only the field being corrected stops reporting its problem now; every other
         // distinct diagnostic stays until the next settled preview replaces them.
-        self.diagnostics.retain(|d| d.path != path);
+        let reported = crate::pages::recipe_diagnostics::validator_paths(path);
+        self.diagnostics.retain(|d| !reported.contains(&d.path));
         self.raw_numbers.insert(path.to_owned(), text.clone());
         let value = if text.trim().is_empty() {
             Some(None)
@@ -250,6 +254,7 @@ impl RecipeDraft {
         }
         self.readiness = Some((generation, validation.state));
         self.diagnostics = validation.diagnostics;
+        self.diagnostics_generation = generation;
         true
     }
     /// Forget readiness when the preview that reported it is no longer trusted
@@ -261,10 +266,20 @@ impl RecipeDraft {
     pub fn readiness(&self) -> Option<krausen_types::validation::Readiness> {
         self.readiness.filter(|(generation, _)| *generation == self.generation).map(|(_, state)| state)
     }
+    /// Whether the retained diagnostics describe the draft as it is now. False once
+    /// the draft has moved on and no check has run yet.
+    pub fn diagnostics_current(&self) -> bool {
+        self.diagnostics_generation == self.generation
+    }
     /// The last settled server diagnostics, retained across edits so the summary
     /// keeps its shape while the brewer types; readiness stays generation-scoped.
     pub fn diagnostics(&self) -> &[krausen_types::validation::Diagnostic] {
         &self.diagnostics
+    }
+    /// Malformed entries whose format feedback is already showing; a first
+    /// character such as "-" is transitional and is not one of these.
+    pub fn settled_malformed(&self) -> Vec<String> {
+        self.malformed.keys().filter(|path| self.settled_numbers.contains(*path)).cloned().collect()
     }
     pub fn unfinished_inputs(&self) -> Vec<(String, String)> {
         self.malformed.keys().filter_map(|path| self.raw_numbers.get(path).map(|text| (path.clone(), text.clone()))).collect()
@@ -432,7 +447,6 @@ mod tests {
         assert!(draft.diagnostics().is_empty());
         assert_ne!(draft.generation, prior);
     }
-
 
     fn diagnostic(path: &str, code: &str, severity: krausen_types::validation::Readiness) -> krausen_types::validation::Diagnostic {
         krausen_types::validation::Diagnostic { code: code.into(), path: path.into(), severity, affected_targets: vec![] }

@@ -162,6 +162,15 @@ pub(crate) fn diagnostic_spec(path: &str) -> Option<(&'static str, &'static str)
     SPECS.iter().chain(CHILLING_SPECS.iter().map(|c| &c.spec)).find(|spec| spec.path == wanted).map(|spec| (spec.id, spec.label))
 }
 
+/// True when `dom_id` is a chilling-value control that is not rendered because
+/// the recipe's chilling override is a different mode (or none).
+pub(crate) fn chilling_control_hidden(doc: &RecipeDocumentV1, dom_id: &str) -> bool {
+    CHILLING_SPECS
+        .iter()
+        .find(|chill| chill.spec.id == dom_id)
+        .is_some_and(|chill| chilling_mode(&doc.equipment_overrides.chilling) != chill.mode)
+}
+
 static CHILLING_SPECS: [ChillingSpec; 3] = [
     ChillingSpec { mode: "forced", spec: Spec { id: "recipe-chilling-rate", label: "Cooling rate", unit: "per min", scale: 1.0, path: "equipment_overrides.chilling.rate_per_minute",
         read: |s| match &s.chilling { Some(ChillingV1::Forced { rate_per_minute, .. }) => *rate_per_minute, _ => None },

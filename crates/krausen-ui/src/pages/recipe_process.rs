@@ -241,13 +241,13 @@ fn holds_value(draft: &RecipeDraft, path: &str, value: Option<f64>) -> bool {
     value.is_some() || draft.raw_numbers().contains_key(path)
 }
 
-fn show_manual_mash_water(draft: &RecipeDraft) -> bool {
+pub(crate) fn show_manual_mash_water(draft: &RecipeDraft) -> bool {
     let process = &draft.document().process;
     process.mash_water_method.as_deref() == Some("manual")
         || holds_value(draft, "process.mash_water_l", process.mash_water_l)
 }
 
-fn show_kettle_top_up(draft: &RecipeDraft) -> bool {
+pub(crate) fn show_kettle_top_up(draft: &RecipeDraft) -> bool {
     let process = &draft.document().process;
     process.mash_water_method.is_some()
         || holds_value(draft, "process.kettle_top_up_l", process.kettle_top_up_l)

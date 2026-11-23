@@ -1337,7 +1337,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(not(target_arch = "wasm32"))]
         let _ = (target, explanation);
     });
-    provide_context(crate::pages::recipe_diagnostics::DiagnosticJump(jump));
+    provide_context(crate::components::diagnostic_list::DiagnosticJump(jump));
     let review = Callback::new(move |()| {
         // Explicit request: settle every touched field so its error shows, then go to the first one.
         draft.update(|d| d.settle_numbers());
@@ -1898,9 +1898,9 @@ fn FormulationPreview(
                         && preview.context.is_none()
                         && preview.context_digest.is_none()
                     {
+                        message.set(crate::pages::recipe_diagnostics::readiness_summary(&preview.validation));
                         draft.update(|d| { d.apply_validation(draft_generation, preview.validation); });
                         phase.set(crate::pages::recipe_process::EstimatePhase::InvalidInput);
-                        message.set("Invalid: correct the highlighted inputs.".into());
                     } else {
                         phase.set(crate::pages::recipe_process::EstimatePhase::Unavailable);
                         message.set("Preview context changed. Try again.".into());
