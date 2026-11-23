@@ -1136,6 +1136,163 @@ for (const width of [1440, 601, 390, 320]) {
   });
 }
 
+// KRA-49: the estimates summary is the fixed rail/stack above the sections. Its
+// height must not change while an estimate is replaced or settles without one,
+// or every control under it moves while a person is typing.
+async function readyEstimateRecipe(page: import('@playwright/test').Page) {
+  await recipeWithNumbers(page);
+  await page.locator('#recipe-attenuation').fill('75');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+  // A saved Ready recipe is the realistic editing case: the first keystroke also
+  // changes the estimate source line from "matching saved revision" to "changes
+  // not yet in saved revision", and the summary height must not change with it.
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Summary ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+}
+
+for (const width of [320, 390]) {
+  test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await readyEstimateRecipe(page);
+    const summary = page.locator('.recipe-editor__preview-summary');
+    const values = summary.locator('.k-metric__value');
+    const measure = () => page.evaluate(() => {
+      const summary = document.querySelector('.recipe-editor__preview-summary')!;
+      const below = document.querySelector('.recipe-editor__sections')!;
+      const rect = summary.getBoundingClientRect();
+      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+    });
+    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
+      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
+    };
+    const current = await measure();
+    const status = summary.locator('[role="status"]');
+    // The state text keeps one top edge in every state: the reserved space sits
+    // below it, so "Ready" does not float and no outcome starts lower.
+    const statusTop = async () => {
+      const [summaryBox, statusBox] = await Promise.all([summary.boundingBox(), status.boundingBox()]);
+      return statusBox!.top - summaryBox!.top;
+    };
+    const currentStatusTop = await statusTop();
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
+    const currentValues = await values.allTextContents();
+    expect(currentValues.some(text => /\d\.\d/.test(text)), 'a current estimate shows values').toBe(true);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+
+    // Hold every preview so the whole recalculation window is observable. The last
+    // accepted values stay in place, dimmed and hidden from assistive technology.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.evaluate(() => {
+      const samples: number[] = [];
+      (window as any).__summarySamples = samples;
+      const tick = () => {
+        const summary = document.querySelector('.recipe-editor__preview-summary')!;
+        const below = document.querySelector('.recipe-editor__sections')!;
+        samples.push(Math.round((below.getBoundingClientRect().top - summary.getBoundingClientRect().top) * 100) / 100);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    const batch = page.getByLabel('Batch volume (L)');
+    await batch.fill('21');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    // The first observable failure on the old behaviour: the summary loses the
+    // whole estimate block the moment a replacement starts.
+    expectSame('recalculating', await measure(), current);
+    await expect(summary.locator('.k-stale--active')).toHaveCount(1);
+    await expect(summary.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
+    expect(await values.allTextContents(), 'old values stay (dimmed) while recalculating, never dashes').toEqual(currentValues);
+    await page.locator('#recipe-whirlpool').focus();
+    await page.keyboard.type('5');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    expect(await values.allTextContents(), 'typing in a process field keeps the shown values').toEqual(currentValues);
+    await page.waitForTimeout(400);
+    expectSame('recalculating after typing in a process field', await measure(), current);
+
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(async () => (await values.allTextContents()).some(text => /\d\.\d/.test(text))).toBe(true);
+    await page.unroute('**/leptos-api/preview_formulation*');
+
+    await batch.fill('-');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    expectSame('settled invalid', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'invalid status text top').toBeLessThanOrEqual(0.5);
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+    const samples: number[] = await page.evaluate(() => (window as any).__summarySamples ?? []);
+    expect(samples.length, 'frames sampled across the window').toBeGreaterThan(10);
+    expect(Math.max(...samples) - Math.min(...samples), `first control below moved: ${[...new Set(samples)]}`).toBeLessThan(0.5);
+
+    // A failed request settles without an estimate: the same height, dashes, and
+    // one explicit retry target that is only in the tab order while unavailable.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await batch.fill('23');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    expectSame('settled unavailable', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'unavailable status text top').toBeLessThanOrEqual(0.5);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+    const retry = summary.getByRole('button', { name: 'Retry calculation' });
+    await expect(retry).toBeVisible();
+    const retryBox = (await retry.boundingBox())!;
+    expect(retryBox.width, 'retry touch target width').toBeGreaterThanOrEqual(44);
+    expect(retryBox.height, 'retry touch target height').toBeGreaterThanOrEqual(44);
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await page.unroute('**/leptos-api/preview_formulation*');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(async () => (await values.allTextContents()).some(text => /\d\.\d/.test(text))).toBe(true);
+    expectSame('current after retry', await measure(), current);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+  });
+}
+
+test('a late preview response cannot replace a settled invalid estimate', async ({ page }) => {
+  test.slow();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await readyEstimateRecipe(page);
+  const summary = page.locator('.recipe-editor__preview-summary');
+  const values = summary.locator('.k-metric__value');
+  const height = () => summary.evaluate(element => element.getBoundingClientRect().height);
+  const currentHeight = await height();
+  // Fetch the response once, then deliver it when released: a slow response that
+  // is still in flight while the person types an invalid value.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let fetched!: () => void;
+  const responseFetched = new Promise<void>(resolve => { fetched = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => {
+    const response = await route.fetch();
+    fetched();
+    await held;
+    await route.fulfill({ response });
+  });
+  const batch = page.getByLabel('Batch volume (L)');
+  await batch.fill('21');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+  await responseFetched;
+  await batch.fill('-');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+  await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+  const dashes = await values.allTextContents();
+  release();
+  // The late response belongs to an older draft generation. It must not clear the
+  // settled invalid outcome, restore the old numbers, or restart recalculating.
+  await page.waitForTimeout(1000);
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+  expect(await values.allTextContents()).toEqual(dashes);
+  expect(Math.abs((await height()) - currentHeight), 'late response changed the summary height').toBeLessThanOrEqual(0.5);
+  await page.unroute('**/leptos-api/preview_formulation*');
+});
+
 test('switching recipes never shows the previous recipe\'s estimate', async ({ page }) => {
   const stamp = Date.now();
   const [first, second] = [`Switch A ${stamp}`, `Switch B ${stamp}`];
