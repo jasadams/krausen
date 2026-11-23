@@ -951,6 +951,11 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
 }
 
 /// Export a saved revision or the explicitly labelled current local draft.
+/// BeerXML export as an on-demand, source-bound task (INT-008). The source is
+/// known from the editor state or chosen once when the saved head and the
+/// unsaved draft differ; a saved version selected in Saved versions supplies its
+/// own revision, so no revision number is typed. The unedited original import is
+/// a separate, labelled download and never replaces current native values.
 #[component]
 pub(super) fn BeerXmlExport(
     identity: RwSignal<OperationIntent>,
@@ -958,23 +963,19 @@ pub(super) fn BeerXmlExport(
     recipe_id: RwSignal<Option<String>>,
     revision: RwSignal<Option<i64>>,
     draft: RwSignal<crate::pages::recipe_draft::RecipeDraft>,
+    open: RwSignal<bool>,
+    selected: RwSignal<Option<i64>>,
 ) -> impl IntoView {
+    use crate::pages::recipe_output::{OutputSource, SourceChoice, resolve_source};
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use krausen_types::interchange::{
         ExportOutcome, ExportRequest, ExportSelection, OriginalOutcome,
     };
-    let revision_text = RwSignal::new(
-        revision
-            .get_untracked()
-            .map(|n| n.to_string())
-            .unwrap_or_default(),
-    );
-    Effect::new(move |_| {
-        if let Some(current) = revision.get() {
-            if revision_text.get_untracked().is_empty() {
-                revision_text.set(current.to_string());
-            }
-        }
+    let source = Signal::derive(move || {
+        resolve_source(revision.get(), draft.with(|d| d.dirty), selected.get())
+    });
+    let has_original = Signal::derive(move || {
+        recipe_id.get().is_some() && draft.with(|d| d.document().import_provenance_id.is_some())
     });
     let output = RwSignal::new(None::<String>);
     let original = RwSignal::new(None::<String>);
@@ -984,14 +985,17 @@ pub(super) fn BeerXmlExport(
     let export_sequence = RwSignal::new(0_u64);
     let status = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let clear = move || {
+        output.set(None);
+        original.set(None);
+        pending.set(None);
+        warnings.set(Vec::new());
+        draft_export_generation.set(None);
+    };
     Effect::new(move |_| {
         if !context_visible.get() {
             export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
-            output.set(None);
-            original.set(None);
-            pending.set(None);
-            warnings.set(Vec::new());
-            draft_export_generation.set(None);
+            clear();
         }
     });
     Effect::new(move |_| {
@@ -1007,6 +1011,12 @@ pub(super) fn BeerXmlExport(
             status.set("The draft changed. Prepare the export again.".into());
         }
     });
+    let focus_result = move |id: &'static str| {
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || crate::pages::recipe_editor::focus_element(id));
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = id;
+    };
     let run_export = Callback::new(move |request: ExportRequest| {
         if busy.get_untracked() {
             return;
@@ -1059,6 +1069,7 @@ pub(super) fn BeerXmlExport(
                     warnings.set(diagnostics);
                     pending.set(Some(request));
                     status.set("Review the omitted information before downloading.".into());
+                    focus_result("export-acknowledge");
                 }
                 Ok(ExportOutcome::Exported {
                     xml,
@@ -1079,6 +1090,7 @@ pub(super) fn BeerXmlExport(
                         }
                         .into(),
                     );
+                    focus_result("export-result");
                 }
                 _ => {
                     output.set(None);
@@ -1087,45 +1099,55 @@ pub(super) fn BeerXmlExport(
             }
         });
     });
-    let saved = move |_| {
-        let (Some(id), Ok(number)) = (
-            recipe_id.get_untracked(),
-            revision_text.get_untracked().parse::<i64>(),
-        ) else {
-            status.set("Enter an available saved revision.".into());
-            return;
-        };
-        output.set(None);
-        warnings.set(Vec::new());
-        pending.set(None);
-        draft_export_generation.set(None);
-        run_export.run(ExportRequest {
-            intent: identity.get_untracked(),
-            selection: ExportSelection::Saved {
-                recipe_id: id,
-                revision: number,
-            },
-            acknowledge_loss: false,
-        });
-    };
-    let unsaved = move |_| {
-        if !draft.with_untracked(|d| d.unfinished_inputs().is_empty()) {
-            status.set("Complete unfinished fields before exporting the draft.".into());
-            return;
+    let prepare = Callback::new(move |chosen: OutputSource| {
+        clear();
+        status.set(String::new());
+        match chosen {
+            OutputSource::Saved { revision: number } => {
+                let Some(id) = recipe_id.get_untracked() else {
+                    status.set("Save the recipe before exporting a saved revision.".into());
+                    return;
+                };
+                run_export.run(ExportRequest {
+                    intent: identity.get_untracked(),
+                    selection: ExportSelection::Saved {
+                        recipe_id: id,
+                        revision: number,
+                    },
+                    acknowledge_loss: false,
+                });
+            }
+            OutputSource::Draft => {
+                if !draft.with_untracked(|d| d.unfinished_inputs().is_empty()) {
+                    status.set("Complete unfinished fields before exporting the draft.".into());
+                    return;
+                }
+                draft_export_generation.set(Some(draft.with_untracked(|d| d.generation)));
+                run_export.run(ExportRequest {
+                    intent: identity.get_untracked(),
+                    selection: ExportSelection::Draft {
+                        recipe_id: recipe_id.get_untracked(),
+                        document: draft.with_untracked(|d| d.document().clone()),
+                    },
+                    acknowledge_loss: false,
+                });
+            }
         }
-        output.set(None);
-        warnings.set(Vec::new());
-        pending.set(None);
-        draft_export_generation.set(Some(draft.with_untracked(|d| d.generation)));
-        run_export.run(ExportRequest {
-            intent: identity.get_untracked(),
-            selection: ExportSelection::Draft {
-                recipe_id: recipe_id.get_untracked(),
-                document: draft.with_untracked(|d| d.document().clone()),
-            },
-            acknowledge_loss: false,
-        });
-    };
+    });
+    // Opening resets the task; a known source is prepared at once, an ambiguous
+    // one waits for the short choice. Closing retires any in-flight request.
+    Effect::new(move |_| {
+        if open.get() {
+            clear();
+            status.set(String::new());
+            if let SourceChoice::Known(chosen) = source.get_untracked() {
+                prepare.run(chosen);
+            }
+        } else {
+            export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
+            clear();
+        }
+    });
     let fetch_original = move |_| {
         if busy.get_untracked() {
             return;
@@ -1172,22 +1194,62 @@ pub(super) fn BeerXmlExport(
                     status.set(format!(
                         "Unedited original import is ready. SHA-256: {sha256}"
                     ));
+                    focus_result("export-original-result");
                 }
                 _ => status.set("No original import is available for this recipe.".into()),
             }
         });
     };
-    view! { <BreweryPanel title="BeerXML export" description="Export a saved revision or this unsaved draft. The unedited original is separate.">
-        <crate::components::BreweryDraftField id="beerxml-export-revision" label="Saved revision" numeric=true value=Signal::from(revision_text) on_change=Callback::new(move |v| { export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted")); revision_text.set(v); output.set(None); pending.set(None); warnings.set(Vec::new()); })/>
-        <Button on:click=saved>"Prepare saved revision"</Button>
-        <Button on:click=unsaved>"Prepare unsaved draft"</Button>
-        <Show when=move || recipe_id.get().is_some()><Button on:click=fetch_original>"Prepare unedited original"</Button></Show>
-        <ul>{move || warnings.get().into_iter().map(|d| view! { <li>{d.message}</li> }).collect_view()}</ul>
-        <Show when=move || pending.get().is_some()><Button on:click=move |_| { if let Some(mut request) = pending.get_untracked() { request.acknowledge_loss = true; run_export.run(request); } }>"Acknowledge omissions and prepare download"</Button></Show>
-        {move || output.get().map(|href| view! { <crate::components::DownloadLink href=Signal::derive(move || href.clone()) filename="recipe.xml">"Download BeerXML"</crate::components::DownloadLink> })}
-        {move || original.get().map(|href| view! { <crate::components::DownloadLink href=Signal::derive(move || href.clone()) filename="original-unedited.xml">"Download unedited original"</crate::components::DownloadLink> })}
-        <p role="status">{move || status.get()}</p>
-    </BreweryPanel> }
+    let description = Signal::derive(move || match source.get() {
+        SourceChoice::Known(chosen) => format!(
+            "Source: {}. Edited export writes the current native values; the unedited original import is separate.",
+            chosen.label()
+        ),
+        SourceChoice::Choose { .. } => {
+            "Your draft has changes that are not saved. Choose which source to export.".to_owned()
+        }
+    });
+    view! {
+        <crate::components::BreweryDialog
+            id="export-task"
+            title="Export BeerXML"
+            description=description
+            open=open
+            wide=true
+            return_focus_fallback="recipe-actions-trigger".to_owned()
+            actions=std::sync::Arc::new(move || view! {
+                <Button variant=ButtonVariant::Ghost on:click=move |_| open.set(false)>"Close"</Button>
+                {move || match source.get() {
+                    SourceChoice::Choose { saved, draft: draft_source } => view! {
+                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| prepare.run(saved)>{format!("Export {}", saved.label().to_lowercase())}</Button>
+                        <Button disabled=busy on:click=move |_| prepare.run(draft_source)>"Export unsaved draft"</Button>
+                    }.into_any(),
+                    SourceChoice::Known(_) => ().into_any(),
+                }}
+            }.into_any())
+        >
+            <div class="space-y-4">
+                <ul>{move || warnings.get().into_iter().map(|d| view! { <li>{d.message}</li> }).collect_view()}</ul>
+                <Show when=move || pending.get().is_some()>
+                    <Button id="export-acknowledge" on:click=move |_| { if let Some(mut request) = pending.get_untracked() { request.acknowledge_loss = true; run_export.run(request); } }>"Acknowledge omissions and prepare download"</Button>
+                </Show>
+                <div id="export-result" tabindex="-1">
+                    {move || output.get().map(|href| view! { <crate::components::DownloadLink href=Signal::derive(move || href.clone()) filename="recipe.xml">"Download BeerXML"</crate::components::DownloadLink> })}
+                </div>
+                <Show when=move || has_original.get()>
+                    <div class="k-field">
+                        <p class="k-field__label">"Unedited original import"</p>
+                        <p class="k-field__hint">"The file as it was imported, separate from this recipe's current values."</p>
+                        <Button variant=ButtonVariant::Secondary disabled=busy on:click=fetch_original>"Prepare unedited original"</Button>
+                        <div id="export-original-result" tabindex="-1">
+                            {move || original.get().map(|href| view! { <crate::components::DownloadLink href=Signal::derive(move || href.clone()) filename="original-unedited.xml">"Download unedited original"</crate::components::DownloadLink> })}
+                        </div>
+                    </div>
+                </Show>
+                <p role="status">{move || status.get()}</p>
+            </div>
+        </crate::components::BreweryDialog>
+    }
 }
 
 #[cfg(test)]

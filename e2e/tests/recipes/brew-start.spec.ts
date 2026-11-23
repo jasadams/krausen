@@ -1449,6 +1449,14 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  // KRA-43: the frozen preview gets the same real boundary; its content is unchanged.
+  const frozen = page.getByRole('dialog', { name: 'Historical print preview' });
+  await expect(frozen.getByRole('heading', { name: 'Historical print preview' })).toBeFocused();
+  await expect(frozen.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+  await page.keyboard.press('Escape');
+  await expect(frozen).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Print frozen plan' })).toBeFocused();
 });
 
 test('brew pages carry the authorized Recipes → recipe → Brews → brew trail and sibling links', async ({ page }) => {

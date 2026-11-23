@@ -14,6 +14,7 @@ pub mod recipe_draft;
 mod library_recovery;
 mod recipe_recovery;
 mod start_recovery;
+mod transform_recovery;
 
 pub mod beerxml;
 mod beerxml_recovery;
@@ -30,4 +31,5 @@ pub mod recipe_equipment;
 pub mod recipe_process;
 pub mod recipe_header;
 pub mod recipe_editor;
+pub mod recipe_output;
 pub mod recipe_scaling;

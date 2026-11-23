@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Scaling and duplication dialogs over the shared application operations.
 use crate::{
-    components::{BreweryDraftField, BreweryPanel, Button, ButtonVariant, Modal, ModalSize},
+    components::{BreweryDialog, BreweryDraftField, BreweryPanel, Button, ButtonVariant},
+    pages::transform_recovery::{self, TransformCommand},
     server_fns::scaling::{duplicate_recipe_shared, scale_apply_shared, scale_preview_shared},
 };
 use krausen_types::{
@@ -179,7 +180,12 @@ pub fn ScaleDialog(
     pending: RwSignal<bool>,
     status: crate::pages::recipe_header::EditorStatus,
     on_applied: Callback<(RecipeDocumentV1, i64)>,
+    /// Why Scale cannot start from the current editor state (clean saved recipe
+    /// required); explained inside the dialog, never saved implicitly.
+    prerequisite: Signal<Option<&'static str>>,
 ) -> impl IntoView {
+    let installation = crate::components::layout::GuardScope::installation();
+    let recovery_block = RwSignal::new(None::<String>);
     let target = RwSignal::new(String::new());
     let preview = RwSignal::new(None::<ScalePreview>);
     let message = RwSignal::new(String::new());
@@ -232,8 +238,38 @@ pub fn ScaleDialog(
         }
     });
 
+    // The original request survives reload: adopt it as the pending retry, or
+    // fail closed when a record is unreadable or belongs to the other command.
+    Effect::new({
+        let installation = installation.clone();
+        move |_| {
+            let Some(id) = recipe_id.get() else { return };
+            match transform_recovery::load(&installation, &identity.get_untracked(), &id) {
+                Ok(None) => recovery_block.set(None),
+                Ok(Some(TransformCommand::Scale { request, scaled })) => {
+                    if retry.get_untracked().is_none() {
+                        retry.set(Some(request));
+                        retry_document.set(Some(scaled));
+                        uncertain.set(true);
+                    }
+                }
+                Ok(Some(TransformCommand::Duplicate(_))) => recovery_block.set(Some(
+                    "A Duplicate request for this recipe is unresolved. Resolve it from Duplicate before scaling.".into(),
+                )),
+                Err(reason) => recovery_block.set(Some(reason)),
+            }
+        }
+    });
+    // Escape or backdrop closing leaves a sent request running; only an idle
+    // dialog drops its preview so reopening never shows a stale one.
+    Effect::new(move |_| {
+        if !open.get() && !busy.get_untracked() {
+            reset.run(());
+        }
+    });
+
     let run_preview = Callback::new(move |()| {
-        if retry.get_untracked().is_some() {
+        if retry.get_untracked().is_some() || recovery_block.get_untracked().is_some() {
             message.set("Retry the previous apply before starting another.".into());
             return;
         }
@@ -311,10 +347,24 @@ pub fn ScaleDialog(
         });
     });
 
-    let submit = Callback::new(move |request: ScaleApplyRequest| {
+    let submit = Callback::new({
+        let installation = installation.clone();
+        move |request: ScaleApplyRequest| {
         if let Some(preview_value) = preview.get_untracked() {
             retry_document.set(Some(preview_value.scaled_document));
         }
+        let Some(scaled) = retry_document.get_untracked() else {
+            message.set("The scaled document is unavailable; preview again.".into());
+            return;
+        };
+        // Retain the exact command before it can be sent; if that is impossible
+        // nothing is sent.
+        let command = TransformCommand::Scale { request: request.clone(), scaled };
+        if let Err(reason) = transform_recovery::retain(&installation, &command) {
+            message.set(reason);
+            return;
+        }
+        let installation = installation.clone();
         let next_generation = generation.get_untracked().wrapping_add(1);
         generation.set(next_generation);
         busy.set(true);
@@ -426,12 +476,14 @@ pub fn ScaleDialog(
                 }
             }
             if !uncertain_outcome {
+                // A known outcome releases the retained original.
+                transform_recovery::remove(&installation, &command);
                 retry.set(None);
                 uncertain.set(false);
                 retry_document.set(None);
             }
         });
-    });
+    }});
 
     let apply = Callback::new(move |()| {
         let Some(preview_value) = preview.get_untracked() else {
@@ -454,28 +506,38 @@ pub fn ScaleDialog(
         });
     });
 
+    let form_visible = Signal::derive(move || retry.get().is_some() || prerequisite.get().is_none());
     view! {
-        <Modal
-            show=Signal::derive(move || open.get())
-            on_close=close
+        <BreweryDialog
+            id="scale-dialog"
             title="Scale batch"
-            size=ModalSize::Lg
+            description="Scale ingredient amounts and specified water allocations with linear-ingredients-v1. Timings, specifications, equipment and fixed losses stay unchanged; targets are recalculated."
+            open=open
+            wide=true
+            return_focus_fallback="recipe-actions-trigger".to_owned()
+            actions=std::sync::Arc::new(move || view! {
+                <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>{move || if form_visible.get() { "Cancel" } else { "Close" }}</Button>
+                <Show when=move || form_visible.get()>
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || retry.get().is_some() || preview.get().is_none() || recovery_block.get().is_some()) on:click=move |_| apply.run(())>"Apply scaling"</Button>
+                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some() || recovery_block.get().is_some()) on:click=move |_| run_preview.run(())>"Preview scaling"</Button>
+                </Show>
+            }.into_any())
         >
             <div class="space-y-4">
-                <p>"Scale ingredient amounts and specified water allocations with linear-ingredients-v1. Timings, specifications, equipment and fixed losses stay unchanged; targets are recalculated."</p>
-                <BreweryDraftField
-                    id="scale-target-volume"
-                    label="Target fermenter volume"
-                    unit="L"
-                    numeric=true
-                    value=Signal::derive(move || target.get())
-                    on_change=Callback::new(move |value: String| target.set(value))
-                />
-                <div class="recipe-editor__actions">
-                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| run_preview.run(())>"Preview scaling"</Button>
-                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || retry.get().is_some() || preview.get().is_none()) on:click=move |_| apply.run(())>"Apply scaling"</Button>
-                    <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>"Cancel"</Button>
-                </div>
+                <Show when=move || !form_visible.get()>
+                    <p id="scale-prerequisite">{move || prerequisite.get()}</p>
+                </Show>
+                {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
+                <Show when=move || form_visible.get()>
+                    <BreweryDraftField
+                        id="scale-target-volume"
+                        label="Target fermenter volume"
+                        unit="L"
+                        numeric=true
+                        value=Signal::derive(move || target.get())
+                        on_change=Callback::new(move |value: String| target.set(value))
+                    />
+                </Show>
                 <p role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
                     <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| {
@@ -486,7 +548,7 @@ pub fn ScaleDialog(
                     {move || preview.get().map(|value| view! { <ScalePreviewView value=value/> })}
                 </Show>
             </div>
-        </Modal>
+        </BreweryDialog>
     }
 }
 
@@ -509,7 +571,12 @@ pub fn DuplicateDialog(
     uncertain: RwSignal<bool>,
     pending: RwSignal<bool>,
     status: crate::pages::recipe_header::EditorStatus,
+    /// Why Duplicate cannot start from the current editor state (clean saved
+    /// recipe required); explained inside the dialog, never saved implicitly.
+    prerequisite: Signal<Option<&'static str>>,
 ) -> impl IntoView {
+    let installation = crate::components::layout::GuardScope::installation();
+    let recovery_block = RwSignal::new(None::<String>);
     let title = RwSignal::new(String::new());
     let message = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
@@ -549,7 +616,39 @@ pub fn DuplicateDialog(
         }
     });
 
-    let submit = Callback::new(move |request: DuplicateRecipe| {
+    // The original request survives reload: adopt it as the pending retry, or
+    // fail closed when a record is unreadable or belongs to the other command.
+    Effect::new({
+        let installation = installation.clone();
+        move |_| {
+            let Some(id) = recipe_id.get() else { return };
+            match transform_recovery::load(&installation, &identity.get_untracked(), &id) {
+                Ok(None) => recovery_block.set(None),
+                Ok(Some(TransformCommand::Duplicate(request))) => {
+                    if retry.get_untracked().is_none() {
+                        retry.set(Some(request));
+                        uncertain.set(true);
+                    }
+                }
+                Ok(Some(TransformCommand::Scale { .. })) => recovery_block.set(Some(
+                    "A Scale request for this recipe is unresolved. Resolve it from Scale before duplicating.".into(),
+                )),
+                Err(reason) => recovery_block.set(Some(reason)),
+            }
+        }
+    });
+
+    let submit = Callback::new({
+        let installation = installation.clone();
+        move |request: DuplicateRecipe| {
+        // Retain the exact command before it can be sent; if that is impossible
+        // nothing is sent.
+        let command = TransformCommand::Duplicate(request.clone());
+        if let Err(reason) = transform_recovery::retain(&installation, &command) {
+            message.set(reason);
+            return;
+        }
+        let installation = installation.clone();
         busy.set(true);
         pending.set(true);
         message.set("Duplicating recipe…".into());
@@ -568,6 +667,8 @@ pub fn DuplicateDialog(
                 retry.set(Some(request.clone()));
                 uncertain.set(true);
             } else {
+                // A known outcome releases the retained original.
+                transform_recovery::remove(&installation, &command);
                 retry.set(None);
                 uncertain.set(false);
             }
@@ -614,7 +715,7 @@ pub fn DuplicateDialog(
                 Ok(DuplicateOutcome::RequestIdentityConflict) => message
                     .set("This request identity was already used for a different duplicate.".into()),
                 Ok(DuplicateOutcome::ResultExpired { .. }) => {
-                    message.set("This duplicate result expired; start again.".into())
+                    message.set("The original result is no longer available, so it cannot be confirmed whether the copy was created. Check Recipes before duplicating again.".into())
                 }
                 Ok(DuplicateOutcome::Retryable) => {
                     message.set("Duplication is retryable; try again.".into())
@@ -627,10 +728,10 @@ pub fn DuplicateDialog(
                 }
             }
         });
-    });
+    }});
 
     let duplicate = Callback::new(move |()| {
-        if retry.get_untracked().is_some() {
+        if retry.get_untracked().is_some() || recovery_block.get_untracked().is_some() {
             message.set("Retry the previous duplicate request before starting another.".into());
             return;
         }
@@ -656,25 +757,34 @@ pub fn DuplicateDialog(
         });
     });
 
+    let form_visible = Signal::derive(move || retry.get().is_some() || prerequisite.get().is_none());
     view! {
-        <Modal
-            show=Signal::derive(move || open.get())
-            on_close=close
+        <BreweryDialog
+            id="duplicate-dialog"
             title="Duplicate recipe"
-            size=ModalSize::Md
+            description="Create an independent recipe from the current saved revision. Ingredient specifications and their source provenance are copied; brew history and imported-source claims are not."
+            open=open
+            return_focus_fallback="recipe-actions-trigger".to_owned()
+            actions=std::sync::Arc::new(move || view! {
+                <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>{move || if form_visible.get() { "Cancel" } else { "Close" }}</Button>
+                <Show when=move || form_visible.get()>
+                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some() || recovery_block.get().is_some()) on:click=move |_| duplicate.run(())>"Duplicate"</Button>
+                </Show>
+            }.into_any())
         >
             <div class="space-y-4">
-                <p>"Create an independent recipe from the current saved revision. Ingredient specifications and their source provenance are copied; brew history and imported-source claims are not."</p>
-                <BreweryDraftField
-                    id="duplicate-title"
-                    label="New recipe name (optional)"
-                    value=Signal::derive(move || title.get())
-                    on_change=Callback::new(move |value: String| title.set(value))
-                />
-                <div class="recipe-editor__actions">
-                    <Button disabled=Signal::derive(move || busy.get() || retry.get().is_some()) on:click=move |_| duplicate.run(())>"Duplicate"</Button>
-                    <Button variant=ButtonVariant::Ghost disabled=busy on:click=move |_| close.run(())>"Cancel"</Button>
-                </div>
+                <Show when=move || !form_visible.get()>
+                    <p id="duplicate-prerequisite">{move || prerequisite.get()}</p>
+                </Show>
+                {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
+                <Show when=move || form_visible.get()>
+                    <BreweryDraftField
+                        id="duplicate-title"
+                        label="New recipe name (optional)"
+                        value=Signal::derive(move || title.get())
+                        on_change=Callback::new(move |value: String| title.set(value))
+                    />
+                </Show>
                 <p role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
                     <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| {
@@ -682,7 +792,7 @@ pub fn DuplicateDialog(
                     }>"Retry previous request"</Button>
                 </Show>
             </div>
-        </Modal>
+        </BreweryDialog>
     }
 }
 

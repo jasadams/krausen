@@ -4,8 +4,9 @@
 //!
 //! Presentation only. Save, Start, Scale, Duplicate, Print and Export workflows
 //! stay with their existing owners; this component places their entry points and
-//! exposes [`RecipeActionSlots`] so later source-bound tasks can be wired without
-//! another header change. Nothing here saves or starts automatically.
+//! exposes [`RecipeActionSlots`]. Every action opens its own task, which states
+//! its source or unmet prerequisite itself; nothing here saves or starts
+//! automatically.
 use crate::{
     components::{
         BreweryActionGroup, BreweryDraftField, BreweryDraftSelect, BrewerySaveStatus,
@@ -118,8 +119,8 @@ pub fn start_reason(saved: bool, dirty: bool, readiness: Option<Readiness>) -> O
     }
 }
 
-/// Stable entry points for recipe commands. Print and Export are intentionally
-/// callbacks: their source-bound task workflows are owned elsewhere.
+/// Stable entry points for recipe commands. Each opens its source-bound task,
+/// owned by its workflow, on demand.
 #[derive(Clone, Copy)]
 pub struct RecipeActionSlots {
     pub save: Callback<()>,
@@ -196,7 +197,6 @@ pub fn RecipeHeader(
             message
         }
     });
-    let can_transform = Signal::derive(move || !pending.get() && saved.get() && !dirty.get());
     let crumb = move || {
         let name = title.get();
         if name.is_empty() { "Recipe editor".to_owned() } else { name }
@@ -221,13 +221,10 @@ pub fn RecipeHeader(
                     <Button variant=save_variant class="min-w-[9rem]" disabled=pending on:click=move |_| actions.save.run(())>{move || save_label(saved.get())}</Button>
                     <Button id="recipe-start-command" variant=start_variant aria_describedby=Signal::derive(move || reason.get().map(|_| reason_id.to_owned())) on:click=move |_| actions.start.run(())>"Start brew"</Button>
                     <BreweryPopover id="recipe-actions" trigger_id="recipe-actions-trigger" label="Recipe actions" open=actions_open>
-                        <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.scale)>"Scale…"</Button>
-                        <Button variant=ButtonVariant::Ghost disabled=Signal::derive(move || !can_transform.get()) on:click=close_then(actions.duplicate)>"Duplicate…"</Button>
+                        <Button variant=ButtonVariant::Ghost on:click=close_then(actions.scale)>"Scale…"</Button>
+                        <Button variant=ButtonVariant::Ghost on:click=close_then(actions.duplicate)>"Duplicate…"</Button>
                         <Button variant=ButtonVariant::Ghost on:click=close_then(actions.print)>"Print…"</Button>
                         <Button variant=ButtonVariant::Ghost on:click=close_then(actions.export)>"Export…"</Button>
-                        <Show when=move || !can_transform.get()>
-                            <p class="note-caption">"Scale and Duplicate use the saved recipe. Save your changes first."</p>
-                        </Show>
                     </BreweryPopover>
                 </BreweryActionGroup>
             </div>

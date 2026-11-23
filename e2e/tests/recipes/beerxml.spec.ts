@@ -521,17 +521,28 @@ test('an account switch hides a retained import and sends no source under the ne
   await other.close();
 });
 
+async function openExport(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Export…' }).click();
+  return page.getByRole('dialog', { name: 'Export BeerXML' });
+}
+
 test('an unsaved export is invalidated when the draft changes', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('First draft');
-  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
-  await page.getByRole('button', { name: 'Prepare unsaved draft' }).click();
-  const download = page.getByRole('link', { name: 'Download BeerXML', exact: true });
+  // A never-saved recipe has one possible source, so the task prepares it at once.
+  const dialog = await openExport(page);
+  await expect(dialog).toContainText('Source: Unsaved draft');
+  const download = dialog.getByRole('link', { name: 'Download BeerXML', exact: true });
   await expect(download).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+  // Reopening prepares the draft as it is now, never the earlier download.
   await name.fill('Changed draft');
-  await expect(download).toHaveCount(0);
-  await expect(page.getByRole('status').filter({ hasText: 'The draft changed' })).toBeVisible();
+  const again = await openExport(page);
+  const href = await again.getByRole('link', { name: 'Download BeerXML', exact: true }).getAttribute('href');
+  expect(Buffer.from(href!.split(',')[1], 'base64').toString()).toContain('<NAME>Changed draft</NAME>');
 });
 
 test('file preview, explicit import and saved/original downloads share native values', async ({ page }) => {
@@ -555,16 +566,31 @@ test('file preview, explicit import and saved/original downloads share native va
   await page.getByLabel('Recipe name', { exact: true }).fill(editedTitle);
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
-  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
-  await page.getByLabel('Saved revision').fill('2');
-  await page.getByRole('button', { name: 'Prepare saved revision' }).click();
-  await expect(page.getByRole('button', { name: 'Acknowledge omissions and prepare download' })).toBeVisible();
-  await page.getByRole('button', { name: 'Acknowledge omissions and prepare download' }).click();
-  const href = await page.getByRole('link', { name: 'Download BeerXML', exact: true }).getAttribute('href');
+  // Clean saved recipe: the source is known (revision 2), nothing is typed,
+  // and the omission acknowledgement precedes any download.
+  const dialog = await openExport(page);
+  await expect(dialog).toContainText('Source: Saved revision 2');
+  await expect(dialog.getByLabel('Saved revision')).toHaveCount(0);
+  await expect(dialog.getByRole('link', { name: 'Download BeerXML', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' }), 'the result of the operation takes focus').toBeFocused();
+  await dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' }).click();
+  const href = await dialog.getByRole('link', { name: 'Download BeerXML', exact: true }).getAttribute('href');
   const rendered = Buffer.from(href!.split(',')[1], 'base64').toString();
   expect(rendered).toContain(`<NAME>${editedTitle}</NAME>`);
   expect(rendered).not.toContain(`<NAME>${title}</NAME>`);
-  await page.getByRole('button', { name: 'Prepare unedited original' }).click();
-  const original = await page.getByRole('link', { name: 'Download unedited original' }).getAttribute('href');
+  await expect(dialog.getByText('Unedited original import', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Prepare unedited original' }).click();
+  const original = await dialog.getByRole('link', { name: 'Download unedited original' }).getAttribute('href');
   expect(Buffer.from(original!.split(',')[1], 'base64').toString()).toBe(xml);
+
+  // A dirty draft makes the source ambiguous: one short choice, labelled.
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${editedTitle} draft`);
+  const choice = await openExport(page);
+  await expect(choice).toContainText('Choose which source to export');
+  await expect(choice.getByRole('link', { name: 'Download BeerXML', exact: true })).toHaveCount(0);
+  await choice.getByRole('button', { name: 'Export unsaved draft' }).click();
+  await expect(choice.getByRole('status')).toContainText(/Review the omitted information|Unsaved draft export is ready/);
+  await expect(choice.getByRole('button', { name: 'Export saved revision 2' })).toBeVisible();
 });

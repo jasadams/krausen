@@ -25,7 +25,6 @@ async function importRecipe(page: import('@playwright/test').Page, xml: string) 
   await page.getByRole('button', { name: 'Import recipe' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Recipe imported' })).toBeVisible();
   await page.getByRole('link', { name: 'Open imported recipe' }).click();
-  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
 }
 
 test('a saved revision prints the shared sheet and identifies its source', async ({ page }) => {
@@ -34,8 +33,9 @@ test('a saved revision prints the shared sheet and identifies its source', async
     page,
     `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pilsner malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Hallertauer</NAME><AMOUNT>30</AMOUNT><USE>Boil</USE><TIME>60</TIME><ALPHA>5</ALPHA></HOP></HOPS></RECIPE></RECIPES>`,
   );
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
-  const preview = page.getByRole('region', { name: 'Print preview' });
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
   await expect(preview).toBeVisible();
   await expect(preview).toContainText(`Saved revision 1`);
   await expect(preview).toContainText(title);
@@ -61,9 +61,9 @@ test('an unsaved draft is labelled and closing the preview preserves it', async 
   await page.goto('/recipe-editor/new');
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('Draft print');
-  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
-  await page.getByRole('button', { name: 'Preview unsaved draft' }).click();
-  const preview = page.getByRole('region', { name: 'Print preview' });
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
   await expect(preview).toBeVisible();
   await expect(preview).toContainText('Unsaved draft · not saved');
   await expect(preview).toContainText('Draft print');
@@ -81,7 +81,8 @@ test('a long recipe prints every row with page-break controls and no width overf
     page,
     `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>5</COLOR></FERMENTABLE></FERMENTABLES><HOPS>${hops}</HOPS></RECIPE></RECIPES>`,
   );
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   const hopsSection = page
     .locator('.print-sheet__section')
     .filter({ has: page.getByRole('heading', { name: 'Hops' }) });
@@ -101,7 +102,8 @@ test('leaving the editor unmounts the preview and clears the print class', async
     page,
     `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>5</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>`,
   );
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await expect(page.locator('body')).toHaveClass(/krausen-printing/);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
@@ -129,10 +131,12 @@ test('a delayed summary cannot touch a disposed editor', async ({ page }) => {
       // touch disposed signals when its future resolves.
     }
   });
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
-  await expect(page).toHaveURL(/\/recipes$/);
+  // The print task is modal, so the page is left with browser Back.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
   await expect(page.locator('.print-sheet')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
@@ -158,10 +162,12 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
       // Navigation may cancel the in-flight request; see the success case.
     }
   });
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
-  await expect(page).toHaveURL(/\/recipes$/);
+  // The print task is modal, so the page is left with browser Back.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
   await expect(page.locator('.print-sheet')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
@@ -188,7 +194,8 @@ test('a delayed summary denial redacts a mounted editor even after a draft edit'
       // request is cancelled.
     }
   });
-  await page.getByRole('button', { name: 'Preview saved revision' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
   const name = page.getByLabel('Recipe name', { exact: true });
   await name.fill('Edited during print');
@@ -204,8 +211,8 @@ test('print uses the light paper palette in dark mode and the print class never 
   await page.goto('/recipe-editor/new');
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByLabel('Recipe name', { exact: true }).fill('Dark print');
-  await page.locator('summary').filter({ hasText: /^Export and print$/ }).click();
-  await page.getByRole('button', { name: 'Preview unsaved draft' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await expect(page.locator('body')).toHaveClass(/krausen-printing/);
   await page.emulateMedia({ media: 'print' });
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
@@ -213,8 +220,115 @@ test('print uses the light paper palette in dark mode and the print class never 
   await page.getByRole('button', { name: 'Back to editor' }).click();
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
 
-  await page.getByRole('button', { name: 'Preview unsaved draft' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await expect(page.locator('body')).toHaveClass(/krausen-printing/);
   await page.getByRole('button', { name: 'Back to editor' }).click();
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+});
+
+const SIMPLE_RECIPE = (title: string) =>
+  `<RECIPES><RECIPE><NAME>${title}</NAME><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><AMOUNT>4.2</AMOUNT><TYPE>Grain</TYPE><YIELD>80</YIELD><COLOR>5</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>`;
+
+async function openPrint(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
+}
+
+test('the print preview is a real boundary: heading focus, inert page, Escape returns to the opener with draft and scroll intact', async ({ page }) => {
+  const title = `Print boundary ${Date.now()}`;
+  await importRecipe(page, SIMPLE_RECIPE(title));
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await page.evaluate(() => window.scrollTo(0, 120));
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await openPrint(page);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByRole('heading', { name: 'Print preview' }), 'focus moves to the preview heading').toBeFocused();
+  await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
+  // Keyboard focus never reaches the editor behind the overlay.
+  for (let step = 0; step < 14; step++) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('.recipe-editor'))).toBe(false);
+  }
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
+  await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
+  await expect(page.getByRole('button', { name: 'Recipe actions' }), 'focus returns to the opener').toBeFocused();
+  await expect(name).toHaveValue(title);
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+});
+
+test('a clean saved recipe prints its saved revision without asking for a source', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print known ${Date.now()}`));
+  await openPrint(page);
+  await expect(page.getByRole('dialog', { name: 'Print preview' })).toContainText('Saved revision 1');
+  await expect(page.getByRole('dialog', { name: 'Print recipe' })).toHaveCount(0);
+});
+
+test('a dirty saved recipe asks once: saved revision or labelled unsaved draft', async ({ page }) => {
+  const title = `Print choice ${Date.now()}`;
+  await importRecipe(page, SIMPLE_RECIPE(title));
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill(`${title} edited`);
+  await openPrint(page);
+  const task = page.getByRole('dialog', { name: 'Print recipe' });
+  await expect(task).toContainText('Choose which source to print');
+  await task.getByRole('button', { name: 'Preview saved revision 1' }).click();
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toContainText('Saved revision 1');
+  await expect(preview).toContainText(title);
+  await expect(preview).not.toContainText(`${title} edited`);
+  await page.getByRole('button', { name: 'Back to editor' }).click();
+  await expect(name).toHaveValue(`${title} edited`);
+  await openPrint(page);
+  await page.getByRole('dialog', { name: 'Print recipe' }).getByRole('button', { name: 'Preview unsaved draft' }).click();
+  const draftPreview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(draftPreview).toContainText('Unsaved draft');
+  await expect(draftPreview).toContainText(`${title} edited`);
+});
+
+test('a selected saved version supplies its own source and the draft is untouched', async ({ page }) => {
+  const title = `Print selected ${Date.now()}`;
+  await importRecipe(page, SIMPLE_RECIPE(title));
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill(`${title} v2`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
+  await page.goto(`/recipe-editor/${id}?section=versions&revision=1`);
+  await name.fill('Local edit that stays');
+  await openPrint(page);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toContainText('Saved revision 1');
+  await expect(preview).toContainText(title);
+  await expect(page.getByRole('dialog', { name: 'Print recipe' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Back to editor' }).click();
+  await expect(name).toHaveValue('Local edit that stays');
+});
+
+test('dismissing the print task before its summary arrives opens no preview', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print dismissed ${Date.now()}`));
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/leptos-api/request_process_summary*', async (route) => {
+    started();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  await openPrint(page);
+  await requestStarted;
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Print recipe' })).toBeHidden();
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole('dialog', { name: 'Print preview' })).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+});
+
+test('the permanent export and print disclosure is gone from the recipe', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByText('Export and print', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Preview saved revision' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Prepare unsaved draft' })).toHaveCount(0);
 });

@@ -274,6 +274,13 @@ async fn exercise(db: DbPool) {
         },
         "identical retry recovers the original result"
     );
+    let revision_rows: i64 = match &db {
+        DbPool::Postgres(p) => sqlx::query_scalar("SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = $1")
+            .bind(recipe_id.clone()).fetch_one(p).await.unwrap(),
+        DbPool::Sqlite(p) => sqlx::query_scalar("SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = $1")
+            .bind(recipe_id.clone()).fetch_one(p).await.unwrap(),
+    };
+    assert_eq!(revision_rows, 2, "a replayed scale apply creates no second revision");
     let mut stale_head = apply.clone();
     stale_head.request_id = uuid::Uuid::new_v4().to_string();
     stale_head.expected_revision = 1;
@@ -488,6 +495,7 @@ async fn exercise(db: DbPool) {
         other => panic!("browser-shape apply: {other:?}"),
     }
 
+    let replay_request_id = uuid::Uuid::new_v4().to_string();
     let duplicate = scaling::duplicate(
         &db,
         &actor,
@@ -496,7 +504,7 @@ async fn exercise(db: DbPool) {
             source_recipe_id: recipe_id.clone(),
             expected_revision: 2,
             title: Some("Independent copy".into()),
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: replay_request_id.clone(),
         },
     )
     .await;
@@ -509,6 +517,41 @@ async fn exercise(db: DbPool) {
         panic!("duplicate: {duplicate:?}");
     };
     assert_ne!(duplicate_id, recipe_id);
+    let count_recipes = |db: &DbPool, workspace: String| {
+        let db = db.clone();
+        async move {
+            match &db {
+                DbPool::Postgres(p) => sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM recipes WHERE workspace_id = $1")
+                    .bind(workspace).fetch_one(p).await.unwrap(),
+                DbPool::Sqlite(p) => sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM recipes WHERE workspace_id = $1")
+                    .bind(workspace).fetch_one(p).await.unwrap(),
+            }
+        }
+    };
+    let recipes_after_first = count_recipes(&db, a.clone()).await;
+    // KRA-43 recovery basis: a replay of the original Duplicate request (lost
+    // response, reload, retry) returns the original result and creates nothing.
+    let replayed_request = DuplicateRecipe {
+        intent: intent.clone(),
+        source_recipe_id: recipe_id.clone(),
+        expected_revision: 2,
+        title: Some("Independent copy".into()),
+        request_id: replay_request_id.clone(),
+    };
+    assert_eq!(
+        scaling::duplicate(&db, &actor, replayed_request.clone()).await,
+        DuplicateOutcome::Duplicated { recipe_id: duplicate_id.clone(), revision: 1, source_revision: 2 },
+        "a replayed duplicate returns the original result"
+    );
+    assert_eq!(count_recipes(&db, a.clone()).await, recipes_after_first, "a replayed duplicate creates no second recipe");
+    let mut other_payload = replayed_request;
+    other_payload.title = Some("Different copy".into());
+    assert_eq!(
+        scaling::duplicate(&db, &actor, other_payload).await,
+        DuplicateOutcome::RequestIdentityConflict,
+        "the request identity is bound to its original payload"
+    );
+    assert_eq!(count_recipes(&db, a.clone()).await, recipes_after_first);
     let RecipeReadOutcome::Found(copy) =
         recipe_editor::read(&db, &actor, &intent, &duplicate_id).await
     else {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, loginUser, sqliteExec } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -153,4 +153,132 @@ test('uncertain duplicate keeps its identity through dismissal', async ({ page }
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
+});
+
+test('Scale and Duplicate explain the clean-saved prerequisite at invocation and never save', async ({ page }) => {
+  await createScalableRecipe(page, `Prerequisite ${Date.now()}`);
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Unsaved edit that must survive');
+  const revisionsBefore = sqliteExec('SELECT COUNT(*) FROM recipe_revisions');
+  for (const [action, dialogName] of [['Scale…', 'Scale batch'], ['Duplicate…', 'Duplicate recipe']]) {
+    await page.getByRole('button', { name: 'Recipe actions' }).click();
+    const item = page.getByRole('button', { name: action });
+    await expect(item, 'the action is not an inert mystery button').toBeEnabled();
+    await item.click();
+    const dialog = page.getByRole('dialog', { name: dialogName });
+    await expect(dialog).toContainText('Save your changes first; nothing is saved for you');
+    await expect(dialog.getByRole('button', { name: /Preview scaling|^Duplicate$|Apply scaling/ })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Recipe actions' })).toBeFocused();
+  }
+  await expect(name).toHaveValue('Unsaved edit that must survive');
+  expect(sqliteExec('SELECT COUNT(*) FROM recipe_revisions')).toBe(revisionsBefore);
+});
+
+test('a new unsaved recipe is told to save first when Scale is chosen', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Scale batch' })).toContainText('Save this recipe first; nothing is saved for you');
+});
+
+test('Scale is a real modal: focus is contained and the page behind is inert', async ({ page }) => {
+  await createScalableRecipe(page, `Modal ${Date.now()}`);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scale batch' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
+  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
+  // Tab may leave the document for the browser, but never reaches the page behind.
+  for (let step = 0; step < 12; step++) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => {
+      const active = document.activeElement;
+      return !active || active === document.body || !!active.closest('dialog');
+    })).toBe(true);
+  }
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Recipe actions' })).toBeFocused();
+});
+
+test('a lost Scale response survives Escape and reload and replays the same request once', async ({ page }) => {
+  await createScalableRecipe(page, `Reload scale ${Date.now()}`);
+  const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  // The server commits, the response is lost.
+  const requestIds: string[] = [];
+  await page.route('**/execute_scale_apply*', async (route) => {
+    requestIds.push(route.request().postData() ?? '');
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(sqliteExec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`)).toBe('2');
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_scale_apply*');
+  page.once('dialog', (d) => d.accept());
+  await page.reload();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeDisabled();
+  const replayed: string[] = [];
+  await page.route('**/execute_scale_apply*', async (route) => {
+    replayed.push(route.request().postData() ?? '');
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
+  expect(replayed).toHaveLength(1);
+  expect(replayed[0], 'the replay is the original request, not a fresh one').toBe(requestIds[0]);
+  expect(sqliteExec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`)).toBe('2');
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue(/^40(\.0+)?$/);
+});
+
+test('a lost Duplicate response survives reload and replays to exactly one new recipe', async ({ page }) => {
+  const title = `Reload duplicate ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  const before = Number(sqliteExec('SELECT COUNT(*) FROM recipes'));
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
+  const sent: string[] = [];
+  await page.route('**/execute_duplicate_recipe*', async (route) => {
+    sent.push(route.request().postData() ?? '');
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  expect(Number(sqliteExec('SELECT COUNT(*) FROM recipes'))).toBe(before + 1);
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_duplicate_recipe*');
+  page.once('dialog', (d) => d.accept());
+  await page.reload();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Duplicate', exact: true })).toBeDisabled();
+  const replayed: string[] = [];
+  await page.route('**/execute_duplicate_recipe*', async (route) => {
+    replayed.push(route.request().postData() ?? '');
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page).toHaveURL(/\/recipe-editor\/[0-9a-f-]+$/);
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(`${title} copy`);
+  expect(replayed).toHaveLength(1);
+  expect(replayed[0]).toBe(sent[0]);
+  expect(Number(sqliteExec('SELECT COUNT(*) FROM recipes'))).toBe(before + 1);
 });
