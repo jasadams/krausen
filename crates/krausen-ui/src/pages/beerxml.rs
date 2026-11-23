@@ -1009,7 +1009,7 @@ pub(super) fn BeerXmlExport(
             pending.set(None);
             warnings.set(Vec::new());
             draft_export_generation.set(None);
-            status.set("The draft changed. Prepare the export again.".into());
+            status.set("The draft changed. Open Export again.".into());
         }
     });
     let focus_result = move |id: &'static str| {
@@ -1064,7 +1064,7 @@ pub(super) fn BeerXmlExport(
             if expected_generation
                 .is_some_and(|generation| draft.with_untracked(|d| d.generation) != generation)
             {
-                status.set("The draft changed. Prepare the export again.".into());
+                status.set("The draft changed. Open Export again.".into());
                 return;
             }
             match result {

@@ -135,7 +135,7 @@ test('a delayed summary cannot touch a disposed editor', async ({ page }) => {
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // KRA-43: the print task is modal (native dialog), so the sidebar link that used to
+  // KRA-43: the print task is a modal boundary, so the sidebar link that used to
   // be clicked here is blocked by it (it cannot be clicked); the page is left with browser Back.
   await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();
@@ -168,7 +168,7 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // KRA-43: the print task is modal (native dialog), so the sidebar link that used to
+  // KRA-43: the print task is a modal boundary, so the sidebar link that used to
   // be clicked here is blocked by it (it cannot be clicked); the page is left with browser Back.
   await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();

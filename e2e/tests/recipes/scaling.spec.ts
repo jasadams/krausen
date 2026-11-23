@@ -413,3 +413,48 @@ test('retrying a pending Scale never silently replaces an unsaved draft', async 
   await page.getByRole('button', { name: 'Scale…' }).click();
   await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
 });
+
+test('a changed-context apply keeps its fresh preview and message for review', async ({ page }) => {
+  await createScalableRecipe(page, `Context conflict ${Date.now()}`);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  const previewResponse = page.waitForResponse('**/execute_scale_preview*');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  const outcome = await (await previewResponse).json();
+  expect(outcome.Preview, 'the preview response carries the preview').toBeTruthy();
+  // The apply reports that the accepted context changed and returns a fresh preview.
+  await page.route('**/execute_scale_apply*', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ContextConflict: { fresh: outcome.Preview } }) }));
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scale batch' });
+  await expect(dialog.getByRole('status')).toContainText('Review the fresh preview and apply again');
+  await expect(dialog.getByText(/20 L to 40 L/)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Apply scaling' })).toBeEnabled();
+});
+
+test('retrying a pending Duplicate never navigates away from an unsaved draft', async ({ page }) => {
+  const title = `Duplicate retry draft ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
+  await page.route('**/execute_duplicate_recipe*', (route) => route.abort());
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_duplicate_recipe*');
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('My unsaved edit');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate recipe' });
+  await expect(dialog).toContainText('Save your changes first');
+  await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(name).toHaveValue('My unsaved edit');
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
+});

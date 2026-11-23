@@ -116,6 +116,59 @@ fn change_text(change: &ScaleChange) -> String {
     )
 }
 
+/// What the retained records mean to one dialog: its own command to retry, a
+/// block, or nothing. Shared by Scale and Duplicate so they cannot diverge.
+enum RecoveryRead {
+    Clear,
+    Own(TransformCommand),
+    Blocked { reason: String, broken: bool },
+}
+
+fn read_recovery(
+    installation: &str,
+    intent: &OperationIntent,
+    recipe_id: &str,
+    is_own: fn(&TransformCommand) -> bool,
+    other_name: &'static str,
+    own_name: &'static str,
+) -> RecoveryRead {
+    match transform_recovery::load(installation, intent, recipe_id) {
+        Err(error) => RecoveryRead::Blocked { reason: error.reason, broken: error.broken },
+        Ok(commands) => match commands.iter().find(|command| is_own(command)) {
+            Some(own) => RecoveryRead::Own(own.clone()),
+            None if commands.is_empty() => RecoveryRead::Clear,
+            None => RecoveryRead::Blocked {
+                reason: format!("A {other_name} request for this recipe is unresolved. Resolve it from {other_name} before {own_name}."),
+                broken: false,
+            },
+        },
+    }
+}
+
+/// The explicit, named resolution of unreadable retained records.
+#[component]
+fn DiscardUnreadable(
+    installation: String,
+    identity: RwSignal<OperationIntent>,
+    recipe_id: RwSignal<Option<String>>,
+    tick: RwSignal<u64>,
+    broken: RwSignal<bool>,
+) -> impl IntoView {
+    view! {
+        <Show when=move || broken.get()>
+            <Button variant=ButtonVariant::Secondary on:click={
+                let installation = installation.clone();
+                move |_| {
+                    if let Some(id) = recipe_id.get_untracked() {
+                        transform_recovery::discard_broken(&installation, &identity.get_untracked(), &id);
+                        tick.update(|n| *n = n.wrapping_add(1));
+                    }
+                }
+            }>"Discard unreadable retained request"</Button>
+        </Show>
+    }
+}
+
 #[component]
 fn ScalePreviewView(value: ScalePreview) -> impl IntoView {
     let has_changes = !value.changes.is_empty();
@@ -227,20 +280,23 @@ pub fn ScaleDialog(
             message.set("Workspace changed; return to the original workspace.".into());
         }
     });
+    // The retained-request message follows `retry`; opening a fresh dialog resets
+    // the message and any preview that finished after an Escape. Neither runs on a
+    // later `retry` change, so the outcome of an apply keeps its own message and
+    // (for a changed context) its fresh preview.
     Effect::new(move |_| {
-        if open.get() {
-            if retry.get().is_some() {
-                message.set(
-                    "An earlier apply may have committed. Retry the previous request before starting another."
-                        .into(),
-                );
-            } else {
-                message.set(String::new());
-                // A preview that finished after an Escape mid-request is not
-                // shown again on reopening.
-                if !busy.get_untracked() {
-                    preview.set(None);
-                }
+        if open.get() && retry.get().is_some() {
+            message.set(
+                "An earlier apply may have committed. Retry the previous request before starting another."
+                    .into(),
+            );
+        }
+    });
+    Effect::new(move |_| {
+        if open.get() && retry.get_untracked().is_none() {
+            message.set(String::new());
+            if !busy.get_untracked() {
+                preview.set(None);
             }
         }
     });
@@ -255,32 +311,20 @@ pub fn ScaleDialog(
             let _opened = open.get();
             let _discarded = recovery_tick.get();
             let Some(id) = recipe_id.get() else { return };
-            match transform_recovery::load(&installation, &identity.get_untracked(), &id) {
-                Err(reason) => {
-                    recovery_broken.set(true);
-                    recovery_block.set(Some(reason));
-                }
-                Ok(commands) => {
-                    recovery_broken.set(false);
-                    let own = commands.iter().find_map(|command| match command {
-                        TransformCommand::Scale { request, scaled } => Some((request.clone(), scaled.clone())),
-                        TransformCommand::Duplicate(_) => None,
-                    });
-                    if let Some((request, scaled)) = own {
-                        recovery_block.set(None);
-                        if retry.get_untracked().is_none() {
-                            retry.set(Some(request));
-                            retry_document.set(Some(scaled));
-                            uncertain.set(true);
-                        }
-                    } else if !commands.is_empty() {
-                        recovery_block.set(Some(
-                            "A Duplicate request for this recipe is unresolved. Resolve it from Duplicate before scaling.".into(),
-                        ));
-                    } else {
-                        recovery_block.set(None);
+            let read = read_recovery(&installation, &identity.get_untracked(), &id, |command| matches!(command, TransformCommand::Scale { .. }), "Duplicate", "scaling");
+            recovery_broken.set(matches!(read, RecoveryRead::Blocked { broken: true, .. }));
+            match read {
+                RecoveryRead::Clear => recovery_block.set(None),
+                RecoveryRead::Blocked { reason, .. } => recovery_block.set(Some(reason)),
+                RecoveryRead::Own(TransformCommand::Scale { request, scaled }) => {
+                    recovery_block.set(None);
+                    if retry.get_untracked().is_none() {
+                        retry.set(Some(request));
+                        retry_document.set(Some(scaled));
+                        uncertain.set(true);
                     }
                 }
+                RecoveryRead::Own(TransformCommand::Duplicate(_)) => {}
             }
         }
     });
@@ -557,17 +601,7 @@ pub fn ScaleDialog(
                     </Show>
                 </Show>
                 {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
-                <Show when=move || recovery_broken.get()>
-                    <Button variant=ButtonVariant::Secondary on:click={
-                        let installation = installation.clone();
-                        move |_| {
-                            if let Some(id) = recipe_id.get_untracked() {
-                                transform_recovery::discard_broken(&installation, &identity.get_untracked(), &id);
-                                recovery_tick.update(|n| *n = n.wrapping_add(1));
-                            }
-                        }
-                    }>"Discard unreadable retained request"</Button>
-                </Show>
+                <DiscardUnreadable installation=installation.clone() identity=identity recipe_id=recipe_id tick=recovery_tick broken=recovery_broken/>
                 <Show when=move || form_visible.get()>
                     <BreweryDraftField
                         id="scale-target-volume"
@@ -644,15 +678,21 @@ pub fn DuplicateDialog(
             message.set("Workspace changed; return to the original workspace.".into());
         }
     });
+    // The retained-request message follows `retry`; opening a fresh dialog resets
+    // the title and message. Neither runs on a later `retry` change, so an
+    // outcome keeps its own message.
+    Effect::new(move |_| {
+        if open.get() && retry.get().is_some() {
+            message.set(
+                "An earlier duplicate may have committed. Retry the previous request before duplicating again."
+                    .into(),
+            );
+        }
+    });
     Effect::new(move |_| {
         if open.get() {
             title.set(String::new());
-            if retry.get().is_some() {
-                message.set(
-                    "An earlier duplicate may have committed. Retry the previous request before duplicating again."
-                        .into(),
-                );
-            } else {
+            if retry.get_untracked().is_none() {
                 message.set(String::new());
             }
         }
@@ -668,31 +708,19 @@ pub fn DuplicateDialog(
             let _opened = open.get();
             let _discarded = recovery_tick.get();
             let Some(id) = recipe_id.get() else { return };
-            match transform_recovery::load(&installation, &identity.get_untracked(), &id) {
-                Err(reason) => {
-                    recovery_broken.set(true);
-                    recovery_block.set(Some(reason));
-                }
-                Ok(commands) => {
-                    recovery_broken.set(false);
-                    let own = commands.iter().find_map(|command| match command {
-                        TransformCommand::Duplicate(request) => Some(request.clone()),
-                        TransformCommand::Scale { .. } => None,
-                    });
-                    if let Some(request) = own {
-                        recovery_block.set(None);
-                        if retry.get_untracked().is_none() {
-                            retry.set(Some(request));
-                            uncertain.set(true);
-                        }
-                    } else if !commands.is_empty() {
-                        recovery_block.set(Some(
-                            "A Scale request for this recipe is unresolved. Resolve it from Scale before duplicating.".into(),
-                        ));
-                    } else {
-                        recovery_block.set(None);
+            let read = read_recovery(&installation, &identity.get_untracked(), &id, |command| matches!(command, TransformCommand::Duplicate(_)), "Scale", "duplicating");
+            recovery_broken.set(matches!(read, RecoveryRead::Blocked { broken: true, .. }));
+            match read {
+                RecoveryRead::Clear => recovery_block.set(None),
+                RecoveryRead::Blocked { reason, .. } => recovery_block.set(Some(reason)),
+                RecoveryRead::Own(TransformCommand::Duplicate(request)) => {
+                    recovery_block.set(None);
+                    if retry.get_untracked().is_none() {
+                        retry.set(Some(request));
+                        uncertain.set(true);
                     }
                 }
+                RecoveryRead::Own(TransformCommand::Scale { .. }) => {}
             }
         }
     });
@@ -841,17 +869,7 @@ pub fn DuplicateDialog(
                     </Show>
                 </Show>
                 {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
-                <Show when=move || recovery_broken.get()>
-                    <Button variant=ButtonVariant::Secondary on:click={
-                        let installation = installation.clone();
-                        move |_| {
-                            if let Some(id) = recipe_id.get_untracked() {
-                                transform_recovery::discard_broken(&installation, &identity.get_untracked(), &id);
-                                recovery_tick.update(|n| *n = n.wrapping_add(1));
-                            }
-                        }
-                    }>"Discard unreadable retained request"</Button>
-                </Show>
+                <DiscardUnreadable installation=installation.clone() identity=identity recipe_id=recipe_id tick=recovery_tick broken=recovery_broken/>
                 <Show when=move || form_visible.get()>
                     <BreweryDraftField
                         id="duplicate-title"

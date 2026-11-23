@@ -1561,7 +1561,7 @@ fn PrintRecipe(
             }) {
                 if mine() {
                     busy.set(false);
-                    status.set("The draft changed. Prepare the print summary again.".into());
+                    status.set("The draft changed. Preview the print summary again.".into());
                 }
                 return;
             }

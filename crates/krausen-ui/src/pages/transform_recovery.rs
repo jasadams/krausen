@@ -184,25 +184,36 @@ fn raw_entries(storage: &web_sys::Storage) -> Result<Vec<(String, Result<Option<
     Ok(raw)
 }
 
+/// Why Scale and Duplicate are blocked. `broken` means a retained record is
+/// unreadable or mismatched, which an explicit discard can resolve; otherwise
+/// storage itself could not be read, which a discard cannot fix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoadError {
+    pub reason: String,
+    pub broken: bool,
+}
+
 /// Unresolved commands for this installation/account/workspace/recipe, oldest first.
 pub(crate) fn load(
     installation: &str,
     intent: &OperationIntent,
     recipe_id: &str,
-) -> Result<Vec<TransformCommand>, String> {
+) -> Result<Vec<TransformCommand>, LoadError> {
     #[cfg(target_arch = "wasm32")]
     {
-        let storage = storage()?;
+        let unavailable = |reason: String| LoadError { reason, broken: false };
+        let storage = storage().map_err(unavailable)?;
         // Fails closed: a key whose value cannot be read blocks Scale and Duplicate.
-        let entries = raw_entries(&storage)?
+        let entries = raw_entries(&storage)
+            .map_err(unavailable)?
             .into_iter()
             .map(|(key, value)| {
                 value
                     .map(|value| (key, value))
-                    .map_err(|()| "Unable to read Scale and Duplicate recovery".to_owned())
+                    .map_err(|()| LoadError { reason: "Unable to read Scale and Duplicate recovery".to_owned(), broken: false })
             })
-            .collect::<Result<Vec<_>, String>>()?;
-        return select(entries, installation, intent, recipe_id);
+            .collect::<Result<Vec<_>, LoadError>>()?;
+        return select(entries, installation, intent, recipe_id).map_err(|reason| LoadError { reason, broken: true });
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
