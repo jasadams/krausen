@@ -96,6 +96,19 @@ test.describe('approved recipe and shared kit composition', () => {
         expect(new Set(lefts).size, 'water plan is one aligned column').toBe(1);
         await expect(page.getByRole('heading', { name: 'Water plan' }).locator('xpath=ancestor::section[1]').getByText('Total water', { exact: true })).toBeVisible();
         await expect(page.locator('.recipe-editor__preview-summary').getByText('Total water', { exact: true })).toHaveCount(0);
+        // UX-004: the water plan sits with the mash inputs, and boil minutes has one owner (Boil & whirlpool).
+        await expect(page.locator('.recipe-editor__preview-details').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+        await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toBeVisible();
+        // The plan sits with the mash inputs: after the allocation row, inside the same section.
+        const order = await page.evaluate(() => {
+          const section = document.getElementById('recipe-section-mash')!;
+          const method = document.getElementById('recipe-mash-method')!;
+          const plan = [...section.querySelectorAll('h3')].find(h => h.textContent === 'Water plan')!;
+          return { inside: section.contains(plan), after: !!(method.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING) };
+        });
+        expect(order).toEqual({ inside: true, after: true });
+        await expect(page.getByLabel('Boil time (min)', { exact: true })).toHaveCount(1);
+        await expect(page.locator('#recipe-section-boil').getByLabel('Boil time (min)', { exact: true })).toBeVisible();
         await expect(page.locator('.recipe-editor__preview-summary').getByText('Into fermenter', { exact: true })).toBeVisible();
         // INT-005: no permanent Prepare/revision workflow; Start opens a bounded task.
         await expect(page.getByRole('button', { name: 'Prepare start' })).toHaveCount(0);

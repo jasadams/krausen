@@ -27,6 +27,7 @@ pub mod equipment;
 pub mod ingredient_addition;
 pub mod equipment_profiles;
 pub mod recipe_equipment;
+pub mod recipe_process;
 pub mod recipe_header;
 pub mod recipe_editor;
 pub mod recipe_scaling;

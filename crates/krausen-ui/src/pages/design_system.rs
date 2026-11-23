@@ -7,7 +7,8 @@ use crate::components::{
     BreweryCompactIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BreweryMetricList, BrewerySelect, BreweryTabs,
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
-    BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryPopover, BrewerySection,
+    BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryFields, BreweryPopover, BrewerySection, BreweryStale,
+    BreweryStaleCue, BreweryStepGroup, BreweryStepRow,
     MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation,
 };
 use leptos::prelude::*;
@@ -269,6 +270,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                         <BreweryField id="show-disabled" label="Unavailable amount" unit="kg" numeric=true value=grain disabled=true hint="Unavailable while this example is pending"/>
                     </BreweryFieldRow></BrewerySection>
                 </BreweryPanel>
+                <ProcessKitExample/>
                 <BreweryPanel title="Measurements" presentation=PanelPresentation::Summary mobile_compact=true description="Style ranges are guidance, not a save restriction.">
                     <crate::components::BreweryBeerPortrait/>
                     <BreweryMetricList><BreweryMetric label="Mash water" value="15.3" unit="L" density=MetricDensity::Quiet testid="showcase-quiet-metric">{""}</BreweryMetric><BreweryMetric label="Total water" value="28.9" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric></BreweryMetricList><p class="note-caption">"Quiet metrics are label/value fact rows (Start brew review, Water plan). Pass testid for a stable test or focus hook on the row."</p><div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
@@ -337,5 +339,61 @@ pub fn DesignSystemPage() -> impl IntoView {
             </BreweryDisclosure>
             <BreweryDialog id="showcase-dialog" title="Keep your changes?" description="A saved recipe revision is separate from your draft." open=dialog><p>"You can return to this recipe before deciding."</p><BreweryPopover id="showcase-nested-account" label="Account actions example" open=nested_popup><a href="#showcase-popover-successor">"Profile example"</a>{(1..=30).map(|number| view! { <Button variant=ButtonVariant::Ghost>{format!("Workspace example {number}{}", if number == 1 { " (current)" } else { "" })}</Button> }).collect_view()}</BreweryPopover></BreweryDialog>
         </div>
+    }
+}
+
+/// The numbered step row, stale estimate and out-of-flow live line used by the
+/// recipe editor's process sections, with the same components and classes.
+#[component]
+fn ProcessKitExample() -> impl IntoView {
+    let name = RwSignal::new("Saccharification".to_owned());
+    let time = RwSignal::new("60".to_owned());
+    let temperature = RwSignal::new("66".to_owned());
+    let volume = RwSignal::new(String::new());
+    let mash_water = RwSignal::new("15".to_owned());
+    let top_up = RwSignal::new(String::new());
+    // None = current; otherwise the cue shown for that outcome.
+    let outcome = RwSignal::new(None::<&'static str>);
+    let announced = RwSignal::new(String::new());
+    let cue = Signal::derive(move || outcome.get().map(str::to_owned));
+    let stale = Signal::derive(move || outcome.get().is_some());
+    let choose = move |value: Option<&'static str>| move |_| outcome.set(value);
+    view! {
+        <BreweryPanel title="Process steps" eyebrow="Component / Step row" description="A numbered row keeps name, measurements and Remove aligned; a stale estimate is dimmed, named and hidden from assistive technology." stacked=true>
+            <BrewerySection title="Mash steps">
+                <BreweryStepGroup>
+                    <BreweryStepRow label="Mash step 1 of 1, Saccharification" number=1_usize
+                        actions=ChildrenFn::to_children(move || view! { <Button variant=ButtonVariant::GhostDestructive aria_label="Remove step, Mash step 1 of 1, Saccharification" on:click=move |_| announced.set("Example removal requested; demonstration row retained.".into())>"Remove step"</Button> })
+                        measurements=ChildrenFn::to_children(move || view! {
+                            <BreweryField id="show-step-time" label="Time" unit="min" numeric=true value=time/>
+                            <BreweryField id="show-step-temperature" label="Temperature" unit="°C" numeric=true value=temperature/>
+                            <BreweryField id="show-step-volume" label="Volume" unit="L" numeric=true value=volume/>
+                        })>
+                        <BreweryField id="show-step-name" label="Step name" value=name/>
+                    </BreweryStepRow>
+                    <p class="sr-only" role="status" data-testid="showcase-live">{move || announced.get()}</p>
+                    <BreweryActionGroup>
+                        <Button id="show-step-add" variant=ButtonVariant::Secondary on:click=move |_| announced.set("Added Mash step 2 of 2.".into())>"Add step"</Button>
+                        <Button variant=ButtonVariant::Ghost aria_label="Undo removal of Mash step 1 of 1, Saccharification" on:click=move |_| announced.set("Restored Mash step 1 of 1.".into())>"Undo"</Button>
+                    </BreweryActionGroup>
+                </BreweryStepGroup>
+            </BrewerySection>
+            <BreweryFields>
+                <BreweryField id="show-mash-water" label="Mash water" unit="L" numeric=true value=mash_water/>
+                <BreweryField id="show-top-up" label="Kettle top-up" unit="L" numeric=true value=top_up/>
+            </BreweryFields>
+            <BrewerySection title="Water plan" actions=ChildrenFn::to_children(move || view! { <BreweryStaleCue text=cue announce=cue testid="estimate-stale" announce_testid="estimate-announce"/> })>
+                <BreweryStale stale=stale><BreweryMetricList total=true>
+                    <BreweryMetric label="Mash water" value="15.3" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric>
+                    <BreweryMetric label="Total water" value="28.4" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric>
+                </BreweryMetricList></BreweryStale>
+            </BrewerySection>
+            <BreweryActionGroup label="Estimate state">
+                <Button variant=ButtonVariant::Secondary on:click=choose(None)>"Current estimate"</Button>
+                <Button variant=ButtonVariant::Secondary on:click=choose(Some("Out of date, recalculating"))>"In flight"</Button>
+                <Button variant=ButtonVariant::Secondary on:click=choose(Some("Estimate unavailable until the inputs are valid"))>"Invalid input"</Button>
+                <Button variant=ButtonVariant::Secondary on:click=choose(Some("Estimate unavailable"))>"Unavailable"</Button>
+            </BreweryActionGroup>
+        </BreweryPanel>
     }
 }

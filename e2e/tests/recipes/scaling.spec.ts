@@ -17,7 +17,6 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Amount in recipe (kg)').fill('4');
   await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^4(\.0+)?$/);
-  await page.getByText('Recipe process and notes', { exact: true }).click();
   await page.locator('#recipe-attenuation').fill('80');
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');

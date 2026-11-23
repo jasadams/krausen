@@ -57,6 +57,13 @@ pub fn BrewerySection(
     view! { <section class="k-section"><header class="k-section__header"><h3>{title}</h3>{actions.map(|slot| slot())}</header><div class="k-section__body">{children()}</div></section> }
 }
 
+/// Fields side by side with no reserved message space: a message under one
+/// pushes what follows. Use [`BreweryFieldRow`] where nothing may move.
+#[component]
+pub fn BreweryFields(children: Children) -> impl IntoView {
+    view! { <div class="k-fields">{children()}</div> }
+}
+
 /// Shared responsive field alignment, including space for associated messages.
 #[component]
 pub fn BreweryFieldRow(children: Children) -> impl IntoView {
@@ -81,17 +88,21 @@ pub fn BreweryBadge(
 /// Compact, titled surface shared by the editor and component showcase.
 #[component]
 pub fn BreweryPanel(
+    /// Stable DOM id so a diagnostic or command can reach this region.
+    #[prop(optional, into)] id: Option<String>,
     #[prop(into)] title: String,
     #[prop(optional, into)] description: Option<String>,
     #[prop(optional, into)] eyebrow: Option<String>,
     #[prop(default = false)] mobile_compact: bool,
+    /// Body is one vertical stack of sections and field rows with shared spacing.
+    #[prop(default = false)] stacked: bool,
     #[prop(optional)] presentation: PanelPresentation,
     #[prop(optional)] actions: Option<ChildrenFn>,
     #[prop(optional)] footer: Option<ChildrenFn>,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <section class="k-panel" class:k-panel--mobile-compact=mobile_compact class:k-panel--summary=matches!(presentation, PanelPresentation::Summary)>
+        <section id=id class="k-panel" class:k-panel--mobile-compact=mobile_compact class:k-panel--stacked=stacked class:k-panel--summary=matches!(presentation, PanelPresentation::Summary)>
             <header class="k-panel__header"><div>{eyebrow.map(|text| view! { <span class="k-panel__eyebrow">{text}</span> })}<h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div>{actions.map(|slot| view! { <div class="k-panel__actions">{slot()}</div> })}</header>
             <div class="k-panel__body">{children()}</div>
             {footer.map(|slot| view! { <footer class="k-panel__footer">{slot()}</footer> })}
@@ -568,8 +579,12 @@ pub fn BrewerySaveStatus(
 /// Aligned one-column secondary values (for example a water plan). Children are
 /// `MetricDensity::Quiet` metrics; the list owns spacing and separators.
 #[component]
-pub fn BreweryMetricList(children: Children) -> impl IntoView {
-    view! { <div class="k-metric-list">{children()}</div> }
+pub fn BreweryMetricList(
+    /// The last metric is a total: divider and emphasis.
+    #[prop(default = false)] total: bool,
+    children: Children,
+) -> impl IntoView {
+    view! { <div class="k-metric-list" class:k-metric-list--total=total>{children()}</div> }
 }
 
 /// Labelled select used by recipe and showcase; values remain caller-owned.
@@ -977,4 +992,59 @@ pub fn BreweryDraftArea(
 #[component]
 pub fn BreweryAddition(children: Children) -> impl IntoView {
     view! { <div class="k-addition">{children()}</div> }
+}
+
+/// The group a [`BreweryStepRow`] list lives in. It is the width container the
+/// rows compact by, so every consumer gets the same responsive behaviour.
+#[component]
+pub fn BreweryStepGroup(children: Children) -> impl IntoView {
+    view! { <div class="k-step-group">{children()}</div> }
+}
+
+/// A numbered process step (mash or fermentation): number, the caller's `children`
+/// (the name field), the action (Remove) beside it, then the
+/// `measurements`. DOM order is the visual order at every width, so keyboard order
+/// matches what is seen. The row always has six cells (number, name, action, three
+/// measurements); the CSS places them by position. `label` names the group for assistive technology. Not an
+/// extension of `.k-addition` or the ingredient row: those stack a form vertically
+/// or use two-line identity cells, while a step needs equal-width measurement
+/// columns that stay level.
+#[component]
+pub fn BreweryStepRow(
+    #[prop(into)] label: Signal<String>,
+    #[prop(into)] number: Signal<usize>,
+    actions: ChildrenFn,
+    measurements: ChildrenFn,
+    children: Children,
+) -> impl IntoView {
+    view! { <div class="k-step" role="group" aria-label=move || label.get()>
+        <div class="k-field k-step__number" aria-hidden="true"><span class="k-field__label">"\u{a0}"</span><span class="k-step__index">{move || number.get()}</span></div>
+        {children()}
+        <div class="k-field k-step__action"><span class="k-field__label" aria-hidden="true">"\u{a0}"</span>{actions()}</div>
+        {measurements()}
+    </div> }
+}
+
+/// Values from an earlier estimate that is being replaced or is unavailable.
+/// While `stale` they are dimmed and hidden from assistive technology; the
+/// caller names the state with a [`BreweryStaleCue`].
+#[component]
+pub fn BreweryStale(#[prop(into)] stale: Signal<bool>, children: Children) -> impl IntoView {
+    view! { <div class="k-stale" class:k-stale--active=move || stale.get() aria-hidden=move || stale.get().then_some("true")>{children()}</div> }
+}
+
+/// Names why values are stale. `text` is the visible cue (at once); `announce`
+/// is the same outcome as a polite status that the caller debounces, so typing
+/// does not announce on every key. Both are empty when the values are current.
+#[component]
+pub fn BreweryStaleCue(
+    #[prop(into)] text: Signal<Option<String>>,
+    #[prop(into)] announce: Signal<Option<String>>,
+    #[prop(optional, into)] testid: Option<String>,
+    #[prop(optional, into)] announce_testid: Option<String>,
+) -> impl IntoView {
+    view! {
+        <span class="k-stale__cue" aria-hidden="true" data-testid=testid>{move || text.get()}</span>
+        <span class="sr-only" role="status" data-testid=announce_testid>{move || announce.get()}</span>
+    }
 }

@@ -315,7 +315,6 @@ test('typed print denial never labels a hidden editor as access verified', async
 test('successful revalidation preserves textarea selection and backward direction', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
-  await page.getByText('Recipe process and notes', { exact: true }).click();
   const notes = page.getByLabel('Notes', { exact: true });
   await notes.fill('First line\nSecond line');
   await notes.focus();
@@ -463,7 +462,6 @@ test('raw formatting settles on blur and correction preserves precision and care
   const original = await volume.elementHandle();
   await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
   await page.getByRole('tab', { name: 'Recipe', exact: true }).click();
-  await page.getByText('Recipe process and notes', { exact: true }).click();
   await expect(volume).toHaveValue(precise);
   expect(await original!.evaluate(element => element.isConnected)).toBe(true);
   for (const [text, native] of [['', null], ['0', 0], ['0.000000000000000', 0], ['.125', 0.125]] as const) {
@@ -772,13 +770,11 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   await page.reload();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
-  await page.getByText('Recipe process and notes', { exact: true }).click();
-  await page.getByLabel('Whole-wort apparent attenuation (%)').fill('75');
+  await page.getByLabel('Wort attenuation (%)').fill('75');
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
   await page.reload();
-  await page.getByText('Recipe process and notes', { exact: true }).click();
-  await expect(page.getByLabel('Whole-wort apparent attenuation (%)')).toHaveValue('75');
+  await expect(page.getByLabel('Wort attenuation (%)')).toHaveValue('75');
   const id = page.url().split('/').pop()!;
   const before = Number(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`));
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
@@ -787,6 +783,608 @@ test('an explicit save keeps a numeric draft and reopens its native revision', a
   expect(before).toBe(2);
   expect(db.exec(`SELECT json_extract(document, '$.boil_minutes') IS NULL FROM recipe_revisions WHERE recipe_id = '${id}' AND revision = 2`)).toBe('1');
 });
+
+test('process composes by brewing stage and keeps raw controls through save, reload and Undo', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  for (const name of ['Mash & water', 'Boil & whirlpool', 'Fermentation', 'Description & notes']) {
+    await expect(page.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
+  }
+  await expect(page.getByText('Recipe process and notes', { exact: true })).toHaveCount(0);
+  // UX-004: one boil control, owned by Boil & whirlpool rather than the identity header.
+  await expect(page.getByLabel('Boil time (min)', { exact: true })).toHaveCount(1);
+  await expect(page.locator('#recipe-section-boil').getByLabel('Boil time (min)', { exact: true })).toBeVisible();
+  // Conditional water controls are absent until they can apply.
+  await expect(page.locator('#recipe-mash-water')).toHaveCount(0);
+  await expect(page.locator('#recipe-top-up')).toHaveCount(0);
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Process ${Date.now()}`);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.locator('#recipe-mash-water').fill('15.250');
+  await page.locator('#recipe-top-up').fill('0');
+  await page.locator('#recipe-boil').fill('60');
+  await page.locator('#recipe-whirlpool').fill('15');
+  await page.locator('#recipe-whirlpool-temp').fill('80.5');
+  await page.getByLabel('Wort attenuation (%)').fill('77.5');
+  await page.getByLabel('Description', { exact: true }).fill('A clean lager.');
+  await page.getByLabel('Notes', { exact: true }).fill('Second line\nthird');
+  const mash = page.locator('#recipe-section-mash');
+  await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+  const step = mash.getByRole('group', { name: 'Mash step 1 of 1' });
+  await step.getByLabel('Step name', { exact: true }).fill('Saccharification');
+  await step.getByLabel('Time (min)', { exact: true }).fill('60.0');
+  await step.getByLabel('Temperature (°C)', { exact: true }).fill('0');
+  const ferment = page.locator('#recipe-section-fermentation');
+  await ferment.getByRole('button', { name: 'Add step', exact: true }).click();
+  await ferment.getByLabel('Temperature (°C)', { exact: true }).fill('18');
+  // Clearing the method must not hide or erase a stored mash volume.
+  await page.locator('#recipe-mash-method').selectOption('');
+  await expect(page.locator('#recipe-mash-water')).toHaveValue('15.250');
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('#recipe-mash-water')).toHaveValue('15.25');
+  await expect(page.locator('#recipe-top-up')).toHaveValue('0');
+  await expect(page.locator('#recipe-boil')).toHaveValue('60');
+  await expect(page.locator('#recipe-whirlpool-temp')).toHaveValue('80.5');
+  await expect(page.getByLabel('Wort attenuation (%)')).toHaveValue('77.5');
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('A clean lager.');
+  await expect(page.getByLabel('Notes', { exact: true })).toHaveValue('Second line\nthird');
+  const id = page.url().split('/').pop()!;
+  const json = (path: string) => db.exec(`SELECT json_extract(document, '${path}') FROM recipe_revisions WHERE recipe_id = '${id}' AND revision = 1`);
+  expect(json('$.boil_minutes')).toBe('60');
+  expect(json('$.process.apparent_attenuation_fraction')).toBe('0.775');
+  expect(json('$.process.kettle_top_up_l')).toBe('0');
+  expect(json('$.process.mash_steps[0].temperature_c')).toBe('0');
+  expect(json('$.process.mash_steps[0].volume_l') ?? '').toBe('');
+  expect(json('$.process.fermentation_steps[0].time_minutes') ?? '').toBe('');
+  expect(json('$.process.fermentation_steps[0].temperature_c')).toBe('18');
+});
+
+test('adding and removing steps keeps focus, unique context and Undo restores order and raw text', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const mash = page.locator('#recipe-section-mash');
+  const add = mash.getByRole('button', { name: 'Add step', exact: true });
+  for (const name of ['Mash in', 'Rest', 'Rest']) {
+    await add.click();
+    const count = await mash.getByRole('group', { name: /^Mash step/ }).count();
+    const added = mash.getByRole('group', { name: new RegExp(`^Mash step ${count} of ${count}`) });
+    await expect(added.getByLabel('Step name', { exact: true })).toBeFocused();
+    // The outcome is announced once; the next edit (typing the name) leaves it behind.
+    await expect(mash.getByRole('status').filter({ hasText: `Added Mash step ${count} of ${count}.` })).toBeVisible();
+    await added.getByLabel('Step name', { exact: true }).fill(name);
+    await expect(mash.getByRole('status').filter({ hasText: 'Added Mash step' })).toHaveCount(0);
+  }
+  // Duplicate names stay distinguishable by position.
+  await expect(mash.getByRole('group', { name: 'Mash step 2 of 3, Rest' })).toBeVisible();
+  await expect(mash.getByRole('group', { name: 'Mash step 3 of 3, Rest' })).toBeVisible();
+  const second = mash.getByRole('group', { name: 'Mash step 2 of 3, Rest' });
+  await second.getByLabel('Time (min)', { exact: true }).fill('30.123456789012345678');
+  await second.getByLabel('Temperature (°C)', { exact: true }).fill('6x');
+  // Middle: focus moves to the next step's Remove action.
+  await second.getByRole('button', { name: 'Remove step, Mash step 2 of 3, Rest' }).click();
+  await expect(mash.getByRole('status').filter({ hasText: 'Removed Mash step 2 of 3, Rest.' })).toBeVisible();
+  await expect(mash.getByRole('button', { name: 'Remove step, Mash step 2 of 2, Rest' })).toBeFocused();
+  // Last: focus moves to the previous step's Remove action.
+  await mash.getByRole('button', { name: 'Remove step, Mash step 2 of 2, Rest' }).click();
+  await expect(mash.getByRole('button', { name: 'Remove step, Mash step 1 of 1, Mash in' })).toBeFocused();
+  // Only: focus falls back to Add step.
+  await mash.getByRole('button', { name: 'Remove step, Mash step 1 of 1, Mash in' }).click();
+  await expect(add).toBeFocused();
+  await expect(mash.getByRole('group', { name: /^Mash step/ })).toHaveCount(0);
+  // Undo (most recent first) restores IDs, order and the exact typed text.
+  const undo = mash.getByRole('button', { name: /^Undo removal of/ });
+  await undo.click();
+  await undo.click();
+  await undo.click();
+  await expect(mash.getByRole('group', { name: /^Mash step/ })).toHaveCount(3);
+  await expect(mash.getByRole('group', { name: 'Mash step 1 of 3, Mash in' })).toBeVisible();
+  const restored = mash.getByRole('group', { name: 'Mash step 2 of 3, Rest' });
+  await expect(restored.getByLabel('Time (min)', { exact: true })).toHaveValue('30.123456789012345678');
+  await expect(restored.getByLabel('Temperature (°C)', { exact: true })).toHaveValue('6x');
+  await expect(mash.getByRole('button', { name: /^Undo removal of/ })).toHaveCount(0);
+});
+
+test('first step removal focuses the next step and a stale step Undo returns to Add step', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const mash = page.locator('#recipe-section-mash');
+  const add = mash.getByRole('button', { name: 'Add step', exact: true });
+  for (const name of ['One', 'Two']) {
+    await add.click();
+    const count = await mash.getByRole('group', { name: /^Mash step/ }).count();
+    await mash.getByRole('group', { name: new RegExp(`^Mash step ${count} of ${count}`) }).getByLabel('Step name', { exact: true }).fill(name);
+  }
+  // First of several: focus moves to the next step's Remove action.
+  await mash.getByRole('button', { name: 'Remove step, Mash step 1 of 2, One' }).click();
+  await expect(mash.getByRole('button', { name: 'Remove step, Mash step 1 of 1, Two' })).toBeFocused();
+  // The step Undo's own message is dropped by the next draft change, not left claiming an old outcome.
+  await expect(mash.getByRole('status').filter({ hasText: 'Removed Mash step 1 of 2, One.' })).toBeVisible();
+  // Header Undo puts the step back; the step Undo is now redundant and must not drop focus onto the body.
+  await page.getByRole('button', { name: 'Undo', exact: true }).first().click();
+  await expect(mash.getByRole('group', { name: /^Mash step/ })).toHaveCount(2);
+  await expect(mash.getByRole('status').filter({ hasText: 'Removed Mash step 1 of 2, One.' })).toHaveCount(0);
+  const stepUndo = mash.getByRole('button', { name: /^Undo removal of/ });
+  await stepUndo.focus();
+  await stepUndo.click();
+  await expect(mash.getByRole('status').filter({ hasText: 'is already in the recipe.' })).toBeVisible();
+  await expect(add).toBeFocused();
+  // Added message is likewise dropped by a later unrelated edit.
+  await add.click();
+  await expect(mash.getByRole('status').filter({ hasText: 'Added Mash step 3 of 3.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).first().click();
+  await expect(mash.getByRole('status').filter({ hasText: 'Added Mash step 3 of 3.' })).toHaveCount(0);
+});
+
+test('step focus succession never steals a field the user already moved to', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  // Add step, then (in the same task) move to Boil time, as a fast typist does before the next frame.
+  await page.evaluate(() => {
+    (document.getElementById('process.mash_steps-add') as HTMLElement).click();
+    (document.getElementById('recipe-boil') as HTMLElement).focus();
+  });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator('#recipe-boil')).toBeFocused();
+  // Without a deliberate move, focus still lands on the new step's name.
+  await page.locator('#recipe-section-mash').getByRole('button', { name: 'Add step', exact: true }).click();
+  await expect(page.locator('#recipe-section-mash').getByRole('group', { name: 'Mash step 2 of 2' }).getByLabel('Step name', { exact: true })).toBeFocused();
+});
+
+async function recipeWithWaterPlan(page: import('@playwright/test').Page) {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.locator('#recipe-boil').fill('60');
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.locator('#recipe-mash-water').fill('15');
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+}
+
+// Mirrors STALE_ANNOUNCE_DELAY_MS in recipe_process.rs: how long an estimate stays out of
+// date before it is announced. Tests hold or delay the preview response past or inside it.
+const ANNOUNCE_DEBOUNCE_MS = 800;
+const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3', 'profile-transfer-loss': '2', 'profile-deadspace': '0', 'profile-absorption': '0.8', 'profile-thickness': '2.5', 'profile-capacity': '30', 'profile-diameter': '35', 'profile-opening': '30', 'profile-boil-temperature': '100' };
+
+// A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
+async function recipeWithNumbers(page: import('@playwright/test').Page) {
+  const profile = `Numbers ${Date.now()}`;
+  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.locator('#recipe-boil').fill('60');
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  await page.getByLabel('Search fermentables').fill('Joe White Signature');
+  await page.getByRole('button', { name: /Joe White Signature Lager/ }).click();
+  await page.getByLabel('Amount in recipe (kg)').fill('4');
+  await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await page.locator('#recipe-mash-method').selectOption('manual');
+  await page.locator('#recipe-mash-water').fill('15');
+  await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+}
+const waterValues = (page: import('@playwright/test').Page) => page.locator('#recipe-section-mash .k-metric-list .k-metric__value').allTextContents();
+
+for (const width of [1440, 390, 320]) {
+  test(`typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await recipeWithNumbers(page);
+    const before = await waterValues(page);
+    expect(before.some(text => text.includes('15.0'))).toBe(true);
+    // Hold every preview so the whole recalculation window is observable.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    const whirlpool = page.locator('#recipe-whirlpool');
+    await whirlpool.focus();
+    // Sample the focused input's position on every animation frame for the whole window.
+    await page.evaluate(() => {
+      const samples: number[] = [];
+      (window as any).__samples = samples;
+      (window as any).__announced = [] as string[];
+      const input = document.getElementById('recipe-whirlpool')!;
+      const panel = document.getElementById('recipe-section-mash')!;
+      // Relative to the mash panel: what sits above the process sections (the estimates summary) is not ours.
+      const tick = () => { samples.push(Math.round((input.getBoundingClientRect().top - panel.getBoundingClientRect().top) * 100) / 100); requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+      const target = document.querySelector('[data-testid="estimate-announce"]')!;
+      new MutationObserver(() => { if (target.textContent) (window as any).__announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+    });
+    const mash = page.locator('#recipe-section-mash');
+    await page.keyboard.press('1');
+    // INT-001: while recalculating the old numbers stay but are dimmed, named and hidden from
+    // assistive technology at once; the announcement waits for the debounce.
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await expect(page.getByTestId('estimate-announce')).toHaveText('');
+    await expect(mash.locator('.k-stale--active')).toHaveCount(1);
+    await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
+    expect(await waterValues(page), 'old numbers stay (dimmed) while recalculating').toEqual(before);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating', { timeout: ANNOUNCE_DEBOUNCE_MS + 2000 });
+    // The outcome settling as invalid is announced once (the status must not keep saying 'recalculating').
+    await page.keyboard.press('x');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+    // Going back to calculating and typing on is silent.
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('2');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 400);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+    await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
+    await expect(mash.locator('.k-stale--active')).toHaveCount(0);
+    await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(0);
+    await expect(whirlpool).toBeFocused();
+    expect(await page.evaluate(() => (window as any).__announced), 'announced once, the settled outcome once, then the settle').toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
+    const samples: number[] = await page.evaluate(() => (window as any).__samples);
+    expect(samples.length, 'frames sampled across the window').toBeGreaterThan(30);
+    // Layout is stable to sub-pixel rounding (a hundredth of a pixel is font/rounding noise, not a shift).
+    expect(Math.max(...samples) - Math.min(...samples), `focused input moved: ${[...new Set(samples)]}`).toBeLessThan(0.25);
+    await page.unroute('**/leptos-api/preview_formulation*');
+  });
+}
+
+test('a quick recalculation is not announced but a slow one is', async ({ page }) => {
+  await recipeWithNumbers(page);
+  const whirlpool = page.locator('#recipe-whirlpool');
+  await whirlpool.focus();
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as any).__announced = seen;
+    const target = document.querySelector('[data-testid="estimate-announce"]')!;
+    new MutationObserver(() => { if (target.textContent) seen.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+  });
+  // A response that arrives well inside the debounce: the client's own 250ms wait, the access check and the
+  // calculation already take part of it, so the route adds only a fixed 50ms.
+  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, 50)); await route.continue(); });
+  await page.keyboard.type('12', { delay: 50 });
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 400);
+  expect(await page.evaluate(() => (window as any).__announced), 'announced during a fast recalculation').toEqual([]);
+  await page.unroute('**/leptos-api/preview_formulation*');
+  // A response slower than the debounce is announced exactly once, then the settle.
+  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, ANNOUNCE_DEBOUNCE_MS + 700)); await route.continue(); });
+  await page.keyboard.type('3', { delay: 50 });
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
+  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate updated']);
+  await page.unroute('**/leptos-api/preview_formulation*');
+});
+
+test('a failure after the announcement is announced once instead of leaving the status stale', async ({ page }) => {
+  await recipeWithNumbers(page);
+  const whirlpool = page.locator('#recipe-section-boil #recipe-whirlpool');
+  await whirlpool.focus();
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as any).__announced = seen;
+    const target = document.querySelector('[data-testid="estimate-announce"]')!;
+    new MutationObserver(() => { if (target.textContent) seen.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+  });
+  // The response is slow enough to be announced, THEN it fails (not an immediate failure).
+  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, ANNOUNCE_DEBOUNCE_MS + 600)); await route.abort(); });
+  await page.keyboard.type('7');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+  await page.unroute('**/leptos-api/preview_formulation*');
+  await page.getByRole('button', { name: 'Retry calculation' }).click();
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
+  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate unavailable', 'Estimate updated']);
+  // The same when the held request is overtaken by an invalid value.
+  await page.evaluate(() => { (window as any).__announced.length = 0; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+  await whirlpool.focus(); // Retry took the focus
+  await page.keyboard.type('8');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+  await page.keyboard.type('-');
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+  await page.keyboard.press('Backspace');
+  release();
+  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
+  await page.unroute('**/leptos-api/preview_formulation*');
+});
+
+for (const width of [1440, 601, 390, 320]) {
+  test(`an invalid or unavailable estimate shows dashes and its own outcome at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await recipeWithNumbers(page);
+    const mash = page.locator('#recipe-section-mash');
+    const whirlpool = page.locator('#recipe-whirlpool');
+    const numbers = await waterValues(page);
+    expect(numbers.some(text => text.includes('15.0'))).toBe(true);
+    await whirlpool.focus();
+    const offset = async () => (await whirlpool.boundingBox())!.y - (await mash.boundingBox())!.y;
+    const top = await offset();
+    const planHeight = (await mash.locator('.k-metric-list').boundingBox())!.height;
+    await page.keyboard.type('-');
+    // Settled as invalid: dashes replace every old number, the cue names the outcome, nothing moves.
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    await expect.poll(async () => (await waterValues(page)).every(text => text.startsWith('—'))).toBe(true);
+    expect((await waterValues(page)).join(' ')).not.toMatch(/\d\.\d/);
+    expect((await mash.locator('.k-metric-list').boundingBox())!.height, 'plan height').toBe(planHeight);
+    expect(Math.abs((await offset()) - top), 'focused input moved within the process sections when the cue appeared').toBeLessThan(0.25);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid', { timeout: ANNOUNCE_DEBOUNCE_MS + 2000 });
+    await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
+    await whirlpool.fill('10');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(() => waterValues(page)).toEqual(numbers);
+    // A network failure is neutral, agrees with the preview panel's own message, and also shows dashes.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await whirlpool.fill('12');
+    await expect(page.getByText('Preview unavailable. Your draft remains open.')).toBeVisible();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    await expect.poll(async () => (await waterValues(page)).every(text => text.startsWith('—'))).toBe(true);
+    await page.unroute('**/leptos-api/preview_formulation*');
+    await page.getByRole('button', { name: 'Retry calculation' }).click();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(() => waterValues(page)).toEqual(numbers);
+    await expect(mash.locator('.k-stale--active')).toHaveCount(0);
+  });
+}
+
+test('switching recipes never shows the previous recipe\'s estimate', async ({ page }) => {
+  const stamp = Date.now();
+  const [first, second] = [`Switch A ${stamp}`, `Switch B ${stamp}`];
+  const save = async (title: string) => {
+    await page.getByLabel('Recipe name', { exact: true }).fill(title);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  };
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('30');
+  await save(second);
+  await recipeWithWaterPlan(page);
+  await save(first);
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__navigationMarker = true;
+    const frames: number[] = [];
+    (window as any).__planFrames = frames;
+    const tick = () => {
+      const section = document.getElementById('recipe-section-mash');
+      frames.push(section ? [...section.querySelectorAll('h3')].filter(h => h.textContent === 'Water plan').length : -1);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  await page.getByRole('link', { name: `Open ${second}` }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(second);
+  // The switch was client-side (the page was not reloaded), so a carried-over estimate would be visible.
+  expect(await page.evaluate(() => (window as any).__navigationMarker), 'navigation reloaded the page').toBe(true);
+  const frames: number[] = await page.evaluate(() => (window as any).__planFrames);
+  // After the old editor left, the new mash section's first frame has no Water plan: nothing carried over.
+  const arrival = frames.slice(frames.lastIndexOf(-1) + 1);
+  expect(arrival.length).toBeGreaterThan(0);
+  expect(arrival[0], 'previous recipe estimate shown on arrival').toBe(0);
+});
+
+test('the water plan emphasises its total and the process panels keep the Equipment titles unchanged', async ({ page }) => {
+  await recipeWithWaterPlan(page);
+  const rows = page.locator('#recipe-section-mash .k-metric-list .k-metric');
+  const total = rows.filter({ hasText: 'Total water' });
+  await expect(total).toHaveCSS('font-weight', '600');
+  await expect(total).toHaveCSS('border-top-width', '1px');
+  await expect(rows.filter({ hasText: 'Mash water' })).toHaveCSS('font-weight', '400');
+  // Equipment is owned by another ticket: its section headings are the shared default, ours are smaller.
+  await page.getByText('Equipment settings', { exact: true }).click();
+  const equipmentHeading = page.locator('#recipe-equipment-disclosure h3').first();
+  const processHeading = page.locator('#recipe-section-mash h3').first();
+  const size = (heading: import('@playwright/test').Locator) => heading.evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+  expect(await size(equipmentHeading)).toBeGreaterThan(await size(processHeading));
+  expect(await size(equipmentHeading)).toBeCloseTo(await page.locator('#recipe-section-mash h2').evaluate(el => parseFloat(getComputedStyle(el).fontSize)), 1);
+});
+
+test('the chilling note states the effective chilling and the model limitation', async ({ page }) => {
+  const profile = `Natural ${Date.now()}`;
+  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
+  const title = `Chilling ${Date.now()}`;
+  const xml = `<RECIPES><RECIPE><NAME>${title}</NAME><VERSION>1</VERSION><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>4</AMOUNT><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Saaz</NAME><VERSION>1</VERSION><ALPHA>4</ALPHA><AMOUNT>0.02</AMOUNT><USE>Boil</USE><TIME>60</TIME></HOP></HOPS></RECIPE></RECIPES>`;
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(xml);
+  await page.locator('#beerxml-colour').selectOption('srm');
+  await page.locator('#beerxml-efficiency').selectOption('override');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  const note = page.getByTestId('chilling-context');
+  const limitation = 'a hop first added after the wort has cooled is not modelled';
+  // No equipment chilling choice and a hop addition: bitterness needs a choice.
+  await expect(note).toContainText('Effective chilling: not specified. A bitterness estimate needs a chilling choice in Equipment.');
+  await expect(note).toContainText(limitation);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await expect(note).toContainText('Effective chilling: natural cooling after flameout.');
+  await expect(note).toContainText(limitation);
+  await expect(note).not.toContainText('not specified');
+  // While the new estimate is in flight the note (read from the old estimate) is dimmed and hidden from
+  // assistive technology like the Water plan, in place so nothing moves, and is restored when accepted.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+  await page.locator('#equipment-profile-select').selectOption('');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+  await expect(page.locator('.k-stale--active[aria-hidden="true"]').getByTestId('chilling-context')).toContainText('natural cooling after flameout');
+  release();
+  await page.unroute('**/leptos-api/preview_formulation*');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  await expect(note).toContainText('Effective chilling: not specified.');
+  await expect(page.locator('.k-stale--active').getByTestId('chilling-context')).toHaveCount(0);
+  await expect(page.locator('.k-stale[aria-hidden="true"]').getByTestId('chilling-context')).toHaveCount(0);
+  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await expect(note).toContainText('Effective chilling: natural cooling after flameout.');
+  // When the estimate becomes unavailable the note is not left describing the old equipment as current.
+  await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+  await page.locator('#equipment-profile-select').selectOption('');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+  await expect(note).toHaveCount(0);
+  await page.unroute('**/leptos-api/preview_formulation*');
+  await page.getByRole('button', { name: 'Retry calculation' }).click();
+  await expect(note).toContainText('Effective chilling: not specified.');
+});
+
+test('the process kit example shows the step row, stale outcomes and out-of-flow live line', async ({ page }) => {
+  await page.goto('/design-system');
+  const step = page.getByRole('group', { name: 'Mash step 1 of 1, Saccharification' });
+  await expect(step).toBeVisible();
+  await expect(step.getByLabel('Step name', { exact: true })).toHaveValue('Saccharification');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  for (const [button, cue] of [['In flight', 'Out of date, recalculating'], ['Invalid input', 'Estimate unavailable until the inputs are valid'], ['Unavailable', 'Estimate unavailable']] as const) {
+    await page.getByRole('button', { name: button, exact: true }).click();
+    await expect(page.getByTestId('estimate-stale')).toHaveText(cue);
+    await expect(page.getByTestId('estimate-announce')).toHaveText(cue);
+    await expect(page.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
+  }
+  await page.getByRole('button', { name: 'Current estimate', exact: true }).click();
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  const live = page.getByTestId('showcase-live');
+  const marker = page.getByRole('button', { name: 'Current estimate', exact: true });
+  // Distance from the group heading above the live line to a control below it (scroll-independent).
+  const heading = page.getByRole('heading', { name: 'Mash steps', exact: true }).last();
+  const gap = async () => (await marker.boundingBox())!.y - (await heading.boundingBox())!.y;
+  const before = await gap();
+  await step.getByRole('button', { name: /^Remove step/ }).click();
+  await expect(live).toHaveText('Example removal requested; demonstration row retained.');
+  await page.getByRole('button', { name: 'Add step', exact: true }).click();
+  await expect(live).toHaveText('Added Mash step 2 of 2.');
+  await page.getByRole('button', { name: /^Undo removal/ }).click();
+  await expect(live).toHaveText('Restored Mash step 1 of 1.');
+  expect(await gap(), 'announcing does not move following content').toBe(before);
+});
+
+test('unsupported imported process details are named and kept, never silently dropped', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await expect(page.getByTestId('unsupported-process')).toHaveCount(0);
+  // A legacy recipe with yeast and a mash block maps to preserved-but-unmodelled process data.
+  const title = `Legacy process ${Date.now()}`;
+  const xml = `<RECIPES><RECIPE><NAME>${title}</NAME><VERSION>1</VERSION><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>4</AMOUNT><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><YEASTS><YEAST><NAME>Lager yeast</NAME><VERSION>1</VERSION><TYPE>Lager</TYPE><FORM>Dry</FORM><AMOUNT>0.011</AMOUNT></YEAST></YEASTS></RECIPE></RECIPES>`;
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(xml);
+  await page.locator('#beerxml-colour').selectOption('srm');
+  await page.locator('#beerxml-efficiency').selectOption('override');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Import preview' })).toContainText(title);
+  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
+  await expect(page.getByTestId('unsupported-process')).toHaveText('Imported process details that Krausen does not model are kept with this recipe and do not affect estimates.');
+});
+
+test('wort attenuation is independent of the informational yeast attenuation', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const yeast = page.locator('.k-panel').filter({ has: page.getByRole('heading', { name: 'Yeast', exact: true }) });
+  await yeast.getByRole('button', { name: 'Add yeast', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Add yeast', exact: true }).getByRole('button', { name: 'Add to recipe', exact: true }).click();
+  await yeast.getByText('Addition details', { exact: true }).click();
+  const informational = yeast.getByLabel('Yeast attenuation (informational) (%)', { exact: true });
+  const effective = page.getByLabel('Wort attenuation (%)');
+  await informational.fill('82');
+  await expect(effective).toHaveValue('');
+  await effective.fill('70');
+  await expect(informational).toHaveValue('82');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Attenuation ${Date.now()}`);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Wort attenuation (%)')).toHaveValue('70');
+  await yeast.getByText('Addition details', { exact: true }).click();
+  await expect(yeast.getByLabel('Yeast attenuation (informational) (%)', { exact: true })).toHaveValue('82');
+  await expect(page.locator('#recipe-section-fermentation').getByText('never copied here', { exact: false })).toBeVisible();
+});
+
+for (const width of [1440, 1280, 1100, 900, 601, 390, 320]) {
+  test(`process sections stay reachable and aligned at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    for (const section of ['mash', 'boil', 'fermentation', 'notes']) {
+      const region = page.locator(`#recipe-section-${section}`);
+      await region.scrollIntoViewIfNeeded();
+      await expect(region).toBeVisible();
+    }
+    const mash = page.locator('#recipe-section-mash');
+    await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+    const step = mash.getByRole('group', { name: /^Mash step 1 of 1/ });
+    const nameInput = step.getByLabel('Step name', { exact: true });
+    await nameInput.fill('Saccharification');
+    const [time, temperature, volume] = ['Time (min)', 'Temperature (°C)', 'Volume (L)'].map(label => step.getByLabel(label, { exact: true }));
+    const boxes = await Promise.all([time, temperature, volume].map(input => input.boundingBox()));
+    for (const box of boxes) {
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    }
+    // Inputs sit level whatever the labels wrap to.
+    expect(new Set(boxes.map(box => Math.round(box!.y))).size, `input tops ${boxes.map(box => box!.y)}`).toBe(1);
+    const remove = step.getByRole('button', { name: /^Remove step/ });
+    const add = mash.getByRole('button', { name: 'Add step', exact: true });
+    const nameBox = (await nameInput.boundingBox())!;
+    const removeBox = (await remove.boundingBox())!;
+    // Remove follows the name at every width (DOM order = visual order).
+    expect(removeBox.x, 'Remove is after the name').toBeGreaterThan(nameBox.x + nameBox.width - 1);
+    expect(Math.abs(removeBox.y + removeBox.height / 2 - (nameBox.y + nameBox.height / 2)), 'Remove sits on the name row').toBeLessThanOrEqual(nameBox.height);
+    const groupWidth = await mash.locator('.k-step-group').evaluate(el => el.getBoundingClientRect().width);
+    const wide = groupWidth >= 640;
+    test.info().annotations.push({ type: 'layout', description: `${width}px viewport: step group ${Math.round(groupWidth)}px -> ${wide ? 'one row' : 'compact rows'}` });
+    // The layout is decided by the group's own width (container query), so it is pinned per viewport: one row from 1280px, compact rows below, including the mid width where the page sidebar leaves a narrow group.
+    expect(wide, `${width}px viewport: step group ${Math.round(groupWidth)}px`).toBe(width >= 1280);
+    if (wide) {
+      expect(removeBox.x + removeBox.width, 'one row: measurements follow Remove').toBeLessThanOrEqual(boxes[0]!.x + 1);
+      expect(Math.abs(boxes[0]!.y - nameBox.y), 'one row').toBeLessThanOrEqual(2);
+    } else {
+      expect(boxes[0]!.y, 'measurements are on the second row').toBeGreaterThan(nameBox.y + nameBox.height - 1);
+    }
+    if (width <= 600) {
+      const targets = [time, temperature, volume, nameInput, remove, add];
+      for (const target of targets) expect((await target.boundingBox())!.height, 'touch target height').toBeGreaterThanOrEqual(44);
+      await remove.click();
+      expect((await mash.getByRole('button', { name: /^Undo removal of/ }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`keyboard order follows visual order at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const mash = page.locator('#recipe-section-mash');
+    await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+    const step = mash.getByRole('group', { name: /^Mash step 1 of 1/ });
+    await expect(step.getByLabel('Step name', { exact: true })).toBeFocused();
+    const order: string[] = [];
+    const points: { top: number; left: number }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const info = await page.evaluate(() => { const e = document.activeElement as HTMLElement; const r = e.getBoundingClientRect(); return { label: e.getAttribute('aria-label') ?? (e as HTMLInputElement).labels?.[0]?.textContent ?? e.textContent ?? '', top: r.top, left: r.left }; });
+      order.push(info.label.trim()); points.push({ top: info.top, left: info.left });
+      await page.keyboard.press('Tab');
+    }
+    expect(order.map(label => label.split(',')[0].replace(/\s*\(.*\)/, ''))).toEqual(['Step name', 'Remove step', 'Time', 'Temperature', 'Volume']);
+    // Reading order (rows top to bottom, then left to right) is the Tab order.
+    for (let i = 1; i < points.length; i++) {
+      const sameRow = Math.abs(points[i].top - points[i - 1].top) < 12;
+      if (sameRow) expect(points[i].left, `focus moved left at step ${i}`).toBeGreaterThan(points[i - 1].left);
+      else expect(points[i].top, `focus moved up at step ${i}`).toBeGreaterThan(points[i - 1].top);
+    }
+  });
+}
 
 test('shared preview exposes style ranges and rejects an older response', async ({ page }) => {
   await page.goto('/recipe-editor/new');
@@ -1466,7 +2064,8 @@ test('recipe overrides show inherited and effective values and reset deletes the
   await expect(page.getByText(`Inherited: effective 3 L/h from ${name}.`)).toBeVisible();
   await boil.fill('4');
   await expect(page.getByText(`Overridden for this recipe: effective 4 L/h. Inherited: 3 L/h from ${name}.`)).toBeVisible();
-  await expect(page.getByText('1 recipe override', { exact: false })).toBeVisible();
+  // The header badge also says "1 recipe override"; the field hint is the intended element.
+  await expect(page.getByText(/^1 recipe override\./)).toBeVisible();
   await page.locator('#recipe-efficiency').fill('70');
   await expect(page.locator('#recipe-efficiency-override')).toHaveValue('');
   await page.locator('#recipe-chilling').selectOption('forced');

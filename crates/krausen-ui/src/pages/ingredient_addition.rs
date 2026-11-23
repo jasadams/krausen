@@ -608,7 +608,7 @@ fn push_new_row(doc: &mut RecipeDocumentV1, category: AdditionCategory, row: New
 // ---- scoped removal and Undo -------------------------------------------------
 
 /// Removals kept per group for Undo.
-const UNDO_DEPTH: usize = 20;
+pub(crate) const UNDO_DEPTH: usize = 20;
 
 #[derive(Clone, Debug, PartialEq)]
 enum RowPayload {

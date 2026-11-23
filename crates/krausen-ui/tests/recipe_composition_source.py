@@ -11,6 +11,7 @@ class RecipeComposition(unittest.TestCase):
         self.root = Path(__file__).parents[1]
         self.editor = (self.root / "src/pages/recipe_editor.rs").read_text()
         self.header = (self.root / "src/pages/recipe_header.rs").read_text()
+        self.process = (self.root / "src/pages/recipe_process.rs").read_text()
         self.kit = (self.root / "src/components/brewery_kit.rs").read_text()
         self.showcase = (self.root / "src/pages/design_system.rs").read_text()
         self.css = (self.root / "style/kit.css").read_text()
@@ -34,7 +35,13 @@ class RecipeComposition(unittest.TestCase):
             'BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() on_authority_failure=history_authority_failure',
             self.editor,
         )
-        self.assertIn('title="Water plan"', self.editor)
+        # UX-004: the water plan sits beside the mash inputs, not in the preview rail.
+        self.assertIn('title="Water plan"', self.process)
+        self.assertNotIn('title="Water plan"', self.editor)
+        for section in ("Mash & water", "Boil & whirlpool", "Fermentation", "Description & notes"):
+            self.assertIn(f'title="{section}"', self.process)
+        self.assertNotIn("Recipe process and notes", self.editor)
+        self.assertEqual(self.editor.count('id="recipe-boil"'), 0, "boil minutes is owned by Boil & whirlpool")
         self.assertIn('title="Your equipment"', self.editor)
 
     def test_shared_history_has_pagination_inspection_and_context_fences(self):
@@ -130,6 +137,43 @@ class RecipeComposition(unittest.TestCase):
         self.assertIn("pub(crate) fn format_measurement_value(value: f64, unit: &str)", presentation)
         for unit in ('"sg"', '"l"', '"c"', '"kg"', '"g"', '"min"', '"ebc"'):
             self.assertIn(f"{unit} =>", presentation)
+
+    def test_process_kit_classes_are_shared_by_recipe_and_showcase(self):
+        import re
+        for cls in (".k-step {", ".k-step__index", ".k-step-group {", ".k-stale--active", ".k-stale__cue", ".k-panel--stacked", ".k-fields {", ".k-metric-list--total"):
+            self.assertIn(cls, self.css)
+        # The recipe and the showcase use the same kit components, not page CSS.
+        for component in ("BreweryStepGroup", "BreweryStepRow", "BreweryStale", "BreweryStaleCue", "BreweryFields"):
+            self.assertIn(f"pub fn {component}(", self.kit)
+            for source in (self.process, self.showcase):
+                self.assertRegex(source, rf"<{component}[\s>/]", f"{component} missing in a consumer")
+        self.assertIn("stacked=true", self.process)
+        self.assertIn("stacked=true", self.showcase)
+        # The width container comes from the kit; no consumer writes the wrapper by hand.
+        for source in (self.process, self.showcase):
+            self.assertNotIn('class="k-step-group"', source)
+        self.assertIn('class="k-step-group"', self.kit)
+        # Page CSS keyed on ids or on the page wrapper must not return to the shared kit file.
+        for forbidden in ('[id^="recipe-section-"]', ".recipe-editor__sections .k-section__header", ".k-live"):
+            self.assertNotIn(forbidden, self.css)
+        # One mobile breakpoint (the kit's 600px) for touch sizing; layout follows the group's width.
+        step_css = self.css[self.css.index(".k-step-group {"):]
+        self.assertEqual(set(re.findall(r"@media \(max-width: (\d+)px\)", step_css)), {"600"})
+        self.assertIn("@container (min-width: 40rem)", step_css)
+        # The compact layout is the default (engines without container queries still get it) and
+        # `lh` has a fallback declaration before it.
+        base = step_css[step_css.index(".k-step {"):step_css.index("@container")]
+        self.assertIn("grid-template-columns: 1.25rem repeat(3, minmax(0, 1fr))", base)
+        self.assertRegex(step_css, r"min-height: 3em;\s*min-height: 2lh;")
+        # DOM order is visual order: Remove (actions) is rendered before the measurements.
+        self.assertLess(self.kit.index("actions.map(|slot|"), self.kit.index("{measurements()}"))
+        # Stale values are hidden from assistive technology; announcements are a polite status.
+        self.assertRegex(self.kit, r"aria-hidden=move \|\| stale\.get\(\)")
+        self.assertRegex(self.kit, r'class="sr-only" role="status"')
+        # The stale wording follows the preview outcome, and settled values become dashes.
+        for text in ("Out of date, recalculating", "Estimate unavailable until the inputs are valid", '"Estimate unavailable"', "Estimate updated"):
+            self.assertIn(text, self.process)
+        self.assertIn("shown.values.get()", self.process)
 
 
 if __name__ == "__main__":
