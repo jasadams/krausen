@@ -3039,3 +3039,45 @@ test('diagnostics from an earlier draft are marked out of date and never counted
   await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
   await expect(issues(page).getByRole('button', { name: /is longer than the boil time/ })).toHaveCount(0);
 });
+
+test('an empty draft links Add at least one fermentable to the add control', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  await issues(page).getByRole('button', { name: 'Add at least one fermentable.', exact: true }).click();
+  await expect.poll(() => focusedId(page)).toBe('fermentables-add');
+});
+
+test('summary links reach a step field, a select, an override and yeast and other amounts by their exact ids', async ({ page }) => {
+  await recipeWithNumbers(page);
+  // A mash step with a negative time.
+  await page.locator('#recipe-section-mash').getByRole('button', { name: 'Add step', exact: true }).click();
+  const stepTime = page.locator('#recipe-section-mash').getByLabel('Time (min)', { exact: true });
+  await stepTime.fill('-5');
+  const stepId = (await stepTime.getAttribute('id'))!;
+  await issues(page).getByRole('button', { name: /^Mash step 1 of 1: Time cannot be negative\.$/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(stepId);
+  // A fermentable stage select.
+  const row = page.getByRole('group', { name: /^Joe White Signature Lager/ });
+  const stageId = (await row.locator('[id$="-stage"]').getAttribute('id'))!;
+  await row.getByLabel('Stage', { exact: true }).selectOption('');
+  await issues(page).getByRole('button', { name: /Stage needs a supported stage/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(stageId);
+  // An equipment override.
+  await page.locator('#recipe-boil-off').fill('-1');
+  await issues(page).getByRole('button', { name: /Boil-off cannot be negative/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-boil-off');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
+  // Yeast and other-ingredient amounts, whose raw and validator paths differ.
+  for (const [opener, dialogName, name] of [['Add yeast', 'Add yeast', 'US-05'], ['Add other ingredient', 'Add other ingredient', 'Irish moss']] as const) {
+    await page.getByRole('button', { name: opener, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: dialogName, exact: true });
+    await dialog.getByLabel('Name', { exact: true }).fill(name);
+    await dialog.getByLabel('Amount', { exact: true }).fill('1');
+    await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+    const amount = page.getByRole('group', { name: new RegExp(`^${name}`) }).getByLabel('Amount', { exact: true });
+    const amountId = (await amount.getAttribute('id'))!;
+    await amount.fill('-1');
+    await issues(page).getByRole('button', { name: new RegExp(`${name}.*Amount cannot be negative`) }).click();
+    await expect.poll(() => focusedId(page)).toBe(amountId);
+  }
+});
