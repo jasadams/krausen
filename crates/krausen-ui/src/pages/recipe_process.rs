@@ -111,6 +111,33 @@ fn step_field_id(kind: StepKind, id: &str, suffix: &str) -> String {
     format!("{}-{id}-{suffix}", kind.prefix())
 }
 
+/// The control a structured step path addresses, for the diagnostic registry.
+pub(crate) struct StepDiagnostic {
+    pub dom_id: String,
+    pub row_label: String,
+    pub label: &'static str,
+}
+
+/// `None` when the path is not a step-field path or its row no longer exists, so
+/// a stale diagnostic never becomes a link to nothing.
+pub(crate) fn diagnostic_step(doc: &RecipeDocumentV1, path: &str) -> Option<StepDiagnostic> {
+    for kind in [StepKind::Mash, StepKind::Fermentation] {
+        let Some(rest) = path.strip_prefix(kind.prefix()).and_then(|r| r.strip_prefix('[')) else { continue };
+        let (id, tail) = rest.split_once("].")?;
+        if !kind.rows(doc).iter().any(|row| row.row_id == id) {
+            return None;
+        }
+        let label = match tail {
+            "time_minutes" => "Time",
+            "temperature_c" => "Temperature",
+            "volume_l" => "Volume",
+            _ => return None,
+        };
+        return Some(StepDiagnostic { dom_id: step_field_id(kind, id, tail), row_label: step_label(doc, kind, id), label });
+    }
+    None
+}
+
 fn remove_button_id(kind: StepKind, id: &str) -> String {
     step_field_id(kind, id, "remove")
 }
@@ -405,13 +432,15 @@ fn MashAndWater(draft: RwSignal<RecipeDraft>, shown: Shown) -> impl IntoView {
     let change_method = Callback::new(move |value: String| {
         draft.update(|d| d.edit(|doc| doc.process.mash_water_method = (!value.is_empty()).then_some(value)))
     });
+    let method_error = Signal::derive(move || draft.with(|d| d.validation_error("process.mash_water_method").map(str::to_owned)));
+    let method_hint = Signal::derive(move || draft.with(|d| d.validation_hint("process.mash_water_method").map(str::to_owned)));
     let manual = Memo::new(move |_| draft.with(show_manual_mash_water));
     let top_up = Memo::new(move |_| draft.with(show_kettle_top_up));
     view! {
         <BreweryPanel id="recipe-section-mash" title="Mash & water" description="Mash steps and how the mash water is allocated." stacked=true>
             <StepGroup draft=draft kind=StepKind::Mash/>
             <BreweryFields>
-                <BreweryDraftSelect id="recipe-mash-method" label="Mash water method" value=method on_change=change_method options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
+                <BreweryDraftSelect id="recipe-mash-method" label="Mash water method" value=method on_change=change_method error=method_error hint=method_hint options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
                 <Show when=move || manual.get()>
                     <NumberField id="recipe-mash-water" label="Mash water" unit="L" path="process.mash_water_l" draft=draft read=|d: &RecipeDocumentV1| d.process.mash_water_l write=|d: &mut RecipeDocumentV1, n| d.process.mash_water_l = n/>
                 </Show>
@@ -662,6 +691,8 @@ fn StepNumberField(
         })
     });
     let error = Signal::derive(move || draft.with(|d| d.number_error(&error_path).map(str::to_owned)));
+    let hint_path = path.clone();
+    let hint = Signal::derive(move || draft.with(|d| d.validation_hint(&hint_path).map(str::to_owned)));
     let change = Callback::new(move |text| {
         let id = id.clone();
         let path = path.clone();
@@ -677,7 +708,7 @@ fn StepNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error hint=hint on_change=change on_blur=blur numeric=true/> }
 }
 
 #[cfg(test)]

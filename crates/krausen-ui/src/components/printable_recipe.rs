@@ -156,31 +156,7 @@ fn assumption_text(key: &str) -> String {
 }
 
 pub fn diagnostic_message(diagnostic: &Diagnostic) -> String {
-    let subject = if diagnostic.path.starts_with("fermentables[") {
-        "Fermentable"
-    } else if diagnostic.path.starts_with("hops[") {
-        "Hop addition"
-    } else if diagnostic.path.starts_with("yeast[") {
-        "Yeast"
-    } else if diagnostic.path.starts_with("ingredients[") {
-        "Ingredient"
-    } else if diagnostic.path.starts_with("process.") {
-        "Process"
-    } else if diagnostic.path.starts_with("equipment") {
-        "Equipment"
-    } else {
-        "Recipe"
-    };
-    let message = match diagnostic.code.as_str() {
-        "missing" => "needs more information",
-        "unfinished_quantity" => "needs a quantity",
-        "negative" => "contains a negative value",
-        "out_of_range" => "contains a value outside its allowed range",
-        "non_finite" => "contains an invalid number",
-        "invalid_row_id" => "has an invalid addition",
-        _ => "needs attention",
-    };
-    format!("{subject} {message}.")
+    crate::pages::recipe_diagnostics::plain_message(diagnostic)
 }
 
 fn timing_text(row: &SummaryIngredient) -> String {
@@ -553,7 +529,7 @@ mod tests {
         };
         assert_eq!(
             diagnostic_message(&diagnostic),
-            "Hop addition contains a negative value."
+            "Hop contact time cannot be negative."
         );
     }
 }

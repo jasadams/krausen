@@ -154,6 +154,14 @@ static SPECS: [Spec; 11] = [
     Spec { id: "recipe-boil-temp", label: "Boil temperature", unit: "°C", scale: 1.0, path: "equipment_overrides.boil_temperature_c", read: |s| s.boil_temperature_c, write: |s, v| s.boil_temperature_c = v },
 ];
 
+/// Control id and label for an equipment diagnostic. `equipment.*` names the
+/// resolved effective value, which the brewer corrects by overriding it here.
+pub(crate) fn diagnostic_spec(path: &str) -> Option<(&'static str, &'static str)> {
+    let field = path.strip_prefix("equipment.").or_else(|| path.strip_prefix("equipment_overrides."))?;
+    let wanted = format!("equipment_overrides.{field}");
+    SPECS.iter().chain(CHILLING_SPECS.iter().map(|c| &c.spec)).find(|spec| spec.path == wanted).map(|spec| (spec.id, spec.label))
+}
+
 static CHILLING_SPECS: [ChillingSpec; 3] = [
     ChillingSpec { mode: "forced", spec: Spec { id: "recipe-chilling-rate", label: "Cooling rate", unit: "per min", scale: 1.0, path: "equipment_overrides.chilling.rate_per_minute",
         read: |s| match &s.chilling { Some(ChillingV1::Forced { rate_per_minute, .. }) => *rate_per_minute, _ => None },
@@ -267,7 +275,13 @@ fn OverrideField(
     let value = Signal::derive(move || {
         draft.with(|d| d.number_text(path, read(&d.document().equipment_overrides).map(|v| v * scale)))
     });
-    let error = Signal::derive(move || draft.with(|d| d.number_error(path).map(str::to_owned)));
+    // The validator reports a missing or invalid effective value as `equipment.*`
+    // and an invalid recipe override as `equipment_overrides.*`; both land here.
+    let effective_path = path.replacen("equipment_overrides.", "equipment.", 1);
+    let error = Signal::derive({
+        let effective = effective_path.clone();
+        move || draft.with(|d| d.number_error(path).or_else(|| d.validation_error(&effective)).map(str::to_owned))
+    });
     let overridden = Signal::derive(move || {
         draft.with(|d| read(&d.document().equipment_overrides).is_some() || d.raw_numbers().contains_key(path))
     });
@@ -280,6 +294,11 @@ fn OverrideField(
             profile_name.get().as_deref(),
             profile_known.get(),
         )
+    });
+    let needs = Signal::derive(move || draft.with(|d| d.validation_hint(path).or_else(|| d.validation_hint(&effective_path)).map(str::to_owned)));
+    let hint = Signal::derive(move || match needs.get() {
+        Some(need) => format!("{need}. {}", hint.get()),
+        None => hint.get(),
     });
     let change = Callback::new(move |text| {
         draft.update(|d| {
@@ -362,6 +381,8 @@ pub fn RecipeEquipment(
             })
         })
     });
+    let chilling_error = Signal::derive(move || draft.with(|d| d.validation_error("equipment.chilling").map(str::to_owned)));
+    let chilling_need = Signal::derive(move || draft.with(|d| d.validation_hint("equipment.chilling").map(str::to_owned)));
     let chilling_hint = Signal::derive(move || {
         let inherited = usable_profile.get().map(|p| (p.name.clone(), chilling_mode(&p.settings.chilling)));
         match (chilling.get().as_str(), inherited) {
@@ -370,6 +391,10 @@ pub fn RecipeEquipment(
             ("", None) => "Not overridden. No profile values to inherit.".to_owned(),
             (mode, _) => format!("Overridden for this recipe: effective {mode} chilling."),
         }
+    });
+    let chilling_hint = Signal::derive(move || match chilling_need.get() {
+        Some(need) => format!("{need}. {}", chilling_hint.get()),
+        None => chilling_hint.get(),
     });
     view! {
         <BrewerySection title="Equipment for this recipe">
@@ -410,7 +435,7 @@ pub fn RecipeEquipment(
             <div class="recipe-editor__fields">
                 {SPECS.iter().map(|spec| view! { <OverrideField spec=spec draft=draft profile=usable_profile profile_name=profile_name profile_known=profile_known/> }).collect_view()}
                 <div>
-                    <BreweryDraftSelect id="recipe-chilling" label="Chilling" value=chilling on_change=chilling_change hint=chilling_hint options=vec![("".into(), "Inherit / not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
+                    <BreweryDraftSelect id="recipe-chilling" label="Chilling" value=chilling on_change=chilling_change error=chilling_error hint=chilling_hint options=vec![("".into(), "Inherit / not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
                     <Show when=move || chilling.get() != "">
                         <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_label="Reset Chilling to inherited" on:click=move |_| chilling_change.run(String::new())>"Reset"</Button>
                     </Show>

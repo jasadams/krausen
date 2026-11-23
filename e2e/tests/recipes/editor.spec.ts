@@ -2730,3 +2730,176 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
   expect(requests[1]).toBe(requests[0]);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}' AND native_head_revision = 1`)).toBe('1');
 });
+
+// ---- KRA-34: actionable diagnostics, stable field jumps and settled announcements ----
+
+async function addHop(page: import('@playwright/test').Page, name: string, minutes: string) {
+  await page.getByRole('button', { name: 'Add hop', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add hop', exact: true });
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('Amount (g)', { exact: true }).fill('20');
+  await dialog.getByLabel('Use', { exact: true }).selectOption('boil');
+  await dialog.getByLabel('Contact time (min)', { exact: true }).fill(minutes);
+  await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+  await expect(dialog).toBeHidden();
+}
+
+const focusedId = (page: import('@playwright/test').Page) => page.evaluate(() => document.activeElement?.id ?? '');
+const issues = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Recipe issues', exact: true });
+
+test('diagnostic summary names each repeated hop and jumps to its hidden alpha field by row id', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  const alphaLinks = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+  await expect(alphaLinks).toHaveCount(2);
+  const texts = await alphaLinks.allTextContents();
+  expect(new Set(texts).size, `two rows, two distinct messages: ${texts}`).toBe(2);
+  expect(texts[0]).toMatch(/60 min, 1 of 2/);
+  expect(texts[1]).toMatch(/30 min, 2 of 2/);
+  // The control is in the collapsed "Addition details" of its row before the jump.
+  expect(await page.locator('[id^="hops-"][id$="-yield-alpha"]').first().evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(false);
+  await alphaLinks.nth(1).click();
+  await expect.poll(() => focusedId(page)).toMatch(/^hops-.+-yield-alpha$/);
+  const second = await focusedId(page);
+  expect(await page.locator(`#${second}`).evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(true);
+  expect(await page.locator(`#${second}`).evaluate(el => el.closest('[role=group]')?.getAttribute('aria-label') ?? '')).toMatch(/30 min, 2 of 2/);
+  await expect(page.locator(`#${second}`)).toHaveAttribute('aria-describedby', `${second}-description`);
+  await expect(page.locator(`#${second}-description`)).toHaveText('Needed to start a brew');
+  // Removing the first row changes every position; the remaining entry still reaches the same control.
+  await page.getByRole('button', { name: /^Remove Cascade, hop, Boil, 60 min/ }).click();
+  await expect(alphaLinks).toHaveCount(1);
+  await alphaLinks.click();
+  await expect.poll(() => focusedId(page)).toBe(second);
+  await expect(alphaLinks).toHaveText(/1 of 1/);
+});
+
+test('diagnostic jump reaches a select and a field inside a collapsed section', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Saaz', '45');
+  const row = page.getByRole('group', { name: /^Saaz, hop/ });
+  await row.getByLabel('Use', { exact: true }).selectOption('');
+  const useLink = issues(page).getByRole('button', { name: /Use needs a supported use/ });
+  await expect(useLink).toBeVisible();
+  await useLink.click();
+  await expect.poll(() => focusedId(page)).toMatch(/^hops-.+-stage$/);
+  const select = page.locator(`#${await focusedId(page)}`);
+  await expect(select).toHaveAttribute('aria-describedby', /-stage-description$/);
+  await expect(page.locator(`#${await focusedId(page)}-description`)).toContainText('Choose a supported stage');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
+  await issues(page).getByRole('button', { name: /Chilling is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-chilling');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
+  await expect(page.locator('#recipe-chilling')).toHaveAttribute('aria-describedby', 'recipe-chilling-description');
+  await expect(page.locator('#recipe-chilling-description')).toContainText('Needed to start a brew');
+});
+
+test('repeated diagnostics clear one at a time while the summary keeps its place during typing', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  const alphaLinks = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+  await expect(alphaLinks).toHaveCount(2);
+  await page.evaluate(() => {
+    (window as any).__summaryRemovals = 0;
+    new MutationObserver(records => records.forEach(record => record.removedNodes.forEach(node => {
+      if (node instanceof Element && (node.matches('.k-diagnostics') || node.querySelector('.k-diagnostics'))) (window as any).__summaryRemovals++;
+    }))).observe(document.body, { childList: true, subtree: true });
+  });
+  const alpha = page.getByLabel('Alpha acid (%)');
+  await page.locator('[id^="hops-"][id$="-yield-alpha"]').first().evaluate(el => (el.closest('details') as HTMLDetailsElement).open = true);
+  await alpha.first().focus();
+  await page.keyboard.type('5.5', { delay: 120 });
+  await expect(alphaLinks).toHaveCount(1);
+  await expect(alphaLinks).toHaveText(/30 min, 2 of 2/);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (window as any).__summaryRemovals), 'typing must not tear the summary down').toBe(0);
+  await page.locator('[id^="hops-"][id$="-yield-alpha"]').nth(1).evaluate(el => (el.closest('details') as HTMLDetailsElement).open = true);
+  await alpha.nth(1).fill('4.5');
+  await expect(alphaLinks).toHaveCount(0);
+});
+
+test('invalid save blockers are separate from start requirements and Review highlighted fields reaches the first one', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Diagnostics ${Date.now()}`);
+  await addHop(page, 'Cascade', '60');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await expect(page.getByRole('status').filter({ hasText: 'Invalid: 1 value to correct' })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Correct before saving \(1\)$/ })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Needed to start a brew \(\d+\)$/ })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  await page.getByRole('button', { name: 'Review highlighted fields', exact: true }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+  await expect(page.locator('#recipe-batch')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#recipe-batch-description')).toHaveText('Enter a non-negative value');
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await expect(page.getByRole('button', { name: 'Review highlighted fields', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  // Saved, and still Incomplete: the start requirements are listed, not hidden or promoted to errors.
+  await expect(issues(page).getByRole('heading', { name: /^Needed to start a brew/ })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Correct before saving/ })).toHaveCount(0);
+  await expect(page.getByText('Starting needs a complete recipe', { exact: false })).toBeVisible();
+});
+
+test('preview results never move focus or collapse sections and the live status carries only the count', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  await issues(page).getByRole('button', { name: /60 min, 1 of 2: Alpha acid is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
+  const id = await focusedId(page);
+  await page.evaluate(() => {
+    (window as any).__statusTexts = [];
+    const watch = () => (window as any).__statusTexts.push([...document.querySelectorAll('[role=status]')].map(node => node.textContent ?? '').join('|'));
+    new MutationObserver(watch).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  await page.keyboard.type('5.55', { delay: 150 });
+  await page.waitForTimeout(800);
+  expect(await focusedId(page)).toBe(id);
+  expect(await page.locator(`#${id}`).evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(true);
+  const spoken: string[] = await page.evaluate(() => (window as any).__statusTexts);
+  expect(spoken.some(text => /Alpha acid is missing/.test(text)), 'the detailed list is not in any live region').toBe(false);
+  await expect(page.locator('.k-diagnostics [role=status], .k-diagnostics [aria-live], .k-diagnostics [role=alert]')).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: /^Incomplete: \d+ inputs? needed to start a brew$/ })).toBeVisible();
+});
+
+test('preserved data this editor cannot edit is explained and never linked', async ({ page }) => {
+  const title = `Legacy diagnostics ${Date.now()}`;
+  const xml = `<RECIPES><RECIPE><NAME>${title}</NAME><VERSION>1</VERSION><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>4</AMOUNT><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><YEASTS><YEAST><NAME>Lager yeast</NAME><VERSION>1</VERSION><TYPE>Lager</TYPE><FORM>Dry</FORM><AMOUNT>0.011</AMOUNT></YEAST></YEASTS></RECIPE></RECIPES>`;
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(xml);
+  await page.locator('#beerxml-colour').selectOption('srm');
+  await page.locator('#beerxml-efficiency').selectOption('override');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
+  const note = issues(page).getByText(/process data this app cannot edit/);
+  await expect(note).toBeVisible();
+  await expect(issues(page).getByRole('button', { name: /process data this app cannot edit/ })).toHaveCount(0);
+  await expect(issues(page).getByRole('link', { name: /process data this app cannot edit/ })).toHaveCount(0);
+});
+
+for (const { width, scheme } of [{ width: 320, scheme: 'light' }, { width: 390, scheme: 'dark' }, { width: 1440, scheme: 'light' }] as const) {
+  test(`diagnostic summary stays in bounds with long names and whole touch targets at ${width}px ${scheme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/recipe-editor/new');
+    await addHop(page, 'A very long hop variety name that must wrap rather than overflow the narrow summary list', '60');
+    await addHop(page, 'Cascade', '30');
+    const links = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+    await expect(links).toHaveCount(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    for (const link of await links.all()) {
+      const box = (await link.boundingBox())!;
+      expect(box.height, 'whole target at least 44px tall').toBeGreaterThanOrEqual(44);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    await links.first().click();
+    await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
+    const focused = (await page.locator(`#${await focusedId(page)}`).boundingBox())!;
+    expect(focused.x).toBeGreaterThanOrEqual(0);
+    expect(focused.x + focused.width).toBeLessThanOrEqual(width);
+  });
+}

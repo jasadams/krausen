@@ -46,7 +46,7 @@ impl AdditionCategory {
             Self::Other => "other_ingredients",
         }
     }
-    fn noun(self) -> &'static str {
+    pub(crate) fn noun(self) -> &'static str {
         match self {
             Self::Fermentable => "fermentable",
             Self::Hop => "hop",
@@ -69,7 +69,7 @@ impl AdditionCategory {
             Self::Yeast | Self::Other => "",
         }
     }
-    fn add_button_id(self) -> String {
+    pub(crate) fn add_button_id(self) -> String {
         format!("{}-add", self.prefix())
     }
 }
@@ -118,6 +118,9 @@ impl Field {
             (AdditionCategory::Fermentable, Self::Yield) => "specification.yield_fraction",
             (AdditionCategory::Fermentable, Self::Colour) => "specification.colour_ebc",
             (AdditionCategory::Fermentable, Self::BoilMinutes) => "addition.time_minutes",
+            (AdditionCategory::Fermentable, Self::Stage) => "addition.stage",
+            (AdditionCategory::Fermentable, Self::Kind) => "specification.type",
+            (AdditionCategory::Hop, Self::Stage) => "stage",
             (AdditionCategory::Hop, Self::Amount) => "amount_g",
             (AdditionCategory::Hop, Self::Alpha) => "specification.alpha_fraction",
             (AdditionCategory::Hop, Self::ContactMinutes) => "contact_minutes",
@@ -135,7 +138,7 @@ pub(crate) fn dom_id(category: AdditionCategory, row_id: &str, field: Field) -> 
 fn remove_button_id(category: AdditionCategory, row_id: &str) -> String {
     format!("{}-{row_id}-remove", category.prefix())
 }
-fn raw_path(category: AdditionCategory, row_id: &str, field: Field) -> String {
+pub(crate) fn raw_path(category: AdditionCategory, row_id: &str, field: Field) -> String {
     format!("{}[{row_id}].{}", category.prefix(), field.path_suffix(category))
 }
 /// Structured-diagnostic path for fields whose service path differs from the raw path.
@@ -158,25 +161,48 @@ fn service_path(category: AdditionCategory, row_id: &str, field: Field) -> Optio
 pub struct FieldOpening {
     pub dom_id: String,
     pub in_details: bool,
+    /// Visible control label, e.g. "Alpha acid".
+    pub label: &'static str,
+    /// Identity of the row the control belongs to, including its position.
+    pub row_label: String,
 }
 
 pub fn diagnostic_field(doc: &RecipeDocumentV1, path: &str) -> Option<FieldOpening> {
     let (head, rest) = path.split_once('[')?;
     let (row_id, tail) = rest.split_once("].")?;
     let category = match head {
-        "fermentables" => AdditionCategory::Fermentable,
-        "hops" => AdditionCategory::Hop,
-        "yeast" => AdditionCategory::Yeast,
-        "other_ingredients" => AdditionCategory::Other,
         "ingredients" => [AdditionCategory::Yeast, AdditionCategory::Other]
             .into_iter()
             .find(|category| row_ids(doc, *category).iter().any(|id| id == row_id))?,
-        _ => return None,
+        _ => category_for_head(head)?,
     };
     if !row_ids(doc, category).iter().any(|id| id == row_id) {
         return None;
     }
-    let field = match (category, tail) {
+    let field = diagnostic_row_field(category, tail)?;
+    Some(FieldOpening {
+        dom_id: dom_id(category, row_id, field),
+        in_details: field_in_details(category, field),
+        label: field_label(category, field).0,
+        row_label: row_label(doc, category, row_id),
+    })
+}
+
+/// Which addition group a structured path head names. `ingredients` is shared by
+/// yeast and other additions, so it is resolved against the document instead.
+pub(crate) fn category_for_head(head: &str) -> Option<AdditionCategory> {
+    Some(match head {
+        "fermentables" => AdditionCategory::Fermentable,
+        "hops" => AdditionCategory::Hop,
+        "yeast" => AdditionCategory::Yeast,
+        "other_ingredients" => AdditionCategory::Other,
+        _ => return None,
+    })
+}
+
+/// The row control a structured field path (the part after `[row_id].`) addresses.
+pub(crate) fn diagnostic_row_field(category: AdditionCategory, tail: &str) -> Option<Field> {
+    Some(match (category, tail) {
         (AdditionCategory::Fermentable, "amount_kg") => Field::Amount,
         (AdditionCategory::Fermentable, "specification.name") => Field::Name,
         (AdditionCategory::Fermentable, "specification.producer") => Field::Producer,
@@ -200,10 +226,6 @@ pub fn diagnostic_field(doc: &RecipeDocumentV1, path: &str) -> Option<FieldOpeni
         }
         (AdditionCategory::Yeast, "specification.attenuation_fraction") => Field::Attenuation,
         _ => return None,
-    };
-    Some(FieldOpening {
-        dom_id: dom_id(category, row_id, field),
-        in_details: field_in_details(category, field),
     })
 }
 
@@ -425,7 +447,7 @@ fn display_name(doc: &RecipeDocumentV1, category: AdditionCategory, id: &str) ->
 
 /// Distinguishes duplicate names by use/stage, time and position (ACC-001).
 /// The name leads so "Remove {label}" still begins with the ingredient's name.
-fn row_label(doc: &RecipeDocumentV1, category: AdditionCategory, id: &str) -> String {
+pub(crate) fn row_label(doc: &RecipeDocumentV1, category: AdditionCategory, id: &str) -> String {
     let ids = row_ids(doc, category);
     let Some(position) = ids.iter().position(|row| row == id) else { return String::new() };
     let name = row_text(doc, category, id, Field::Name);
@@ -855,7 +877,7 @@ fn number_field(category: AdditionCategory, draft: RwSignal<RecipeDraft>, id: &s
     view! { <RowNumberField category=category draft=draft id=id field=field/> }.into_any()
 }
 
-fn field_label(category: AdditionCategory, field: Field) -> (&'static str, &'static str) {
+pub(crate) fn field_label(category: AdditionCategory, field: Field) -> (&'static str, &'static str) {
     match (category, field) {
         (_, Field::Name) => ("Name", ""),
         (_, Field::Producer) => ("Producer", ""),
@@ -895,13 +917,19 @@ fn RowTextField(
     let (label, _) = field_label(category, field);
     let read_id = id.clone();
     let value = Signal::derive(move || draft.with(|d| row_text(d.document(), category, &read_id, field)));
+    let select_path = raw_path(category, &id, field);
+    let error = Signal::derive({
+        let path = select_path.clone();
+        move || draft.with(|d| d.validation_error(&path).map(str::to_owned))
+    });
+    let hint = Signal::derive(move || draft.with(|d| d.validation_hint(&select_path).map(str::to_owned)));
     let change = Callback::new(move |text: String| {
         let id = id.clone();
         draft.update(|d| d.edit(|doc| set_row_text(doc, category, &id, field, text)));
     });
     match field {
-        Field::Kind => view! { <BreweryDraftSelect id=input_id label=label value=value on_change=change options=vec![("".into(), "Select a type".into()), ("grain".into(), "Grain".into()), ("extract".into(), "Extract".into()), ("sugar".into(), "Sugar".into())]/> }.into_any(),
-        Field::Stage => view! { <BreweryDraftSelect id=input_id label=label value=value on_change=change options=stage_options(category)/> }.into_any(),
+        Field::Kind => view! { <BreweryDraftSelect id=input_id label=label value=value on_change=change error=error hint=hint options=vec![("".into(), "Select a type".into()), ("grain".into(), "Grain".into()), ("extract".into(), "Extract".into()), ("sugar".into(), "Sugar".into())]/> }.into_any(),
+        Field::Stage => view! { <BreweryDraftSelect id=input_id label=label value=value on_change=change error=error hint=hint options=stage_options(category)/> }.into_any(),
         _ => view! { <BreweryDraftField id=input_id label=label value=value on_change=change/> }.into_any(),
     }
 }
@@ -939,6 +967,15 @@ fn RowNumberField(
                 .map(str::to_owned)
         })
     });
+    let hint_path = path.clone();
+    let hint_service = service_path(category, &id, field);
+    let hint = Signal::derive(move || {
+        draft.with(|d| {
+            d.validation_hint(&hint_path)
+                .or_else(|| hint_service.as_deref().and_then(|path| d.validation_hint(path)))
+                .map(str::to_owned)
+        })
+    });
     let change = Callback::new(move |text: String| {
         let id = id.clone();
         let path = path.clone();
@@ -948,7 +985,7 @@ fn RowNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error hint=hint on_change=change on_blur=blur numeric=true/> }
 }
 
 /// Truthful manual specification task for groups without a supported catalogue.
@@ -1179,9 +1216,10 @@ mod tests {
         draft.replace_saved(doc);
         let doc = draft.document();
         let contact = diagnostic_field(doc, "hops[h2].contact_minutes").unwrap();
-        assert_eq!(contact, FieldOpening { dom_id: "hops-h2-colour-time".into(), in_details: false });
+        assert_eq!((contact.dom_id.as_str(), contact.in_details, contact.label), ("hops-h2-colour-time", false, "Contact time"));
+        assert!(contact.row_label.ends_with("2 of 3"), "{}", contact.row_label);
         let alpha = diagnostic_field(doc, "hops[h1].specification.alpha_fraction").unwrap();
-        assert_eq!(alpha, FieldOpening { dom_id: "hops-h1-yield-alpha".into(), in_details: true });
+        assert_eq!((alpha.dom_id.as_str(), alpha.in_details, alpha.label), ("hops-h1-yield-alpha", true, "Alpha acid"));
         let amount = diagnostic_field(doc, "ingredients[y1].amount").unwrap();
         assert_eq!(amount.dom_id, "yeast-y1-amount");
         assert!(!amount.in_details);

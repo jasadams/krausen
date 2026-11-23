@@ -258,13 +258,14 @@ fn may_start(phase: &Phase, has_pending: bool) -> bool {
     !has_pending && matches!(phase, Phase::Review { .. })
 }
 
-/// The same reason can arise from several rows or fields; show each distinct text
-/// once, in first-seen order.
-fn distinct_reasons(reasons: Vec<String>) -> Vec<String> {
+/// One reason per distinct diagnostic. Identity is the structured (path, code), so
+/// two rows with the same problem stay two reasons; message text never decides it.
+fn distinct_reasons(diagnostics: &[Diagnostic]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    reasons
-        .into_iter()
-        .filter(|text| seen.insert(text.clone()))
+    diagnostics
+        .iter()
+        .filter(|d| seen.insert((d.path.as_str(), d.code.as_str())))
+        .map(diagnostic_text)
         .collect()
 }
 
@@ -686,9 +687,7 @@ pub fn StartBrewTask(
                     let ready =
                         found.readiness == Readiness::Ready && found.context.digest.is_some();
                     if !ready {
-                        let reasons = distinct_reasons(
-                            found.diagnostics.iter().map(diagnostic_text).collect(),
-                        );
+                        let reasons = distinct_reasons(&found.diagnostics);
                         phase.set(Phase::Blocked(if reasons.is_empty() {
                             "This revision is not Ready. Add the missing inputs and save a new revision.".into()
                         } else {
@@ -1523,31 +1522,19 @@ mod regression_tests {
     }
 
     #[test]
-    fn repeated_blocking_reasons_are_shown_once_in_first_seen_order() {
-        let captured = [
-            "Fermentable needs attention.",
-            "Fermentable needs attention.",
-            "Process needs more information.",
-            "Equipment needs more information.",
-            "Equipment needs more information.",
-            "Equipment needs more information.",
-        ]
-        .map(str::to_owned)
-        .to_vec();
+    fn blocking_reasons_are_distinct_by_row_and_code_not_by_text() {
+        let d = |path: &str, code: &str| Diagnostic { code: code.into(), path: path.into(), severity: Readiness::Incomplete, affected_targets: vec![] };
+        let found = [
+            d("hops[a].specification.alpha_fraction", "missing"),
+            d("hops[a].specification.alpha_fraction", "missing"),
+            d("hops[b].specification.alpha_fraction", "missing"),
+            d("batch_size_l", "missing"),
+        ];
         assert_eq!(
-            distinct_reasons(captured),
-            vec![
-                "Fermentable needs attention.",
-                "Process needs more information.",
-                "Equipment needs more information."
-            ]
+            distinct_reasons(&found),
+            vec!["Hop alpha acid is missing.", "Hop alpha acid is missing.", "Batch volume is missing."]
         );
-        // Distinct texts that differ only slightly are all kept.
-        assert_eq!(
-            distinct_reasons(vec!["A".into(), "a".into(), "A".into()]).len(),
-            2
-        );
-        assert!(distinct_reasons(Vec::new()).is_empty());
+        assert!(distinct_reasons(&[]).is_empty());
     }
 
     #[test]

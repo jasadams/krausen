@@ -272,6 +272,24 @@ pub(crate) fn focus_element(id: &str) {
     if !focused { tracing::warn!(target = id, "Unable to focus a recipe target"); }
 }
 
+/// Deliberate diagnostic jump: open every collapsed ancestor of the control,
+/// then focus it, or the summary entry that explains it when the control is not
+/// rendered (a conditional field, for instance). Called only from a user action.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn jump_to_diagnostic(target: &str, explanation: &str) {
+    use wasm_bindgen::JsCast;
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    if let Some(element) = document.get_element_by_id(target) {
+        let mut ancestor = element.parent_element();
+        while let Some(node) = ancestor {
+            if let Some(details) = node.dyn_ref::<web_sys::HtmlDetailsElement>() { details.set_open(true); }
+            ancestor = node.parent_element();
+        }
+        if try_focus_element(&element) { return; }
+    }
+    focus_element(explanation);
+}
+
 /// Open a native disclosure from a header command, then move focus into it.
 #[cfg(target_arch = "wasm32")]
 fn reveal_disclosure(disclosure: &str, focus: &str) {
@@ -1032,7 +1050,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Invalid(validation)) => {
                     retry.set(None);
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
-                        draft.update(|d| d.set_validation(validation));
+                        draft.update(|d| { d.apply_validation(attempt.generation, validation); });
                         status.fail("Correct the invalid fields before saving.".into());
                     } else {
                         status.fail(
@@ -1312,7 +1330,27 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(not(target_arch = "wasm32"))]
         let _ = (disclosure, focus);
     };
+    let jump = Callback::new(move |(target, explanation): (String, String)| {
+        active_tab.set("recipe".to_owned());
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || jump_to_diagnostic(&target, &explanation));
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (target, explanation);
+    });
+    provide_context(crate::pages::recipe_diagnostics::DiagnosticJump(jump));
+    let review = Callback::new(move |()| {
+        // Explicit request: settle every touched field so its error shows, then go to the first one.
+        draft.update(|d| d.settle_numbers());
+        if let Some(first) = draft.with_untracked(crate::pages::recipe_diagnostics::first_invalid) {
+            let target = match first.route {
+                crate::pages::recipe_diagnostics::Route::Field { dom_id } => dom_id,
+                crate::pages::recipe_diagnostics::Route::Explain => first.key.clone(),
+            };
+            jump.run((target, first.key));
+        }
+    });
     let header_actions = RecipeActionSlots {
+        review,
         save: Callback::new(move |()| save()),
         undo: Callback::new(move |()| draft.update(|d| d.undo())),
         // Start always opens the bounded review task; it never commits. A saved
@@ -1708,11 +1746,12 @@ pub(crate) fn NumberField(
         draft.with(|d| d.number_text(path, read(d.document()).map(|v| v * scale)))
     });
     let error = Signal::derive(move || draft.with(|d| d.number_error(path).map(str::to_owned)));
+    let hint = Signal::derive(move || draft.with(|d| d.validation_hint(path).map(str::to_owned)));
     let change = Callback::new(move |text| {
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error described_by=described_by on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error hint=hint described_by=described_by on_change=change on_blur=blur numeric=true/> }
 }
 
 #[component]
@@ -1851,19 +1890,15 @@ fn FormulationPreview(
                         }
                     }
                     if accepted {
-                        message.set(match preview.validation.state {
-                            krausen_types::validation::Readiness::Ready => "Ready".into(),
-                            krausen_types::validation::Readiness::Incomplete => "Incomplete".into(),
-                            krausen_types::validation::Readiness::Invalid => "Invalid".into(),
-                        });
-                        draft.update(|d| d.set_validation(preview.validation.clone()));
+                        message.set(crate::pages::recipe_diagnostics::readiness_summary(&preview.validation));
+                        draft.update(|d| { d.apply_validation(draft_generation, preview.validation.clone()); });
                         result.set(Some((draft_generation, preview)));
                     } else if preview.validation.state
                         == krausen_types::validation::Readiness::Invalid
                         && preview.context.is_none()
                         && preview.context_digest.is_none()
                     {
-                        draft.update(|d| d.set_validation(preview.validation));
+                        draft.update(|d| { d.apply_validation(draft_generation, preview.validation); });
                         phase.set(crate::pages::recipe_process::EstimatePhase::InvalidInput);
                         message.set("Invalid: correct the highlighted inputs.".into());
                     } else {
@@ -1930,7 +1965,7 @@ fn FormulationPreview(
         </Show>
         <crate::components::BreweryBeerPortrait/>
         {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview.clone()/><PreviewSource preview=preview draft=draft revision=revision/> })}
-        <div>{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
+        <crate::pages::recipe_diagnostics::DiagnosticSummary draft=draft/>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 

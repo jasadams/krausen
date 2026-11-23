@@ -122,6 +122,8 @@ pub fn start_reason(saved: bool, dirty: bool, readiness: Option<Readiness>) -> O
 /// callbacks: their source-bound task workflows are owned elsewhere.
 #[derive(Clone, Copy)]
 pub struct RecipeActionSlots {
+    /// Go to the first control that must be corrected before the recipe can be saved.
+    pub review: Callback<()>,
     pub save: Callback<()>,
     pub undo: Callback<()>,
     pub start: Callback<()>,
@@ -244,6 +246,9 @@ pub fn RecipeHeader(
                     </div>
                 </div>
             </div>
+            <Show when=move || draft.with(|d| crate::pages::recipe_diagnostics::first_invalid(d).is_some())>
+                <Button variant=ButtonVariant::Secondary on:click=move |_| actions.review.run(())>"Review highlighted fields"</Button>
+            </Show>
             <Show when=move || reason.get().is_some()>
                 <p id=reason_id class="recipe-header__reason">{move || reason.get()}</p>
             </Show>

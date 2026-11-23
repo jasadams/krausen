@@ -197,8 +197,35 @@ fn printable_example() -> krausen_types::process_summary::ProcessSummary {
     }
 }
 
+/// Example diagnostics that point at real showcase fields, in both severities
+/// plus an uneditable explanation.
+fn diagnostics_example() -> Signal<Vec<crate::pages::recipe_diagnostics::Presented>> {
+    use crate::pages::recipe_diagnostics::{Presented, Route};
+    use krausen_types::validation::Readiness;
+    let item = |key: &str, severity, message: &str, route| Presented {
+        key: key.into(),
+        path: key.into(),
+        code: "example".into(),
+        severity,
+        message: message.into(),
+        route,
+    };
+    let items = vec![
+        item("show-diagnostic-invalid", Readiness::Invalid, "Amount cannot be negative.", Route::Field { dom_id: "show-invalid".into() }),
+        item("show-diagnostic-incomplete", Readiness::Incomplete, "Batch volume is missing.", Route::Field { dom_id: "show-volume".into() }),
+        item("show-diagnostic-preserved", Readiness::Incomplete, "This recipe carries process data this app cannot edit. It is preserved unchanged.", Route::Explain),
+    ];
+    Signal::derive(move || items.clone())
+}
+
 #[component]
 pub fn DesignSystemPage() -> impl IntoView {
+    provide_context(crate::pages::recipe_diagnostics::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || crate::pages::recipe_editor::jump_to_diagnostic(&target, &explanation));
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (target, explanation);
+    })));
     let name = RwSignal::new("Munich Helles".to_owned());
     let volume = RwSignal::new("20".to_owned());
     let invalid = RwSignal::new("-1".to_owned());
@@ -327,6 +354,9 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div role="tabpanel" id="show-tabs-panel-recipe" aria-labelledby="show-tabs-tab-recipe" hidden=move || active_tab.get() != "recipe">"Recipe section"</div>
                     <div role="tabpanel" id="show-tabs-panel-versions" aria-labelledby="show-tabs-tab-versions" hidden=move || active_tab.get() != "versions">"Saved versions section"</div>
                     <div role="tabpanel" id="show-tabs-panel-brews" aria-labelledby="show-tabs-tab-brews" hidden=move || active_tab.get() != "brews">"Brews section"</div>
+                </BreweryPanel>
+                <BreweryPanel title="Diagnostics" eyebrow="Component / Diagnostic summary" description="Each message names its field and row; a link moves focus to that control. Preserved data this editor cannot edit is explained, never linked.">
+                    <crate::pages::recipe_diagnostics::DiagnosticList items=diagnostics_example()/>
                 </BreweryPanel>
                 <BreweryPanel title="Feedback" description="Status is expressed in words as well as colour.">
                     <BreweryNotice title="Example save failed" body="Keep this page open and retry when the connection is available. Your local values remain editable." tone=NoticeTone::Error/>
