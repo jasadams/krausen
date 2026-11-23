@@ -194,6 +194,8 @@ test('Scale is a real modal: focus is contained and the page behind is inert', a
   expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
   expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
   await expectTabContainment(page, 'dialog#scale-dialog', 12);
+  await dialog.getByLabel('Target fermenter volume (L)').focus();
+  await expectTabContainment(page, 'dialog#scale-dialog', 12, { shift: true });
   // The trace may end with focus handed to the browser UI; Escape is the user's
   // action from inside the dialog.
   await dialog.getByRole('button', { name: 'Cancel' }).focus();
@@ -380,4 +382,34 @@ test('an open Scale preview survives the editor revalidating on window focus', a
   await expect(page.getByRole('dialog', { name: 'Scale batch' })).toBeVisible();
   await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeEnabled();
+});
+
+test('retrying a pending Scale never silently replaces an unsaved draft', async ({ page }) => {
+  await createScalableRecipe(page, `Retry draft ${Date.now()}`);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await page.route('**/execute_scale_apply*', (route) => route.abort());
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_scale_apply*');
+  // The user keeps editing while the original request is still unresolved.
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('My unsaved edit');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scale batch' });
+  await expect(dialog).toContainText('Save your changes first');
+  const retry = dialog.getByRole('button', { name: 'Retry previous request' });
+  await expect(retry, 'the retained request is explained and cannot overwrite the draft').toBeDisabled();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(name).toHaveValue('My unsaved edit');
+  // Undo the edit, and the retained original request becomes retryable.
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
 });

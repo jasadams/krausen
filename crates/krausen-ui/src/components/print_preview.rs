@@ -12,6 +12,7 @@ use super::{Button, ButtonVariant};
 use leptos::prelude::*;
 
 const HEADING_ID: &str = "print-preview-heading";
+const HINT_ID: &str = "print-preview-hint";
 #[cfg(target_arch = "wasm32")]
 const OWNER_ATTRIBUTE: &str = "data-print-inert-owner";
 
@@ -136,15 +137,15 @@ pub fn PrintPreviewTask(
         }
     };
     view! {
-        <section class="print-preview" role="dialog" aria-modal="true" aria-labelledby=HEADING_ID node_ref=root>
+        <section class="print-preview" role="dialog" aria-modal="true" aria-labelledby=HEADING_ID aria-describedby=HINT_ID node_ref=root>
             <div class="print-preview__toolbar">
                 <div>
                     <h2 id=HEADING_ID tabindex="-1" class="kit-showcase__eyebrow">{heading}</h2>
-                    <p class="print-preview__hint">{hint}</p>
+                    <p id=HINT_ID class="print-preview__hint">{hint}</p>
                 </div>
                 <div class="recipe-editor__actions">
                     <Button on:click=print>"Print / Save as PDF"</Button>
-                    <Button variant=ButtonVariant::Secondary on:click=move |_| on_close.run(())>{back_label}</Button>
+                    <Button class="print-preview__back" variant=ButtonVariant::Secondary on:click=move |_| on_close.run(())>{back_label}</Button>
                 </div>
                 <p role="status">{move || status.get()}</p>
             </div>

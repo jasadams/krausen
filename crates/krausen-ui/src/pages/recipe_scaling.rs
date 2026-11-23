@@ -530,7 +530,9 @@ pub fn ScaleDialog(
         });
     });
 
-    let form_visible = Signal::derive(move || retry.get().is_some() || prerequisite.get().is_none());
+    // A pending request never bypasses the prerequisite: retrying it replaces the
+    // editor with its result, which would silently drop unsaved edits.
+    let form_visible = Signal::derive(move || prerequisite.get().is_none());
     view! {
         <BreweryDialog
             id="scale-dialog"
@@ -550,6 +552,9 @@ pub fn ScaleDialog(
             <div class="space-y-4">
                 <Show when=move || !form_visible.get()>
                     <p id="scale-prerequisite">{move || prerequisite.get()}</p>
+                    <Show when=move || retry.get().is_some()>
+                        <p>"An earlier Scale request is retained. It can be retried once this is resolved, because applying it replaces the recipe in the editor."</p>
+                    </Show>
                 </Show>
                 {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
                 <Show when=move || recovery_broken.get()>
@@ -575,7 +580,7 @@ pub fn ScaleDialog(
                 </Show>
                 <p role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
-                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| {
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || !form_visible.get()) on:click=move |_| {
                         if let Some(request) = retry.get_untracked() { submit.run(request); }
                     }>"Retry previous request"</Button>
                 </Show>
@@ -811,7 +816,9 @@ pub fn DuplicateDialog(
         });
     });
 
-    let form_visible = Signal::derive(move || retry.get().is_some() || prerequisite.get().is_none());
+    // A pending request never bypasses the prerequisite: retrying it replaces the
+    // editor with its result, which would silently drop unsaved edits.
+    let form_visible = Signal::derive(move || prerequisite.get().is_none());
     view! {
         <BreweryDialog
             id="duplicate-dialog"
@@ -829,6 +836,9 @@ pub fn DuplicateDialog(
             <div class="space-y-4">
                 <Show when=move || !form_visible.get()>
                     <p id="duplicate-prerequisite">{move || prerequisite.get()}</p>
+                    <Show when=move || retry.get().is_some()>
+                        <p>"An earlier Duplicate request is retained. It can be retried once this is resolved, because the copy opens in place of this recipe."</p>
+                    </Show>
                 </Show>
                 {move || recovery_block.get().map(|reason| view! { <p class="k-field__error" role="alert">{reason}</p> })}
                 <Show when=move || recovery_broken.get()>
@@ -852,7 +862,7 @@ pub fn DuplicateDialog(
                 </Show>
                 <p role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
-                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| {
+                    <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || !form_visible.get()) on:click=move |_| {
                         if let Some(request) = retry.get_untracked() { submit.run(request); }
                     }>"Retry previous request"</Button>
                 </Show>

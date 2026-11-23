@@ -203,6 +203,7 @@ pub fn DesignSystemPage() -> impl IntoView {
     let volume = RwSignal::new("20".to_owned());
     let invalid = RwSignal::new("-1".to_owned());
     let dialog = RwSignal::new(false);
+    let print_example = RwSignal::new(false);
     let grain = RwSignal::new("4.20".to_owned());
     let grain_name = RwSignal::new("Pilsner malt".to_owned());
     let show_grain = RwSignal::new(true);
@@ -336,7 +337,23 @@ pub fn DesignSystemPage() -> impl IntoView {
             <BreweryDisclosure title="Printable recipe and process summary">
                 <p class="note-caption">"The same shared summary is used by the editor print preview and the MCP operation. A saved revision and an unsaved draft are identified separately."</p>
                 <div class="print-preview__sheet"><PrintableRecipe summary=printable_example()/></div>
+                <p class="note-caption">"The print preview is a real modal task: focus moves to its heading, the page behind is inert, and Escape or Back returns to this button."</p>
+                <Button id="showcase-print-preview-open" variant=ButtonVariant::Secondary on:click=move |_| print_example.set(true)>"Open print preview example"</Button>
             </BreweryDisclosure>
+            {move || print_example.get().then(|| view! {
+                <crate::components::PrintPreviewTask
+                    heading="Print preview"
+                    hint="Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins."
+                    print_state=false
+                    on_close=Callback::new(move |()| {
+                        print_example.set(false);
+                        #[cfg(target_arch = "wasm32")]
+                        request_animation_frame(move || crate::pages::recipe_editor::focus_element("showcase-print-preview-open"));
+                    })
+                >
+                    <div class="print-preview__sheet"><PrintableRecipe summary=printable_example()/></div>
+                </crate::components::PrintPreviewTask>
+            })}
             <BreweryDialog id="showcase-dialog" title="Keep your changes?" description="A saved recipe revision is separate from your draft." open=dialog><p>"You can return to this recipe before deciding."</p><BreweryPopover id="showcase-nested-account" label="Account actions example" open=nested_popup><a href="#showcase-popover-successor">"Profile example"</a>{(1..=30).map(|number| view! { <Button variant=ButtonVariant::Ghost>{format!("Workspace example {number}{}", if number == 1 { " (current)" } else { "" })}</Button> }).collect_view()}</BreweryPopover></BreweryDialog>
         </div>
     }

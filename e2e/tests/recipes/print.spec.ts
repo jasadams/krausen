@@ -135,8 +135,8 @@ test('a delayed summary cannot touch a disposed editor', async ({ page }) => {
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // KRA-43: the print task is modal, so the sidebar link that used to be clicked
-  // here is now inert and unreachable; the page is left with browser Back.
+  // KRA-43: the print task is modal (native dialog), so the sidebar link that used to
+  // be clicked here is blocked by it (it cannot be clicked); the page is left with browser Back.
   await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
@@ -168,8 +168,8 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // KRA-43: the print task is modal, so the sidebar link that used to be clicked
-  // here is now inert and unreachable; the page is left with browser Back.
+  // KRA-43: the print task is modal (native dialog), so the sidebar link that used to
+  // be clicked here is blocked by it (it cannot be clicked); the page is left with browser Back.
   await expect(page.locator('#sidebar-recipes-link').click({ trial: true, timeout: 1500 })).rejects.toThrow(/intercepts pointer events/);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
@@ -250,9 +250,12 @@ test('the print preview is a real boundary: heading focus, inert page, Escape re
   const preview = page.getByRole('dialog', { name: 'Print preview' });
   await expect(preview).toBeVisible();
   await expect(preview.getByRole('heading', { name: 'Print preview' }), 'focus moves to the preview heading').toBeFocused();
+  await expect(preview, 'the hint is the dialog description').toHaveAccessibleDescription(/paper size and margins/);
   await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
   // Keyboard focus never reaches the page behind the overlay.
   await expectTabContainment(page, '.print-preview', 14);
+  await preview.getByRole('button', { name: 'Print / Save as PDF' }).focus();
+  await expectTabContainment(page, '.print-preview', 14, { shift: true });
   await page.keyboard.press('Escape');
   await expect(preview).toHaveCount(0);
   await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
@@ -416,4 +419,34 @@ test('closing and reopening the print task while a request is in flight runs onl
   await expect(preview).toContainText('Unsaved draft');
   await expect(preview).not.toContainText('Saved revision 1');
   expect(calls).toBe(2);
+});
+
+test('raw numeric draft text survives opening and closing the print preview', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const batch = page.getByLabel('Batch volume (L)');
+  await page.getByLabel('Recipe name', { exact: true }).fill('Raw draft print');
+  await batch.fill('20.000');
+  await openPrint(page);
+  await expect(page.getByRole('dialog', { name: 'Print preview' })).toContainText('Unsaved draft');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Print preview' })).toHaveCount(0);
+  await expect(batch, 'the raw text, not a reformatted number').toHaveValue('20.000');
+  await batch.fill('1e1');
+  await openPrint(page);
+  await page.getByRole('button', { name: 'Back to editor' }).click();
+  await expect(batch).toHaveValue('1e1');
+});
+
+test('the design system showcase demonstrates the print preview boundary', async ({ page }) => {
+  await page.goto('/design-system');
+  await page.getByText('Printable recipe and process summary', { exact: true }).click();
+  const open = page.getByRole('button', { name: 'Open print preview example' });
+  await open.click();
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
+  await expect(preview).toHaveAccessibleDescription(/paper size and margins/);
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
+  await expect(open).toBeFocused();
 });

@@ -1454,6 +1454,16 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(frozen.getByRole('heading', { name: 'Historical print preview' })).toBeFocused();
   await expect(frozen.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
   await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+  // What is printed is unchanged: the toolbar shows its original text and the
+  // new Back control never reaches the paper.
+  await page.emulateMedia({ media: 'print' });
+  const toolbarText = await frozen.locator('.print-preview__toolbar').innerText();
+  expect(toolbarText).toContain('Historical print preview');
+  expect(toolbarText).toContain('Print / Save as PDF');
+  expect(toolbarText).not.toContain('Back to brew');
+  await expect(frozen.getByRole('button', { name: 'Back to brew' })).toBeHidden();
+  await expect(frozen.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
   await page.keyboard.press('Escape');
   await expect(frozen).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Print frozen plan' })).toBeFocused();
