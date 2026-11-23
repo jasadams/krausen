@@ -134,7 +134,9 @@ test('a delayed summary cannot touch a disposed editor', async ({ page }) => {
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // The print task is modal, so the page is left with browser Back.
+  // KRA-43: the print task is modal, so the sidebar link that used to be clicked
+  // here is now inert and unreachable; the page is left with browser Back.
+  expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
@@ -165,7 +167,9 @@ test('a delayed summary denial cannot touch a disposed editor', async ({ page })
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Print…' }).click();
   await requestStarted;
-  // The print task is modal, so the page is left with browser Back.
+  // KRA-43: the print task is modal, so the sidebar link that used to be clicked
+  // here is now inert and unreachable; the page is left with browser Back.
+  expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
   await page.goBack();
   await expect(page).toHaveURL(/\/beerxml$/);
   await page.waitForTimeout(2000);
@@ -331,4 +335,29 @@ test('the permanent export and print disclosure is gone from the recipe', async 
   await expect(page.getByText('Export and print', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Preview saved revision' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Prepare unsaved draft' })).toHaveCount(0);
+});
+
+test('the page behind the preview stays inert when the editor remounts the preview during revalidation', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print remount ${Date.now()}`));
+  await openPrint(page);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toBeVisible();
+  // A window focus makes the editor revalidate, hide and restore the preview.
+  for (let round = 0; round < 3; round++) {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(preview).toBeVisible();
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
+    expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
+    await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
+  }
+  for (let step = 0; step < 10; step++) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => {
+      const active = document.activeElement;
+      return !active || active === document.body || !!active.closest('.print-preview');
+    })).toBe(true);
+  }
+  await page.getByRole('button', { name: 'Back to editor' }).click();
+  await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
+  expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(false);
 });
