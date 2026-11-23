@@ -204,9 +204,11 @@ test.describe('approved recipe and shared kit composition', () => {
     await page.getByRole('tab', { name: 'Brews' }).click();
     await page.getByRole('button', { name: 'Recipe actions' }).click();
     await page.getByRole('button', { name: 'Print…' }).click();
-    await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('#recipe-output-disclosure')).toHaveJSProperty('open', true);
-    await expect(page.locator('#recipe-output-disclosure > summary')).toBeFocused();
+    // Print opens its own on-demand task from any tab (no permanent disclosure).
+    await expect(page.getByRole('dialog', { name: 'Print preview' }).or(page.getByRole('dialog', { name: 'Print recipe' }))).toBeVisible();
+    await expect(page.locator('#recipe-output-disclosure')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'Recipe actions' })).toBeFocused();
   });
 
   test('Recipe actions is an ordinary popover that returns focus and keeps editing reachable', async ({ page }) => {
@@ -222,7 +224,12 @@ test.describe('approved recipe and shared kit composition', () => {
     await expect(trigger).toBeFocused();
     await trigger.click();
     await page.getByRole('button', { name: 'Export…' }).click();
-    await expect(page.locator('#recipe-output-disclosure')).toHaveJSProperty('open', true);
+    const exportTask = page.getByRole('dialog', { name: 'Export BeerXML' });
+    await expect(exportTask).toBeVisible();
+    await expect(page.locator('#recipe-output-disclosure')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(exportTask).toBeHidden();
+    await expect(trigger, 'the task returns focus to its opener').toBeFocused();
     await page.getByRole('button', { name: 'Change equipment' }).click();
     await expect(page.locator('#recipe-equipment-disclosure')).toHaveJSProperty('open', true);
     await expect(page.locator('#equipment-profile-select')).toBeFocused();

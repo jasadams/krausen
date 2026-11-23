@@ -1490,17 +1490,21 @@ fn PrintRecipe(
         busy.set(true);
         status.set("Preparing the print summary…".into());
         leptos::task::spawn_local(async move {
+            // A closed, superseded or revalidated run never touches the state of
+            // the run that replaced it; the effect below owns `busy` for those.
+            let mine = move || task_generation.try_get_untracked() == Some(task);
             let context_result = check_editor_access(&expected).await;
             if context_visible.try_get_untracked().is_none() {
                 return;
             }
             if check_generation.try_get_untracked() != Some(context_epoch) {
-                busy.set(false);
                 return;
             }
             if context_result != EditorAccess::Verified {
                 hold_editor(access, context_visible, context_result);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             let result =
@@ -1529,12 +1533,13 @@ fn PrintRecipe(
                 return;
             }
             if check_generation.try_get_untracked() != Some(context_epoch) {
-                busy.set(false);
                 return;
             }
             if context_result != EditorAccess::Verified {
                 hold_editor(access, context_visible, context_result);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             // Authority denial must invalidate a mounted editor even when the
@@ -1546,20 +1551,24 @@ fn PrintRecipe(
             ) {
                 let outcome = if matches!(&result, Ok(ProcessSummaryOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
                 hold_editor(access, context_visible, outcome);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             if draft_generation.is_some_and(|generation| {
                 draft.try_with_untracked(|draft| draft.generation) != Some(generation)
             }) {
-                busy.set(false);
-                status.set("The draft changed. Prepare the print summary again.".into());
+                if mine() {
+                    busy.set(false);
+                    status.set("The draft changed. Prepare the print summary again.".into());
+                }
+                return;
+            }
+            if !mine() {
                 return;
             }
             busy.set(false);
-            if task_generation.try_get_untracked() != Some(task) {
-                return;
-            }
             match result {
                 Ok(ProcessSummaryOutcome::Summary(summary)) => {
                     status.set(String::new());
@@ -1632,8 +1641,10 @@ fn PrintRecipe(
     });
     // Opening resets the task; a known source is prepared at once, an ambiguous
     // one waits for the short choice. Closing retires any in-flight request.
+    // It also runs again when a revalidation restores the editor, so a request
+    // dropped by the check is prepared afresh instead of leaving the task stuck.
     Effect::new(move |_| {
-        if open.get() {
+        if open.get() && context_visible.get() {
             status.set(String::new());
             if let SourceChoice::Known(chosen) = source.get_untracked() {
                 prepare.run(chosen);

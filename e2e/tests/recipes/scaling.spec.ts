@@ -308,3 +308,76 @@ for (const [width, height] of [[320, 568], [390, 844], [844, 390]]) {
     }
   });
 }
+
+test('an unreadable retained record blocks Scale and Duplicate until it is explicitly discarded', async ({ page }) => {
+  await createScalableRecipe(page, `Broken record ${Date.now()}`);
+  await page.evaluate(() => localStorage.setItem('krausen-transform-v1:garbage', 'not json'));
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scale batch' });
+  await expect(dialog.getByRole('alert')).toContainText('cannot be identified');
+  await expect(dialog.getByRole('button', { name: 'Preview scaling' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Discard unreadable retained request' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Preview scaling' })).toBeEnabled();
+  expect(await page.evaluate(() => localStorage.getItem('krausen-transform-v1:garbage'))).toBeNull();
+});
+
+test('a block caused by the other command is lifted once that command is resolved', async ({ page }) => {
+  await createScalableRecipe(page, `Cross block ${Date.now()}`);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await page.route('**/execute_scale_apply*', (route) => route.abort());
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  const duplicate = page.getByRole('dialog', { name: 'Duplicate recipe' });
+  await expect(duplicate.getByRole('alert')).toContainText('A Scale request for this recipe is unresolved');
+  await expect(duplicate.getByRole('button', { name: 'Duplicate', exact: true })).toBeDisabled();
+  await duplicate.getByRole('button', { name: 'Close' }).click();
+  await page.unroute('**/execute_scale_apply*');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toBeVisible();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await expect(duplicate.getByRole('alert')).toHaveCount(0);
+  await expect(duplicate.getByRole('button', { name: 'Duplicate', exact: true })).toBeEnabled();
+});
+
+test('a Scale preview that finishes after Escape is not shown when reopened', async ({ page }) => {
+  await createScalableRecipe(page, `Late preview ${Date.now()}`);
+  await page.route('**/leptos-api/execute_scale_preview*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(2000);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Scale batch' })).toBeVisible();
+  await expect(page.getByText(/20 L to 40 L/)).toHaveCount(0);
+});
+
+test('an open Scale preview survives the editor revalidating on window focus', async ({ page }) => {
+  await createScalableRecipe(page, `Scale revalidate ${Date.now()}`);
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('dialog', { name: 'Scale batch' })).toBeVisible();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply scaling' })).toBeEnabled();
+});

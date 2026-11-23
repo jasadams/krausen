@@ -593,4 +593,67 @@ test('file preview, explicit import and saved/original downloads share native va
   await choice.getByRole('button', { name: 'Export unsaved draft' }).click();
   await expect(choice.getByRole('status')).toContainText(/Review the omitted information|Unsaved draft export is ready/);
   await expect(choice.getByRole('button', { name: 'Export saved revision 2' })).toBeVisible();
+  await choice.getByRole('button', { name: 'Close' }).click();
+
+  // A saved version selected in Saved versions supplies its own source: no
+  // choice and no typed revision number, even with the dirty draft retained.
+  const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
+  // The unsaved draft makes leaving ask first; Leave is chosen explicitly.
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.goto(`/recipe-editor/${id}?section=versions&revision=1`);
+  await page.getByLabel('Recipe name', { exact: true }).fill('Draft kept while exporting a version');
+  const selected = await openExport(page);
+  await expect(selected).toContainText('Source: Saved revision 1');
+  await expect(selected.getByLabel('Saved revision')).toHaveCount(0);
+  await expect(selected).not.toContainText('Choose which source');
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Draft kept while exporting a version');
+});
+
+async function importEditedRecipe(page: import('@playwright/test').Page) {
+  const title = `Export task ${Date.now()}`;
+  const xml = `<RECIPES vendor="example"><RECIPE><NAME>${title}</NAME><EST_OG>1.055 SG</EST_OG><EFFICIENCY>75</EFFICIENCY><FERMENTABLES><FERMENTABLE><NAME>Malt</NAME><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES></RECIPE></RECIPES>`;
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(xml);
+  await page.getByLabel('Source colour').selectOption('srm');
+  await page.getByLabel('Source efficiency').selectOption('override');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Recipe imported' })).toBeVisible();
+  await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${title} edited`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  return title;
+}
+
+test('a focus revalidation while the export task shows its acknowledgement prepares it again', async ({ page }) => {
+  await importEditedRecipe(page);
+  const dialog = await openExport(page);
+  const acknowledge = dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' });
+  await expect(acknowledge).toBeVisible();
+  for (let round = 0; round < 2; round++) {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(dialog).toBeVisible();
+    await expect(acknowledge, 'the acknowledgement is not lost or stranded').toBeVisible();
+    await expect(dialog.getByRole('status')).toContainText('Review the omitted information');
+  }
+  await acknowledge.click();
+  await expect(dialog.getByRole('link', { name: 'Download BeerXML', exact: true })).toBeVisible();
+});
+
+test('closing the export task while its request is in flight does not block opening it again', async ({ page }) => {
+  await importEditedRecipe(page);
+  let first = true;
+  await page.route('**/leptos-api/export_beerxml*', async (route) => {
+    if (first) {
+      first = false;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    await route.continue();
+  });
+  const dialog = await openExport(page);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  const again = await openExport(page);
+  await expect(again.getByRole('button', { name: 'Acknowledge omissions and prepare download' })).toBeVisible();
 });

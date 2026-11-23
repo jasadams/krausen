@@ -45,6 +45,13 @@ pub fn PrintPreviewTask(
         let body = web_sys::window()
             .and_then(|window| window.document())
             .and_then(|document| document.body());
+        // The print-only page state is shared by every live preview instance, so
+        // a remount that mounts before the old instance is disposed cannot lose
+        // it: it is removed only when the last instance goes away.
+        static LIVE_PRINT_STATES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if print_state {
+            LIVE_PRINT_STATES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         if let Some(body) = body.as_ref().filter(|_| print_state) {
             if body.class_list().add_1("krausen-printing").is_err() {
                 tracing::warn!("Unable to prepare the print-only page state");
@@ -111,9 +118,11 @@ pub fn PrintPreviewTask(
                     tracing::warn!("Unable to restore the page behind the print preview");
                 }
             }
-            if let Some(body) = body.filter(|_| print_state) {
-                if body.class_list().remove_1("krausen-printing").is_err() {
-                    tracing::warn!("Unable to clear the print-only page state");
+            if print_state && LIVE_PRINT_STATES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                if let Some(body) = body {
+                    if body.class_list().remove_1("krausen-printing").is_err() {
+                        tracing::warn!("Unable to clear the print-only page state");
+                    }
                 }
             }
         });

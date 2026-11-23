@@ -346,6 +346,7 @@ test('the page behind the preview stays inert when the editor remounts the previ
     await expect(preview).toBeVisible();
     await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
     expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
+    await expect(page.locator('body'), 'the print-only page state survives a remount').toHaveClass(/krausen-printing/);
     await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
   }
   await expectTabContainment(page, '.print-preview', 10);
@@ -375,3 +376,44 @@ for (const [width, height] of [[320, 568], [390, 844]]) {
     await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
   });
 }
+
+test('a revalidation during the print request prepares it again instead of sticking on Preparing', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print revalidate ${Date.now()}`));
+  let first = true;
+  await page.route('**/leptos-api/request_process_summary*', async (route) => {
+    if (first) {
+      first = false;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+    await route.continue();
+  });
+  await openPrint(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('dialog', { name: 'Print preview' })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('dialog', { name: 'Print recipe' })).toHaveCount(0);
+});
+
+test('closing and reopening the print task while a request is in flight runs only the new request', async ({ page }) => {
+  const title = `Print reopen ${Date.now()}`;
+  await importRecipe(page, SIMPLE_RECIPE(title));
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${title} edited`);
+  let calls = 0;
+  await page.route('**/leptos-api/request_process_summary*', async (route) => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  await openPrint(page);
+  const task = page.getByRole('dialog', { name: 'Print recipe' });
+  await task.getByRole('button', { name: 'Preview saved revision 1' }).click();
+  await page.keyboard.press('Escape');
+  await expect(task).toBeHidden();
+  await openPrint(page);
+  await expect(task.getByRole('button', { name: 'Preview saved revision 1' }), 'a closed run does not leave the task busy').toBeEnabled();
+  await task.getByRole('button', { name: 'Preview unsaved draft' }).click();
+  await page.waitForTimeout(2200);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toContainText('Unsaved draft');
+  await expect(preview).not.toContainText('Saved revision 1');
+  expect(calls).toBe(2);
+});

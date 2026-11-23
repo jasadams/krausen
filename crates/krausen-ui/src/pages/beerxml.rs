@@ -992,12 +992,13 @@ pub(super) fn BeerXmlExport(
         warnings.set(Vec::new());
         draft_export_generation.set(None);
     };
-    Effect::new(move |_| {
-        if !context_visible.get() {
-            export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
-            clear();
-        }
-    });
+    // Retires any request in flight: its late result is dropped by the sequence
+    // fence, and `busy` is released here so the task can be started again.
+    let retire = move || {
+        export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
+        busy.set(false);
+        clear();
+    };
     Effect::new(move |_| {
         let generation = draft.with(|d| d.generation);
         if draft_export_generation
@@ -1031,9 +1032,12 @@ pub(super) fn BeerXmlExport(
             None
         };
         leptos::task::spawn_local(async move {
+            let stale = move || export_sequence.try_get_untracked() != Some(sequence);
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
-                busy.set(false);
+                return;
+            }
+            if stale() {
                 return;
             }
             let result = crate::server_fns::interchange::export_beerxml(request.clone()).await;
@@ -1051,13 +1055,12 @@ pub(super) fn BeerXmlExport(
             };
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
-                busy.set(false);
+                return;
+            }
+            if stale() {
                 return;
             }
             busy.set(false);
-            if export_sequence.try_get_untracked() != Some(sequence) {
-                return;
-            }
             if expected_generation
                 .is_some_and(|generation| draft.with_untracked(|d| d.generation) != generation)
             {
@@ -1136,16 +1139,17 @@ pub(super) fn BeerXmlExport(
     });
     // Opening resets the task; a known source is prepared at once, an ambiguous
     // one waits for the short choice. Closing retires any in-flight request.
+    // It also runs again when a revalidation hides and restores the editor, so a
+    // result dropped by the check is prepared afresh instead of being stranded.
     Effect::new(move |_| {
-        if open.get() {
+        if open.get() && context_visible.get() {
             clear();
             status.set(String::new());
             if let SourceChoice::Known(chosen) = source.get_untracked() {
                 prepare.run(chosen);
             }
         } else {
-            export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
-            clear();
+            retire();
         }
     });
     let fetch_original = move |_| {
@@ -1156,12 +1160,17 @@ pub(super) fn BeerXmlExport(
             return;
         };
         let expected = identity.get_untracked();
+        export_sequence.update(|n| *n = n.checked_add(1).expect("export sequence exhausted"));
+        let sequence = export_sequence.get_untracked();
         busy.set(true);
         original.set(None);
         leptos::task::spawn_local(async move {
+            let stale = move || export_sequence.try_get_untracked() != Some(sequence);
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
-                busy.set(false);
+                return;
+            }
+            if stale() {
                 return;
             }
             let result =
@@ -1181,7 +1190,9 @@ pub(super) fn BeerXmlExport(
             };
             if !current_context_matches(&expected).await {
                 context_visible.set(false);
-                busy.set(false);
+                return;
+            }
+            if stale() {
                 return;
             }
             busy.set(false);

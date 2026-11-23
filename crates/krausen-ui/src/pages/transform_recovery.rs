@@ -8,6 +8,10 @@
 //! (`krausen-app` `scaling::apply`/`scaling::duplicate`), so a second tab or a
 //! replay after a lost response cannot apply twice or create a second recipe.
 //!
+//! Selection is a pure function over the stored entries (oldest first, an
+//! unreadable or mismatched in-scope record or an unidentifiable key fails
+//! closed) and an explicit, named discard removes only broken records, never a
+//! readable request that may have committed, exactly as `start_recovery.rs` does.
 //! This follows the `start_recovery.rs`/`library_recovery.rs` convention and is
 //! deliberately not shared with them: each retains a different command family
 //! with its own payload type and scope (a recipe here, a catalogue entry or a
@@ -44,6 +48,9 @@ struct Record {
     version: u8,
     installation: String,
     command: TransformCommand,
+    /// Creation time (ms since epoch); orders unresolved records oldest first.
+    #[serde(default)]
+    created_ms: u64,
 }
 
 const PREFIX: &str = "krausen-transform-v1:";
@@ -55,32 +62,8 @@ fn key(installation: &str, command: &TransformCommand) -> Result<String, String>
         .map_err(|e| e.to_string())
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 fn key_scope(key: &str) -> Option<(String, String, String, String, String)> {
     serde_json::from_str(key.strip_prefix(PREFIX)?).ok()
-}
-
-/// A stored record is trusted only when its key, scope and payload agree.
-/// Anything else fails closed: no new Scale/Duplicate is permitted until the
-/// retained original is resolved, rather than guessing or discarding it.
-#[cfg(any(target_arch = "wasm32", test))]
-fn validate(
-    stored_key: &str,
-    record: &Record,
-    installation: &str,
-    intent: &OperationIntent,
-    recipe_id: &str,
-) -> Result<(), String> {
-    let (command_intent, command_recipe, _) = record.command.identity();
-    if record.version != 1
-        || record.installation != installation
-        || command_intent != intent
-        || command_recipe != recipe_id
-        || key(installation, &record.command).as_deref() != Ok(stored_key)
-    {
-        return Err("A retained Scale or Duplicate request does not match its scope; no new one is permitted".into());
-    }
-    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -88,11 +71,25 @@ fn storage() -> Result<web_sys::Storage, String> {
     crate::utils::storage::local_storage("Scale and Duplicate recovery")
 }
 
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> u64 {
+    js_sys::Date::now() as u64
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> u64 {
+    0
+}
+
 /// Retain the exact command before it is sent. A different payload already
 /// owning the request identity is refused, never replaced.
 pub(crate) fn retain(installation: &str, command: &TransformCommand) -> Result<(), String> {
     let key = key(installation, command)?;
-    let record = Record { version: 1, installation: installation.to_owned(), command: command.clone() };
+    let record = Record {
+        version: 1,
+        installation: installation.to_owned(),
+        command: command.clone(),
+        created_ms: now_ms(),
+    };
     let json = krausen_types::request_context::checked_json(&record)
         .map_err(|_| "The request cannot be retained without changing its numbers".to_owned())?;
     #[cfg(target_arch = "wasm32")]
@@ -117,49 +114,146 @@ pub(crate) fn retain(installation: &str, command: &TransformCommand) -> Result<(
 pub(crate) fn remove(installation: &str, command: &TransformCommand) {
     #[cfg(target_arch = "wasm32")]
     if let Ok(key) = key(installation, command) {
-        if let Ok(storage) = storage() {
-            if storage.remove_item(&key).is_err() {
-                tracing::warn!("Unable to remove resolved Scale and Duplicate recovery");
+        match storage() {
+            Ok(storage) => {
+                if storage.remove_item(&key).is_err() {
+                    tracing::warn!("Unable to remove resolved Scale and Duplicate recovery");
+                }
             }
+            Err(error) => tracing::warn!(error, "Unable to remove resolved Scale and Duplicate recovery"),
         }
     }
     let _ = (installation, command);
 }
 
-/// The retained command for exactly this installation/account/workspace/recipe.
+/// Pure selection over the stored entries (`key`, `value`) so the fail-closed
+/// rules are testable without a browser. Only entries whose key names exactly
+/// this installation, account, workspace and recipe are considered, so a corrupt
+/// record for another recipe never blocks this one. An unreadable or mismatched
+/// in-scope record is an error: no new Scale or Duplicate is permitted until it
+/// is resolved. Oldest first.
+fn select(
+    entries: Vec<(String, Option<String>)>,
+    installation: &str,
+    intent: &OperationIntent,
+    recipe_id: &str,
+) -> Result<Vec<TransformCommand>, String> {
+    let mut found = Vec::new();
+    for (stored, value) in entries {
+        let Some((i, account, workspace, recipe, _)) = key_scope(&stored) else {
+            if stored.starts_with(PREFIX) {
+                // The key itself is unreadable, so its recipe cannot be known.
+                return Err("A retained Scale or Duplicate request cannot be identified; no new one is permitted".into());
+            }
+            continue;
+        };
+        if i != installation || account != intent.account_id || workspace != intent.workspace_id || recipe != recipe_id {
+            continue;
+        }
+        let record: Record = value
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .ok_or("A retained Scale or Duplicate request is unreadable; no new one is permitted")?;
+        let (command_intent, command_recipe, _) = record.command.identity();
+        if record.version != 1
+            || record.installation != installation
+            || command_intent != intent
+            || command_recipe != recipe_id
+            || key(installation, &record.command).as_deref() != Ok(stored.as_str())
+        {
+            return Err("A retained Scale or Duplicate request does not match its scope; no new one is permitted".into());
+        }
+        found.push((record.created_ms, stored, record.command));
+    }
+    found.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    Ok(found.into_iter().map(|(_, _, command)| command).collect())
+}
+
+/// Every retained entry (key and raw value; `Err` when the value could not be
+/// read). Shared by `load` (which fails closed) and `discard` (which skips).
+#[cfg(target_arch = "wasm32")]
+fn raw_entries(storage: &web_sys::Storage) -> Result<Vec<(String, Result<Option<String>, ()>)>, String> {
+    let mut raw = Vec::new();
+    for index in 0..storage.length().map_err(|_| "Unable to list Scale and Duplicate recovery")? {
+        let Some(stored) = storage.key(index).map_err(|_| "Unable to read recovery key")? else { continue };
+        if stored.starts_with(PREFIX) {
+            let value = storage.get_item(&stored).map_err(|_| ());
+            raw.push((stored, value));
+        }
+    }
+    Ok(raw)
+}
+
+/// Unresolved commands for this installation/account/workspace/recipe, oldest first.
 pub(crate) fn load(
     installation: &str,
     intent: &OperationIntent,
     recipe_id: &str,
-) -> Result<Option<TransformCommand>, String> {
+) -> Result<Vec<TransformCommand>, String> {
     #[cfg(target_arch = "wasm32")]
     {
         let storage = storage()?;
-        let mut found = Vec::new();
-        for index in 0..storage.length().map_err(|_| "Unable to list Scale and Duplicate recovery")? {
-            let Some(stored_key) = storage.key(index).map_err(|_| "Unable to read recovery key")? else { continue };
-            let Some((stored_installation, account, workspace, recipe, _)) = key_scope(&stored_key) else { continue };
-            if stored_installation != installation
-                || account != intent.account_id
-                || workspace != intent.workspace_id
-                || recipe != recipe_id
-            {
-                continue;
-            }
-            let Some(json) = storage.get_item(&stored_key).map_err(|_| "Unable to read recovery")? else { continue };
-            let record: Record = serde_json::from_str(&json)
-                .map_err(|_| "A retained Scale or Duplicate request is unreadable; no new one is permitted")?;
-            validate(&stored_key, &record, installation, intent, recipe_id)?;
-            found.push((stored_key, record.command));
-        }
-        found.sort_by(|a, b| a.0.cmp(&b.0));
-        return Ok(found.into_iter().next().map(|(_, command)| command));
+        // Fails closed: a key whose value cannot be read blocks Scale and Duplicate.
+        let entries = raw_entries(&storage)?
+            .into_iter()
+            .map(|(key, value)| {
+                value
+                    .map(|value| (key, value))
+                    .map_err(|()| "Unable to read Scale and Duplicate recovery".to_owned())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        return select(entries, installation, intent, recipe_id);
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (installation, intent, recipe_id);
-        Ok(None)
+        Ok(Vec::new())
     }
+}
+
+/// Keys an explicit discard may remove: only the broken entries (unparseable
+/// keys of this family and in-scope entries that are unreadable or do not match
+/// their key). A readable request is never listed, because the operation may
+/// have committed for it.
+fn discardable(
+    entries: &[(String, Option<String>)],
+    installation: &str,
+    intent: &OperationIntent,
+    recipe_id: &str,
+) -> Vec<String> {
+    let mut doomed = Vec::new();
+    for (stored, value) in entries {
+        let Some((i, account, workspace, recipe, _)) = key_scope(stored) else {
+            if stored.starts_with(PREFIX) {
+                doomed.push(stored.clone());
+            }
+            continue;
+        };
+        if i != installation || account != intent.account_id || workspace != intent.workspace_id || recipe != recipe_id {
+            continue;
+        }
+        if select(vec![(stored.clone(), value.clone())], installation, intent, recipe_id).is_err() {
+            doomed.push(stored.clone());
+        }
+    }
+    doomed
+}
+
+/// Explicit, named user resolution of unreadable retained records. See [`discardable`].
+pub(crate) fn discard_broken(installation: &str, intent: &OperationIntent, recipe_id: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Ok(storage) = storage() {
+        let Ok(raw) = raw_entries(&storage) else { return };
+        // A key whose value could not be read is neither listed nor deleted: an
+        // error is not evidence that the record is broken.
+        let entries: Vec<_> = raw.into_iter().filter_map(|(key, value)| value.ok().map(|value| (key, value))).collect();
+        for stored in discardable(&entries, installation, intent, recipe_id) {
+            if storage.remove_item(&stored).is_err() {
+                tracing::warn!("Unable to discard a retained Scale or Duplicate record");
+            }
+        }
+    }
+    let _ = (installation, intent, recipe_id);
 }
 
 #[cfg(test)]
@@ -187,6 +281,7 @@ mod tests {
             version: 1,
             installation: "http://local".into(),
             command: command.clone(),
+            created_ms: 7,
         })
         .unwrap();
         let recovered: Record = serde_json::from_str(&json).unwrap();
@@ -200,20 +295,45 @@ mod tests {
         assert_ne!(stored, key("http://other", &command).unwrap());
     }
 
+    fn entry(command: &TransformCommand, created_ms: u64) -> (String, Option<String>) {
+        let record = Record { version: 1, installation: "http://local".into(), command: command.clone(), created_ms };
+        (key("http://local", command).unwrap(), Some(serde_json::to_string(&record).unwrap()))
+    }
+
     #[test]
-    fn only_a_record_whose_key_scope_and_payload_agree_is_trusted() {
-        let command = duplicate("request-1");
-        let stored = key("http://local", &command).unwrap();
-        let record = || Record { version: 1, installation: "http://local".into(), command: command.clone() };
-        assert!(validate(&stored, &record(), "http://local", &intent(), "r").is_ok());
-        let mut wrong_version = record();
-        wrong_version.version = 2;
-        assert!(validate(&stored, &wrong_version, "http://local", &intent(), "r").is_err());
-        assert!(validate(&stored, &record(), "http://other", &intent(), "r").is_err(), "installation");
-        assert!(validate(&stored, &record(), "http://local", &intent(), "other-recipe").is_err(), "recipe");
-        let other_account = OperationIntent { account_id: "b".into(), workspace_id: "w".into() };
-        assert!(validate(&stored, &record(), "http://local", &other_account, "r").is_err(), "account");
-        let other_key = key("http://local", &duplicate("request-2")).unwrap();
-        assert!(validate(&other_key, &record(), "http://local", &intent(), "r").is_err(), "key/payload mismatch");
+    fn selection_is_oldest_first_and_scoped_to_one_recipe() {
+        let mut other_recipe = duplicate("request-3");
+        if let TransformCommand::Duplicate(c) = &mut other_recipe {
+            c.source_recipe_id = "elsewhere".into();
+        }
+        let entries = vec![entry(&duplicate("newer"), 20), entry(&duplicate("older"), 10), entry(&other_recipe, 5)];
+        let found = select(entries, "http://local", &intent(), "r").unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(matches!(&found[0], TransformCommand::Duplicate(c) if c.request_id == "older"));
+        assert!(matches!(&found[1], TransformCommand::Duplicate(c) if c.request_id == "newer"));
+    }
+
+    #[test]
+    fn a_broken_in_scope_record_fails_closed_but_another_recipes_corruption_does_not() {
+        let good = entry(&duplicate("request-1"), 1);
+        let unreadable = (good.0.clone(), Some("not json".to_owned()));
+        assert!(select(vec![unreadable.clone()], "http://local", &intent(), "r").is_err());
+        assert!(select(vec![unreadable], "http://local", &intent(), "elsewhere").unwrap().is_empty());
+        let mismatched = (key("http://local", &duplicate("request-2")).unwrap(), good.1.clone());
+        assert!(select(vec![mismatched], "http://local", &intent(), "r").is_err());
+        let unidentifiable = (format!("{PREFIX}garbage"), Some("{}".to_owned()));
+        assert!(select(vec![unidentifiable], "http://local", &intent(), "r").is_err(), "an unreadable key could belong to this recipe");
+        assert!(select(vec![("unrelated-key".to_owned(), Some("x".to_owned()))], "http://local", &intent(), "r").unwrap().is_empty());
+    }
+
+    #[test]
+    fn discarding_lists_only_broken_records_never_a_readable_request() {
+        let readable = entry(&duplicate("request-1"), 1);
+        let broken = (key("http://local", &duplicate("request-2")).unwrap(), Some("not json".to_owned()));
+        let unidentifiable = (format!("{PREFIX}garbage"), None);
+        let doomed = discardable(&[readable.clone(), broken.clone(), unidentifiable.clone()], "http://local", &intent(), "r");
+        assert!(doomed.contains(&broken.0));
+        assert!(doomed.contains(&unidentifiable.0));
+        assert!(!doomed.contains(&readable.0), "a readable request may have committed");
     }
 }
