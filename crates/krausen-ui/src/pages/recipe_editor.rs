@@ -251,6 +251,10 @@ pub fn RecipeEditorPage() -> impl IntoView {
     </Suspense> }
 }
 
+/// `(DOM id, visible label)` of the batch volume control, declared once for the
+/// control and the diagnostic registry.
+pub(crate) const BATCH_FIELD: (&str, &str) = ("recipe-batch", "Batch volume");
+
 /// One focus guard for every deliberate editor focus move: visible, connected,
 /// enabled and not inside a hidden/inert subtree.
 #[cfg(target_arch = "wasm32")]
@@ -276,7 +280,7 @@ pub(crate) fn focus_element(id: &str) {
 /// then focus it, or the summary entry that explains it when the control is not
 /// rendered (a conditional field, for instance). Called only from a user action.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn jump_to_diagnostic(target: &str, explanation: &str) {
+fn jump_to_diagnostic(target: &str, explanation: &str) {
     use wasm_bindgen::JsCast;
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     if let Some(element) = document.get_element_by_id(target) {
@@ -288,6 +292,15 @@ pub(crate) fn jump_to_diagnostic(target: &str, explanation: &str) {
         if try_focus_element(&element) { return; }
     }
     focus_element(explanation);
+}
+
+/// Waits for the render, then runs the deliberate diagnostic jump. Shared by the
+/// editor and the design-system showcase.
+pub(crate) fn jump_after_render(target: String, explanation: String) {
+    #[cfg(target_arch = "wasm32")]
+    request_animation_frame(move || jump_to_diagnostic(&target, &explanation));
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (target, explanation);
 }
 
 /// Open a native disclosure from a header command, then move focus into it.
@@ -1332,10 +1345,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     };
     let jump = Callback::new(move |(target, explanation): (String, String)| {
         active_tab.set("recipe".to_owned());
-        #[cfg(target_arch = "wasm32")]
-        request_animation_frame(move || jump_to_diagnostic(&target, &explanation));
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = (target, explanation);
+        jump_after_render(target, explanation);
     });
     provide_context(crate::components::diagnostic_list::DiagnosticJump(jump));
     let review = Callback::new(move |()| {
@@ -1343,10 +1353,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         draft.update(|d| d.settle_numbers());
         if let Some(first) = draft.with_untracked(crate::pages::recipe_diagnostics::first_invalid) {
             let target = match first.route {
-                crate::pages::recipe_diagnostics::Route::Field { dom_id } => dom_id,
-                crate::pages::recipe_diagnostics::Route::Explain => first.key.clone(),
+                crate::components::diagnostic_list::Route::Field { dom_id } => dom_id,
+                crate::components::diagnostic_list::Route::Explain => first.key.clone(),
             };
-            jump.run((target, first.key));
+            // A malformed entry has no summary row, so the page heading is the fallback.
+            let explanation = if first.code == "malformed" { "recipe-editor-heading".to_owned() } else { first.key };
+            jump.run((target, explanation));
         }
     });
     let header_actions = RecipeActionSlots {
@@ -1451,7 +1463,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         })}
         <crate::components::wayfinding::PageTitle text=Signal::derive(move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() }))/>
         <RecipeHeader draft=draft revision=revision status=status retained=retained pending=pending conflict=Signal::derive(move || conflict.with(|c| c.is_some())) equipment=equipment_summary title=title on_title=title_change style_value=selected_style style_options=style_options on_style=change_style actions=header_actions actions_open=actions_open>
-            <NumberField id="recipe-batch" label="Batch volume" unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
+            <NumberField id=BATCH_FIELD.0 label=BATCH_FIELD.1 unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
         </RecipeHeader>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
         <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>

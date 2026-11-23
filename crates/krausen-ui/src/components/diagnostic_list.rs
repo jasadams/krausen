@@ -2,9 +2,29 @@
 //! Shared kit list of resolved diagnostics (UX-006). The recipe editor and the
 //! design-system showcase render this one component.
 use crate::components::{Button, ButtonSize, ButtonVariant};
-use crate::pages::recipe_diagnostics::{Presented, Route};
 use krausen_types::validation::Readiness;
 use leptos::prelude::*;
+
+/// Where a diagnostic can be repaired.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// An editable control with this stable DOM id.
+    Field { dom_id: String },
+    /// Preserved data this editor cannot correct: an honest explanation, no link.
+    Explain,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presented {
+    /// Stable DOM id of this message in the summary; the fallback focus target.
+    pub key: String,
+    pub path: String,
+    pub code: String,
+    pub severity: Readiness,
+    /// Full sentence, naming the row and field.
+    pub message: String,
+    pub route: Route,
+}
 
 /// Moves to a control on the user's explicit request: the owner selects the
 /// Recipe tab, opens collapsed ancestors, waits for the render, then focuses the
@@ -51,7 +71,7 @@ pub fn DiagnosticList(
     view! {
         <Show when=move || items.with(|list| !list.is_empty())>
             <section class="k-diagnostics k-stale" class:k-stale--active=move || stale.get() aria-labelledby=heading_id>
-                <h3 id=heading_id class="k-diagnostics__title">"Recipe issues"<span class="k-stale__cue" data-testid="diagnostics-stale">{move || stale.get().then_some(" · Out of date, checking")}</span></h3>
+                <h3 id=heading_id class="k-diagnostics__title">"Recipe issues"<span class="k-stale__cue" data-testid="diagnostics-stale">{move || stale.get().then_some(" · Out of date")}</span></h3>
                 {group(Readiness::Invalid, "Correct before saving")}
                 {group(Readiness::Incomplete, "Needed to start a brew")}
             </section>

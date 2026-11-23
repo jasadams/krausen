@@ -11,77 +11,60 @@ use crate::pages::{
     ingredient_addition::{
         AdditionCategory, category_for_head, diagnostic_field, diagnostic_row_field, field_label,
     },
-    recipe_equipment::{chilling_control_hidden, diagnostic_spec},
-    recipe_process::{diagnostic_step, show_kettle_top_up, show_manual_mash_water},
+    recipe_editor::BATCH_FIELD,
+    recipe_equipment::{CHILLING_FIELD, chilling_control_hidden, diagnostic_spec},
+    recipe_process::{diagnostic_step, fields as process_fields, show_kettle_top_up, show_manual_mash_water, step_field_label},
 };
 use crate::pages::recipe_draft::RecipeDraft;
 use krausen_types::{
     brewery::RecipeDocumentV1,
     validation::{Diagnostic, Readiness, Validation},
 };
-use crate::components::diagnostic_list::DiagnosticList;
+use crate::components::diagnostic_list::{DiagnosticList, Presented, Route};
 use leptos::prelude::*;
 
-/// Where a diagnostic can be repaired.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Route {
-    /// An editable control with this stable DOM id.
-    Field { dom_id: String },
-    /// Preserved data this editor cannot correct: an honest explanation, no link.
-    Explain,
+/// Wording for one validator code: the short text beside the control (whose own
+/// label already names the field) and the tail of the full sentence. One table, so
+/// the two cannot drift.
+struct CodeText {
+    code: &'static str,
+    inline: &'static str,
+    tail: &'static str,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Presented {
-    /// Stable DOM id of this message in the summary; the fallback focus target.
-    pub key: String,
-    pub path: String,
-    pub code: String,
-    pub severity: Readiness,
-    /// Full sentence, naming the row and field.
-    pub message: String,
-    pub route: Route,
+const CODES: &[CodeText] = &[
+    CodeText { code: "missing", inline: "Needed to start a brew", tail: "is missing" },
+    CodeText { code: "unfinished_quantity", inline: "Enter an amount above zero to start a brew", tail: "needs an amount above zero" },
+    CodeText { code: "negative", inline: "Enter a non-negative value", tail: "cannot be negative" },
+    CodeText { code: "out_of_range", inline: "Value is out of range", tail: "is outside its allowed range" },
+    CodeText { code: "non_finite", inline: "Enter a finite number", tail: "is not a valid number" },
+    CodeText { code: "exposure_exceeds_boil", inline: "Longer than the boil time", tail: "is longer than the boil time" },
+    CodeText { code: "negative_sparge", inline: "More than the water available", tail: "is more than the water available" },
+    CodeText { code: "opening_exceeds_diameter", inline: "Wider than the kettle diameter", tail: "is wider than the kettle diameter" },
+    CodeText { code: "plateau_not_below_boil", inline: "Must be below the boil temperature", tail: "must be below the boil temperature" },
+    CodeText { code: "unsupported_fermentable_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported stage (mash or boil)" },
+    CodeText { code: "unsupported_hop_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported use" },
+    CodeText { code: "unsupported_fermentable_kind_or_stage", inline: "Choose a type that matches the stage to start a brew", tail: "needs a type that matches its stage" },
+    CodeText { code: "unsupported_cooled_hop_addition", inline: "Clear this to start a brew", tail: "is not supported on a whirlpool addition; clear it" },
+    CodeText { code: "missing_or_unsupported_mash_water_method", inline: "Choose a mash water method to start a brew", tail: "needs a supported method" },
+];
+
+fn code_text(code: &str) -> Option<&'static CodeText> {
+    CODES.iter().find(|entry| entry.code == code)
 }
 
-/// Short text shown beside the control itself; the control's label already names
-/// the field, so these omit it.
+/// Short text shown beside the control itself.
 pub fn inline_text(code: &str, severity: Readiness) -> &'static str {
-    match (code, severity) {
-        ("negative", _) => "Enter a non-negative value",
-        ("out_of_range", _) => "Value is out of range",
-        ("non_finite", _) => "Enter a finite number",
-        ("exposure_exceeds_boil", _) => "Longer than the boil time",
-        ("negative_sparge", _) => "More than the water available",
-        ("opening_exceeds_diameter", _) => "Wider than the kettle diameter",
-        (_, Readiness::Invalid) => "Check this value",
-        ("missing", _) => "Needed to start a brew",
-        ("unfinished_quantity", _) => "Enter an amount above zero to start a brew",
-        ("unsupported_fermentable_stage", _) | ("unsupported_hop_stage", _) => "Choose a supported stage to start a brew",
-        ("unsupported_fermentable_kind_or_stage", _) => "Choose a type that matches the stage to start a brew",
-        ("unsupported_cooled_hop_addition", _) => "Clear this to start a brew",
-        ("missing_or_unsupported_mash_water_method", _) => "Choose a mash water method to start a brew",
-        _ => "Needed to start a brew",
+    match (code_text(code), severity) {
+        (Some(entry), _) => entry.inline,
+        (None, Readiness::Invalid) => "Check this value",
+        (None, _) => "Needed to start a brew",
     }
 }
 
 /// What is wrong with the named field, as a sentence tail.
 fn tail(code: &str) -> &'static str {
-    match code {
-        "missing" => "is missing",
-        "unfinished_quantity" => "needs an amount above zero",
-        "negative" => "cannot be negative",
-        "out_of_range" => "is outside its allowed range",
-        "non_finite" => "is not a valid number",
-        "exposure_exceeds_boil" => "is longer than the boil time",
-        "negative_sparge" => "is more than the water available",
-        "opening_exceeds_diameter" => "is wider than the kettle diameter",
-        "unsupported_fermentable_stage" => "needs a supported stage (mash or boil)",
-        "unsupported_hop_stage" => "needs a supported use",
-        "unsupported_fermentable_kind_or_stage" => "needs a type that matches its stage",
-        "unsupported_cooled_hop_addition" => "is not supported on a whirlpool addition; clear it",
-        "missing_or_unsupported_mash_water_method" => "needs a supported method",
-        _ => "needs attention",
-    }
+    code_text(code).map_or("needs attention", |entry| entry.tail)
 }
 
 fn explanation(path: &str, code: &str) -> String {
@@ -121,18 +104,20 @@ struct Located {
 }
 
 fn fixed_field(path: &str) -> Option<(&'static str, &'static str)> {
-    Some(match path {
-        "batch_size_l" => ("Batch volume", "recipe-batch"),
-        "boil_minutes" => ("Boil time", "recipe-boil"),
-        "process.whirlpool_minutes" => ("Whirlpool time", "recipe-whirlpool"),
-        "process.whirlpool_temperature_c" => ("Whirlpool temperature", "recipe-whirlpool-temp"),
-        "process.kettle_top_up_l" => ("Kettle top-up", "recipe-top-up"),
-        "process.mash_water_l" => ("Mash water", "recipe-mash-water"),
-        "process.mash_water_method" => ("Mash water method", "recipe-mash-method"),
-        "process.apparent_attenuation_fraction" => ("Wort attenuation", "recipe-attenuation"),
-        "equipment.chilling" | "equipment_overrides.chilling" => ("Chilling", "recipe-chilling"),
+    use process_fields as f;
+    let (id, label) = match path {
+        "batch_size_l" => BATCH_FIELD,
+        "boil_minutes" => f::BOIL,
+        "process.whirlpool_minutes" => f::WHIRLPOOL,
+        "process.whirlpool_temperature_c" => f::WHIRLPOOL_TEMP,
+        "process.kettle_top_up_l" => f::TOP_UP,
+        "process.mash_water_l" => f::MASH_WATER,
+        "process.mash_water_method" => f::MASH_METHOD,
+        "process.apparent_attenuation_fraction" => f::ATTENUATION,
+        "equipment.chilling" | "equipment_overrides.chilling" => CHILLING_FIELD,
         _ => return None,
-    })
+    };
+    Some((label, id))
 }
 
 /// A control that is only rendered in some states links to the control that
@@ -141,9 +126,9 @@ fn governed(draft: &RecipeDraft, mut located: Located) -> Located {
     let Route::Field { dom_id } = &located.route else { return located };
     let doc = draft.document();
     let (governing, note) = match dom_id.as_str() {
-        "recipe-mash-water" if !show_manual_mash_water(draft) => ("recipe-mash-method", "Change Mash water method to adjust it."),
-        "recipe-top-up" if !show_kettle_top_up(draft) => ("recipe-mash-method", "Choose a Mash water method to enter it."),
-        id if chilling_control_hidden(doc, id) => ("recipe-chilling", "Set Chilling for this recipe to enter it."),
+        id if id == process_fields::MASH_WATER.0 && !show_manual_mash_water(draft) => (process_fields::MASH_METHOD.0, "Change Mash water method to adjust it."),
+        id if id == process_fields::TOP_UP.0 && !show_kettle_top_up(draft) => (process_fields::MASH_METHOD.0, "Choose a Mash water method to enter it."),
+        id if chilling_control_hidden(doc, id) => (CHILLING_FIELD.0, "Set Chilling for this recipe to enter it."),
         _ => return located,
     };
     located.route = Route::Field { dom_id: governing.into() };
@@ -287,13 +272,10 @@ pub fn plain_message(diagnostic: &Diagnostic) -> String {
     }
     for (prefix, noun) in [("process.mash_steps[", "Mash step"), ("process.fermentation_steps[", "Fermentation step")] {
         if let Some(rest) = path.strip_prefix(prefix) {
-            let label = match rest.split_once("].").map(|(_, t)| t) {
-                Some("time_minutes") => "time",
-                Some("temperature_c") => "temperature",
-                Some("volume_l") => "volume",
-                _ => return explanation(path, &diagnostic.code),
+            let Some(label) = rest.split_once("].").and_then(|(_, t)| step_field_label(t)) else {
+                return explanation(path, &diagnostic.code);
             };
-            return sentence(None, &format!("{noun} {label}"), &diagnostic.code);
+            return sentence(None, &format!("{noun} {}", lowered(label)), &diagnostic.code);
         }
     }
     if let Some((head, rest)) = path.split_once('[') {
@@ -604,6 +586,21 @@ mod tests {
         let contents = restored.recovery();
         restored.restore(contents);
         assert!(!restored.diagnostics_current(), "a recovery restore replaces the document");
+    }
+
+    #[test]
+    fn every_validator_code_has_specific_wording() {
+        // The codes crates/krausen-brewery/src/validation.rs can emit.
+        for code in [
+            "missing", "unfinished_quantity", "negative", "out_of_range", "non_finite", "exposure_exceeds_boil",
+            "negative_sparge", "opening_exceeds_diameter", "plateau_not_below_boil", "unsupported_fermentable_stage",
+            "unsupported_hop_stage", "unsupported_fermentable_kind_or_stage", "unsupported_cooled_hop_addition",
+            "missing_or_unsupported_mash_water_method",
+        ] {
+            assert!(code_text(code).is_some(), "{code} would read as generic");
+        }
+        let plateau = plain_message(&diag("equipment.chilling.plateau_c", "plateau_not_below_boil", Readiness::Invalid));
+        assert_eq!(plateau, "Equipment cooling plateau must be below the boil temperature.");
     }
 
     #[test]

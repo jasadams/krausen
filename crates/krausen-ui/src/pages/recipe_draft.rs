@@ -176,10 +176,15 @@ impl RecipeDraft {
             .cloned()
             .unwrap_or_else(|| value.map(|v| v.to_string()).unwrap_or_default())
     }
-    /// Server diagnostics for exactly this draft generation, `Invalid` first so a
-    /// save blocker is never hidden behind a start requirement on the same path.
+    /// The server diagnostic of this severity for `path`, only while the diagnostics
+    /// describe exactly the current draft generation.
     fn current_diagnostic(&self, path: &str, severity: krausen_types::validation::Readiness) -> Option<&krausen_types::validation::Diagnostic> {
-        self.diagnostics()
+        // Beside a control only what is true of the draft as it is now; the summary
+        // is the place that keeps an earlier list, marked out of date.
+        if !self.diagnostics_current() {
+            return None;
+        }
+        self.diagnostics
             .iter()
             .find(|d| d.path == path && d.severity == severity)
     }
@@ -310,7 +315,7 @@ impl RecipeDraft {
             self.raw_numbers = previous.raw_numbers;
             self.malformed = previous.malformed;
             self.settled_numbers = previous.settled_numbers;
-                self.dirty = self.contents() != self.baseline;
+            self.dirty = self.contents() != self.baseline;
             self.generation = self
                 .generation
                 .checked_add(1)
@@ -530,6 +535,23 @@ mod tests {
         assert_eq!(draft.diagnostics().len(), 1);
         assert_eq!(draft.diagnostics()[0].path, "boil_minutes");
         assert_eq!(draft.readiness(), Some(Incomplete));
+    }
+
+    #[test]
+    fn inline_messages_describe_only_the_current_draft_while_the_summary_keeps_the_earlier_list() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("hops[a].stage", "unsupported_hop_stage", Incomplete)] });
+        assert!(draft.validation_hint("hops[a].stage").is_some());
+        // A select is edited with the ordinary structural edit; its old message must go quiet at once.
+        draft.edit(|doc| doc.title = "changed".into());
+        assert_eq!(draft.validation_hint("hops[a].stage"), None);
+        assert_eq!(draft.diagnostics().len(), 1, "the summary still has it, marked out of date");
+        let generation = draft.generation;
+        draft.apply_validation(generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("hops[a].stage", "unsupported_hop_stage", Incomplete)] });
+        assert!(draft.validation_hint("hops[a].stage").is_some(), "back once a check settles");
+        draft.undo();
+        assert_eq!(draft.validation_hint("hops[a].stage"), None, "Undo moves the draft on as well");
     }
 
     #[test]

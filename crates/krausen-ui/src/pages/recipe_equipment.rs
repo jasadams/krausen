@@ -162,6 +162,18 @@ pub(crate) fn diagnostic_spec(path: &str) -> Option<(&'static str, &'static str)
     SPECS.iter().chain(CHILLING_SPECS.iter().map(|c| &c.spec)).find(|spec| spec.path == wanted).map(|spec| (spec.id, spec.label))
 }
 
+/// `(DOM id, visible label)` of the chilling mode select, declared once for the
+/// control and the diagnostic registry.
+pub(crate) const CHILLING_FIELD: (&str, &str) = ("recipe-chilling", "Chilling");
+
+/// Appends a start requirement to a field's existing explanatory hint.
+fn with_need(need: Option<String>, hint: String) -> String {
+    match need {
+        Some(need) => format!("{need}. {hint}"),
+        None => hint,
+    }
+}
+
 /// True when `dom_id` is a chilling-value control that is not rendered because
 /// the recipe's chilling override is a different mode (or none).
 pub(crate) fn chilling_control_hidden(doc: &RecipeDocumentV1, dom_id: &str) -> bool {
@@ -305,10 +317,7 @@ fn OverrideField(
         )
     });
     let needs = Signal::derive(move || draft.with(|d| d.validation_hint(path).or_else(|| d.validation_hint(&effective_path)).map(str::to_owned)));
-    let hint = Signal::derive(move || match needs.get() {
-        Some(need) => format!("{need}. {}", hint.get()),
-        None => hint.get(),
-    });
+    let hint = Signal::derive(move || with_need(needs.get(), hint.get()));
     let change = Callback::new(move |text| {
         draft.update(|d| {
             d.edit_number(path, text, |doc, n| write(&mut doc.equipment_overrides, n.map(|v| v / scale)))
@@ -401,10 +410,7 @@ pub fn RecipeEquipment(
             (mode, _) => format!("Overridden for this recipe: effective {mode} chilling."),
         }
     });
-    let chilling_hint = Signal::derive(move || match chilling_need.get() {
-        Some(need) => format!("{need}. {}", chilling_hint.get()),
-        None => chilling_hint.get(),
-    });
+    let chilling_hint = Signal::derive(move || with_need(chilling_need.get(), chilling_hint.get()));
     view! {
         <BrewerySection title="Equipment for this recipe">
             <div class="recipe-editor__fields">
@@ -444,7 +450,7 @@ pub fn RecipeEquipment(
             <div class="recipe-editor__fields">
                 {SPECS.iter().map(|spec| view! { <OverrideField spec=spec draft=draft profile=usable_profile profile_name=profile_name profile_known=profile_known/> }).collect_view()}
                 <div>
-                    <BreweryDraftSelect id="recipe-chilling" label="Chilling" value=chilling on_change=chilling_change error=chilling_error hint=chilling_hint options=vec![("".into(), "Inherit / not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
+                    <BreweryDraftSelect id=CHILLING_FIELD.0 label=CHILLING_FIELD.1 value=chilling on_change=chilling_change error=chilling_error hint=chilling_hint options=vec![("".into(), "Inherit / not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
                     <Show when=move || chilling.get() != "">
                         <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_label="Reset Chilling to inherited" on:click=move |_| chilling_change.run(String::new())>"Reset"</Button>
                     </Show>

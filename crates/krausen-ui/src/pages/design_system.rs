@@ -199,8 +199,8 @@ pub(crate) fn printable_example() -> krausen_types::process_summary::ProcessSumm
 
 /// Example diagnostics that point at real showcase fields, in both severities
 /// plus an uneditable explanation.
-fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::pages::recipe_diagnostics::Presented>> {
-    use crate::pages::recipe_diagnostics::{Presented, Route};
+fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::components::diagnostic_list::Presented>> {
+    use crate::components::diagnostic_list::{Presented, Route};
     use krausen_types::validation::Readiness;
     let item = |key: &str, severity, message: &str, route| Presented {
         key: format!("{prefix}-{key}"),
@@ -221,10 +221,7 @@ fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::pages::recipe_diagnost
 #[component]
 pub fn DesignSystemPage() -> impl IntoView {
     provide_context(crate::components::diagnostic_list::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
-        #[cfg(target_arch = "wasm32")]
-        request_animation_frame(move || crate::pages::recipe_editor::jump_to_diagnostic(&target, &explanation));
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = (target, explanation);
+        crate::pages::recipe_editor::jump_after_render(target, explanation);
     })));
     let name = RwSignal::new("Munich Helles".to_owned());
     let volume = RwSignal::new("20".to_owned());
