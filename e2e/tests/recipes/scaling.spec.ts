@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { DEFAULT_TEST_USER, loginUser, sqliteExec } from '../../helpers/test-helpers';
+import { expectTabContainment } from '../../helpers/focus-boundary';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -192,14 +193,7 @@ test('Scale is a real modal: focus is contained and the page behind is inert', a
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
   expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
-  // Tab may leave the document for the browser, but never reaches the page behind.
-  for (let step = 0; step < 12; step++) {
-    await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => {
-      const active = document.activeElement;
-      return !active || active === document.body || !!active.closest('dialog');
-    })).toBe(true);
-  }
+  await expectTabContainment(page, 'dialog#scale-dialog', 12);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: 'Recipe actions' })).toBeFocused();

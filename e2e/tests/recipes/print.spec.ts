@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import { expectTabContainment } from '../../helpers/focus-boundary';
 
 test.beforeEach(async ({ page }) => {
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
@@ -250,11 +251,8 @@ test('the print preview is a real boundary: heading focus, inert page, Escape re
   await expect(preview).toBeVisible();
   await expect(preview.getByRole('heading', { name: 'Print preview' }), 'focus moves to the preview heading').toBeFocused();
   await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
-  // Keyboard focus never reaches the editor behind the overlay.
-  for (let step = 0; step < 14; step++) {
-    await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => !!document.activeElement?.closest('.recipe-editor'))).toBe(false);
-  }
+  // Keyboard focus never reaches the page behind the overlay.
+  await expectTabContainment(page, '.print-preview', 14);
   await page.keyboard.press('Escape');
   await expect(preview).toHaveCount(0);
   await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
@@ -350,13 +348,7 @@ test('the page behind the preview stays inert when the editor remounts the previ
     expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(true);
     await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
   }
-  for (let step = 0; step < 10; step++) {
-    await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => {
-      const active = document.activeElement;
-      return !active || active === document.body || !!active.closest('.print-preview');
-    })).toBe(true);
-  }
+  await expectTabContainment(page, '.print-preview', 10);
   await page.getByRole('button', { name: 'Back to editor' }).click();
   await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
   expect(await page.locator('#sidebar-recipes-link').evaluate((link) => !!link.closest('[inert]'))).toBe(false);
