@@ -96,6 +96,10 @@ impl Default for EditorStatus {
     }
 }
 
+/// Stable id of the editor page heading: the focus successor for several tasks and
+/// the fallback of a diagnostic jump.
+pub(crate) const EDITOR_HEADING_ID: &str = "recipe-editor-heading";
+
 pub fn save_label(saved: bool) -> &'static str {
     if saved { "Save changes" } else { "Save recipe" }
 }
@@ -233,7 +237,7 @@ pub fn RecipeHeader(
                     </BreweryPopover>
                 </BreweryActionGroup>
             </div>
-            <h1 id="recipe-editor-heading" class="recipe-header__heading" tabindex="-1">{crumb}</h1>
+            <h1 id=EDITOR_HEADING_ID class="recipe-header__heading" tabindex="-1">{crumb}</h1>
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
             <div class="recipe-header__context">
                 <div class="recipe-header__batch">{children()}<span id="recipe-batch-note" class="k-field__hint recipe-header__hint">"Batch is the volume into the fermenter"</span></div>

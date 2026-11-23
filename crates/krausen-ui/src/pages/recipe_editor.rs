@@ -162,7 +162,7 @@ impl EditorFocus {
         // cleared by confirmed denial, return to the existing editor heading.
         if let Some(print) = print {
             if let Some(button) = print.query_selector("button").ok().flatten() { try_focus(&button); }
-        } else if let Some(heading) = document.get_element_by_id("recipe-editor-heading") {
+        } else if let Some(heading) = document.get_element_by_id(crate::pages::recipe_header::EDITOR_HEADING_ID) {
             try_focus(&heading);
         }
     }
@@ -1357,7 +1357,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 crate::components::diagnostic_list::Route::Explain => first.key.clone(),
             };
             // A malformed entry has no summary row, so the page heading is the fallback.
-            let explanation = if first.code == "malformed" { "recipe-editor-heading".to_owned() } else { first.key };
+            let explanation = if first.code == "malformed" { crate::pages::recipe_header::EDITOR_HEADING_ID.to_owned() } else { first.key };
             jump.run((target, explanation));
         }
     });
