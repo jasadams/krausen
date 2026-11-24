@@ -1437,7 +1437,9 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     </div>
     // The page behind a print preview stays inert for as long as the task is open,
     // including while a revalidation unmounts the preview itself.
-    <crate::components::PageIsolation active=Signal::derive(move || print_preview.with(|preview| preview.is_some()))/>
+    // It is released while access is unavailable or expired, so the notice and its
+    // Retry check stay usable; a denial clears the preview altogether.
+    <crate::components::PageIsolation active=Signal::derive(move || print_preview.with(|preview| preview.is_some()) && (context_visible.get() || access.get() == EditorAccess::Checking))/>
     {
         move || {
             print_preview

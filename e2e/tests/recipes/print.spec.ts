@@ -477,3 +477,22 @@ test('the page behind the preview stays inert for the whole revalidation gap whi
   await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
   await expectTabContainment(page, '.print-preview', 10, { shift: true });
 });
+
+test('an unavailable access check with a print preview open leaves the notice and Retry check usable', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print outage ${Date.now()}`));
+  await openPrint(page);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toBeVisible();
+  await page.route('**/leptos-api/get_user_context*', (route) => route.abort('failed'));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('Network unavailable', { exact: true })).toBeVisible();
+  await expect(preview, 'protected content stays hidden while access is unavailable').toHaveCount(0);
+  const retry = page.getByRole('button', { name: 'Retry check', exact: true });
+  expect(await retry.evaluate((button) => !!button.closest('[inert]')), 'the way out is not inert').toBe(false);
+  await page.unroute('**/leptos-api/get_user_context*');
+  await retry.click();
+  await expect(preview).toBeVisible();
+  await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
+  await page.getByRole('button', { name: 'Back to editor' }).click();
+  await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
+});
