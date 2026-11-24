@@ -1930,6 +1930,14 @@ fn FormulationPreview(
             last_preview.set(Some(next));
         }
     });
+    // A retained estimate describes one draft document. A restore or a saved-recipe
+    // replacement changes the draft epoch, so the old document's rows must not be
+    // shown as the new draft's reference (UX-007).
+    let draft_epoch = Memo::new(move |_| draft.with(|d| d.epoch()));
+    Effect::new(move |_| {
+        draft_epoch.get();
+        last_preview.set(None);
+    });
     let current_phase = Signal::derive(move || if draft.with(|d| d.generation) == message_generation.get() { phase.get() } else { crate::pages::recipe_process::EstimatePhase::Calculating });
     provide_context(crate::pages::recipe_process::AcceptedPreview {
         preview: accepted,
@@ -1952,12 +1960,17 @@ fn FormulationPreview(
             let current = accepted.get().is_some();
             // Values stay only while current or while their replacement is calculated.
             let show_values = current || (reference.is_some() && current_phase.get() == crate::pages::recipe_process::EstimatePhase::Calculating);
-            let style_selected = draft.with(|d| d.document().style.is_some());
-            let metrics = view! { <PreviewMetrics preview=reference.clone() current=show_values style_selected=style_selected/> }.into_any();
+            let selected_style = draft.with(|d| d.document().style.clone());
+            // The retained bands only describe the retained estimate when the same
+            // style is still selected; a different style gets its own reserved rows.
+            let reference_style_current = selected_style.as_ref().is_some_and(|selected| {
+                reference.as_ref().and_then(|preview| preview.style.as_ref()).is_some_and(|ranges| ranges.name == selected.name)
+            });
+            let metrics = view! { <PreviewMetrics preview=reference.clone() current=show_values style_selected=selected_style.is_some() reference_style_current=reference_style_current/> }.into_any();
             let source = match reference {
                 Some(preview) => view! { <PreviewSource preview=preview draft=draft revision=revision/> }.into_any(),
                 None => view! {
-                    <p class="note-caption recipe-editor__provenance" data-testid="estimate-source">"No estimate yet."</p>
+                    <p class="note-caption recipe-editor__provenance recipe-editor__provenance--source" data-testid="estimate-source">"No estimate yet."</p>
                     <BreweryDisclosure title="Style reference and assumptions" compact=true>{""}</BreweryDisclosure>
                 }.into_any(),
             };
@@ -1984,9 +1997,12 @@ fn PreviewMetrics(
     /// A style is selected, so its band rows must be reserved even before the
     /// reference values are known.
     #[prop(default = false)] style_selected: bool,
+    /// The retained estimate's bands describe the style still selected. A changed
+    /// style reserves its own rows instead of showing the old limits.
+    #[prop(default = false)] reference_style_current: bool,
 ) -> impl IntoView {
-    let style = preview.as_ref().and_then(|preview| preview.style.as_ref());
-    let comparison = preview.as_ref().and_then(|preview| preview.style_comparison.as_ref());
+    let style = if reference_style_current { preview.as_ref().and_then(|preview| preview.style.as_ref()) } else { None };
+    let comparison = if reference_style_current { preview.as_ref().and_then(|preview| preview.style_comparison.as_ref()) } else { None };
     // The fermenter batch is the draft that was actually calculated; it is a
     // different quantity from total water, which belongs to the water plan.
     let fermenter = current
@@ -2042,7 +2058,7 @@ fn PreviewSource(
         // equipment identity is separate so phones can keep this line at a fixed
         // two-line height while the header badge and equipment panel still name
         // the effective profile (KRA-49: no height change on the first keystroke).
-        <p class="note-caption recipe-editor__provenance" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| view! { <span class="recipe-editor__provenance-equipment">{format!(" {text}")}</span> })}</p>
+        <p class="note-caption recipe-editor__provenance recipe-editor__provenance--source" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| view! { <span class="recipe-editor__provenance-equipment">{format!(" {text}")}</span> })}</p>
         {(style.is_some() || !assumptions.is_empty()).then(|| view! { <BreweryDisclosure title="Style reference and assumptions" compact=true>
             {style.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
             {(!assumptions.is_empty()).then(|| view! { <ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul> })}

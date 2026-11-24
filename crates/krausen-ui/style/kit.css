@@ -445,8 +445,9 @@
   .recipe-editor__estimate-retry-compact { display: inline-flex; }
   /* The source line keeps two lines whether the draft is clean, dirty or has no
      estimate yet; the equipment identity lives in the header badge and the
-     equipment panel, so an arbitrary profile name can never add a line here. */
-  .recipe-editor__provenance { min-height: 33px; min-height: 2lh; }
+     equipment panel, so an arbitrary profile name can never add a line here. The
+     reservation is scoped to the summary source, not the disclosure's reference prose. */
+  .recipe-editor__provenance--source { min-height: 33px; min-height: 2lh; }
   .recipe-editor__provenance-equipment { display: none; }
 }
 
@@ -546,6 +547,10 @@
 .k-stale--active .note-caption { font-style: italic; }
 /* Reference detail one disclosure away belongs to the stale region too. */
 .k-stale--active .k-disclosure--compact > summary { font-style: italic; }
+/* A retained style comparison is an earlier estimate's reading, not the current one. */
+.k-stale--active .k-style-range__limits { font-style: italic; }
+.k-stale--active .k-style-range__status { color: color-mix(in srgb, var(--k-color-foreground) 70%, var(--k-color-surface)); }
+.k-stale--active .k-style-range__marker { opacity: 0.55; }
 .k-stale__cue { color: var(--k-color-muted); font-size: var(--k-font-sm); font-weight: 400; line-height: 1.25; }
 
 /* A panel whose body is a vertical stack of sections and field rows with one

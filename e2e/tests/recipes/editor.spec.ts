@@ -1220,8 +1220,10 @@ for (const width of [320, 390]) {
     await expect(staleRegion, 'one stale region owns the metrics, source and reference').toHaveCount(1);
     expect(await staleRegion.evaluate(element => (element as HTMLElement).inert), 'stale region is inert').toBe(true);
     expect(await staleRegion.locator('.k-style-range').count(), 'the old style bands stay in the stale region').toBeGreaterThan(0);
-    expect(await staleRegion.locator('.recipe-editor__provenance').evaluate(element => getComputedStyle(element).fontStyle), 'stale source is marked').toBe('italic');
+    expect(await staleRegion.getByTestId('estimate-source').evaluate(element => getComputedStyle(element).fontStyle), 'stale source is marked').toBe('italic');
     expect(await disclosureSummary.evaluate(element => getComputedStyle(element).fontStyle), 'stale reference disclosure is marked').toBe('italic');
+    expect(await staleRegion.locator('.k-style-range__limits').first().evaluate(element => getComputedStyle(element).fontStyle), 'stale band limits are marked').toBe('italic');
+    expect(Number(await staleRegion.locator('.k-style-range__marker').first().evaluate(element => getComputedStyle(element).opacity)), 'stale band marker is dimmed').toBeLessThan(1);
     expect(await disclosureSummary.evaluate(element => { (element as HTMLElement).focus(); return document.activeElement === element; }), 'inert disclosure cannot take focus').toBe(false);
     expect(await values.allTextContents(), 'old values stay (dimmed) while recalculating, never dashes').toEqual(currentValues);
     await page.locator('#recipe-whirlpool').focus();
@@ -1242,6 +1244,7 @@ for (const width of [320, 390]) {
     expect(Math.abs((await statusTop()) - currentStatusTop), 'invalid status text top').toBeLessThanOrEqual(0.5);
     await expect(staleRegion).toHaveCount(1);
     expect(await staleRegion.evaluate(element => (element as HTMLElement).inert)).toBe(true);
+    expect(await staleRegion.locator('.k-style-range__limits').first().evaluate(element => getComputedStyle(element).fontStyle)).toBe('italic');
     expect(await staleRegion.locator('.k-style-range').count()).toBeGreaterThan(0);
     await expect(summary.locator('.k-metric')).toHaveCount(6);
     await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
@@ -1326,21 +1329,26 @@ test('a late preview response cannot replace a settled invalid estimate', async 
 });
 
 test('an editor that has never had an estimate reserves the summary before the first one at 320px', async ({ page }) => {
+  test.slow();
   await page.setViewportSize({ width: 320, height: 900 });
-  await page.goto('/recipe-editor/new');
-  await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
-  await expect(page.getByLabel(/Original gravity.*Style reference/)).toBeVisible();
+  // A saved Ready styled recipe: the restored draft holds only an invalid raw
+  // value, so its first valid estimate is Ready (no diagnostics) and must fill
+  // the reserved rows exactly.
+  await readyEstimateRecipe(page);
   await page.getByLabel('Batch volume (L)').fill('-');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
   let unload = false;
   page.once('dialog', async dialog => { unload = dialog.type() === 'beforeunload'; await dialog.accept(); });
   await page.reload();
   expect(unload).toBe(true);
-  await page.getByText('A retained draft is available').waitFor();
+  const source = page.getByTestId('estimate-source');
+  // The hidden editor behind the recovery panel has already accepted the saved
+  // recipe's estimate; restoring the retained draft changes the draft epoch and
+  // must drop that retained estimate.
+  await expect(source).toContainText('matching saved revision 1');
   await page.getByRole('button', { name: 'Restore draft' }).click();
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('-');
-  await expect(page.getByLabel('Beer style', { exact: true })).toHaveValue('4A · Munich Helles');
-  const source = page.getByTestId('estimate-source');
+  await expect(page.getByLabel('Beer style', { exact: true })).toHaveValue('Munich Helles');
   await expect(source).toHaveText('No estimate yet.');
   const summary = page.locator('.recipe-editor__preview-summary');
   await expect(summary.locator('.k-style-range'), 'the style band rows are reserved').toHaveCount(5);
@@ -1355,7 +1363,7 @@ test('an editor that has never had an estimate reserves the summary before the f
   });
   const placeholder = await measure();
   await page.getByLabel('Batch volume (L)').fill('20');
-  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' }).first()).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
   await expect(source).not.toHaveText('No estimate yet.');
   await expect(summary.locator('.k-style-range')).toHaveCount(5);
   const first = await measure();
