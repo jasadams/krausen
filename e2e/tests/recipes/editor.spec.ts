@@ -1472,6 +1472,76 @@ test('switching recipes never shows the previous recipe\'s estimate', async ({ p
   expect(arrival[0], 'previous recipe estimate shown on arrival').toBe(0);
 });
 
+// KRA-59 (UX-007): a restored draft is a different document from the saved recipe the hidden
+// editor behind the recovery panel has already estimated. Neither the Water plan nor the
+// chilling note under Boil & whirlpool may keep that recipe's numbers, in any estimate state.
+async function reloadToRetainedDraft(page: import('@playwright/test').Page, edit: () => Promise<void>) {
+  await recipeWithNumbers(page);
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Retained plan ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await edit();
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
+  page.once('dialog', async dialog => { await dialog.accept(); });
+  await page.reload();
+  await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
+}
+
+test('a restored draft with no estimate shows no water plan or chilling note from the saved recipe', async ({ page }) => {
+  await reloadToRetainedDraft(page, () => page.getByLabel('Batch volume (L)').fill('-'));
+  await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('-');
+  await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+  await expect(page.locator('#recipe-section-mash .k-metric-list')).toHaveCount(0);
+  await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+});
+
+test('a restored draft that is recalculating shows no water plan or chilling note from the saved recipe', async ({ page }) => {
+  await reloadToRetainedDraft(page, () => page.locator('#recipe-mash-water').fill('12'));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+  try {
+    await page.getByRole('button', { name: 'Restore draft' }).click();
+    await expect(page.locator('#recipe-mash-water')).toHaveValue('12');
+    await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+    await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+    await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+    release();
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('12.0');
+    await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+// KRA-59 (ACC-005): the editor is hidden while access is checked or lost. An estimate episode
+// that starts there is not something the person can see, so it is never announced, and access
+// returning does not end it with "Estimate updated".
+test('losing and regaining access announces nothing for an episode that started while hidden', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await page.evaluate(() => {
+    const announced: string[] = [];
+    (window as any).__announced = announced;
+    const target = document.querySelector('[data-testid="estimate-announce"]')!;
+    new MutationObserver(() => { if (target.textContent) announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+  });
+  const volume = page.getByLabel('Batch volume (L)');
+  await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(volume).toBeHidden();
+  // Longer than the announcement debounce, so a hidden episode would have been announced.
+  await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 700);
+  await page.unroute('**/leptos-api/get_user_context*');
+  await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+  await expect(volume).toBeVisible();
+  await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
+  await page.waitForTimeout(3500);
+  expect(await page.evaluate(() => (window as any).__announced)).toEqual([]);
+  await expect(page.getByTestId('estimate-announce')).toHaveText('');
+});
+
 test('the water plan emphasises its total and the process panels keep the Equipment titles unchanged', async ({ page }) => {
   await recipeWithWaterPlan(page);
   const rows = page.locator('#recipe-section-mash .k-metric-list .k-metric');
