@@ -35,7 +35,7 @@ pub mod wayfinding;
 
 pub use action_status::ActionStatus;
 pub use anchored_popover::BreweryPopover;
-pub use brewery_kit::{BreweryActionGroup, BreweryFieldRow, BreweryFields, BreweryStale, BreweryStaleCue, BreweryStepGroup, BreweryStepRow, BreweryMetricList, BrewerySection, MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation};
+pub use brewery_kit::{BreweryActionGroup, BreweryFieldRow, BreweryFields, BreweryStale, BreweryStaleCue, BreweryStepGroup, BreweryStepRow, BreweryMetricList, BrewerySection, BreweryStyleRangePlaceholder, MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation};
 pub use alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonLink, ButtonSize, ButtonVariant, DownloadLink, ToggleButton};

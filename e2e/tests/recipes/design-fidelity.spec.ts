@@ -38,6 +38,10 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.getByRole('tab', { name: 'Recipe' }).focus();
         await page.keyboard.press('ArrowRight');
         await expect(page.getByRole('tab', { name: 'Saved versions' })).toBeFocused();
+        // KRA-49: the same kit component that reserves the recipe's style band rows
+        // before an estimate exists is rendered in the actual showcase.
+        await expect(page.getByTestId('showcase-style-placeholder')).toContainText('Awaiting estimate');
+        await expect(page.getByTestId('showcase-style-placeholder').locator('.k-style-range__limits')).toHaveText('——');
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await testInfo.attach(`showcase-${theme}-${viewport.width}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 

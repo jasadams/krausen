@@ -420,7 +420,38 @@
 @media (max-width: 760px) { .k-compact-ingredient__main:has(> .k-compact-ingredient__schedule) { grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); } .k-compact-ingredient__schedule { grid-column: 1 / -1; } }
 .recipe-editor__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); margin-top: var(--k-space-4); }
 @media (max-width: 600px) { .recipe-editor__preview-summary .recipe-editor__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--k-space-2); } }
-.recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); }
+.recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); line-height: 1.5; }
+
+/* KRA-49: on phones the estimates summary keeps one height while the estimate is
+   replaced or settles without one. The estimate rows keep their labels, style
+   reference bands and source; values stay (dimmed) while recalculating and become
+   dashes once settled, so nothing under the summary moves. The outcome row
+   reserves the two-line settled message and the 44px retry target in every state.
+   Desktop keeps its existing flow and collapse: the wrapper is transparent to
+   layout and the estimate rows hide while stale. */
+.recipe-editor__estimate-content, .recipe-editor__estimate-outcome { display: contents; }
+.recipe-editor__estimate-retry-compact { display: none; }
+@media (min-width: 601px) {
+  .recipe-editor__preview-summary--stale .recipe-editor__estimate-content { display: none; }
+}
+@media (max-width: 600px) {
+  /* The calculating line and the settled status line never both hold text, so
+     they share one message cell; the retry target sits beside it. The row is two
+     body lines tall in every state, which is also the tallest settled message at
+     320px and the 44px retry height. Content stays at the top so the reserved
+     space sits below the status text and "Ready" keeps its current position. */
+  .recipe-editor__estimate-outcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "message action"; align-items: start; gap: var(--k-space-3); min-height: 3rem; }
+  .recipe-editor__estimate-outcome > p { grid-area: message; margin: 0; min-width: 0; }
+  .recipe-editor__estimate-outcome > button { grid-area: action; }
+  .recipe-editor__estimate-retry-wide { display: none; }
+  .recipe-editor__estimate-retry-compact { display: inline-flex; }
+  /* The source line keeps two lines whether the draft is clean, dirty or has no
+     estimate yet; the equipment identity lives in the header badge and the
+     equipment panel, so an arbitrary profile name can never add a line here. The
+     reservation is scoped to the summary source, not the disclosure's reference prose. */
+  .recipe-editor__provenance--source { min-height: 2lh; }
+  .recipe-editor__provenance-equipment { display: none; }
+}
 
 /* Shared printable recipe and process summary (KRA-19; reused by KRA-22). */
 .print-preview { position: fixed; inset: 0; z-index: 60; overflow: auto; background: var(--k-color-background); padding: var(--k-space-5); }
@@ -516,6 +547,12 @@
 @media (prefers-reduced-motion: no-preference) { .k-stale .k-metric__value { transition: color .15s; } }
 /* Already muted text cannot be dimmed further without failing contrast, so a stale note is set in italics instead. */
 .k-stale--active .note-caption { font-style: italic; }
+/* Reference detail one disclosure away belongs to the stale region too. */
+.k-stale--active .k-disclosure--compact > summary { font-style: italic; }
+/* A retained style comparison is an earlier estimate's reading, not the current one. */
+.k-stale--active .k-style-range__limits { font-style: italic; }
+.k-stale--active .k-style-range__status { color: color-mix(in srgb, var(--k-color-foreground) 70%, var(--k-color-surface)); }
+.k-stale--active .k-style-range__marker { opacity: 0.55; }
 .k-stale__cue { color: var(--k-color-muted); font-size: var(--k-font-sm); font-weight: 400; line-height: 1.25; }
 
 /* A panel whose body is a vertical stack of sections and field rows with one
