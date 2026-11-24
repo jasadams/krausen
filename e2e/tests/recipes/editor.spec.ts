@@ -95,12 +95,14 @@ test('disposed initial recovery authorization cannot write into the retired edit
   const held = new Promise<void>(resolve => { release = resolve; });
   let seen!: () => void;
   const started = new Promise<void>(resolve => { seen = resolve; });
+  // Only the first request is held; later ones are not intercepted, so no handler
+  // is still fetching when the route is removed.
   await page.route('**/leptos-api/list_formulation_styles*', async route => {
     const response = await route.fetch();
     seen();
     await held;
     await route.fulfill({ response });
-  });
+  }, { times: 1 });
   try {
     await page.goto('/recipe-editor/new');
     await started;
@@ -346,13 +348,15 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
   const started = new Promise<void>(resolve => { seen = resolve; });
   let completed!: () => void;
   const finished = new Promise<void>(resolve => { completed = resolve; });
+  // Only the first request is held. Later ones are not intercepted at all, so no
+  // handler is still fetching when the route is removed at the end of the test.
   await page.route('**/leptos-api/get_user_context*', async route => {
     const response = await route.fetch();
     seen();
     await held;
     await route.fulfill({ response });
     completed();
-  });
+  }, { times: 1 });
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await started;
