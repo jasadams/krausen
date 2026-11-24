@@ -109,6 +109,10 @@ pub fn PrintPreviewTask(
     hint: String,
     /// Back/Escape. The caller owns state clearing and return focus.
     on_close: Callback<()>,
+    /// Styling class of the hint line. The frozen brew print keeps its original
+    /// `note-caption` so its printed output is unchanged.
+    #[prop(default = "print-preview__hint")]
+    hint_class: &'static str,
     /// Label of the Back action.
     #[prop(default = "Back to editor")]
     back_label: &'static str,
@@ -197,7 +201,7 @@ pub fn PrintPreviewTask(
             <div class="print-preview__toolbar">
                 <div>
                     <h2 id=HEADING_ID tabindex="-1" class="kit-showcase__eyebrow">{heading}</h2>
-                    <p id=HINT_ID class="print-preview__hint">{hint}</p>
+                    <p id=HINT_ID class=hint_class>{hint}</p>
                 </div>
                 <div class="recipe-editor__actions">
                     <Button on:click=print>"Print / Save as PDF"</Button>

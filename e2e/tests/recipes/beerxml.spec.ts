@@ -575,12 +575,14 @@ test('file preview, explicit import and saved/original downloads share native va
   await expect(dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' }), 'the result of the operation takes focus').toBeFocused();
   await dialog.getByRole('button', { name: 'Acknowledge omissions and prepare download' }).click();
+  await expect(dialog.locator('#export-result'), 'focus moves to the export result after acknowledging').toBeFocused();
   const href = await dialog.getByRole('link', { name: 'Download BeerXML', exact: true }).getAttribute('href');
   const rendered = Buffer.from(href!.split(',')[1], 'base64').toString();
   expect(rendered).toContain(`<NAME>${editedTitle}</NAME>`);
   expect(rendered).not.toContain(`<NAME>${title}</NAME>`);
   await expect(dialog.getByText('Unedited original import', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Prepare unedited original' }).click();
+  await expect(dialog.locator('#export-original-result'), 'focus moves to the original-import result').toBeFocused();
   const original = await dialog.getByRole('link', { name: 'Download unedited original' }).getAttribute('href');
   expect(Buffer.from(original!.split(',')[1], 'base64').toString()).toBe(xml);
 
@@ -606,6 +608,14 @@ test('file preview, explicit import and saved/original downloads share native va
   await expect(selected).toContainText('Source: Saved revision 1');
   await expect(selected.getByLabel('Saved revision')).toHaveCount(0);
   await expect(selected).not.toContainText('Choose which source');
+  // The exported file is revision 1, not the label alone: neither the later saved
+  // title nor the draft in the editor.
+  await selected.getByRole('button', { name: 'Acknowledge omissions and prepare download' }).click();
+  const versionHref = await selected.getByRole('link', { name: 'Download BeerXML', exact: true }).getAttribute('href');
+  const versionXml = Buffer.from(versionHref!.split(',')[1], 'base64').toString();
+  expect(versionXml).toContain(`<NAME>${title}</NAME>`);
+  expect(versionXml).not.toContain(editedTitle);
+  expect(versionXml).not.toContain('Draft kept while exporting a version');
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Draft kept while exporting a version');
 });
 

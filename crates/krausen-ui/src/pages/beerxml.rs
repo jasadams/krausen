@@ -950,7 +950,6 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
     </Show> }
 }
 
-/// Export a saved revision or the explicitly labelled current local draft.
 /// BeerXML export as an on-demand, source-bound task (INT-008). The source is
 /// known from the editor state or chosen once when the saved head and the
 /// unsaved draft differ; a saved version selected in Saved versions supplies its

@@ -460,11 +460,24 @@ pub fn ScaleDialog(
                 Ok(ScaleApplyOutcome::Applied {
                     revision: applied, ..
                 }) => {
+                    let editor_revision = revision.get_untracked();
                     let document = preview
                         .get_untracked()
                         .map(|preview_value| preview_value.scaled_document)
                         .or_else(|| retry_document.get_untracked());
-                    if let Some(document) = document {
+                    if editor_revision == Some(applied) {
+                        // A reload after the commit already shows this saved revision.
+                        status.set(format!("Scaled recipe saved as revision {applied}."));
+                        open.set(false);
+                        reset.run(());
+                    } else if editor_revision.is_some_and(|current| current > applied) {
+                        // A replayed result is never applied over a newer saved
+                        // head: the recorded outcome is reported and the editor
+                        // keeps what the user saved since.
+                        message.set(format!(
+                            "An earlier Scale was saved as revision {applied}; the recipe has changed since, so the editor was left as it is."
+                        ));
+                    } else if let Some(document) = document {
                         on_applied.run((document, applied));
                         status.set(format!("Scaled recipe saved as revision {applied}."));
                         open.set(false);
@@ -760,6 +773,18 @@ pub fn DuplicateDialog(
                 uncertain.set(false);
             }
             match outcome {
+                Ok(DuplicateOutcome::Duplicated {
+                    recipe_id: new_id,
+                    revision: new_revision,
+                    source_revision,
+                }) if revision.get_untracked() != Some(source_revision) => {
+                    // The recipe moved on after this copy was requested, so the
+                    // recorded result is reported instead of replacing the page.
+                    let _ = new_id;
+                    message.set(format!(
+                        "An earlier Duplicate created a copy of revision {source_revision} (as revision {new_revision} of a new recipe); this recipe has changed since, so you were not taken to it. Find the copy in Recipes."
+                    ));
+                }
                 Ok(DuplicateOutcome::Duplicated {
                     recipe_id: new_id,
                     revision: new_revision,

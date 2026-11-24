@@ -1080,6 +1080,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                         heading="Historical print preview"
                         hint=format!("Frozen recipe revision {}. Planned targets are printed with recorded actuals listed separately.", print.selected_recipe_revision)
                         back_label="Back to brew"
+                        hint_class="note-caption"
                         print_state=false
                         on_close=close_print
                     >

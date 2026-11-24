@@ -458,3 +458,79 @@ test('retrying a pending Duplicate never navigates away from an unsaved draft', 
   await page.getByRole('button', { name: 'Duplicate…' }).click();
   await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toBeEnabled();
 });
+
+test('a retained Scale replay never rolls the editor back past a newer saved revision', async ({ page }) => {
+  const title = `Replay moved head ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByRole('button', { name: 'Preview scaling' }).click();
+  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  // The server commits revision 2, the response is lost.
+  await page.route('**/execute_scale_apply*', async (route) => { await route.fetch(); await route.abort(); });
+  await page.getByRole('button', { name: 'Apply scaling' }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_scale_apply*');
+  page.once('dialog', (d) => d.accept());
+  await page.reload();
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await expect(name).toHaveValue(title);
+  // The user keeps working on the scaled head and saves revision 3.
+  await name.fill(`${title} saved later`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 3' })).toBeVisible();
+  expect(sqliteExec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`)).toBe('3');
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scale batch' });
+  await dialog.getByRole('button', { name: 'Retry previous request' }).click();
+  // The recorded outcome is reported truthfully; the editor keeps revision 3.
+  await expect(dialog).toContainText('An earlier Scale was saved as revision 2');
+  await expect(dialog).toContainText('has changed since');
+  await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
+  await expect(name, 'the newer saved edit is still shown').toHaveValue(`${title} saved later`);
+  // The record is released: nothing is retained any more.
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Scale…' }).click();
+  await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toHaveCount(0);
+  expect(sqliteExec(`SELECT COUNT(*) FROM recipe_revisions WHERE recipe_id = '${id}'`)).toBe('3');
+});
+
+test('a retained Duplicate replay over a newer saved revision reports the copy instead of leaving the page', async ({ page }) => {
+  const title = `Duplicate moved head ${Date.now()}`;
+  await createScalableRecipe(page, title);
+  const before = Number(sqliteExec('SELECT COUNT(*) FROM recipes'));
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await page.getByLabel('New recipe name (optional)').fill(`${title} copy`);
+  await page.route('**/execute_duplicate_recipe*', async (route) => { await route.fetch(); await route.abort(); });
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry previous request' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.unroute('**/execute_duplicate_recipe*');
+  page.once('dialog', (d) => d.accept());
+  await page.reload();
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await expect(name).toHaveValue(title);
+  await name.fill(`${title} saved later`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+  const url = page.url();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate recipe' });
+  await dialog.getByRole('button', { name: 'Retry previous request' }).click();
+  await expect(dialog).toContainText('An earlier Duplicate created a copy of revision 1');
+  await expect(dialog).toContainText('Find the copy in Recipes');
+  expect(page.url(), 'the page is not replaced by the copy').toBe(url);
+  await expect(name).toHaveValue(`${title} saved later`);
+  expect(Number(sqliteExec('SELECT COUNT(*) FROM recipes'))).toBe(before + 1);
+  await dialog.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Duplicate…' }).click();
+  await expect(dialog.getByRole('button', { name: 'Retry previous request' })).toHaveCount(0);
+});
