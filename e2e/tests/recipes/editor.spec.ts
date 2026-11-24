@@ -1515,6 +1515,35 @@ test('a restored draft that is recalculating shows no water plan or chilling not
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// An in-place switch to a newer saved revision (replace_saved, no remount) is also another
+// document: the old revision's Water plan and chilling note must not stay while the new estimate
+// is calculated. Held with a promise the test releases, so nothing depends on timing.
+test('a focus refetch to a newer saved revision shows no water plan or chilling note from the old revision', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Refetch ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  const other = await page.context().newPage();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await other.goto(page.url());
+    await other.locator('#recipe-mash-water').fill('12');
+    await other.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#recipe-mash-water')).toHaveValue('12');
+    await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+    await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+    await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+    release();
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('12.0');
+    await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); await other.close(); }
+});
+
 // KRA-59 (ACC-005): the editor is hidden while access is checked or lost. An estimate episode
 // that starts there is not something the person can see, so it is never announced, and access
 // returning does not end it with "Estimate updated". The page clock is paused so the
