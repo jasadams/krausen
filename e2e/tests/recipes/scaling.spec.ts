@@ -341,7 +341,7 @@ test('a block caused by the other command is lifted once that command is resolve
   const duplicate = page.getByRole('dialog', { name: 'Duplicate recipe' });
   await expect(duplicate.getByRole('alert')).toContainText('A Scale request for this recipe is unresolved');
   await expect(duplicate.getByRole('button', { name: 'Duplicate', exact: true })).toBeDisabled();
-  await duplicate.getByRole('button', { name: 'Close' }).click();
+  await duplicate.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
   await page.unroute('**/execute_scale_apply*');
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();

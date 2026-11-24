@@ -450,3 +450,29 @@ test('the design system showcase demonstrates the print preview boundary', async
   await expect(preview).toHaveCount(0);
   await expect(open).toBeFocused();
 });
+
+test('the page behind the preview stays inert for the whole revalidation gap while the preview is unmounted', async ({ page }) => {
+  await importRecipe(page, SIMPLE_RECIPE(`Print gap ${Date.now()}`));
+  await openPrint(page);
+  const preview = page.getByRole('dialog', { name: 'Print preview' });
+  await expect(preview).toBeVisible();
+  // Hold the revalidation so the preview stays unmounted for a while.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(preview, 'the preview is unmounted while access is rechecked').toHaveCount(0);
+  const inertDuringGap = await page.evaluate(() => {
+    const reachable = [...document.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea')]
+      .filter((el) => !el.closest('[inert]') && !el.closest('[hidden]') && el.getClientRects().length > 0);
+    return reachable.map((el) => `${el.tagName}#${el.id} ${(el.textContent || '').slice(0, 20)}`);
+  });
+  expect(inertDuringGap, 'nothing behind the preview is reachable during the gap').toEqual([]);
+  release();
+  await expect(preview).toBeVisible();
+  await expect(preview.getByRole('heading', { name: 'Print preview' })).toBeFocused();
+  await expectTabContainment(page, '.print-preview', 10, { shift: true });
+});

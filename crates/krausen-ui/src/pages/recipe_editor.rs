@@ -1435,13 +1435,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             </Show>
         </div>
     </div>
+    // The page behind a print preview stays inert for as long as the task is open,
+    // including while a revalidation unmounts the preview itself.
+    <crate::components::PageIsolation active=Signal::derive(move || print_preview.with(|preview| preview.is_some()))/>
     {
         move || {
             print_preview
                 .get()
                 .filter(|_| context_visible.get())
                 .map(|summary| view! {
-                    <crate::components::PrintPreviewTask heading="Print preview" hint="Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins." on_close=close_print>
+                    <crate::components::PrintPreviewTask heading="Print preview" hint="Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins." isolate=false on_close=close_print>
                         <div class="print-preview__sheet"><crate::components::PrintableRecipe summary=summary/></div>
                     </crate::components::PrintPreviewTask>
                 })

@@ -16,6 +16,87 @@ const HINT_ID: &str = "print-preview-hint";
 #[cfg(target_arch = "wasm32")]
 const OWNER_ATTRIBUTE: &str = "data-print-inert-owner";
 
+/// Make everything outside `keep`'s ancestor chain inert, marking each element
+/// with `owner` so only its owner can release it. Elements that are inert for
+/// another reason are left alone.
+#[cfg(target_arch = "wasm32")]
+fn isolate_page(keep: &web_sys::Element, owner: &str) -> Vec<web_sys::Element> {
+    let mut changed = Vec::new();
+    let mut current = keep.clone();
+    while let Some(parent) = current.parent_element() {
+        let siblings = parent.children();
+        for index in 0..siblings.length() {
+            let Some(sibling) = siblings.item(index) else { continue };
+            let foreign = sibling.has_attribute("inert") && !sibling.has_attribute(OWNER_ATTRIBUTE);
+            if sibling.is_same_node(Some(&current)) || foreign {
+                continue;
+            }
+            if sibling.set_attribute("inert", "").is_ok() && sibling.set_attribute(OWNER_ATTRIBUTE, owner).is_ok() {
+                changed.push(sibling);
+            } else {
+                tracing::warn!("Unable to make the page behind the print preview inert");
+            }
+        }
+        if parent.tag_name() == "BODY" {
+            break;
+        }
+        current = parent;
+    }
+    changed
+}
+
+/// Release the elements `owner` still owns; a newer owner's isolation is kept.
+#[cfg(target_arch = "wasm32")]
+fn release_page(elements: &[web_sys::Element], owner: &str) {
+    for element in elements {
+        if element.get_attribute(OWNER_ATTRIBUTE).as_deref() != Some(owner) {
+            continue;
+        }
+        if element.remove_attribute("inert").is_err() || element.remove_attribute(OWNER_ATTRIBUTE).is_err() {
+            tracing::warn!("Unable to restore the page behind the print preview");
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn next_owner() -> String {
+    static NEXT_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_OWNER.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string()
+}
+
+/// Keeps the page around this component's position inert while `active`.
+///
+/// A task whose preview is temporarily unmounted (the editor hides protected
+/// content while it revalidates access) mounts this alongside it, so the page
+/// stays isolated across the gap instead of becoming reachable. Place it where
+/// the preview mounts: siblings of this marker are isolated, later siblings
+/// (the preview itself) are not touched.
+#[component]
+pub fn PageIsolation(active: Signal<bool>) -> impl IntoView {
+    let marker = NodeRef::<leptos::html::Span>::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (active, marker);
+    #[cfg(target_arch = "wasm32")]
+    {
+        use send_wrapper::SendWrapper;
+        use wasm_bindgen::JsCast;
+        let owner = next_owner();
+        let held = StoredValue::new(SendWrapper::new(Vec::<web_sys::Element>::new()));
+        let effect_owner = owner.clone();
+        Effect::new(move |_| {
+            let isolate = active.get();
+            let element = marker.get();
+            release_page(&held.get_value(), &effect_owner);
+            held.set_value(SendWrapper::new(Vec::new()));
+            if let (true, Some(element)) = (isolate, element) {
+                held.set_value(SendWrapper::new(isolate_page(&element.unchecked_into(), &effect_owner)));
+            }
+        });
+        on_cleanup(move || release_page(&held.get_value(), &owner));
+    }
+    view! { <span hidden node_ref=marker></span> }
+}
+
 #[component]
 pub fn PrintPreviewTask(
     /// Visible heading and dialog name, e.g. "Print preview".
@@ -32,12 +113,17 @@ pub fn PrintPreviewTask(
     /// printing. The frozen brew print keeps its existing print behaviour.
     #[prop(default = true)]
     print_state: bool,
+    /// Isolate the page behind this preview while it is mounted. A caller that
+    /// keeps the page isolated across remounts itself passes `false` and
+    /// renders [`PageIsolation`].
+    #[prop(default = true)]
+    isolate: bool,
     children: Children,
 ) -> impl IntoView {
     let status = RwSignal::new(String::new());
     let root = NodeRef::<leptos::html::Section>::new();
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (root, print_state);
+    let _ = (root, print_state, isolate);
     #[cfg(target_arch = "wasm32")]
     {
         use send_wrapper::SendWrapper;
@@ -60,41 +146,15 @@ pub fn PrintPreviewTask(
             }
         }
         // The preview can be remounted (for example by a context revalidation)
-        // while the previous instance is still disposing. Each instance marks the
-        // elements it made inert with its own owner token, and only removes
-        // `inert` where it is still the owner, so an old instance's cleanup never
-        // re-enables a page the new instance is isolating.
-        static NEXT_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let owner = NEXT_OWNER.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string();
+        // while the previous instance is still disposing, so each instance
+        // isolates and releases the page with its own owner token.
+        let owner = next_owner();
         let setup_owner = owner.clone();
         Effect::new(move |_| {
             let Some(section) = root.get() else { return };
-            let owner = setup_owner.clone();
-            let mut changed = Vec::new();
-            let mut current: web_sys::Element = section.unchecked_into();
-            while let Some(parent) = current.parent_element() {
-                let siblings = parent.children();
-                for index in 0..siblings.length() {
-                    let Some(sibling) = siblings.item(index) else { continue };
-                    // Elements that are inert for another reason are not ours.
-                    let foreign = sibling.has_attribute("inert") && !sibling.has_attribute(OWNER_ATTRIBUTE);
-                    if sibling.is_same_node(Some(&current)) || foreign {
-                        continue;
-                    }
-                    if sibling.set_attribute("inert", "").is_ok()
-                        && sibling.set_attribute(OWNER_ATTRIBUTE, &owner).is_ok()
-                    {
-                        changed.push(sibling);
-                    } else {
-                        tracing::warn!("Unable to make the page behind the print preview inert");
-                    }
-                }
-                if parent.tag_name() == "BODY" {
-                    break;
-                }
-                current = parent;
+            if isolate {
+                inerted.set_value(SendWrapper::new(isolate_page(&section.unchecked_into::<web_sys::Element>(), &setup_owner)));
             }
-            inerted.set_value(SendWrapper::new(changed));
             let heading = web_sys::window()
                 .and_then(|window| window.document())
                 .and_then(|document| document.get_element_by_id(HEADING_ID))
@@ -111,14 +171,7 @@ pub fn PrintPreviewTask(
         });
         on_cleanup(move || {
             escape.remove();
-            for element in inerted.get_value().iter() {
-                if element.get_attribute(OWNER_ATTRIBUTE).as_deref() != Some(owner.as_str()) {
-                    continue;
-                }
-                if element.remove_attribute("inert").is_err() || element.remove_attribute(OWNER_ATTRIBUTE).is_err() {
-                    tracing::warn!("Unable to restore the page behind the print preview");
-                }
-            }
+            release_page(&inerted.get_value(), &owner);
             if print_state && LIVE_PRINT_STATES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
                 if let Some(body) = body {
                     if body.class_list().remove_1("krausen-printing").is_err() {
