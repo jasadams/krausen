@@ -429,6 +429,11 @@
    layout and the estimate rows hide while stale. */
 .recipe-editor__estimate-content, .recipe-editor__estimate-outcome { display: contents; }
 .recipe-editor__estimate-retry-compact { display: none; }
+/* Everything read from an out-of-date estimate is marked as such: its numbers are
+   dimmed by the shared .k-stale rule, and its muted source/reference prose is set
+   in italics (it cannot be dimmed further without failing contrast). */
+.recipe-editor__estimate-content .k-stale--active .recipe-editor__provenance,
+.recipe-editor__estimate-content .k-stale--active .k-disclosure--compact > summary { font-style: italic; }
 @media (min-width: 601px) {
   .recipe-editor__preview-summary--stale .recipe-editor__estimate-content { display: none; }
 }
@@ -443,6 +448,11 @@
   .recipe-editor__estimate-outcome > button { grid-area: action; }
   .recipe-editor__estimate-retry-wide { display: none; }
   .recipe-editor__estimate-retry-compact { display: inline-flex; }
+  /* The source line keeps two lines whether the draft is clean, dirty or has no
+     estimate yet; the equipment identity lives in the header badge and the
+     equipment panel, so an arbitrary profile name can never add a line here. */
+  .recipe-editor__provenance { min-height: 33px; min-height: 2lh; }
+  .recipe-editor__provenance-equipment { display: none; }
 }
 
 /* Shared printable recipe and process summary (KRA-19; reused by KRA-22). */

@@ -762,6 +762,19 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_estimate_hides_its_controls_from_assistive_technology() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let stale = view! { <BreweryStale stale=Signal::derive(|| true)><button>"Open assumptions"</button></BreweryStale> }.to_html();
+            assert!(stale.contains("aria-hidden=\"true\""), "stale region hidden from AT");
+            assert!(stale.contains("inert"), "stale controls are not focusable");
+            let current = view! { <BreweryStale stale=Signal::derive(|| false)><button>"Open assumptions"</button></BreweryStale> }.to_html();
+            assert!(!current.contains("aria-hidden"), "current region stays readable");
+            assert!(!current.contains("inert"), "current controls stay focusable");
+        });
+    }
+
+    #[test]
     fn unavailable_estimate_never_renders_a_stale_marker() {
         let html = view! { <StyleRange label="Gravity" min=1.044 max=1.048 value=None state=StyleState::Awaiting unit="SG" digits=3/> }.to_html();
         assert!(html.contains("Awaiting estimate"));
@@ -1026,11 +1039,13 @@ pub fn BreweryStepRow(
 }
 
 /// Values from an earlier estimate that is being replaced or is unavailable.
-/// While `stale` they are dimmed and hidden from assistive technology; the
-/// caller names the state with a [`BreweryStaleCue`].
+/// While `stale` they are dimmed, hidden from assistive technology and inert, so
+/// no control inside (for example an assumptions disclosure) stays focusable
+/// while it is out of date; the caller names the state with a [`BreweryStaleCue`]
+/// or an adjacent status line.
 #[component]
 pub fn BreweryStale(#[prop(into)] stale: Signal<bool>, children: Children) -> impl IntoView {
-    view! { <div class="k-stale" class:k-stale--active=move || stale.get() aria-hidden=move || stale.get().then_some("true")>{children()}</div> }
+    view! { <div class="k-stale" class:k-stale--active=move || stale.get() aria-hidden=move || stale.get().then_some("true") inert=move || stale.get().then_some("")>{children()}</div> }
 }
 
 /// Names why values are stale. `text` is the visible cue (at once); `announce`
