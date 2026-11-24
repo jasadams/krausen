@@ -2937,6 +2937,79 @@ test('Review highlighted fields does not appear on a first character and reaches
   await expect(page.locator('#recipe-batch-description')).toHaveText('Enter a number');
 });
 
+for (const width of [1440, 390]) {
+  test(`Review highlighted fields keeps the button's natural width, left-aligned with the header fields at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Batch volume (L)').fill('-5');
+    const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+    await expect(review).toBeVisible();
+    // Natural width: forcing max-content changes nothing, and it never spans the header.
+    const measured = await review.evaluate(el => {
+      const own = el.getBoundingClientRect();
+      const previous = (el as HTMLElement).style.width;
+      (el as HTMLElement).style.width = 'max-content';
+      const natural = el.getBoundingClientRect().width;
+      (el as HTMLElement).style.width = previous;
+      const header = el.closest('header')!.getBoundingClientRect();
+      const name = document.getElementById('recipe-title')!.getBoundingClientRect();
+      return { own: own.width, left: own.left, natural, header: header.width, nameLeft: name.left };
+    });
+    expect(Math.abs(measured.own - measured.natural), `width ${measured.own} vs natural ${measured.natural}`).toBeLessThanOrEqual(1);
+    expect(measured.own).toBeLessThan(measured.header / 2);
+    expect(Math.abs(measured.left - measured.nameLeft)).toBeLessThanOrEqual(1);
+  });
+}
+
+test('Review highlighted fields started from Saved versions selects the Recipe tab and focuses the exact control', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+  await expect(review).toBeVisible();
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Saved versions', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await review.click();
+  await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+});
+
+test('Review highlighted fields never blinks and nothing moves while another field is edited with an Invalid outstanding', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+  await expect(review).toBeVisible();
+  await expect(issues(page).getByRole('button', { name: 'Batch volume cannot be negative.', exact: true })).toBeVisible();
+  await page.locator('#recipe-boil').focus();
+  // Sample every frame: the command is present and the tab strip below it never moves.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__frames = 0; w.__missing = 0; w.__tops = new Set<number>();
+    const tick = () => {
+      const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Review highlighted fields');
+      const tabs = document.querySelector('[role=tablist]');
+      w.__frames++;
+      if (!button) w.__missing++;
+      if (tabs) w.__tops.add(Math.round(tabs.getBoundingClientRect().top));
+      w.__raf = requestAnimationFrame(tick);
+    };
+    w.__raf = requestAnimationFrame(tick);
+  });
+  for (const key of ['6', '0', '1', '2', '3']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(120);
+  }
+  await expect(page.locator('#recipe-boil')).toHaveValue('60123');
+  await page.waitForTimeout(1500);
+  const seen = await page.evaluate(() => { const w = window as any; cancelAnimationFrame(w.__raf); return { frames: w.__frames, missing: w.__missing, tops: [...w.__tops] }; });
+  expect(seen.frames).toBeGreaterThan(30);
+  expect(seen.missing, 'the Review command was absent in some frame').toBe(0);
+  expect(seen.tops, `the tab strip moved: ${seen.tops}`).toHaveLength(1);
+  await review.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+});
+
 test('a link to a conditional control goes to the control that governs it, never to an absent input', async ({ page }) => {
   // Mash water follows the thickness method, so the Mash water field is not on the page.
   const mashProfile = `Thickness ${Date.now()}`;
@@ -2999,6 +3072,16 @@ test('inline messages are associated with every field family', async ({ page }) 
   await row.getByLabel('Stage', { exact: true }).selectOption('');
   await expect(row.locator('[id$="-stage"]')).toHaveAttribute('aria-describedby', /-stage-description$/);
   await expect(page.locator(`#${await row.locator('[id$="-stage"]').getAttribute('id')}-description`)).toContainText('Choose a supported stage');
+  // Fermentable type select: an extract in the Mash stage is a real mismatch.
+  await row.getByLabel('Stage', { exact: true }).selectOption('mash');
+  await row.getByText('Addition details').click();
+  const type = row.locator('[id$="-type"]');
+  await type.selectOption('extract');
+  const typeId = (await type.getAttribute('id'))!;
+  await expect(type).toHaveAttribute('aria-describedby', new RegExp(`${typeId}-description$`));
+  await expect(page.locator(`[id="${typeId}-description"]`)).toContainText('Choose a type that matches the stage');
+  await issues(page).getByRole('button', { name: /needs a type that matches its stage/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(typeId);
   // A mash step field and an equipment override field report a real error.
   await page.locator('#recipe-section-mash').getByRole('button', { name: 'Add step', exact: true }).click();
   const stepTime = page.locator('#recipe-section-mash').getByLabel('Time (min)', { exact: true });
@@ -3084,6 +3167,35 @@ test('summary links reach a step field, a select, an override and yeast and othe
     await expect.poll(() => focusedId(page)).toBe(amountId);
   }
 });
+
+for (const scheme of ['light', 'dark'] as const) {
+  test(`an out-of-date issues list keeps at least 4.5:1 text contrast in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/design-system');
+    if (scheme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'));
+    const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
+    await expect(list).toBeVisible();
+    const ratios = await list.evaluate(el => {
+      const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
+      const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
+      let opacity = 1;
+      for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+      let bg = [255, 255, 255];
+      for (let node: Element | null = el; node; node = node.parentElement) {
+        const c = rgb(getComputedStyle(node).backgroundColor);
+        if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
+      }
+      return [...el.querySelectorAll('li, button')].map(entry => {
+        const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05);
+      });
+    });
+    expect(ratios.length).toBeGreaterThan(0);
+    for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+  });
+}
 
 test('wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link', async ({ page }) => {
   for (const width of [320, 1440]) {

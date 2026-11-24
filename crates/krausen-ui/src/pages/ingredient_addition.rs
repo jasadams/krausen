@@ -154,6 +154,18 @@ fn service_path(category: AdditionCategory, row_id: &str, field: Field) -> Optio
     }
 }
 
+/// The validator's path for a raw-input path, where the two differ (yeast and other
+/// amounts, yeast attenuation); `None` where they are the same.
+pub(crate) fn service_path_for_raw(raw: &str) -> Option<String> {
+    let (head, rest) = raw.split_once('[')?;
+    let (row_id, tail) = rest.split_once("].")?;
+    let category = category_for_head(head)?;
+    [Field::Amount, Field::Attenuation]
+        .into_iter()
+        .find(|field| field.path_suffix(category) == tail)
+        .and_then(|field| service_path(category, row_id, field))
+}
+
 /// Stable opening map for the diagnostic registry (KRA-34): the DOM id of the
 /// control a structured row path addresses and whether it sits in the row's
 /// collapsed details. Paths that address no editable row control return `None`.

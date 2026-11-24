@@ -10,7 +10,6 @@ pub mod recipes;
 pub mod settings;
 pub mod welcome;
 
-pub mod recipe_diagnostics;
 pub mod recipe_draft;
 mod library_recovery;
 mod recipe_recovery;

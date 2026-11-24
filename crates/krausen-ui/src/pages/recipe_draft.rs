@@ -190,12 +190,12 @@ impl RecipeDraft {
     }
     pub fn validation_error(&self, path: &str) -> Option<&'static str> {
         self.current_diagnostic(path, krausen_types::validation::Readiness::Invalid)
-            .map(|d| crate::pages::recipe_diagnostics::inline_text(&d.code, d.severity))
+            .map(|d| crate::recipe_diagnostics::inline_text(&d.code, d.severity))
     }
     /// What a field still needs before a brew can start; never a save blocker.
     pub fn validation_hint(&self, path: &str) -> Option<&'static str> {
         self.current_diagnostic(path, krausen_types::validation::Readiness::Incomplete)
-            .map(|d| crate::pages::recipe_diagnostics::inline_text(&d.code, d.severity))
+            .map(|d| crate::recipe_diagnostics::inline_text(&d.code, d.severity))
     }
     pub fn number_error(&self, path: &str) -> Option<&str> {
         self.malformed
@@ -221,7 +221,7 @@ impl RecipeDraft {
         self.remember();
         // Only the field being corrected stops reporting its problem now; every other
         // distinct diagnostic stays until the next settled preview replaces them.
-        let reported = crate::pages::recipe_diagnostics::validator_paths(path);
+        let reported = crate::recipe_diagnostics::validator_paths(path);
         self.diagnostics.retain(|d| !reported.contains(&d.path));
         self.raw_numbers.insert(path.to_owned(), text.clone());
         let value = if text.trim().is_empty() {
@@ -474,6 +474,45 @@ mod tests {
         draft.edit(|doc| doc.title = "renamed".into());
         assert_eq!(draft.diagnostics().len(), 1, "a structural edit must not empty the summary either");
         assert_eq!(draft.readiness(), None, "readiness is still only for the generation that was checked");
+    }
+
+    /// Correcting a raw-input field retires the validator's entry for it, even
+    /// where the validator names the field differently from the input.
+    fn edited_retires(raw: &str, reported: &str, other: &str) {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation {
+            state: Invalid,
+            diagnostics: vec![diagnostic(reported, "negative", Invalid), diagnostic(other, "negative", Invalid)],
+        });
+        draft.edit_number(raw, "5".into(), |_, _| {});
+        let left: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(left, [other], "editing {raw} must retire {reported} and keep {other}");
+    }
+
+    #[test]
+    fn editing_a_yeast_amount_retires_the_ingredient_path_the_validator_reports() {
+        edited_retires("yeast[y1].amount", "ingredients[y1].amount", "ingredients[y2].amount");
+    }
+
+    #[test]
+    fn editing_an_other_ingredient_amount_retires_the_ingredient_path() {
+        edited_retires("other_ingredients[o1].amount", "ingredients[o1].amount", "ingredients[o2].amount");
+    }
+
+    #[test]
+    fn editing_a_yeast_attenuation_retires_the_specification_path() {
+        edited_retires("yeast[y1].attenuation", "yeast[y1].specification.attenuation_fraction", "yeast[y2].specification.attenuation_fraction");
+    }
+
+    #[test]
+    fn editing_an_equipment_override_retires_the_effective_equipment_path() {
+        edited_retires("equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm", "equipment.boil_off_l_per_h");
+    }
+
+    #[test]
+    fn editing_an_equipment_override_retires_the_override_path_too() {
+        edited_retires("equipment_overrides.kettle_opening_cm", "equipment_overrides.kettle_opening_cm", "equipment_overrides.boil_off_l_per_h");
     }
 
     #[test]

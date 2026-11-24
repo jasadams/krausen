@@ -177,14 +177,8 @@ fn locate(draft: &RecipeDraft, path: &str, code: &str) -> Result<Located, ()> {
 /// differ for yeast/other amounts, yeast attenuation and equipment overrides.
 pub fn validator_paths(raw: &str) -> Vec<String> {
     let mut paths = vec![raw.to_owned()];
-    if let Some((head, rest)) = raw.split_once('[') {
-        if let Some((id, tail)) = rest.split_once("].") {
-            match (head, tail) {
-                ("yeast" | "other_ingredients", "amount") => paths.push(format!("ingredients[{id}].amount")),
-                ("yeast", "attenuation") => paths.push(format!("yeast[{id}].specification.attenuation_fraction")),
-                _ => (),
-            }
-        }
+    if let Some(service) = crate::pages::ingredient_addition::service_path_for_raw(raw) {
+        paths.push(service);
     } else if let Some(field) = raw.strip_prefix("equipment_overrides.") {
         paths.push(format!("equipment.{field}"));
     }
@@ -372,9 +366,10 @@ pub fn readiness_summary(validation: &Validation) -> String {
 
 /// First control a brewer must correct before the recipe can be saved: a
 /// malformed number whose format feedback is already showing, else the first
-/// Invalid diagnostic of the current draft. A first character such as "-" is
-/// transitional and never counts, and diagnostics from an earlier draft are not
-/// presented as current.
+/// retained Invalid diagnostic whose field has not been edited since (an edit
+/// drops its entry). A first character such as "-" is transitional and never
+/// counts. Retained entries stay targetable while the list is out of date, so
+/// typing in another field never makes the command blink away and move the page.
 pub fn first_invalid(draft: &RecipeDraft) -> Option<Presented> {
     let doc = draft.document();
     let malformed = draft.settled_malformed().into_iter().filter_map(|path| {
@@ -391,9 +386,6 @@ pub fn first_invalid(draft: &RecipeDraft) -> Option<Presented> {
         }))
     });
     malformed.min_by_key(|(order, _)| *order).map(|(_, p)| p).or_else(|| {
-        if !draft.diagnostics_current() {
-            return None;
-        }
         present_all(draft, draft.diagnostics()).into_iter().find(|p| p.severity == Readiness::Invalid)
     })
 }
@@ -590,7 +582,11 @@ mod tests {
         draft.edit(|doc| doc.title = "moved on".into());
         assert!(!draft.diagnostics_current());
         assert_eq!(draft.diagnostics().len(), 1, "still shown, marked out of date");
-        assert!(first_invalid(&draft).is_none(), "but never counted by Review");
+        assert_eq!(first_invalid(&draft).map(|p| p.path), Some("batch_size_l".into()), "Review keeps targeting the retained entry, so the command never blinks while another field is edited");
+        draft.edit_number("boil_minutes", "61".into(), |doc, v| doc.boil_minutes = v);
+        assert_eq!(first_invalid(&draft).map(|p| p.path), Some("batch_size_l".into()), "still there after typing in a different field");
+        draft.edit_number("batch_size_l", "20".into(), |doc, v| doc.batch_size_l = v);
+        assert!(first_invalid(&draft).is_none(), "editing the field itself retires its entry");
         let mut restored = RecipeDraft::new(RecipeDocumentV1::default());
         let generation = restored.generation;
         restored.apply_validation(generation, Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] });

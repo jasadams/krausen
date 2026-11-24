@@ -19,6 +19,9 @@ use krausen_types::{
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome, RecipeSnapshot},
 };
 use leptos::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use crate::utils::focus::{focus_element, try_focus_element};
+use crate::utils::focus::jump_after_render;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 #[path = "recipe_comparison.rs"]
@@ -254,54 +257,6 @@ pub fn RecipeEditorPage() -> impl IntoView {
 /// `(DOM id, visible label)` of the batch volume control, declared once for the
 /// control and the diagnostic registry.
 pub(crate) const BATCH_FIELD: (&str, &str) = ("recipe-batch", "Batch volume");
-
-/// One focus guard for every deliberate editor focus move: visible, connected,
-/// enabled and not inside a hidden/inert subtree.
-#[cfg(target_arch = "wasm32")]
-fn try_focus_element(element: &web_sys::Element) -> bool {
-    use wasm_bindgen::JsCast;
-    if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
-        || element.get_client_rects().length() == 0
-        || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
-            .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
-    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
-        && web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|active| active == *element)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn focus_element(id: &str) {
-    let focused = web_sys::window().and_then(|window| window.document())
-        .and_then(|document| document.get_element_by_id(id))
-        .is_some_and(|element| try_focus_element(&element));
-    if !focused { tracing::warn!(target = id, "Unable to focus a recipe target"); }
-}
-
-/// Deliberate diagnostic jump: open every collapsed ancestor of the control,
-/// then focus it, or the summary entry that explains it when the control is not
-/// rendered (a conditional field, for instance). Called only from a user action.
-#[cfg(target_arch = "wasm32")]
-fn jump_to_diagnostic(target: &str, explanation: &str) {
-    use wasm_bindgen::JsCast;
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-    if let Some(element) = document.get_element_by_id(target) {
-        let mut ancestor = element.parent_element();
-        while let Some(node) = ancestor {
-            if let Some(details) = node.dyn_ref::<web_sys::HtmlDetailsElement>() { details.set_open(true); }
-            ancestor = node.parent_element();
-        }
-        if try_focus_element(&element) { return; }
-    }
-    focus_element(explanation);
-}
-
-/// Waits for the render, then runs the deliberate diagnostic jump. Shared by the
-/// editor and the design-system showcase.
-pub(crate) fn jump_after_render(target: String, explanation: String) {
-    #[cfg(target_arch = "wasm32")]
-    request_animation_frame(move || jump_to_diagnostic(&target, &explanation));
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = (target, explanation);
-}
 
 /// Open a native disclosure from a header command, then move focus into it.
 #[cfg(target_arch = "wasm32")]
@@ -1351,7 +1306,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let review = Callback::new(move |()| {
         // Explicit request: settle every touched field so its error shows, then go to the first one.
         draft.update(|d| d.settle_numbers());
-        if let Some(first) = draft.with_untracked(crate::pages::recipe_diagnostics::first_invalid) {
+        if let Some(first) = draft.with_untracked(crate::recipe_diagnostics::first_invalid) {
             let target = match first.route {
                 crate::components::diagnostic_list::Route::Field { dom_id } => dom_id,
                 crate::components::diagnostic_list::Route::Explain => first.key.clone(),
@@ -1902,7 +1857,7 @@ fn FormulationPreview(
                         }
                     }
                     if accepted {
-                        message.set(crate::pages::recipe_diagnostics::readiness_summary(&preview.validation));
+                        message.set(crate::recipe_diagnostics::readiness_summary(&preview.validation));
                         draft.update(|d| { d.apply_validation(draft_generation, preview.validation.clone()); });
                         result.set(Some((draft_generation, preview)));
                     } else if preview.validation.state
@@ -1910,7 +1865,7 @@ fn FormulationPreview(
                         && preview.context.is_none()
                         && preview.context_digest.is_none()
                     {
-                        message.set(crate::pages::recipe_diagnostics::readiness_summary(&preview.validation));
+                        message.set(crate::recipe_diagnostics::readiness_summary(&preview.validation));
                         draft.update(|d| { d.apply_validation(draft_generation, preview.validation); });
                         phase.set(crate::pages::recipe_process::EstimatePhase::InvalidInput);
                     } else {
@@ -1977,7 +1932,7 @@ fn FormulationPreview(
         </Show>
         <crate::components::BreweryBeerPortrait/>
         {move || accepted.get().map(|preview| view! { <PreviewMetrics preview=preview.clone()/><PreviewSource preview=preview draft=draft revision=revision/> })}
-        <crate::pages::recipe_diagnostics::DiagnosticSummary draft=draft/>
+        <crate::recipe_diagnostics::DiagnosticSummary draft=draft/>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 

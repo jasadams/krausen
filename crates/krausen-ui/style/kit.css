@@ -355,6 +355,8 @@
 .recipe-header__equipment { display: grid; gap: var(--k-space-1); min-width: 0; }
 .recipe-header__equipment-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--k-space-2); min-height: var(--k-control-height); min-width: 0; }
 .recipe-header__hint { grid-column: 1 / -1; }
+/* A grid item stretches by default; the quiet Review action keeps the button's own width, left-aligned with the fields. */
+.recipe-header__review { justify-self: start; max-width: 100%; }
 .recipe-editor > .recipe-header:not(:first-child) { margin-top: 0; }
 .recipe-header__heading:focus-visible { position: static; width: auto; height: auto; margin: 0; clip-path: none; overflow: visible; white-space: normal; font-family: var(--k-font-display); font-size: var(--k-font-heading); line-height: 1.1; outline: 2px solid var(--k-color-ring); outline-offset: 4px; }
 .recipe-header__reason { margin: 0; color: var(--k-color-muted); font-size: var(--k-font-xs); }
@@ -564,5 +566,6 @@
 .k-diagnostics__title, .k-diagnostics__heading { margin: 0; font-size: var(--k-font-sm); font-weight: 600; }
 .k-diagnostics__list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--k-space-1); }
 .k-diagnostics__list > li { font-size: var(--k-font-sm); line-height: 1.5; overflow-wrap: anywhere; }
-.k-diagnostics.k-stale--active .k-diagnostics__list { opacity: .7; }
+/* An out-of-date list is muted with a token colour, not opacity: opacity dropped the red entry text below 4.5:1. */
+.k-diagnostics.k-stale--active .k-diagnostics__list :is(li, button) { color: var(--k-color-muted); }
 .k-diagnostics__list > li:focus-visible { outline: 2px solid var(--k-color-ring); outline-offset: 2px; }

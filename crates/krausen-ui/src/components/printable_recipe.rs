@@ -156,7 +156,7 @@ fn assumption_text(key: &str) -> String {
 }
 
 pub fn diagnostic_message(diagnostic: &Diagnostic) -> String {
-    crate::pages::recipe_diagnostics::plain_message(diagnostic)
+    crate::recipe_diagnostics::plain_message(diagnostic)
 }
 
 fn timing_text(row: &SummaryIngredient) -> String {
@@ -454,7 +454,7 @@ pub fn PrintableRecipe(summary: ProcessSummary) -> impl IntoView {
                     view! { <p class="print-sheet__muted">"No validation diagnostics."</p> }.into_any()
                 } else {
                     view! { <ul class="print-sheet__list">{diagnostics.iter().map(|diagnostic| view! {
-                        <li><strong>{readiness_label(diagnostic.severity)}</strong> " · " {crate::pages::recipe_diagnostics::summary_message(&summary, diagnostic)} <span class="print-sheet__path">{diagnostic.path.clone()}</span></li>
+                        <li><strong>{readiness_label(diagnostic.severity)}</strong> " · " {crate::recipe_diagnostics::summary_message(&summary, diagnostic)} <span class="print-sheet__path">{diagnostic.path.clone()}</span></li>
                     }).collect_view()}</ul> }.into_any()
                 }}
             </section>

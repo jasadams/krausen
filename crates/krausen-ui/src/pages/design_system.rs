@@ -221,7 +221,7 @@ fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::components::diagnostic
 #[component]
 pub fn DesignSystemPage() -> impl IntoView {
     provide_context(crate::components::diagnostic_list::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
-        crate::pages::recipe_editor::jump_after_render(target, explanation);
+        crate::utils::focus::jump_after_render(target, explanation);
     })));
     let name = RwSignal::new("Munich Helles".to_owned());
     let volume = RwSignal::new("20".to_owned());

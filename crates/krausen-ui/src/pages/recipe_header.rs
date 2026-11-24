@@ -250,8 +250,10 @@ pub fn RecipeHeader(
                     </div>
                 </div>
             </div>
-            <Show when=move || draft.with(|d| crate::pages::recipe_diagnostics::first_invalid(d).is_some())>
-                <Button variant=ButtonVariant::Secondary on:click=move |_| actions.review.run(())>"Review highlighted fields"</Button>
+            <Show when=move || draft.with(|d| crate::recipe_diagnostics::first_invalid(d).is_some())>
+                <div class="recipe-header__review">
+                    <Button variant=ButtonVariant::Secondary on:click=move |_| actions.review.run(())>"Review highlighted fields"</Button>
+                </div>
             </Show>
             <Show when=move || reason.get().is_some()>
                 <p id=reason_id class="recipe-header__reason">{move || reason.get()}</p>

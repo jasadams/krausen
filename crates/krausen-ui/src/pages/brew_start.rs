@@ -265,8 +265,8 @@ fn distinct_reasons(summary: &krausen_types::process_summary::ProcessSummary) ->
     summary
         .diagnostics
         .iter()
-        .filter(|d| seen.insert(crate::pages::recipe_diagnostics::problem_key(d)))
-        .map(|d| crate::pages::recipe_diagnostics::summary_message(summary, d))
+        .filter(|d| seen.insert(crate::recipe_diagnostics::problem_key(d)))
+        .map(|d| crate::recipe_diagnostics::summary_message(summary, d))
         .collect()
 }
 
@@ -1205,7 +1205,7 @@ pub fn StartBrewTask(
                 && phase.try_with_untracked(|p| p.key()) == Some(key)
                 && generation.try_get_untracked() == Some(this)
             {
-                crate::pages::recipe_editor::focus_element(target);
+                crate::utils::focus::focus_element(target);
             }
         });
     });
