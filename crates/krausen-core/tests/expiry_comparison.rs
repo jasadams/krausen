@@ -86,22 +86,44 @@ async fn expiry_on_other_days_still_works() {
 
 /// The comparison this replaced, kept so the regression stays legible: a bare
 /// `column > datetime('now')` accepts a credential that expired earlier today.
+///
+/// Both reference instants are fixed rather than read from the wall clock. The
+/// old version derived "now - 1 hour" at run time, so in the first hour after
+/// 00:00 UTC the stamp fell on the previous date, where the naive comparison is
+/// accidentally correct and the assertion failed. Fixed references keep the
+/// demonstration identical at any time of day.
 #[tokio::test]
 async fn the_naive_comparison_is_why_this_helper_exists() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
 
-    let past = stamp(&mut conn, "%Y-%m-%dT%H:%M:%S.000000+00:00", -1).await;
-    let naive: i64 = sqlx::query("SELECT (? > datetime('now')) AS still_valid")
-        .bind(&past)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap()
-        .get("still_valid");
+    // (reference "now" in datetime('now')'s shape, expired chrono RFC3339 stamp)
+    // The fixed instants are in the past, so is_future's real-clock side of
+    // the comparison still classifies them as expired.
+    let cases = [
+        // First hour after 00:00 UTC: expired fifteen minutes ago, same date.
+        ("2020-03-08 00:30:00", "2020-03-08T00:15:00.000000+00:00"),
+        // Later the same day: expired an hour ago, same date.
+        ("2020-03-08 06:00:00", "2020-03-08T05:00:00.000000+00:00"),
+    ];
 
-    assert_eq!(
-        naive, 1,
-        "the naive comparison used to accept {past}; if this now fails the \
-         storage format changed and is_future may no longer be needed"
-    );
-    assert!(!evaluate(&mut conn, &past).await, "is_future must reject it");
+    for (reference_now, expired) in cases {
+        let naive: i64 = sqlx::query("SELECT (? > datetime(?)) AS still_valid")
+            .bind(expired)
+            .bind(reference_now)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap()
+            .get("still_valid");
+
+        assert_eq!(
+            naive, 1,
+            "the naive comparison used to accept {expired}, expired before \
+             {reference_now}; if this now fails the storage format changed and \
+             is_future may no longer be needed"
+        );
+        assert!(
+            !evaluate(&mut conn, expired).await,
+            "is_future must reject {expired}, expired before {reference_now}"
+        );
+    }
 }
