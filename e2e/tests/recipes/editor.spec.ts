@@ -963,7 +963,7 @@ async function recipeWithNumbers(page: import('@playwright/test').Page) {
   await page.getByLabel('Amount in recipe (kg)').fill('4');
   await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await chooseEquipmentProfile(page, profile);
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
@@ -2733,6 +2733,14 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
 
 // ---- KRA-34: actionable diagnostics, stable field jumps and settled announcements ----
 
+// The equipment select lists a page of profiles; once a workspace holds more (the pagination spec
+// creates over a hundred), later ones are behind "Load more profiles".
+async function chooseEquipmentProfile(page: import('@playwright/test').Page, label: string) {
+  const more = page.getByRole('button', { name: 'Load more profiles' });
+  while (await more.isVisible()) await more.click();
+  await page.locator('#equipment-profile-select').selectOption({ label });
+}
+
 async function addHop(page: import('@playwright/test').Page, name: string, minutes: string) {
   await page.getByRole('button', { name: 'Add hop', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add hop', exact: true });
@@ -2982,7 +2990,7 @@ test('Review highlighted fields never blinks and nothing moves while another fie
   await expect(review).toBeVisible();
   await expect(issues(page).getByRole('button', { name: 'Batch volume cannot be negative.', exact: true })).toBeVisible();
   await page.locator('#recipe-boil').focus();
-  // Sample every frame: the command is present and the tab strip below it never moves.
+  // Sample every frame: the command is present and the tab strip below it never moves (document-relative, so focus scrolling does not count).
   await page.evaluate(() => {
     const w = window as any;
     w.__frames = 0; w.__missing = 0; w.__tops = new Set<number>();
@@ -2991,7 +2999,7 @@ test('Review highlighted fields never blinks and nothing moves while another fie
       const tabs = document.querySelector('[role=tablist]');
       w.__frames++;
       if (!button) w.__missing++;
-      if (tabs) w.__tops.add(Math.round(tabs.getBoundingClientRect().top));
+      if (tabs) w.__tops.add(Math.round(tabs.getBoundingClientRect().top + window.scrollY));
       w.__raf = requestAnimationFrame(tick);
     };
     w.__raf = requestAnimationFrame(tick);
@@ -3023,7 +3031,7 @@ test('a link to a conditional control goes to the control that governs it, never
   await page.getByLabel('Amount in recipe (kg)').fill('4');
   await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-select').selectOption({ label: mashProfile });
+  await chooseEquipmentProfile(page, mashProfile);
   await page.locator('#recipe-mash-method').selectOption('profile_thickness');
   await expect(page.locator('#recipe-mash-water')).toHaveCount(0);
   const sparge = issues(page).getByRole('button', { name: /Mash water is more than the water available/ });
@@ -3040,7 +3048,7 @@ test('a link to an inherited chilling value goes to the Chilling override, never
   await page.goto('/recipe-editor/new');
   await addHop(page, 'Cascade', '60');
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await chooseEquipmentProfile(page, profile);
   await page.getByText('Equipment settings', { exact: true }).click();
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
   await expect(page.locator('#recipe-chilling-rate')).toHaveCount(0);
