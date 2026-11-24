@@ -110,6 +110,9 @@ impl RecipeDraft {
     }
     pub fn edit_clearing(&mut self, prefix: &str, change: impl FnOnce(&mut RecipeDocumentV1)) {
         self.remember();
+        // The cleared field stops reporting its problem, under every path the validator uses for it.
+        let reported = crate::recipe_diagnostics::validator_paths(prefix);
+        self.diagnostics.retain(|d| !reported.iter().any(|path| d.path.starts_with(path.as_str())));
         self.raw_numbers.retain(|path, _| !path.starts_with(prefix));
         self.malformed.retain(|path, _| !path.starts_with(prefix));
         self.settled_numbers.retain(|path| !path.starts_with(prefix));
@@ -513,6 +516,24 @@ mod tests {
     #[test]
     fn editing_an_equipment_override_retires_the_override_path_too() {
         edited_retires("equipment_overrides.kettle_opening_cm", "equipment_overrides.kettle_opening_cm", "equipment_overrides.boil_off_l_per_h");
+    }
+
+    #[test]
+    fn clearing_an_override_retires_its_retained_entries_so_review_cannot_stay_on_it() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        for (prefix, reported) in [
+            ("equipment_overrides.kettle_opening_cm", ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]),
+            ("equipment_overrides.chilling.", ["equipment_overrides.chilling.rate_per_minute", "equipment.chilling.rate_per_minute"]),
+        ] {
+            let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+            draft.apply_validation(draft.generation, Validation {
+                state: Invalid,
+                diagnostics: vec![diagnostic(reported[0], "negative", Invalid), diagnostic(reported[1], "negative", Invalid), diagnostic("batch_size_l", "negative", Invalid)],
+            });
+            draft.edit_clearing(prefix, |_| {});
+            let left: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+            assert_eq!(left, ["batch_size_l"], "clearing {prefix} retires its entries under both validator paths");
+        }
     }
 
     #[test]
