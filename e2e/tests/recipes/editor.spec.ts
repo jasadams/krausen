@@ -968,7 +968,7 @@ async function recipeWithNumbers(page: import('@playwright/test').Page, profileN
   await page.locator('#recipe-mash-water').fill('15');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
   await expect(page.getByTestId('estimate-stale')).toHaveText('');
-  profileId
+  return profileId
 }
 const waterValues = (page: import('@playwright/test').Page) => page.locator('#recipe-section-mash .k-metric-list .k-metric__value').allTextContents();
 
@@ -1157,7 +1157,7 @@ async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
   await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
-  profileId
+  return profileId
 }
 
 for (const width of [320, 390]) {
