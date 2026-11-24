@@ -218,6 +218,15 @@ pub fn StyleRange(
     }
 }
 
+/// The height of a metric's style band before its reference values are known:
+/// the same track, limits and status rows with dashes and no invented limits, so
+/// the first estimate fills them in place. Decorative; the caller's stale region
+/// or the status line names the state.
+#[component]
+pub fn BreweryStyleRangePlaceholder() -> impl IntoView {
+    view! { <div class="k-style-range k-style-range--awaiting" aria-hidden="true"><div class="k-style-range__track"></div><div class="k-style-range__limits"><span>"—"</span><span>"—"</span></div><span class="k-style-range__status">"Awaiting estimate"</span></div> }
+}
+
 #[component]
 pub fn BreweryMetric(
     #[prop(into)] label: String,

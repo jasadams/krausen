@@ -3,7 +3,7 @@
 use crate::{
     components::{
         BreweryDisclosure, BreweryDraftField, BreweryNotice, BreweryPanel, BreweryStale, BreweryTabs,
-        Button, ButtonVariant, SelectedSavedRevision,
+        BreweryStyleRangePlaceholder, Button, ButtonVariant, SelectedSavedRevision,
         printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
@@ -1952,11 +1952,12 @@ fn FormulationPreview(
             let current = accepted.get().is_some();
             // Values stay only while current or while their replacement is calculated.
             let show_values = current || (reference.is_some() && current_phase.get() == crate::pages::recipe_process::EstimatePhase::Calculating);
-            let metrics = view! { <PreviewMetrics preview=reference.clone() current=show_values/> }.into_any();
+            let style_selected = draft.with(|d| d.document().style.is_some());
+            let metrics = view! { <PreviewMetrics preview=reference.clone() current=show_values style_selected=style_selected/> }.into_any();
             let source = match reference {
                 Some(preview) => view! { <PreviewSource preview=preview draft=draft revision=revision/> }.into_any(),
                 None => view! {
-                    <p class="recipe-editor__provenance recipe-editor__provenance--placeholder" data-testid="estimate-source">"No estimate yet."</p>
+                    <p class="note-caption recipe-editor__provenance" data-testid="estimate-source">"No estimate yet."</p>
                     <BreweryDisclosure title="Style reference and assumptions" compact=true>{""}</BreweryDisclosure>
                 }.into_any(),
             };
@@ -1980,6 +1981,9 @@ fn PreviewMetrics(
     /// the labels and style reference rows either way so the phone summary keeps
     /// one height.
     #[prop(default = true)] current: bool,
+    /// A style is selected, so its band rows must be reserved even before the
+    /// reference values are known.
+    #[prop(default = false)] style_selected: bool,
 ) -> impl IntoView {
     let style = preview.as_ref().and_then(|preview| preview.style.as_ref());
     let comparison = preview.as_ref().and_then(|preview| preview.style_comparison.as_ref());
@@ -1992,11 +1996,11 @@ fn PreviewMetrics(
         current.then(|| preview.as_ref().and_then(|preview| pick(&preview.targets))).flatten()
     };
     view! { <div class="recipe-editor__metrics">
-        {preview_metric("Original gravity", value(|t| t.original_sg), style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline)}
-        {preview_metric("Final gravity", value(|t| t.final_sg), style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline)}
-        {preview_metric("Alcohol", value(|t| t.abv_percent), style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline)}
-        {preview_metric("Bitterness", value(|t| t.ibu), style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline)}
-        {preview_metric("Colour", value(|t| t.colour_ebc), style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline)}
+        {preview_metric_with_style("Original gravity", value(|t| t.original_sg), style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline, style_selected)}
+        {preview_metric_with_style("Final gravity", value(|t| t.final_sg), style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline, style_selected)}
+        {preview_metric_with_style("Alcohol", value(|t| t.abv_percent), style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline, style_selected)}
+        {preview_metric_with_style("Bitterness", value(|t| t.ibu), style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline, style_selected)}
+        {preview_metric_with_style("Colour", value(|t| t.colour_ebc), style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline, style_selected)}
         {preview_metric("Into fermenter", fermenter, None, None, "L", 1, crate::components::MetricDensity::Headline)}
     </div> }
 }
@@ -2038,7 +2042,7 @@ fn PreviewSource(
         // equipment identity is separate so phones can keep this line at a fixed
         // two-line height while the header badge and equipment panel still name
         // the effective profile (KRA-49: no height change on the first keystroke).
-        <p class="recipe-editor__provenance" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| view! { <span class="recipe-editor__provenance-equipment">{format!(" {text}")}</span> })}</p>
+        <p class="note-caption recipe-editor__provenance" data-testid="estimate-source">{move || estimate_source(draft.with(|d| d.dirty), revision.get())}{equipment.map(|text| view! { <span class="recipe-editor__provenance-equipment">{format!(" {text}")}</span> })}</p>
         {(style.is_some() || !assumptions.is_empty()).then(|| view! { <BreweryDisclosure title="Style reference and assumptions" compact=true>
             {style.map(|text| view! { <p class="recipe-editor__provenance">{text}</p> })}
             {(!assumptions.is_empty()).then(|| view! { <ul>{assumptions.into_iter().map(|text| view! { <li>{text}</li> }).collect_view()}</ul> })}
@@ -2073,13 +2077,33 @@ pub(crate) fn preview_metric(
     digits: usize,
     density: crate::components::MetricDensity,
 ) -> AnyView {
+    preview_metric_with_style(label, value, range, comparison, unit, digits, density, false)
+}
+
+/// The summary variant: when a style is selected but its reference values are not
+/// known yet, reserve the band rows with the shared placeholder so the first
+/// estimate fills them in place. Water and equipment metrics never carry bands.
+fn preview_metric_with_style(
+    label: &'static str,
+    value: Option<f64>,
+    range: Option<&krausen_types::formulation::Range>,
+    comparison: Option<krausen_types::formulation::RangeStatus>,
+    unit: &'static str,
+    digits: usize,
+    density: crate::components::MetricDensity,
+    style_selected: bool,
+) -> AnyView {
     use krausen_types::formulation::RangeStatus;
     let formatted = value
         .map(|n| format!("{n:.digits$}"))
         .unwrap_or_else(|| "—".into());
-    let range_view = range.map(|r| {
-        let state = match comparison { Some(RangeStatus::Below) => crate::components::StyleState::Below, Some(RangeStatus::Within) => crate::components::StyleState::Within, Some(RangeStatus::Above) => crate::components::StyleState::Above, None => crate::components::StyleState::Awaiting };
-        view! { <crate::components::StyleRange label=label min=r.min max=r.max value=value state=state unit=unit digits=digits/> }
-    });
+    let range_view = match range {
+        Some(r) => {
+            let state = match comparison { Some(RangeStatus::Below) => crate::components::StyleState::Below, Some(RangeStatus::Within) => crate::components::StyleState::Within, Some(RangeStatus::Above) => crate::components::StyleState::Above, None => crate::components::StyleState::Awaiting };
+            Some(view! { <crate::components::StyleRange label=label min=r.min max=r.max value=value state=state unit=unit digits=digits/> }.into_any())
+        }
+        None if style_selected => Some(view! { <BreweryStyleRangePlaceholder/> }.into_any()),
+        None => None,
+    };
     view! { <crate::components::BreweryMetric label=label value=formatted unit=unit density=density>{range_view}</crate::components::BreweryMetric> }.into_any()
 }

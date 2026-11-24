@@ -418,7 +418,7 @@
 @media (max-width: 760px) { .k-compact-ingredient__main:has(> .k-compact-ingredient__schedule) { grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); } .k-compact-ingredient__schedule { grid-column: 1 / -1; } }
 .recipe-editor__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); margin-top: var(--k-space-4); }
 @media (max-width: 600px) { .recipe-editor__preview-summary .recipe-editor__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--k-space-2); } }
-.recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); }
+.recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); line-height: 1.5; }
 
 /* KRA-49: on phones the estimates summary keeps one height while the estimate is
    replaced or settles without one. The estimate rows keep their labels, style
@@ -429,11 +429,6 @@
    layout and the estimate rows hide while stale. */
 .recipe-editor__estimate-content, .recipe-editor__estimate-outcome { display: contents; }
 .recipe-editor__estimate-retry-compact { display: none; }
-/* Everything read from an out-of-date estimate is marked as such: its numbers are
-   dimmed by the shared .k-stale rule, and its muted source/reference prose is set
-   in italics (it cannot be dimmed further without failing contrast). */
-.recipe-editor__estimate-content .k-stale--active .recipe-editor__provenance,
-.recipe-editor__estimate-content .k-stale--active .k-disclosure--compact > summary { font-style: italic; }
 @media (min-width: 601px) {
   .recipe-editor__preview-summary--stale .recipe-editor__estimate-content { display: none; }
 }
@@ -549,6 +544,8 @@
 @media (prefers-reduced-motion: no-preference) { .k-stale .k-metric__value { transition: color .15s; } }
 /* Already muted text cannot be dimmed further without failing contrast, so a stale note is set in italics instead. */
 .k-stale--active .note-caption { font-style: italic; }
+/* Reference detail one disclosure away belongs to the stale region too. */
+.k-stale--active .k-disclosure--compact > summary { font-style: italic; }
 .k-stale__cue { color: var(--k-color-muted); font-size: var(--k-font-sm); font-weight: 400; line-height: 1.25; }
 
 /* A panel whose body is a vertical stack of sections and field rows with one

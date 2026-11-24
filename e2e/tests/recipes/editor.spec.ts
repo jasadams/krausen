@@ -1328,6 +1328,8 @@ test('a late preview response cannot replace a settled invalid estimate', async 
 test('an editor that has never had an estimate reserves the summary before the first one at 320px', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto('/recipe-editor/new');
+  await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
+  await expect(page.getByLabel(/Original gravity.*Style reference/)).toBeVisible();
   await page.getByLabel('Batch volume (L)').fill('-');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
   let unload = false;
@@ -1337,9 +1339,11 @@ test('an editor that has never had an estimate reserves the summary before the f
   await page.getByText('A retained draft is available').waitFor();
   await page.getByRole('button', { name: 'Restore draft' }).click();
   await expect(page.getByLabel('Batch volume (L)')).toHaveValue('-');
+  await expect(page.getByLabel('Beer style', { exact: true })).toHaveValue('4A · Munich Helles');
   const source = page.getByTestId('estimate-source');
   await expect(source).toHaveText('No estimate yet.');
   const summary = page.locator('.recipe-editor__preview-summary');
+  await expect(summary.locator('.k-style-range'), 'the style band rows are reserved').toHaveCount(5);
   const disclosure = summary.locator('.k-disclosure--compact');
   await expect(disclosure).toHaveCount(1);
   expect(await disclosure.locator('summary').evaluate(element => { (element as HTMLElement).focus(); return document.activeElement === element; }), 'the placeholder reference row is inert').toBe(false);
@@ -1353,6 +1357,7 @@ test('an editor that has never had an estimate reserves the summary before the f
   await page.getByLabel('Batch volume (L)').fill('20');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' }).first()).toBeVisible();
   await expect(source).not.toHaveText('No estimate yet.');
+  await expect(summary.locator('.k-style-range')).toHaveCount(5);
   const first = await measure();
   expect(Math.abs(first.height - placeholder.height), `first estimate inserted ${first.height - placeholder.height}px`).toBeLessThanOrEqual(0.5);
   expect(Math.abs(first.below - placeholder.below), 'the first control below moved when the first estimate arrived').toBeLessThanOrEqual(0.5);
