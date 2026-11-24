@@ -71,7 +71,7 @@ pub fn DiagnosticList(
     view! {
         <Show when=move || items.with(|list| !list.is_empty())>
             <section class="k-diagnostics k-stale" class:k-stale--active=move || stale.get() aria-labelledby=heading_id>
-                <h3 id=heading_id class="k-diagnostics__title">"Recipe issues"<span class="k-stale__cue" data-testid="diagnostics-stale">{move || stale.get().then_some(" · Out of date")}</span></h3>
+                <h3 class="k-diagnostics__title"><span id=heading_id>"Recipe issues"</span><span class="k-stale__cue" data-testid="diagnostics-stale">{move || stale.get().then_some(" · Out of date")}</span></h3>
                 {group(Readiness::Invalid, "Correct before saving")}
                 {group(Readiness::Incomplete, "Needed to start a brew")}
             </section>

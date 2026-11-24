@@ -253,6 +253,13 @@ pub fn present_all(draft: &RecipeDraft, diagnostics: &[Diagnostic]) -> Vec<Prese
         .filter(|(_, d)| seen.insert((d.path.clone(), d.code.clone())))
         .filter_map(|(index, d)| present_one(draft, d).map(|p| (index, p)))
         .collect();
+    // The validator reports one problem under both its override and effective
+    // paths (equipment_overrides.* and equipment.*); the brewer sees it once.
+    let mut same_problem = std::collections::BTreeSet::new();
+    presented.retain(|(_, p)| match &p.route {
+        Route::Field { dom_id } => same_problem.insert((dom_id.clone(), p.code.clone(), p.severity == Readiness::Invalid)),
+        Route::Explain => true,
+    });
     presented.sort_by_key(|(index, p)| (order(doc, &p.path), *index));
     presented.into_iter().map(|(_, p)| p).collect()
 }
@@ -601,6 +608,19 @@ mod tests {
         }
         let plateau = plain_message(&diag("equipment.chilling.plateau_c", "plateau_not_below_boil", Readiness::Invalid));
         assert_eq!(plateau, "Equipment cooling plateau must be below the boil temperature.");
+    }
+
+    #[test]
+    fn one_problem_reported_under_override_and_effective_paths_is_listed_once() {
+        let doc = doc();
+        let list = present_all(&RecipeDraft::new(doc), &[
+            diag("equipment_overrides.boil_off_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment.boil_off_l_per_hour", "negative", Readiness::Invalid),
+            diag("hops[h1].amount_g", "negative", Readiness::Invalid),
+            diag("hops[h2].amount_g", "negative", Readiness::Invalid),
+        ]);
+        assert_eq!(list.len(), 3, "{list:?}");
+        assert_eq!(list.iter().filter(|p| p.message.starts_with("Boil-off")).count(), 1);
     }
 
     #[test]

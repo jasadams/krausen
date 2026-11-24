@@ -2957,7 +2957,9 @@ test('a link to a conditional control goes to the control that governs it, never
   await sparge.click();
   await expect.poll(() => focusedId(page)).toBe('recipe-mash-method');
   await expect(page.locator('#recipe-mash-method')).toBeFocused();
+});
 
+test('a link to an inherited chilling value goes to the Chilling override, never to an absent input', async ({ page }) => {
   // An inherited forced chilling with no rate: the rate field only exists once Chilling is overridden.
   const profile = `Forced ${Date.now()}`;
   await createEquipmentProfile(page, profile, PROFILE_VALUES, 'forced');
