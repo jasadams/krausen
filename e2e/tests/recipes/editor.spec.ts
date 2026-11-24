@@ -1160,22 +1160,26 @@ async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   return profileId
 }
 
+type SummaryBox = { height: number; below: number };
+// The summary's height and where the first section starts below it.
+const measureSummary = (page: import('@playwright/test').Page) => page.evaluate(() => {
+  const summary = document.querySelector('.recipe-editor__preview-summary')!;
+  const below = document.querySelector('.recipe-editor__sections')!;
+  const rect = summary.getBoundingClientRect();
+  return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+});
+const expectSame = (label: string, actual: SummaryBox, expected: SummaryBox) => {
+  expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
+};
+
 for (const width of [320, 390]) {
   test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const profileId = await readyEstimateRecipe(page);
     const summary = page.locator('.recipe-editor__preview-summary');
     const values = summary.locator('.k-metric__value');
-    const measure = () => page.evaluate(() => {
-      const summary = document.querySelector('.recipe-editor__preview-summary')!;
-      const below = document.querySelector('.recipe-editor__sections')!;
-      const rect = summary.getBoundingClientRect();
-      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
-    });
-    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
-      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
-    };
+    const measure = () => measureSummary(page);
     const current = await measure();
     const status = summary.locator('[role="status"]');
     // The state text keeps one top edge in every state: the reserved space sits
@@ -1315,16 +1319,7 @@ for (const width of [320, 390]) {
     const list = issues(page);
     await expect(list.getByRole('button', { name: /Alpha acid is missing/ })).toHaveCount(1);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
-    const measure = () => page.evaluate(() => {
-      const summary = document.querySelector('.recipe-editor__preview-summary')!;
-      const below = document.querySelector('.recipe-editor__sections')!;
-      const rect = summary.getBoundingClientRect();
-      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
-    });
-    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
-      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
-    };
+    const measure = () => measureSummary(page);
     const current = await measure();
     const batch = page.getByLabel('Batch volume (L)');
 
