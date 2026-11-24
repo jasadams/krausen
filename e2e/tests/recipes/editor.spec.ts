@@ -950,9 +950,9 @@ const ANNOUNCE_DEBOUNCE_MS = 800;
 const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3', 'profile-transfer-loss': '2', 'profile-deadspace': '0', 'profile-absorption': '0.8', 'profile-thickness': '2.5', 'profile-capacity': '30', 'profile-diameter': '35', 'profile-opening': '30', 'profile-boil-temperature': '100' };
 
 // A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
-async function recipeWithNumbers(page: import('@playwright/test').Page) {
-  const profile = `Numbers ${Date.now()}`;
-  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
+async function recipeWithNumbers(page: import('@playwright/test').Page, profileName = `Numbers ${Date.now()}`) {
+  const profile = profileName;
+  const profileId = await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Batch volume (L)').fill('20');
@@ -968,6 +968,7 @@ async function recipeWithNumbers(page: import('@playwright/test').Page) {
   await page.locator('#recipe-mash-water').fill('15');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
   await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  return profileId
 }
 const waterValues = (page: import('@playwright/test').Page) => page.locator('#recipe-section-mash .k-metric-list .k-metric__value').allTextContents();
 
@@ -1135,6 +1136,257 @@ for (const width of [1440, 601, 390, 320]) {
     await expect(mash.locator('.k-stale--active')).toHaveCount(0);
   });
 }
+
+// KRA-49: the estimates summary is the fixed rail/stack above the sections. Its
+// height must not change while an estimate is replaced or settles without one,
+// or every control under it moves while a person is typing.
+async function readyEstimateRecipe(page: import('@playwright/test').Page) {
+  // A deliberately long profile name: the phone source line must stay one height
+  // regardless of how long the effective equipment identity is.
+  const profile = `Phone summary profile ${'x'.repeat(24)} ${Date.now()}`;
+  const profileId = await recipeWithNumbers(page, profile);
+  await page.locator('#recipe-attenuation').fill('75');
+  await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
+  await expect(page.getByLabel(/Original gravity.*Style reference/)).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+  // A saved Ready recipe is the realistic editing case: the first keystroke also
+  // changes the estimate source line from "matching saved revision" to "changes
+  // not yet in saved revision", and the summary height must not change with it.
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Summary ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+  return profileId
+}
+
+for (const width of [320, 390]) {
+  test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const profileId = await readyEstimateRecipe(page);
+    const summary = page.locator('.recipe-editor__preview-summary');
+    const values = summary.locator('.k-metric__value');
+    const measure = () => page.evaluate(() => {
+      const summary = document.querySelector('.recipe-editor__preview-summary')!;
+      const below = document.querySelector('.recipe-editor__sections')!;
+      const rect = summary.getBoundingClientRect();
+      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+    });
+    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
+      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
+    };
+    const current = await measure();
+    const status = summary.locator('[role="status"]');
+    // The state text keeps one top edge in every state: the reserved space sits
+    // below it, so "Ready" does not float and no outcome starts lower.
+    const statusTop = async () => {
+      const [summaryBox, statusBox] = await Promise.all([summary.boundingBox(), status.boundingBox()]);
+      return statusBox!.y - summaryBox!.y;
+    };
+    const currentStatusTop = await statusTop();
+    const staleRegion = summary.locator('.k-stale[aria-hidden="true"]');
+    const disclosure = summary.locator('.k-disclosure--compact');
+    const disclosureSummary = disclosure.locator('summary');
+    // A long equipment name is hidden on phones; the header badge and equipment
+    // panel still identify it, and the source line keeps its fixed two-line height.
+    await expect(summary.locator('.recipe-editor__provenance-equipment')).toHaveCount(1);
+    await expect(summary.locator('.recipe-editor__provenance-equipment')).toBeHidden();
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
+    const currentValues = await values.allTextContents();
+    expect(currentValues.some(text => /\d\.\d/.test(text)), 'a current estimate shows values').toBe(true);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+
+    // Hold every preview so the whole recalculation window is observable. The last
+    // accepted values stay in place, dimmed and hidden from assistive technology.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.evaluate(() => {
+      const samples: number[] = [];
+      (window as any).__summarySamples = samples;
+      const tick = () => {
+        const summary = document.querySelector('.recipe-editor__preview-summary')!;
+        const below = document.querySelector('.recipe-editor__sections')!;
+        samples.push(Math.round((below.getBoundingClientRect().top - summary.getBoundingClientRect().top) * 100) / 100);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    const batch = page.getByLabel('Batch volume (L)');
+    await batch.fill('21');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    // The first observable failure on the old behaviour: the summary loses the
+    // whole estimate block the moment a replacement starts.
+    expectSame('recalculating', await measure(), current);
+    await expect(staleRegion, 'one stale region owns the metrics, source and reference').toHaveCount(1);
+    expect(await staleRegion.evaluate(element => (element as HTMLElement).inert), 'stale region is inert').toBe(true);
+    expect(await staleRegion.locator('.k-style-range').count(), 'the old style bands stay in the stale region').toBeGreaterThan(0);
+    expect(await staleRegion.getByTestId('estimate-source').evaluate(element => getComputedStyle(element).fontStyle), 'stale source is marked').toBe('italic');
+    expect(await disclosureSummary.evaluate(element => getComputedStyle(element).fontStyle), 'stale reference disclosure is marked').toBe('italic');
+    expect(await staleRegion.locator('.k-style-range__limits').first().evaluate(element => getComputedStyle(element).fontStyle), 'stale band limits are marked').toBe('italic');
+    expect(Number(await staleRegion.locator('.k-style-range__marker').first().evaluate(element => getComputedStyle(element).opacity)), 'stale band marker is dimmed').toBeLessThan(1);
+    expect(await disclosureSummary.evaluate(element => { (element as HTMLElement).focus(); return document.activeElement === element; }), 'inert disclosure cannot take focus').toBe(false);
+    expect(await values.allTextContents(), 'old values stay (dimmed) while recalculating, never dashes').toEqual(currentValues);
+    await page.locator('#recipe-whirlpool').focus();
+    await page.keyboard.type('5');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    expect(await values.allTextContents(), 'typing in a process field keeps the shown values').toEqual(currentValues);
+    await page.waitForTimeout(400);
+    expectSame('recalculating after typing in a process field', await measure(), current);
+
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(async () => (await values.allTextContents()).some(text => /\d\.\d/.test(text))).toBe(true);
+    await page.unroute('**/leptos-api/preview_formulation*');
+
+    await batch.fill('-');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    expectSame('settled invalid', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'invalid status text top').toBeLessThanOrEqual(0.5);
+    await expect(staleRegion).toHaveCount(1);
+    expect(await staleRegion.evaluate(element => (element as HTMLElement).inert)).toBe(true);
+    expect(await staleRegion.locator('.k-style-range__limits').first().evaluate(element => getComputedStyle(element).fontStyle)).toBe('italic');
+    expect(await staleRegion.locator('.k-style-range').count()).toBeGreaterThan(0);
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+    const samples: number[] = await page.evaluate(() => (window as any).__summarySamples ?? []);
+    expect(samples.length, 'frames sampled across the window').toBeGreaterThan(10);
+    expect(Math.max(...samples) - Math.min(...samples), `first control below moved: ${[...new Set(samples)]}`).toBeLessThan(0.5);
+
+    // A failed request settles without an estimate: the same height, dashes, and
+    // one explicit retry target that is only in the tab order while unavailable.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await batch.fill('23');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    expectSame('settled unavailable', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'unavailable status text top').toBeLessThanOrEqual(0.5);
+    await expect(staleRegion).toHaveCount(1);
+    expect(await staleRegion.evaluate(element => (element as HTMLElement).inert)).toBe(true);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+    const retry = summary.getByRole('button', { name: 'Retry calculation' });
+    await expect(retry).toBeVisible();
+    expect(await retry.getAttribute('title'), 'the retry has no extra hover tooltip').toBeNull();
+    const retryBox = (await retry.boundingBox())!;
+    expect(retryBox.width, 'retry touch target width').toBeGreaterThanOrEqual(44);
+    expect(retryBox.height, 'retry touch target height').toBeGreaterThanOrEqual(44);
+    const disclosureHandle = await disclosureSummary.elementHandle();
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(element => document.activeElement !== element, disclosureHandle), 'Tab skips the inert disclosure').toBe(true);
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await page.unroute('**/leptos-api/preview_formulation*');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect.poll(async () => (await values.allTextContents()).some(text => /\d\.\d/.test(text))).toBe(true);
+    expectSame('current after retry', await measure(), current);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+
+    // The longest real settled message: an unresolvable equipment profile. Archive
+    // the shared profile from another tab, then edit; the same outcome row must
+    // hold the message without moving the estimate rows.
+    const admin = await page.context().newPage();
+    await admin.goto(`/equipment?profile=${profileId}`);
+    await admin.getByRole('button', { name: 'Archive', exact: true }).click();
+    await expect(admin.getByRole('status').filter({ hasText: 'Profile archived.' })).toBeVisible();
+    await admin.close();
+    await batch.fill('24');
+    await expect(summary.getByRole('status')).toHaveText('Equipment profile unavailable. Use draft settings or select a valid profile.');
+    expectSame('settled unavailable profile', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'unavailable profile status text top').toBeLessThanOrEqual(0.5);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+  });
+}
+
+test('a late preview response cannot replace a settled invalid estimate', async ({ page }) => {
+  test.slow();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await readyEstimateRecipe(page);
+  const summary = page.locator('.recipe-editor__preview-summary');
+  const values = summary.locator('.k-metric__value');
+  const height = () => summary.evaluate(element => element.getBoundingClientRect().height);
+  const currentHeight = await height();
+  // Fetch the response once, then deliver it when released: a slow response that
+  // is still in flight while the person types an invalid value.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let fetched!: () => void;
+  const responseFetched = new Promise<void>(resolve => { fetched = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => {
+    const response = await route.fetch();
+    fetched();
+    await held;
+    await route.fulfill({ response });
+  });
+  const batch = page.getByLabel('Batch volume (L)');
+  await batch.fill('21');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+  await responseFetched;
+  await batch.fill('-');
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+  const status = summary.locator('[role="status"]');
+  await expect(status).toHaveText('Complete invalid number fields to see estimates.');
+  const settledStatus = await status.textContent();
+  await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+  const dashes = await values.allTextContents();
+  release();
+  // The late response belongs to an older draft generation. It must not clear the
+  // settled invalid outcome, restore the old numbers, report the old estimate as
+  // Ready, or restart recalculating.
+  await page.waitForTimeout(1000);
+  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+  await expect(status).toHaveText(settledStatus!);
+  expect(await values.allTextContents()).toEqual(dashes);
+  expect(Math.abs((await height()) - currentHeight), 'late response changed the summary height').toBeLessThanOrEqual(0.5);
+  await page.unroute('**/leptos-api/preview_formulation*');
+});
+
+test('an editor that has never had an estimate reserves the summary before the first one at 320px', async ({ page }) => {
+  test.slow();
+  await page.setViewportSize({ width: 320, height: 900 });
+  // A saved Ready styled recipe: the restored draft holds only an invalid raw
+  // value, so its first valid estimate is Ready (no diagnostics) and must fill
+  // the reserved rows exactly.
+  await readyEstimateRecipe(page);
+  await page.getByLabel('Batch volume (L)').fill('-');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
+  let unload = false;
+  page.once('dialog', async dialog => { unload = dialog.type() === 'beforeunload'; await dialog.accept(); });
+  await page.reload();
+  expect(unload).toBe(true);
+  const source = page.getByTestId('estimate-source');
+  // The hidden editor behind the recovery panel has already accepted the saved
+  // recipe's estimate; restoring the retained draft changes the draft epoch and
+  // must drop that retained estimate.
+  await expect(source).toContainText('matching saved revision 1');
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('-');
+  await expect(page.getByLabel('Beer style', { exact: true })).toHaveValue('Munich Helles');
+  await expect(source).toHaveText('No estimate yet.');
+  const summary = page.locator('.recipe-editor__preview-summary');
+  await expect(summary.locator('.k-style-range'), 'the style band rows are reserved').toHaveCount(5);
+  const disclosure = summary.locator('.k-disclosure--compact');
+  await expect(disclosure).toHaveCount(1);
+  expect(await disclosure.locator('summary').evaluate(element => { (element as HTMLElement).focus(); return document.activeElement === element; }), 'the placeholder reference row is inert').toBe(false);
+  const measure = () => page.evaluate(() => {
+    const summary = document.querySelector('.recipe-editor__preview-summary')!;
+    const below = document.querySelector('.recipe-editor__sections')!;
+    const rect = summary.getBoundingClientRect();
+    return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+  });
+  const placeholder = await measure();
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+  await expect(source).not.toHaveText('No estimate yet.');
+  await expect(summary.locator('.k-style-range')).toHaveCount(5);
+  const first = await measure();
+  expect(Math.abs(first.height - placeholder.height), `first estimate inserted ${first.height - placeholder.height}px`).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(first.below - placeholder.below), 'the first control below moved when the first estimate arrived').toBeLessThanOrEqual(0.5);
+});
 
 test('switching recipes never shows the previous recipe\'s estimate', async ({ page }) => {
   const stamp = Date.now();

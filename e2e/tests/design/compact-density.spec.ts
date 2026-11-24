@@ -378,7 +378,10 @@ test('compact ingredient controls preserve focus, invalid raw input, disclosure,
   await expect(fermentables.getByText('Enter a number')).toBeVisible();
   const previewSummary = page.locator('.recipe-editor__preview-summary');
   await expect(previewSummary).toContainText('Complete invalid number fields to see estimates.');
-  await expect(previewSummary.getByText('Original gravity')).toHaveCount(0);
+  // KRA-49 keeps the estimate rows (labels with dashes) in place on phones; at
+  // desktop widths the retained block is hidden, so no old label or figure is
+  // visible next to the invalid outcome.
+  await expect(previewSummary.getByText('Original gravity')).toBeHidden();
   await expect(previewSummary.getByText('1.045')).toHaveCount(0);
   await attachScreenshot(page, testInfo, 'compact-ingredient-invalid-raw');
   await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Recipes' }).click();
