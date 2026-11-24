@@ -952,7 +952,7 @@ const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3
 // A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
 async function recipeWithNumbers(page: import('@playwright/test').Page, profileName = `Numbers ${Date.now()}`) {
   const profile = profileName;
-  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
+  const profileId = await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Batch volume (L)').fill('20');
@@ -968,6 +968,7 @@ async function recipeWithNumbers(page: import('@playwright/test').Page, profileN
   await page.locator('#recipe-mash-water').fill('15');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
   await expect(page.getByTestId('estimate-stale')).toHaveText('');
+  profileId
 }
 const waterValues = (page: import('@playwright/test').Page) => page.locator('#recipe-section-mash .k-metric-list .k-metric__value').allTextContents();
 
@@ -1143,7 +1144,7 @@ async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   // A deliberately long profile name: the phone source line must stay one height
   // regardless of how long the effective equipment identity is.
   const profile = `Phone summary profile ${'x'.repeat(24)} ${Date.now()}`;
-  await recipeWithNumbers(page, profile);
+  const profileId = await recipeWithNumbers(page, profile);
   await page.locator('#recipe-attenuation').fill('75');
   await page.getByLabel('Beer style', { exact: true }).selectOption({ label: '4A · Munich Helles' });
   await expect(page.getByLabel(/Original gravity.*Style reference/)).toBeVisible();
@@ -1156,12 +1157,13 @@ async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
   await expect(page.getByRole('status').filter({ hasText: 'Ready' }).first()).toBeVisible();
+  profileId
 }
 
 for (const width of [320, 390]) {
   test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await readyEstimateRecipe(page);
+    const profileId = await readyEstimateRecipe(page);
     const summary = page.locator('.recipe-editor__preview-summary');
     const values = summary.locator('.k-metric__value');
     const measure = () => page.evaluate(() => {
@@ -1282,6 +1284,21 @@ for (const width of [320, 390]) {
     await expect.poll(async () => (await values.allTextContents()).some(text => /\d\.\d/.test(text))).toBe(true);
     expectSame('current after retry', await measure(), current);
     await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+
+    // The longest real settled message: an unresolvable equipment profile. Archive
+    // the shared profile from another tab, then edit; the same outcome row must
+    // hold the message without moving the estimate rows.
+    const admin = await page.context().newPage();
+    await admin.goto(`/equipment?profile=${profileId}`);
+    await admin.getByRole('button', { name: 'Archive', exact: true }).click();
+    await expect(admin.getByRole('status').filter({ hasText: 'Profile archived.' })).toBeVisible();
+    await admin.close();
+    await batch.fill('24');
+    await expect(summary.getByRole('status')).toHaveText('Equipment profile unavailable. Use draft settings or select a valid profile.');
+    expectSame('settled unavailable profile', await measure(), current);
+    expect(Math.abs((await statusTop()) - currentStatusTop), 'unavailable profile status text top').toBeLessThanOrEqual(0.5);
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+    await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
   });
 }
 

@@ -447,7 +447,7 @@
      estimate yet; the equipment identity lives in the header badge and the
      equipment panel, so an arbitrary profile name can never add a line here. The
      reservation is scoped to the summary source, not the disclosure's reference prose. */
-  .recipe-editor__provenance--source { min-height: 33px; min-height: 2lh; }
+  .recipe-editor__provenance--source { min-height: 2lh; }
   .recipe-editor__provenance-equipment { display: none; }
 }
 

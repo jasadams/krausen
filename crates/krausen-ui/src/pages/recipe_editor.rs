@@ -1993,13 +1993,13 @@ fn PreviewMetrics(
     /// draft settled without an estimate or none has arrived). The caller keeps
     /// the labels and style reference rows either way so the phone summary keeps
     /// one height.
-    #[prop(default = true)] current: bool,
+    current: bool,
     /// A style is selected, so its band rows must be reserved even before the
     /// reference values are known.
-    #[prop(default = false)] style_selected: bool,
+    style_selected: bool,
     /// The retained estimate's bands describe the style still selected. A changed
     /// style reserves its own rows instead of showing the old limits.
-    #[prop(default = false)] reference_style_current: bool,
+    reference_style_current: bool,
 ) -> impl IntoView {
     let style = if reference_style_current { preview.as_ref().and_then(|preview| preview.style.as_ref()) } else { None };
     let comparison = if reference_style_current { preview.as_ref().and_then(|preview| preview.style_comparison.as_ref()) } else { None };
