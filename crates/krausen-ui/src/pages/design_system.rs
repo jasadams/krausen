@@ -8,7 +8,7 @@ use crate::components::{
     BreweryTextArea, Button, ButtonSize, ButtonVariant, CatalogueItem, PrintableRecipe, SaveState,
     StyleRange, StyleState, SwatchRole, TokenSwatch,
     BreweryActionGroup, BreweryDraftField, BreweryFieldRow, BreweryFields, BreweryPopover, BrewerySection, BreweryStale,
-    BreweryStaleCue, BreweryStepGroup, BreweryStepRow,
+    BreweryStaleCue, BreweryStepGroup, BreweryStepRow, BreweryStyleRangePlaceholder,
     MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation,
 };
 use leptos::prelude::*;
@@ -273,7 +273,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 <ProcessKitExample/>
                 <BreweryPanel title="Measurements" presentation=PanelPresentation::Summary mobile_compact=true description="Style ranges are guidance, not a save restriction.">
                     <crate::components::BreweryBeerPortrait/>
-                    <BreweryMetricList><BreweryMetric label="Mash water" value="15.3" unit="L" density=MetricDensity::Quiet testid="showcase-quiet-metric">{""}</BreweryMetric><BreweryMetric label="Total water" value="28.9" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric></BreweryMetricList><p class="note-caption">"Quiet metrics are label/value fact rows (Start brew review, Water plan). Pass testid for a stable test or focus hook on the row."</p><div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric></div>
+                    <BreweryMetricList><BreweryMetric label="Mash water" value="15.3" unit="L" density=MetricDensity::Quiet testid="showcase-quiet-metric">{""}</BreweryMetric><BreweryMetric label="Total water" value="28.9" unit="L" density=MetricDensity::Quiet>{""}</BreweryMetric></BreweryMetricList><p class="note-caption">"Quiet metrics are label/value fact rows (Start brew review, Water plan). Pass testid for a stable test or focus hook on the row."</p><div class="kit-showcase__metrics"><BreweryMetric label="Original gravity" value="1.049" unit="SG"><StyleRange label="Original gravity" min=1.044 max=1.048 value=Some(1.049) state=StyleState::Above unit="SG" digits=3/></BreweryMetric><BreweryMetric label="Bitterness" value="—" unit="IBU"><StyleRange label="Bitterness" min=16.0 max=22.0 value=None state=StyleState::Awaiting unit="IBU"/></BreweryMetric><BreweryMetric label="Alcohol" value="—" unit="%" testid="showcase-style-placeholder"><BreweryStyleRangePlaceholder/></BreweryMetric></div><p class="note-caption">"The style band placeholder reserves a metric's band rows before the style reference values are known, so the first estimate fills them without moving the summary."</p>
                 </BreweryPanel>
                 <BreweryPanel title="Brew measurements" description="Frozen planned targets and selected readings remain distinct.">
                     <div class="kit-showcase__table-scroll" tabindex="0" role="region" aria-label="Brew measurements table"><table class="print-sheet__table"><thead><tr><th scope="col">"Measurement"</th><th scope="col">"Planned target"</th><th scope="col">"Selected actual"</th><th scope="col">"Comparison"</th></tr></thead><tbody>
