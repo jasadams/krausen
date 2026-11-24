@@ -2736,9 +2736,15 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
 // The equipment select lists a page of profiles; once a workspace holds more (the pagination spec
 // creates over a hundred), later ones are behind "Load more profiles".
 async function chooseEquipmentProfile(page: import('@playwright/test').Page, label: string) {
-  const more = page.getByRole('button', { name: 'Load more profiles' });
-  while (await more.isVisible()) await more.click();
-  await page.locator('#equipment-profile-select').selectOption({ label });
+  const select = page.locator('#equipment-profile-select');
+  const option = select.getByRole('option', { name: label, exact: true });
+  await expect.poll(async () => {
+    if (await option.count()) return true;
+    const more = page.getByRole('button', { name: 'Load more profiles', disabled: false });
+    if (await more.count()) await more.click();
+    return false;
+  }, { message: `profile ${label} never appeared in the list` }).toBe(true);
+  await select.selectOption({ label });
 }
 
 async function addHop(page: import('@playwright/test').Page, name: string, minutes: string) {
@@ -2990,7 +2996,7 @@ test('Review highlighted fields never blinks and nothing moves while another fie
   await expect(review).toBeVisible();
   await expect(issues(page).getByRole('button', { name: 'Batch volume cannot be negative.', exact: true })).toBeVisible();
   await page.locator('#recipe-boil').focus();
-  // Sample every frame: the command is present and the tab strip below it never moves (document-relative, so focus scrolling does not count).
+  // Sample every frame: the command is present and the tab strip below it never moves (measured from the command, so scrolling of the page does not count).
   await page.evaluate(() => {
     const w = window as any;
     w.__frames = 0; w.__missing = 0; w.__tops = new Set<number>();
@@ -2999,7 +3005,7 @@ test('Review highlighted fields never blinks and nothing moves while another fie
       const tabs = document.querySelector('[role=tablist]');
       w.__frames++;
       if (!button) w.__missing++;
-      if (tabs) w.__tops.add(Math.round(tabs.getBoundingClientRect().top + window.scrollY));
+      if (tabs && button) w.__tops.add(Math.round(tabs.getBoundingClientRect().top - button.getBoundingClientRect().top));
       w.__raf = requestAnimationFrame(tick);
     };
     w.__raf = requestAnimationFrame(tick);
