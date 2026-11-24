@@ -2904,11 +2904,7 @@ for (const { width, scheme } of [{ width: 320, scheme: 'light' }, { width: 390, 
       expect(box.height, 'whole target at least 44px tall').toBeGreaterThanOrEqual(44);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
     }
-    // Wrapping belongs to the Wrap size alone: ordinary buttons still keep their label on one line.
     expect(await links.first().evaluate(el => getComputedStyle(el).whiteSpace)).toBe('normal');
-    for (const name of ['Add hop', 'Add yeast', 'Undo']) {
-      expect(await page.getByRole('button', { name, exact: true }).first().evaluate(el => getComputedStyle(el).whiteSpace), name).toBe('nowrap');
-    }
     await links.first().click();
     await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
     const focused = (await page.locator(`#${await focusedId(page)}`).boundingBox())!;
@@ -3086,5 +3082,21 @@ test('summary links reach a step field, a select, an override and yeast and othe
     await amount.fill('-1');
     await issues(page).getByRole('button', { name: new RegExp(`${name}.*Amount cannot be negative`) }).click();
     await expect.poll(() => focusedId(page)).toBe(amountId);
+  }
+});
+
+test('wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link', async ({ page }) => {
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/design-system');
+    const whiteSpace = (name: string | RegExp) => page.getByRole('button', { name }).first().evaluate(el => getComputedStyle(el).whiteSpace);
+    expect(await whiteSpace('Add ingredient')).toBe('nowrap');
+    expect(await whiteSpace('View history')).toBe('nowrap');
+    const wrap = page.getByRole('button', { name: /^Wrap · a whole-row link/ });
+    expect(await wrap.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('normal');
+    const box = (await wrap.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
 });
