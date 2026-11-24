@@ -97,6 +97,10 @@ impl Default for EditorStatus {
     }
 }
 
+/// Stable id of the editor page heading: the focus successor for several tasks and
+/// the fallback of a diagnostic jump.
+pub(crate) const EDITOR_HEADING_ID: &str = "recipe-editor-heading";
+
 pub fn save_label(saved: bool) -> &'static str {
     if saved { "Save changes" } else { "Save recipe" }
 }
@@ -123,6 +127,8 @@ pub fn start_reason(saved: bool, dirty: bool, readiness: Option<Readiness>) -> O
 /// owned by its workflow, on demand.
 #[derive(Clone, Copy)]
 pub struct RecipeActionSlots {
+    /// Go to the first control that must be corrected before the recipe can be saved.
+    pub review: Callback<()>,
     pub save: Callback<()>,
     pub undo: Callback<()>,
     pub start: Callback<()>,
@@ -228,7 +234,7 @@ pub fn RecipeHeader(
                     </BreweryPopover>
                 </BreweryActionGroup>
             </div>
-            <h1 id="recipe-editor-heading" class="recipe-header__heading" tabindex="-1">{crumb}</h1>
+            <h1 id=EDITOR_HEADING_ID class="recipe-header__heading" tabindex="-1">{crumb}</h1>
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
             <div class="recipe-header__context">
                 <div class="recipe-header__batch">{children()}<span id="recipe-batch-note" class="k-field__hint recipe-header__hint">"Batch is the volume into the fermenter"</span></div>
@@ -241,6 +247,11 @@ pub fn RecipeHeader(
                     </div>
                 </div>
             </div>
+            <Show when=move || draft.with(|d| crate::recipe_diagnostics::first_invalid(d).is_some())>
+                <div class="recipe-header__review">
+                    <Button variant=ButtonVariant::Secondary on:click=move |_| actions.review.run(())>"Review highlighted fields"</Button>
+                </div>
+            </Show>
             <Show when=move || reason.get().is_some()>
                 <p id=reason_id class="recipe-header__reason">{move || reason.get()}</p>
             </Show>

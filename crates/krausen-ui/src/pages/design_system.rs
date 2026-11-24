@@ -14,7 +14,7 @@ use crate::components::{
 use leptos::prelude::*;
 use phosphor_leptos::Icon;
 
-fn printable_example() -> krausen_types::process_summary::ProcessSummary {
+pub(crate) fn printable_example() -> krausen_types::process_summary::ProcessSummary {
     use krausen_types::{
         brewery::{ChillingV1, EquipmentSettingsV1, StyleReference},
         formulation::Targets,
@@ -197,8 +197,32 @@ fn printable_example() -> krausen_types::process_summary::ProcessSummary {
     }
 }
 
+/// Example diagnostics that point at real showcase fields, in both severities
+/// plus an uneditable explanation.
+fn diagnostics_example(prefix: &str) -> Signal<Vec<crate::components::diagnostic_list::Presented>> {
+    use crate::components::diagnostic_list::{Presented, Route};
+    use krausen_types::validation::Readiness;
+    let item = |key: &str, severity, message: &str, route| Presented {
+        key: format!("{prefix}-{key}"),
+        path: key.into(),
+        code: "example".into(),
+        severity,
+        message: message.into(),
+        route,
+    };
+    let items = vec![
+        item("show-diagnostic-invalid", Readiness::Invalid, "Amount cannot be negative.", Route::Field { dom_id: "show-invalid".into() }),
+        item("show-diagnostic-incomplete", Readiness::Incomplete, "Batch volume is missing.", Route::Field { dom_id: "show-volume".into() }),
+        item("show-diagnostic-preserved", Readiness::Incomplete, "This recipe carries process data this app cannot edit. It is preserved unchanged.", Route::Explain),
+    ];
+    Signal::derive(move || items.clone())
+}
+
 #[component]
 pub fn DesignSystemPage() -> impl IntoView {
+    provide_context(crate::components::diagnostic_list::DiagnosticJump(Callback::new(|(target, explanation): (String, String)| {
+        crate::utils::focus::jump_after_render(target, explanation);
+    })));
     let name = RwSignal::new("Munich Helles".to_owned());
     let volume = RwSignal::new("20".to_owned());
     let invalid = RwSignal::new("-1".to_owned());
@@ -239,7 +263,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 <BreweryPanel title="Actions with hierarchy" eyebrow="Component / Button" description="A deliberate primary action. Supporting controls stay quiet."
                     actions=std::sync::Arc::new(move || view! { <Button variant=ButtonVariant::Ghost>"Back"</Button> }.into_any())
                     footer=std::sync::Arc::new(move || view! { <BreweryActionGroup end=true label="Example task actions"><Button variant=ButtonVariant::Ghost>"Cancel"</Button><Button>"Save recipe"</Button></BreweryActionGroup> }.into_any())>
-                    <div class="kit-showcase__stack"><div class="kit-showcase__row"><Button><Icon icon=phosphor_leptos::CHECK size="16px"/>"Save recipe"</Button><Button variant=ButtonVariant::Secondary><Icon icon=phosphor_leptos::PLUS size="16px"/>"Add ingredient"</Button><Button variant=ButtonVariant::Ghost>"View history"</Button></div><div class="kit-showcase__row"><Button disabled=true>"Saving…"</Button><Button variant=ButtonVariant::Secondary size=ButtonSize::Icon aria_label="Equipment settings"><Icon icon=phosphor_leptos::GEAR size="16px"/></Button><Button variant=ButtonVariant::Destructive size=ButtonSize::Sm>"Delete"</Button></div><p class="kit-showcase__token">"Button · variant / size / icon / disabled"</p></div>
+                    <div class="kit-showcase__stack"><div class="kit-showcase__row"><Button><Icon icon=phosphor_leptos::CHECK size="16px"/>"Save recipe"</Button><Button variant=ButtonVariant::Secondary><Icon icon=phosphor_leptos::PLUS size="16px"/>"Add ingredient"</Button><Button variant=ButtonVariant::Ghost>"View history"</Button></div><div class="kit-showcase__row"><Button disabled=true>"Saving…"</Button><Button variant=ButtonVariant::Secondary size=ButtonSize::Icon aria_label="Equipment settings"><Icon icon=phosphor_leptos::GEAR size="16px"/></Button><Button variant=ButtonVariant::Destructive size=ButtonSize::Sm>"Delete"</Button></div><div class="kit-showcase__row"><Button variant=ButtonVariant::Link size=ButtonSize::Wrap>"Wrap · a whole-row link at least 44px tall; a long label such as Cascade, hop, Boil, 60 min, 1 of 2: Alpha acid is missing wraps instead of overflowing"</Button><Button variant=ButtonVariant::Link size=ButtonSize::Wrap disabled=true>"Wrap, disabled"</Button></div><p class="kit-showcase__token">"Button · variant / size / icon / disabled / wrap"</p></div>
                 </BreweryPanel>
                 <BreweryPanel title="Ordinary anchored actions" description="Tab leaves naturally; Escape returns to the opener. No menu roles or arrow-key promise.">
                     <BreweryActionGroup label="Popover examples">
@@ -329,6 +353,11 @@ pub fn DesignSystemPage() -> impl IntoView {
                     <div role="tabpanel" id="show-tabs-panel-versions" aria-labelledby="show-tabs-tab-versions" hidden=move || active_tab.get() != "versions">"Saved versions section"</div>
                     <div role="tabpanel" id="show-tabs-panel-brews" aria-labelledby="show-tabs-tab-brews" hidden=move || active_tab.get() != "brews">"Brews section"</div>
                 </BreweryPanel>
+                <BreweryPanel title="Diagnostics" eyebrow="Component / Diagnostic summary" description="Each message names its field and row; a link moves focus to that control. Preserved data this editor cannot edit is explained, never linked.">
+                    <crate::components::diagnostic_list::DiagnosticList items=diagnostics_example("current") heading_id="show-diagnostics-heading"/>
+                    <p class="note-caption">"While the draft has moved on and no check has run yet, the same list is dimmed and says it is out of date."</p>
+                    <crate::components::diagnostic_list::DiagnosticList items=diagnostics_example("stale") stale=true heading_id="show-diagnostics-stale-heading"/>
+                </BreweryPanel>
                 <BreweryPanel title="Feedback" description="Status is expressed in words as well as colour.">
                     <BreweryNotice title="Example save failed" body="Keep this page open and retry when the connection is available. Your local values remain editable." tone=NoticeTone::Error/>
                     <div class="kit-showcase__stack"><BreweryNotice title="Draft incomplete" body="Add a batch volume to see the affected estimates." warning=true/><BreweryNotice title="Recipe saved" body="Your revision is available to everyone in this workspace." announcement=NoticeAnnouncement::Settled/><Button variant=ButtonVariant::Secondary on:click=move |_| dialog.set(true)>"Open dialog"</Button></div>
@@ -348,7 +377,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                     on_close=Callback::new(move |()| {
                         print_example.set(false);
                         #[cfg(target_arch = "wasm32")]
-                        request_animation_frame(move || crate::pages::recipe_editor::focus_element("showcase-print-preview-open"));
+                        request_animation_frame(move || crate::utils::focus::focus_element("showcase-print-preview-open"));
                     })
                 >
                     <div class="print-preview__sheet"><PrintableRecipe summary=printable_example()/></div>

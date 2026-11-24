@@ -785,7 +785,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
     let close_print = Callback::new(move |()| {
         print.set(None);
         #[cfg(target_arch = "wasm32")]
-        request_animation_frame(move || crate::pages::recipe_editor::focus_element("print-frozen-plan"));
+        request_animation_frame(move || crate::utils::focus::focus_element("print-frozen-plan"));
     });
     let load_print = Callback::new(move |()| {
         let Some(intent) = identity.get_untracked() else {

@@ -258,13 +258,15 @@ fn may_start(phase: &Phase, has_pending: bool) -> bool {
     !has_pending && matches!(phase, Phase::Review { .. })
 }
 
-/// The same reason can arise from several rows or fields; show each distinct text
-/// once, in first-seen order.
-fn distinct_reasons(reasons: Vec<String>) -> Vec<String> {
+/// One reason per distinct diagnostic, each naming its row. Identity is the
+/// structured (path, code), so two rows with the same problem stay two reasons.
+fn distinct_reasons(summary: &krausen_types::process_summary::ProcessSummary) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    reasons
-        .into_iter()
-        .filter(|text| seen.insert(text.clone()))
+    summary
+        .diagnostics
+        .iter()
+        .filter(|d| seen.insert(crate::recipe_diagnostics::problem_key(d)))
+        .map(|d| crate::recipe_diagnostics::summary_message(summary, d))
         .collect()
 }
 
@@ -686,9 +688,7 @@ pub fn StartBrewTask(
                     let ready =
                         found.readiness == Readiness::Ready && found.context.digest.is_some();
                     if !ready {
-                        let reasons = distinct_reasons(
-                            found.diagnostics.iter().map(diagnostic_text).collect(),
-                        );
+                        let reasons = distinct_reasons(&found);
                         phase.set(Phase::Blocked(if reasons.is_empty() {
                             "This revision is not Ready. Add the missing inputs and save a new revision.".into()
                         } else {
@@ -1205,7 +1205,7 @@ pub fn StartBrewTask(
                 && phase.try_with_untracked(|p| p.key()) == Some(key)
                 && generation.try_get_untracked() == Some(this)
             {
-                crate::pages::recipe_editor::focus_element(target);
+                crate::utils::focus::focus_element(target);
             }
         });
     });
@@ -1523,31 +1523,23 @@ mod regression_tests {
     }
 
     #[test]
-    fn repeated_blocking_reasons_are_shown_once_in_first_seen_order() {
-        let captured = [
-            "Fermentable needs attention.",
-            "Fermentable needs attention.",
-            "Process needs more information.",
-            "Equipment needs more information.",
-            "Equipment needs more information.",
-            "Equipment needs more information.",
-        ]
-        .map(str::to_owned)
-        .to_vec();
-        assert_eq!(
-            distinct_reasons(captured),
-            vec![
-                "Fermentable needs attention.",
-                "Process needs more information.",
-                "Equipment needs more information."
-            ]
-        );
-        // Distinct texts that differ only slightly are all kept.
-        assert_eq!(
-            distinct_reasons(vec!["A".into(), "a".into(), "A".into()]).len(),
-            2
-        );
-        assert!(distinct_reasons(Vec::new()).is_empty());
+    fn blocking_reasons_name_their_rows_and_two_rows_stay_two_reasons() {
+        let d = |path: &str, code: &str| Diagnostic { code: code.into(), path: path.into(), severity: Readiness::Incomplete, affected_targets: vec![] };
+        let mut summary = crate::pages::design_system::printable_example();
+        summary.diagnostics = vec![
+            d("fermentables[grain-1].specification.yield_fraction", "missing"),
+            d("fermentables[grain-1].specification.yield_fraction", "missing"),
+            d("fermentables[grain-2].specification.yield_fraction", "missing"),
+            d("batch_size_l", "missing"),
+        ];
+        let reasons = distinct_reasons(&summary);
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert_ne!(reasons[0], reasons[1], "two rows with the same problem read differently");
+        assert!(reasons[0].starts_with("Pilsner malt, fermentable") && reasons[0].contains("1 of 2"), "{}", reasons[0]);
+        assert!(reasons[1].starts_with("Vienna malt, fermentable") && reasons[1].contains("2 of 2"), "{}", reasons[1]);
+        assert_eq!(reasons[2], "Batch volume is missing.");
+        summary.diagnostics.clear();
+        assert!(distinct_reasons(&summary).is_empty());
     }
 
     #[test]

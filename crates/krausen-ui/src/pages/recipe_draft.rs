@@ -50,6 +50,8 @@ pub struct RecipeDraft {
     malformed: BTreeMap<String, String>,
     settled_numbers: BTreeSet<String>,
     diagnostics: Vec<krausen_types::validation::Diagnostic>,
+    /// The draft generation `diagnostics` were computed for.
+    diagnostics_generation: u64,
     /// Server readiness for exactly one draft generation; never carried across edits.
     readiness: Option<(u64, krausen_types::validation::Readiness)>,
     baseline: DraftContents,
@@ -75,6 +77,7 @@ impl RecipeDraft {
             malformed: BTreeMap::new(),
             settled_numbers: BTreeSet::new(),
             diagnostics: Vec::new(),
+            diagnostics_generation: 0,
             readiness: None,
             baseline,
             undo: Vec::new(),
@@ -99,7 +102,6 @@ impl RecipeDraft {
     pub fn edit(&mut self, change: impl FnOnce(&mut RecipeDocumentV1)) {
         self.remember();
         change(&mut self.document);
-        self.diagnostics.clear();
         self.dirty = true;
         self.generation = self
             .generation
@@ -108,11 +110,13 @@ impl RecipeDraft {
     }
     pub fn edit_clearing(&mut self, prefix: &str, change: impl FnOnce(&mut RecipeDocumentV1)) {
         self.remember();
+        // The cleared field stops reporting its problem, under every path the validator uses for it.
+        let reported = crate::recipe_diagnostics::validator_paths(prefix);
+        self.diagnostics.retain(|d| !reported.iter().any(|path| d.path.starts_with(path.as_str())));
         self.raw_numbers.retain(|path, _| !path.starts_with(prefix));
         self.malformed.retain(|path, _| !path.starts_with(prefix));
         self.settled_numbers.retain(|path| !path.starts_with(prefix));
         change(&mut self.document);
-        self.diagnostics.clear();
         self.dirty = true;
         self.generation = self
             .generation
@@ -144,7 +148,6 @@ impl RecipeDraft {
             },
         };
         change(&mut self.document);
-        self.diagnostics.clear();
         self.dirty = true;
         self.generation = self
             .generation
@@ -164,7 +167,6 @@ impl RecipeDraft {
         self.malformed.extend(inputs.malformed);
         self.settled_numbers.extend(inputs.settled_numbers);
         change(&mut self.document);
-        self.diagnostics.clear();
         self.dirty = true;
         self.generation = self
             .generation
@@ -177,16 +179,26 @@ impl RecipeDraft {
             .cloned()
             .unwrap_or_else(|| value.map(|v| v.to_string()).unwrap_or_default())
     }
-    pub fn validation_error(&self, path: &str) -> Option<&str> {
+    /// The server diagnostic of this severity for `path`, only while the diagnostics
+    /// describe exactly the current draft generation.
+    fn current_diagnostic(&self, path: &str, severity: krausen_types::validation::Readiness) -> Option<&krausen_types::validation::Diagnostic> {
+        // Beside a control only what is true of the draft as it is now; the summary
+        // is the place that keeps an earlier list, marked out of date.
+        if !self.diagnostics_current() {
+            return None;
+        }
         self.diagnostics
             .iter()
-            .find(|d| d.path == path && d.severity == krausen_types::validation::Readiness::Invalid)
-            .map(|d| match d.code.as_str() {
-                "negative" => "Enter a non-negative value",
-                "out_of_range" => "Value is out of range",
-                "non_finite" => "Enter a finite number",
-                _ => "Check this value",
-            })
+            .find(|d| d.path == path && d.severity == severity)
+    }
+    pub fn validation_error(&self, path: &str) -> Option<&'static str> {
+        self.current_diagnostic(path, krausen_types::validation::Readiness::Invalid)
+            .map(|d| crate::recipe_diagnostics::inline_text(&d.code, d.severity))
+    }
+    /// What a field still needs before a brew can start; never a save blocker.
+    pub fn validation_hint(&self, path: &str) -> Option<&'static str> {
+        self.current_diagnostic(path, krausen_types::validation::Readiness::Incomplete)
+            .map(|d| crate::recipe_diagnostics::inline_text(&d.code, d.severity))
     }
     pub fn number_error(&self, path: &str) -> Option<&str> {
         self.malformed
@@ -210,7 +222,10 @@ impl RecipeDraft {
         assign: impl FnOnce(&mut RecipeDocumentV1, Option<f64>),
     ) {
         self.remember();
-        self.diagnostics.clear();
+        // Only the field being corrected stops reporting its problem now; every other
+        // distinct diagnostic stays until the next settled preview replaces them.
+        let reported = crate::recipe_diagnostics::validator_paths(path);
+        self.diagnostics.retain(|d| !reported.contains(&d.path));
         self.raw_numbers.insert(path.to_owned(), text.clone());
         let value = if text.trim().is_empty() {
             Some(None)
@@ -237,9 +252,18 @@ impl RecipeDraft {
             .checked_add(1)
             .expect("draft generation exhausted");
     }
-    pub fn set_validation(&mut self, validation: krausen_types::validation::Validation) {
-        self.readiness = Some((self.generation, validation.state));
+    /// Accepts a server validation only if it was computed for the draft's current
+    /// generation; a late response for an older one changes nothing. Returns whether
+    /// it was applied. The whole list is replaced, so any diagnostic that depended
+    /// on another field is recomputed rather than carried.
+    pub fn apply_validation(&mut self, generation: u64, validation: krausen_types::validation::Validation) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.readiness = Some((generation, validation.state));
         self.diagnostics = validation.diagnostics;
+        self.diagnostics_generation = generation;
+        true
     }
     /// Forget readiness when the preview that reported it is no longer trusted
     /// (context loss or retry at the same generation).
@@ -250,8 +274,20 @@ impl RecipeDraft {
     pub fn readiness(&self) -> Option<krausen_types::validation::Readiness> {
         self.readiness.filter(|(generation, _)| *generation == self.generation).map(|(_, state)| state)
     }
+    /// Whether the retained diagnostics describe the draft as it is now. False once
+    /// the draft has moved on and no check has run yet.
+    pub fn diagnostics_current(&self) -> bool {
+        self.diagnostics_generation == self.generation
+    }
+    /// The last settled server diagnostics, retained across edits so the summary
+    /// keeps its shape while the brewer types; readiness stays generation-scoped.
     pub fn diagnostics(&self) -> &[krausen_types::validation::Diagnostic] {
         &self.diagnostics
+    }
+    /// Malformed entries whose format feedback is already showing; a first
+    /// character such as "-" is transitional and is not one of these.
+    pub fn settled_malformed(&self) -> Vec<String> {
+        self.malformed.keys().filter(|path| self.settled_numbers.contains(*path)).cloned().collect()
     }
     pub fn unfinished_inputs(&self) -> Vec<(String, String)> {
         self.malformed.keys().filter_map(|path| self.raw_numbers.get(path).map(|text| (path.clone(), text.clone()))).collect()
@@ -282,7 +318,6 @@ impl RecipeDraft {
             self.raw_numbers = previous.raw_numbers;
             self.malformed = previous.malformed;
             self.settled_numbers = previous.settled_numbers;
-            self.diagnostics.clear();
             self.dirty = self.contents() != self.baseline;
             self.generation = self
                 .generation
@@ -300,7 +335,6 @@ impl RecipeDraft {
         self.raw_numbers = contents.raw_numbers;
         self.malformed = contents.malformed;
         self.settled_numbers = contents.settled_numbers;
-        self.diagnostics.clear();
         self.dirty = self.contents() != self.baseline;
         self.generation = self
             .generation
@@ -401,7 +435,7 @@ mod tests {
     fn editing_clears_stale_server_diagnostics_and_preview() {
         use krausen_types::validation::{Diagnostic, Readiness, Validation};
         let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
-        draft.set_validation(Validation {
+        draft.apply_validation(draft.generation, Validation {
             state: Readiness::Invalid,
             diagnostics: vec![Diagnostic {
                 code: "negative".into(),
@@ -420,6 +454,164 @@ mod tests {
         });
         assert!(draft.diagnostics().is_empty());
         assert_ne!(draft.generation, prior);
+    }
+
+    fn diagnostic(path: &str, code: &str, severity: krausen_types::validation::Readiness) -> krausen_types::validation::Diagnostic {
+        krausen_types::validation::Diagnostic { code: code.into(), path: path.into(), severity, affected_targets: vec![] }
+    }
+
+    #[test]
+    fn fixing_one_field_keeps_every_other_distinct_diagnostic() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation {
+            state: Incomplete,
+            diagnostics: vec![
+                diagnostic("hops[a].specification.alpha_fraction", "missing", Incomplete),
+                diagnostic("hops[b].specification.alpha_fraction", "missing", Incomplete),
+            ],
+        });
+        draft.edit_number("hops[a].specification.alpha_fraction", "5".into(), |_, _| {});
+        let left: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(left, ["hops[b].specification.alpha_fraction"]);
+        draft.edit(|doc| doc.title = "renamed".into());
+        assert_eq!(draft.diagnostics().len(), 1, "a structural edit must not empty the summary either");
+        assert_eq!(draft.readiness(), None, "readiness is still only for the generation that was checked");
+    }
+
+    /// Correcting a raw-input field retires the validator's entry for it, even
+    /// where the validator names the field differently from the input.
+    fn edited_retires(raw: &str, reported: &str, other: &str) {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation {
+            state: Invalid,
+            diagnostics: vec![diagnostic(reported, "negative", Invalid), diagnostic(other, "negative", Invalid)],
+        });
+        draft.edit_number(raw, "5".into(), |_, _| {});
+        let left: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(left, [other], "editing {raw} must retire {reported} and keep {other}");
+    }
+
+    #[test]
+    fn editing_a_yeast_amount_retires_the_ingredient_path_the_validator_reports() {
+        edited_retires("yeast[y1].amount", "ingredients[y1].amount", "ingredients[y2].amount");
+    }
+
+    #[test]
+    fn editing_an_other_ingredient_amount_retires_the_ingredient_path() {
+        edited_retires("other_ingredients[o1].amount", "ingredients[o1].amount", "ingredients[o2].amount");
+    }
+
+    #[test]
+    fn editing_a_yeast_attenuation_retires_the_specification_path() {
+        edited_retires("yeast[y1].attenuation", "yeast[y1].specification.attenuation_fraction", "yeast[y2].specification.attenuation_fraction");
+    }
+
+    #[test]
+    fn editing_an_equipment_override_retires_the_effective_equipment_path() {
+        edited_retires("equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm", "equipment.boil_off_l_per_h");
+    }
+
+    #[test]
+    fn editing_an_equipment_override_retires_the_override_path_too() {
+        edited_retires("equipment_overrides.kettle_opening_cm", "equipment_overrides.kettle_opening_cm", "equipment_overrides.boil_off_l_per_h");
+    }
+
+    #[test]
+    fn clearing_an_override_retires_its_retained_entries_so_review_cannot_stay_on_it() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        for (prefix, reported) in [
+            ("equipment_overrides.kettle_opening_cm", ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]),
+            ("equipment_overrides.chilling.", ["equipment_overrides.chilling.rate_per_minute", "equipment.chilling.rate_per_minute"]),
+        ] {
+            let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+            draft.apply_validation(draft.generation, Validation {
+                state: Invalid,
+                diagnostics: vec![diagnostic(reported[0], "negative", Invalid), diagnostic(reported[1], "negative", Invalid), diagnostic("batch_size_l", "negative", Invalid)],
+            });
+            draft.edit_clearing(prefix, |_| {});
+            let left: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+            assert_eq!(left, ["batch_size_l"], "clearing {prefix} retires its entries under both validator paths");
+        }
+    }
+
+    #[test]
+    fn inline_feedback_separates_save_blockers_from_start_requirements() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation {
+            state: Invalid,
+            diagnostics: vec![
+                diagnostic("batch_size_l", "negative", Invalid),
+                diagnostic("boil_minutes", "missing", Incomplete),
+                diagnostic("hops[a].stage", "unsupported_hop_stage", Incomplete),
+            ],
+        });
+        assert_eq!(draft.validation_error("batch_size_l"), Some("Enter a non-negative value"));
+        assert_eq!(draft.validation_hint("batch_size_l"), None);
+        assert_eq!(draft.validation_error("boil_minutes"), None, "a start requirement is not an error");
+        assert_eq!(draft.validation_hint("boil_minutes"), Some("Needed to start a brew"));
+        assert_eq!(draft.validation_hint("hops[a].stage"), Some("Choose a supported stage to start a brew"));
+    }
+
+    #[test]
+    fn a_new_error_in_the_edited_field_appears_when_the_next_validation_settles() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("batch_size_l", "missing", Incomplete)] });
+        draft.edit_number("batch_size_l", "-3".into(), |doc, n| doc.batch_size_l = n);
+        assert_eq!((draft.validation_error("batch_size_l"), draft.validation_hint("batch_size_l")), (None, None), "no feedback from the old state while typing");
+        let generation = draft.generation;
+        assert!(draft.apply_validation(generation, Validation { state: Invalid, diagnostics: vec![diagnostic("batch_size_l", "negative", Invalid)] }));
+        assert_eq!(draft.validation_error("batch_size_l"), Some("Enter a non-negative value"));
+    }
+
+    #[test]
+    fn a_diagnostic_that_depends_on_another_field_is_recomputed_not_carried() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        let exposure = diagnostic("hops[a].contact_minutes", "exposure_exceeds_boil", Invalid);
+        draft.apply_validation(draft.generation, Validation { state: Invalid, diagnostics: vec![exposure] });
+        // Raising the boil time fixes the hop exposure, but the hop's own entry is only
+        // retained until the next settled validation replaces the whole list.
+        draft.edit_number("boil_minutes", "90".into(), |doc, n| doc.boil_minutes = n);
+        assert_eq!(draft.diagnostics().len(), 1);
+        let generation = draft.generation;
+        draft.apply_validation(generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("hops[a].amount_g", "missing", Incomplete)] });
+        let paths: Vec<_> = draft.diagnostics().iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(paths, ["hops[a].amount_g"], "the settled result replaces, never merges with, the old list");
+    }
+
+    #[test]
+    fn a_response_for_an_older_generation_cannot_overwrite_newer_diagnostics() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        let old = draft.generation;
+        draft.edit_number("batch_size_l", "20".into(), |doc, n| doc.batch_size_l = n);
+        let current = draft.generation;
+        assert!(draft.apply_validation(current, Validation { state: Incomplete, diagnostics: vec![diagnostic("boil_minutes", "missing", Incomplete)] }));
+        assert!(!draft.apply_validation(old, Validation { state: Invalid, diagnostics: vec![diagnostic("batch_size_l", "negative", Invalid)] }));
+        assert_eq!(draft.diagnostics().len(), 1);
+        assert_eq!(draft.diagnostics()[0].path, "boil_minutes");
+        assert_eq!(draft.readiness(), Some(Incomplete));
+    }
+
+    #[test]
+    fn inline_messages_describe_only_the_current_draft_while_the_summary_keeps_the_earlier_list() {
+        use krausen_types::validation::{Readiness::*, Validation};
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.apply_validation(draft.generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("hops[a].stage", "unsupported_hop_stage", Incomplete)] });
+        assert!(draft.validation_hint("hops[a].stage").is_some());
+        // A select is edited with the ordinary structural edit; its old message must go quiet at once.
+        draft.edit(|doc| doc.title = "changed".into());
+        assert_eq!(draft.validation_hint("hops[a].stage"), None);
+        assert_eq!(draft.diagnostics().len(), 1, "the summary still has it, marked out of date");
+        let generation = draft.generation;
+        draft.apply_validation(generation, Validation { state: Incomplete, diagnostics: vec![diagnostic("hops[a].stage", "unsupported_hop_stage", Incomplete)] });
+        assert!(draft.validation_hint("hops[a].stage").is_some(), "back once a check settles");
+        draft.undo();
+        assert_eq!(draft.validation_hint("hops[a].stage"), None, "Undo moves the draft on as well");
     }
 
     #[test]

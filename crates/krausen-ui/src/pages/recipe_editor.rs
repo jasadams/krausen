@@ -20,6 +20,9 @@ use krausen_types::{
     recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome, RecipeSnapshot},
 };
 use leptos::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use crate::utils::focus::{focus_element, try_focus_element};
+use crate::utils::focus::jump_after_render;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 #[path = "recipe_comparison.rs"]
@@ -163,7 +166,7 @@ impl EditorFocus {
         // cleared by confirmed denial, return to the existing editor heading.
         if let Some(print) = print {
             if let Some(button) = print.query_selector("button").ok().flatten() { try_focus(&button); }
-        } else if let Some(heading) = document.get_element_by_id("recipe-editor-heading") {
+        } else if let Some(heading) = document.get_element_by_id(crate::pages::recipe_header::EDITOR_HEADING_ID) {
             try_focus(&heading);
         }
     }
@@ -252,26 +255,9 @@ pub fn RecipeEditorPage() -> impl IntoView {
     </Suspense> }
 }
 
-/// One focus guard for every deliberate editor focus move: visible, connected,
-/// enabled and not inside a hidden/inert subtree.
-#[cfg(target_arch = "wasm32")]
-fn try_focus_element(element: &web_sys::Element) -> bool {
-    use wasm_bindgen::JsCast;
-    if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
-        || element.get_client_rects().length() == 0
-        || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
-            .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
-    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
-        && web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|active| active == *element)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn focus_element(id: &str) {
-    let focused = web_sys::window().and_then(|window| window.document())
-        .and_then(|document| document.get_element_by_id(id))
-        .is_some_and(|element| try_focus_element(&element));
-    if !focused { tracing::warn!(target = id, "Unable to focus a recipe target"); }
-}
+/// `(DOM id, visible label)` of the batch volume control, declared once for the
+/// control and the diagnostic registry.
+pub(crate) const BATCH_FIELD: (&str, &str) = ("recipe-batch", "Batch volume");
 
 /// Open a native disclosure from a header command, then move focus into it.
 #[cfg(target_arch = "wasm32")]
@@ -1035,7 +1021,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Invalid(validation)) => {
                     retry.set(None);
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
-                        draft.update(|d| d.set_validation(validation));
+                        draft.update(|d| { d.apply_validation(attempt.generation, validation); });
                         status.fail("Correct the invalid fields before saving.".into());
                     } else {
                         status.fail(
@@ -1300,7 +1286,26 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         #[cfg(not(target_arch = "wasm32"))]
         let _ = (disclosure, focus);
     };
+    let jump = Callback::new(move |(target, explanation): (String, String)| {
+        active_tab.set("recipe".to_owned());
+        jump_after_render(target, explanation);
+    });
+    provide_context(crate::components::diagnostic_list::DiagnosticJump(jump));
+    let review = Callback::new(move |()| {
+        // Explicit request: settle every touched field so its error shows, then go to the first one.
+        draft.update(|d| d.settle_numbers());
+        if let Some(first) = draft.with_untracked(crate::recipe_diagnostics::first_invalid) {
+            let target = match first.route {
+                crate::components::diagnostic_list::Route::Field { dom_id } => dom_id,
+                crate::components::diagnostic_list::Route::Explain => first.key.clone(),
+            };
+            // A malformed entry has no summary row, so the page heading is the fallback.
+            let explanation = if first.code == "malformed" { crate::pages::recipe_header::EDITOR_HEADING_ID.to_owned() } else { first.key };
+            jump.run((target, explanation));
+        }
+    });
     let header_actions = RecipeActionSlots {
+        review,
         save: Callback::new(move |()| save()),
         undo: Callback::new(move |()| draft.update(|d| d.undo())),
         // Start always opens the bounded review task; it never commits. A saved
@@ -1401,7 +1406,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         })}
         <crate::components::wayfinding::PageTitle text=Signal::derive(move || draft.with(|d| if d.document().title.is_empty() { "Recipe editor".to_owned() } else { d.document().title.clone() }))/>
         <RecipeHeader draft=draft revision=revision status=status retained=retained pending=pending conflict=Signal::derive(move || conflict.with(|c| c.is_some())) equipment=equipment_summary title=title on_title=title_change style_value=selected_style style_options=style_options on_style=change_style actions=header_actions actions_open=actions_open>
-            <NumberField id="recipe-batch" label="Batch volume" unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
+            <NumberField id=BATCH_FIELD.0 label=BATCH_FIELD.1 unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
         </RecipeHeader>
         <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled prerequisite=transform_prerequisite_signal/>
         <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview open=print_open selected=selected_revision/>
@@ -1712,11 +1717,12 @@ pub(crate) fn NumberField(
         draft.with(|d| d.number_text(path, read(d.document()).map(|v| v * scale)))
     });
     let error = Signal::derive(move || draft.with(|d| d.number_error(path).map(str::to_owned)));
+    let hint = Signal::derive(move || draft.with(|d| d.validation_hint(path).map(str::to_owned)));
     let change = Callback::new(move |text| {
         draft.update(|d| d.edit_number(path, text, |doc, n| write(doc, n.map(|v| v / scale))))
     });
     let blur = Callback::new(move |()| draft.update(|d| d.settle_number(path)));
-    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error described_by=described_by on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=id label=label unit=unit value=value error=error hint=hint described_by=described_by on_change=change on_blur=blur numeric=true/> }
 }
 
 #[component]
@@ -1855,21 +1861,17 @@ fn FormulationPreview(
                         }
                     }
                     if accepted {
-                        message.set(match preview.validation.state {
-                            krausen_types::validation::Readiness::Ready => "Ready".into(),
-                            krausen_types::validation::Readiness::Incomplete => "Incomplete".into(),
-                            krausen_types::validation::Readiness::Invalid => "Invalid".into(),
-                        });
-                        draft.update(|d| d.set_validation(preview.validation.clone()));
+                        message.set(crate::recipe_diagnostics::readiness_summary(&preview.validation));
+                        draft.update(|d| { d.apply_validation(draft_generation, preview.validation.clone()); });
                         result.set(Some((draft_generation, preview)));
                     } else if preview.validation.state
                         == krausen_types::validation::Readiness::Invalid
                         && preview.context.is_none()
                         && preview.context_digest.is_none()
                     {
-                        draft.update(|d| d.set_validation(preview.validation));
+                        message.set(crate::recipe_diagnostics::readiness_summary(&preview.validation));
+                        draft.update(|d| { d.apply_validation(draft_generation, preview.validation); });
                         phase.set(crate::pages::recipe_process::EstimatePhase::InvalidInput);
-                        message.set("Invalid: correct the highlighted inputs.".into());
                     } else {
                         phase.set(crate::pages::recipe_process::EstimatePhase::Unavailable);
                         message.set("Preview context changed. Try again.".into());
@@ -1985,7 +1987,7 @@ fn FormulationPreview(
                 view! { <div class="recipe-editor__estimate-content"><BreweryStale stale=Signal::derive(|| true)>{metrics}{source}</BreweryStale></div> }.into_any()
             }
         }}
-        <div>{move || draft.with(|d| d.diagnostics().iter().map(|diagnostic| view! { <p>{diagnostic_message(diagnostic)}</p> }).collect_view())}</div>
+        <crate::recipe_diagnostics::DiagnosticSummary draft=draft/>
     </BreweryPanel></div>{children()}<div class="recipe-editor__preview-details">{move || accepted.get().map(|preview| view! { <PreviewDetails preview=preview/> })}</div> }
 }
 

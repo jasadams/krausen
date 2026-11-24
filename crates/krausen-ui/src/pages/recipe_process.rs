@@ -111,6 +111,56 @@ fn step_field_id(kind: StepKind, id: &str, suffix: &str) -> String {
     format!("{}-{id}-{suffix}", kind.prefix())
 }
 
+/// Visible label of a step measurement, by its path tail.
+pub(crate) fn step_field_label(tail: &str) -> Option<&'static str> {
+    Some(match tail {
+        "time_minutes" => fields::STEP_TIME,
+        "temperature_c" => fields::STEP_TEMPERATURE,
+        "volume_l" => fields::STEP_VOLUME,
+        _ => return None,
+    })
+}
+
+/// Stable ids and labels of the process controls, declared once: the controls
+/// below and the diagnostic registry both read these, so a rename cannot leave a
+/// jump pointing at nothing.
+pub(crate) mod fields {
+    /// `(DOM id, visible label)` of a control addressed by one draft path.
+    pub type Field = (&'static str, &'static str);
+    pub const MASH_METHOD: Field = ("recipe-mash-method", "Mash water method");
+    pub const MASH_WATER: Field = ("recipe-mash-water", "Mash water");
+    pub const TOP_UP: Field = ("recipe-top-up", "Kettle top-up");
+    pub const BOIL: Field = ("recipe-boil", "Boil time");
+    pub const WHIRLPOOL: Field = ("recipe-whirlpool", "Whirlpool time");
+    pub const WHIRLPOOL_TEMP: Field = ("recipe-whirlpool-temp", "Whirlpool temperature");
+    pub const ATTENUATION: Field = ("recipe-attenuation", "Wort attenuation");
+    pub const STEP_TIME: &str = "Time";
+    pub const STEP_TEMPERATURE: &str = "Temperature";
+    pub const STEP_VOLUME: &str = "Volume";
+}
+
+/// The control a structured step path addresses, for the diagnostic registry.
+pub(crate) struct StepDiagnostic {
+    pub dom_id: String,
+    pub row_label: String,
+    pub label: &'static str,
+}
+
+/// `None` when the path is not a step-field path or its row no longer exists, so
+/// a stale diagnostic never becomes a link to nothing.
+pub(crate) fn diagnostic_step(doc: &RecipeDocumentV1, path: &str) -> Option<StepDiagnostic> {
+    for kind in [StepKind::Mash, StepKind::Fermentation] {
+        let Some(rest) = path.strip_prefix(kind.prefix()).and_then(|r| r.strip_prefix('[')) else { continue };
+        let (id, tail) = rest.split_once("].")?;
+        if !kind.rows(doc).iter().any(|row| row.row_id == id) {
+            return None;
+        }
+        let label = step_field_label(tail)?;
+        return Some(StepDiagnostic { dom_id: step_field_id(kind, id, tail), row_label: step_label(doc, kind, id), label });
+    }
+    None
+}
+
 fn remove_button_id(kind: StepKind, id: &str) -> String {
     step_field_id(kind, id, "remove")
 }
@@ -214,13 +264,13 @@ fn holds_value(draft: &RecipeDraft, path: &str, value: Option<f64>) -> bool {
     value.is_some() || draft.raw_numbers().contains_key(path)
 }
 
-fn show_manual_mash_water(draft: &RecipeDraft) -> bool {
+pub(crate) fn show_manual_mash_water(draft: &RecipeDraft) -> bool {
     let process = &draft.document().process;
     process.mash_water_method.as_deref() == Some("manual")
         || holds_value(draft, "process.mash_water_l", process.mash_water_l)
 }
 
-fn show_kettle_top_up(draft: &RecipeDraft) -> bool {
+pub(crate) fn show_kettle_top_up(draft: &RecipeDraft) -> bool {
     let process = &draft.document().process;
     process.mash_water_method.is_some()
         || holds_value(draft, "process.kettle_top_up_l", process.kettle_top_up_l)
@@ -405,18 +455,20 @@ fn MashAndWater(draft: RwSignal<RecipeDraft>, shown: Shown) -> impl IntoView {
     let change_method = Callback::new(move |value: String| {
         draft.update(|d| d.edit(|doc| doc.process.mash_water_method = (!value.is_empty()).then_some(value)))
     });
+    let method_error = Signal::derive(move || draft.with(|d| d.validation_error("process.mash_water_method").map(str::to_owned)));
+    let method_hint = Signal::derive(move || draft.with(|d| d.validation_hint("process.mash_water_method").map(str::to_owned)));
     let manual = Memo::new(move |_| draft.with(show_manual_mash_water));
     let top_up = Memo::new(move |_| draft.with(show_kettle_top_up));
     view! {
         <BreweryPanel id="recipe-section-mash" title="Mash & water" description="Mash steps and how the mash water is allocated." stacked=true>
             <StepGroup draft=draft kind=StepKind::Mash/>
             <BreweryFields>
-                <BreweryDraftSelect id="recipe-mash-method" label="Mash water method" value=method on_change=change_method options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
+                <BreweryDraftSelect id=fields::MASH_METHOD.0 label=fields::MASH_METHOD.1 value=method on_change=change_method error=method_error hint=method_hint options=vec![("".into(), "Not specified".into()), ("manual".into(), "Manual volume".into()), ("profile_thickness".into(), "From mash thickness".into())]/>
                 <Show when=move || manual.get()>
-                    <NumberField id="recipe-mash-water" label="Mash water" unit="L" path="process.mash_water_l" draft=draft read=|d: &RecipeDocumentV1| d.process.mash_water_l write=|d: &mut RecipeDocumentV1, n| d.process.mash_water_l = n/>
+                    <NumberField id=fields::MASH_WATER.0 label=fields::MASH_WATER.1 unit="L" path="process.mash_water_l" draft=draft read=|d: &RecipeDocumentV1| d.process.mash_water_l write=|d: &mut RecipeDocumentV1, n| d.process.mash_water_l = n/>
                 </Show>
                 <Show when=move || top_up.get()>
-                    <NumberField id="recipe-top-up" label="Kettle top-up" unit="L" path="process.kettle_top_up_l" draft=draft read=|d: &RecipeDocumentV1| d.process.kettle_top_up_l write=|d: &mut RecipeDocumentV1, n| d.process.kettle_top_up_l = n/>
+                    <NumberField id=fields::TOP_UP.0 label=fields::TOP_UP.1 unit="L" path="process.kettle_top_up_l" draft=draft read=|d: &RecipeDocumentV1| d.process.kettle_top_up_l write=|d: &mut RecipeDocumentV1, n| d.process.kettle_top_up_l = n/>
                 </Show>
             </BreweryFields>
             {move || has_plan.get().then(|| view! {
@@ -449,9 +501,9 @@ fn BoilAndWhirlpool(draft: RwSignal<RecipeDraft>, shown: Shown) -> impl IntoView
     view! {
         <BreweryPanel id="recipe-section-boil" title="Boil & whirlpool" description="Boil duration and the whirlpool stand after flameout." stacked=true>
             <BreweryFields>
-                <NumberField id="recipe-boil" label="Boil time" unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1, n| d.boil_minutes = n/>
-                <NumberField id="recipe-whirlpool" label="Whirlpool time" unit="min" path="process.whirlpool_minutes" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_minutes write=|d: &mut RecipeDocumentV1, n| d.process.whirlpool_minutes = n/>
-                <NumberField id="recipe-whirlpool-temp" label="Whirlpool temperature" unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1, n| d.process.whirlpool_temperature_c = n/>
+                <NumberField id=fields::BOIL.0 label=fields::BOIL.1 unit="min" path="boil_minutes" draft=draft read=|d: &RecipeDocumentV1| d.boil_minutes write=|d: &mut RecipeDocumentV1, n| d.boil_minutes = n/>
+                <NumberField id=fields::WHIRLPOOL.0 label=fields::WHIRLPOOL.1 unit="min" path="process.whirlpool_minutes" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_minutes write=|d: &mut RecipeDocumentV1, n| d.process.whirlpool_minutes = n/>
+                <NumberField id=fields::WHIRLPOOL_TEMP.0 label=fields::WHIRLPOOL_TEMP.1 unit="°C" path="process.whirlpool_temperature_c" draft=draft read=|d: &RecipeDocumentV1| d.process.whirlpool_temperature_c write=|d: &mut RecipeDocumentV1, n| d.process.whirlpool_temperature_c = n/>
             </BreweryFields>
             // Same rule as the Water plan: dimmed and hidden from assistive technology while the
             // estimate it was read from is out of date, gone once the draft settles without one.
@@ -467,7 +519,7 @@ fn Fermentation(draft: RwSignal<RecipeDraft>) -> impl IntoView {
         <BreweryPanel id="recipe-section-fermentation" title="Fermentation" description="Fermentation steps and the whole-wort attenuation." stacked=true>
             <StepGroup draft=draft kind=StepKind::Fermentation/>
             <BreweryFields>
-                <NumberField id="recipe-attenuation" label="Wort attenuation" unit="%" scale=100.0 described_by="recipe-attenuation-note" path="process.apparent_attenuation_fraction" draft=draft read=|d: &RecipeDocumentV1| d.process.apparent_attenuation_fraction write=|d: &mut RecipeDocumentV1, n| d.process.apparent_attenuation_fraction = n/>
+                <NumberField id=fields::ATTENUATION.0 label=fields::ATTENUATION.1 unit="%" scale=100.0 described_by="recipe-attenuation-note" path="process.apparent_attenuation_fraction" draft=draft read=|d: &RecipeDocumentV1| d.process.apparent_attenuation_fraction write=|d: &mut RecipeDocumentV1, n| d.process.apparent_attenuation_fraction = n/>
             </BreweryFields>
             <p id="recipe-attenuation-note" class="note-caption">"Effective apparent attenuation of the whole wort, used for final gravity. The yeast attenuation under Yeast is informational and is never copied here."</p>
         </BreweryPanel>
@@ -621,9 +673,9 @@ fn StepRow(draft: RwSignal<RecipeDraft>, id: String, kind: StepKind, on_remove: 
                 view! { <Button id=remove_field_id.clone() variant=ButtonVariant::GhostDestructive aria_label=remove_label on:click=move |_| on_remove.run(remove_id.clone())>"Remove step"</Button> }
             })
             measurements=ChildrenFn::to_children(move || view! {
-                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Time label="Time" unit="min"/>
-                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Temperature label="Temperature" unit="°C"/>
-                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Volume label="Volume" unit="L"/>
+                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Time label=fields::STEP_TIME unit="min"/>
+                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Temperature label=fields::STEP_TEMPERATURE unit="°C"/>
+                <StepNumberField draft=draft id=measurement_id.clone() kind=kind field=StepNumber::Volume label=fields::STEP_VOLUME unit="L"/>
             })>
             <BreweryDraftField id=name_field_id label="Step name" value=name on_change=change_name/>
         </BreweryStepRow>
@@ -662,6 +714,8 @@ fn StepNumberField(
         })
     });
     let error = Signal::derive(move || draft.with(|d| d.number_error(&error_path).map(str::to_owned)));
+    let hint_path = path.clone();
+    let hint = Signal::derive(move || draft.with(|d| d.validation_hint(&hint_path).map(str::to_owned)));
     let change = Callback::new(move |text| {
         let id = id.clone();
         let path = path.clone();
@@ -677,7 +731,7 @@ fn StepNumberField(
             })
         });
     });
-    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error on_change=change on_blur=blur numeric=true/> }
+    view! { <BreweryDraftField id=input_id label=label unit=unit value=value error=error hint=hint on_change=change on_blur=blur numeric=true/> }
 }
 
 #[cfg(test)]

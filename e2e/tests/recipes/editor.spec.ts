@@ -963,7 +963,7 @@ async function recipeWithNumbers(page: import('@playwright/test').Page, profileN
   await page.getByLabel('Amount in recipe (kg)').fill('4');
   await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
   await page.getByText('Equipment settings', { exact: true }).click();
-  await page.locator('#equipment-profile-select').selectOption({ label: profile });
+  await chooseEquipmentProfile(page, profile);
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
@@ -1160,22 +1160,26 @@ async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   return profileId
 }
 
+type SummaryBox = { height: number; below: number };
+// The summary's height and where the first section starts below it.
+const measureSummary = (page: import('@playwright/test').Page) => page.evaluate(() => {
+  const summary = document.querySelector('.recipe-editor__preview-summary')!;
+  const below = document.querySelector('.recipe-editor__sections')!;
+  const rect = summary.getBoundingClientRect();
+  return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+});
+const expectSame = (label: string, actual: SummaryBox, expected: SummaryBox) => {
+  expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
+};
+
 for (const width of [320, 390]) {
   test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const profileId = await readyEstimateRecipe(page);
     const summary = page.locator('.recipe-editor__preview-summary');
     const values = summary.locator('.k-metric__value');
-    const measure = () => page.evaluate(() => {
-      const summary = document.querySelector('.recipe-editor__preview-summary')!;
-      const below = document.querySelector('.recipe-editor__sections')!;
-      const rect = summary.getBoundingClientRect();
-      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
-    });
-    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
-      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
-    };
+    const measure = () => measureSummary(page);
     const current = await measure();
     const status = summary.locator('[role="status"]');
     // The state text keeps one top edge in every state: the reserved space sits
@@ -1299,6 +1303,49 @@ for (const width of [320, 390]) {
     expect(Math.abs((await statusTop()) - currentStatusTop), 'unavailable profile status text top').toBeLessThanOrEqual(0.5);
     await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
     await expect.poll(async () => (await values.allTextContents()).every(text => text.startsWith('—'))).toBe(true);
+  });
+}
+
+// KRA-34 with KRA-49: the issues list lives inside the same summary. The
+// estimate states change under a list of issues that is present throughout, and
+// neither the list nor its "Out of date" cue may add or remove a row, or the
+// controls below the summary move while a person is typing.
+for (const width of [320, 390]) {
+  test(`the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await readyEstimateRecipe(page);
+    await addHop(page, 'Cascade', '60');
+    const summary = page.locator('.recipe-editor__preview-summary');
+    const list = issues(page);
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ })).toHaveCount(1);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    const measure = () => measureSummary(page);
+    const current = await measure();
+    const batch = page.getByLabel('Batch volume (L)');
+
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await batch.fill('21');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed while recalculating').toHaveCount(1);
+    expectSame('recalculating with issues', await measure(), current);
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.unroute('**/leptos-api/preview_formulation*');
+    expectSame('current again with issues', await measure(), current);
+
+    await batch.fill('-');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed when the draft settles invalid').toHaveCount(1);
+    expectSame('settled invalid with issues', await measure(), current);
+
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await batch.fill('23');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed when the preview is unavailable').toHaveCount(1);
+    expectSame('settled unavailable with issues', await measure(), current);
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
   });
 }
 
@@ -2981,4 +3028,500 @@ test('an unconfirmed recipe save cannot discard its identity before save and lea
   expect(requests).toHaveLength(2);
   expect(requests[1]).toBe(requests[0]);
   expect(db.exec(`SELECT COUNT(*) FROM recipes WHERE name = '${title}' AND native_head_revision = 1`)).toBe('1');
+});
+
+// ---- KRA-34: actionable diagnostics, stable field jumps and settled announcements ----
+
+// The equipment select lists a page of profiles; once a workspace holds more (the pagination spec
+// creates over a hundred), later ones are behind "Load more profiles".
+async function chooseEquipmentProfile(page: import('@playwright/test').Page, label: string) {
+  const select = page.locator('#equipment-profile-select');
+  const option = select.getByRole('option', { name: label, exact: true });
+  await expect.poll(async () => {
+    if (await option.count()) return true;
+    const more = page.getByRole('button', { name: 'Load more profiles', disabled: false });
+    if (await more.count()) await more.click();
+    return false;
+  }, { message: `profile ${label} never appeared in the list` }).toBe(true);
+  await select.selectOption({ label });
+}
+
+async function addHop(page: import('@playwright/test').Page, name: string, minutes: string) {
+  await page.getByRole('button', { name: 'Add hop', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add hop', exact: true });
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('Amount (g)', { exact: true }).fill('20');
+  await dialog.getByLabel('Use', { exact: true }).selectOption('boil');
+  await dialog.getByLabel('Contact time (min)', { exact: true }).fill(minutes);
+  await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+  await expect(dialog).toBeHidden();
+}
+
+const focusedId = (page: import('@playwright/test').Page) => page.evaluate(() => document.activeElement?.id ?? '');
+const issues = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Recipe issues', exact: true });
+
+test('diagnostic summary names each repeated hop and jumps to its hidden alpha field by row id', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  const alphaLinks = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+  await expect(alphaLinks).toHaveCount(2);
+  const texts = await alphaLinks.allTextContents();
+  expect(new Set(texts).size, `two rows, two distinct messages: ${texts}`).toBe(2);
+  expect(texts[0]).toMatch(/60 min, 1 of 2/);
+  expect(texts[1]).toMatch(/30 min, 2 of 2/);
+  // The control is in the collapsed "Addition details" of its row before the jump.
+  expect(await page.locator('[id^="hops-"][id$="-yield-alpha"]').first().evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(false);
+  await alphaLinks.nth(1).click();
+  await expect.poll(() => focusedId(page)).toMatch(/^hops-.+-yield-alpha$/);
+  const second = await focusedId(page);
+  expect(await page.locator(`#${second}`).evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(true);
+  expect(await page.locator(`#${second}`).evaluate(el => el.closest('[role=group]')?.getAttribute('aria-label') ?? '')).toMatch(/30 min, 2 of 2/);
+  await expect(page.locator(`#${second}`)).toHaveAttribute('aria-describedby', `${second}-description`);
+  await expect(page.locator(`#${second}-description`)).toHaveText('Needed to start a brew');
+  // Removing the first row changes every position; the remaining entry still reaches the same control.
+  await page.getByRole('button', { name: /^Remove Cascade, hop, Boil, 60 min/ }).click();
+  await expect(alphaLinks).toHaveCount(1);
+  await alphaLinks.click();
+  await expect.poll(() => focusedId(page)).toBe(second);
+  await expect(alphaLinks).toHaveText(/1 of 1/);
+});
+
+test('diagnostic jump reaches a select and a field inside a collapsed section', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Saaz', '45');
+  const row = page.getByRole('group', { name: /^Saaz, hop/ });
+  await row.getByLabel('Use', { exact: true }).selectOption('');
+  const useLink = issues(page).getByRole('button', { name: /Use needs a supported use/ });
+  await expect(useLink).toBeVisible();
+  await useLink.click();
+  await expect.poll(() => focusedId(page)).toMatch(/^hops-.+-stage$/);
+  const select = page.locator(`#${await focusedId(page)}`);
+  await expect(select).toHaveAttribute('aria-describedby', /-stage-description$/);
+  await expect(page.locator(`#${await focusedId(page)}-description`)).toContainText('Choose a supported stage');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
+  await issues(page).getByRole('button', { name: /Chilling is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-chilling');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
+  await expect(page.locator('#recipe-chilling')).toHaveAttribute('aria-describedby', 'recipe-chilling-description');
+  await expect(page.locator('#recipe-chilling-description')).toContainText('Needed to start a brew');
+});
+
+test('repeated diagnostics clear one at a time while the summary keeps its place during typing', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  const alphaLinks = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+  await expect(alphaLinks).toHaveCount(2);
+  await page.evaluate(() => {
+    (window as any).__summaryRemovals = 0;
+    new MutationObserver(records => records.forEach(record => record.removedNodes.forEach(node => {
+      if (node instanceof Element && (node.matches('.k-diagnostics') || node.querySelector('.k-diagnostics'))) (window as any).__summaryRemovals++;
+    }))).observe(document.body, { childList: true, subtree: true });
+  });
+  const alpha = page.getByLabel('Alpha acid (%)');
+  await page.locator('[id^="hops-"][id$="-yield-alpha"]').first().evaluate(el => (el.closest('details') as HTMLDetailsElement).open = true);
+  await alpha.first().focus();
+  await page.keyboard.type('5.', { delay: 120 });
+  const settledCheck = page.waitForResponse(response => response.url().includes('/preview_formulation') && response.ok());
+  await page.keyboard.type('5', { delay: 120 });
+  await expect(alphaLinks).toHaveCount(1);
+  await expect(alpha.first()).toHaveValue('5.5');
+  expect(await alpha.first().evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]), 'the caret stays where typing left it while the hint drops').toEqual([3, 3]);
+  await expect(alphaLinks).toHaveText(/30 min, 2 of 2/);
+  await settledCheck;
+  await expect(page.getByRole('status').filter({ hasText: /^Incomplete: \d+ inputs? needed to start a brew$/ })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__summaryRemovals), 'typing must not tear the summary down').toBe(0);
+  await page.locator('[id^="hops-"][id$="-yield-alpha"]').nth(1).evaluate(el => (el.closest('details') as HTMLDetailsElement).open = true);
+  await alpha.nth(1).fill('4.5');
+  await expect(alphaLinks).toHaveCount(0);
+});
+
+test('invalid save blockers are separate from start requirements and Review highlighted fields reaches the first one', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Diagnostics ${Date.now()}`);
+  await addHop(page, 'Cascade', '60');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await expect(page.getByRole('status').filter({ hasText: 'Invalid: 1 value to correct' })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Correct before saving \(1\)$/ })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Needed to start a brew \(\d+\)$/ })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  await page.getByRole('button', { name: 'Review highlighted fields', exact: true }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+  await expect(page.locator('#recipe-batch')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#recipe-batch-description')).toHaveText('Enter a non-negative value');
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await expect(page.getByRole('button', { name: 'Review highlighted fields', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  // Saved, and still Incomplete: the start requirements are listed, not hidden or promoted to errors.
+  await expect(issues(page).getByRole('heading', { name: /^Needed to start a brew/ })).toBeVisible();
+  await expect(issues(page).getByRole('heading', { name: /^Correct before saving/ })).toHaveCount(0);
+  await expect(page.getByText('Starting needs a complete recipe', { exact: false })).toBeVisible();
+});
+
+test('preview results never move focus or collapse sections and the live status carries only the count', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await addHop(page, 'Cascade', '30');
+  await issues(page).getByRole('button', { name: /60 min, 1 of 2: Alpha acid is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
+  const id = await focusedId(page);
+  await page.evaluate(() => {
+    (window as any).__statusTexts = [];
+    const watch = () => (window as any).__statusTexts.push([...document.querySelectorAll('[role=status]')].map(node => node.textContent ?? '').join('|'));
+    new MutationObserver(watch).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  await page.keyboard.type('5.5', { delay: 150 });
+  const settledCheck = page.waitForResponse(response => response.url().includes('/preview_formulation') && response.ok());
+  await page.keyboard.type('5', { delay: 150 });
+  await settledCheck;
+  await expect(page.getByRole('status').filter({ hasText: /^Incomplete: \d+ inputs? needed to start a brew$/ })).toBeVisible();
+  expect(await focusedId(page)).toBe(id);
+  expect(await page.locator(`#${id}`).evaluate(el => (el.closest('details') as HTMLDetailsElement).open)).toBe(true);
+  const spoken: string[] = await page.evaluate(() => (window as any).__statusTexts);
+  expect(spoken.some(text => /Alpha acid is missing/.test(text)), 'the detailed list is not in any live region').toBe(false);
+  await expect(page.locator('.k-diagnostics [role=status], .k-diagnostics [aria-live], .k-diagnostics [role=alert]')).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: /^Incomplete: \d+ inputs? needed to start a brew$/ })).toBeVisible();
+});
+
+test('preserved data this editor cannot edit is explained and never linked', async ({ page }) => {
+  const title = `Legacy diagnostics ${Date.now()}`;
+  const xml = `<RECIPES><RECIPE><NAME>${title}</NAME><VERSION>1</VERSION><BATCH_SIZE>20</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><FERMENTABLES><FERMENTABLE><NAME>Pale malt</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>4</AMOUNT><YIELD>80</YIELD><COLOR>3</COLOR></FERMENTABLE></FERMENTABLES><YEASTS><YEAST><NAME>Lager yeast</NAME><VERSION>1</VERSION><TYPE>Lager</TYPE><FORM>Dry</FORM><AMOUNT>0.011</AMOUNT></YEAST></YEASTS></RECIPE></RECIPES>`;
+  await page.goto('/beerxml');
+  await page.getByLabel('Paste BeerXML').fill(xml);
+  await page.locator('#beerxml-colour').selectOption('srm');
+  await page.locator('#beerxml-efficiency').selectOption('override');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Import recipe' }).click();
+  await page.getByRole('link', { name: 'Open imported recipe' }).click();
+  await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
+  const note = issues(page).getByText(/process data this app cannot edit/);
+  await expect(note).toBeVisible();
+  await expect(issues(page).getByRole('button', { name: /process data this app cannot edit/ })).toHaveCount(0);
+  await expect(issues(page).getByRole('link', { name: /process data this app cannot edit/ })).toHaveCount(0);
+});
+
+for (const { width, scheme } of [{ width: 320, scheme: 'light' }, { width: 390, scheme: 'dark' }, { width: 1440, scheme: 'light' }] as const) {
+  test(`diagnostic summary stays in bounds with long names and whole touch targets at ${width}px ${scheme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/recipe-editor/new');
+    await addHop(page, 'A very long hop variety name that must wrap rather than overflow the narrow summary list', '60');
+    await addHop(page, 'Cascade', '30');
+    const links = issues(page).getByRole('button', { name: /Alpha acid is missing/ });
+    await expect(links).toHaveCount(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    for (const link of await links.all()) {
+      const box = (await link.boundingBox())!;
+      expect(box.height, 'whole target at least 44px tall').toBeGreaterThanOrEqual(44);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    expect(await links.first().evaluate(el => getComputedStyle(el).whiteSpace)).toBe('normal');
+    await links.first().click();
+    await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
+    const focused = (await page.locator(`#${await focusedId(page)}`).boundingBox())!;
+    expect(focused.x).toBeGreaterThanOrEqual(0);
+    expect(focused.x + focused.width).toBeLessThanOrEqual(width);
+  });
+}
+
+test('Review highlighted fields does not appear on a first character and reaches a settled invalid field', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+  await page.evaluate(() => {
+    (window as any).__reviewSeen = 0;
+    const look = () => { if ([...document.querySelectorAll('button')].some(b => b.textContent === 'Review highlighted fields')) (window as any).__reviewSeen++; };
+    new MutationObserver(look).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  await page.getByLabel('Batch volume (L)').focus();
+  await page.keyboard.press('-');
+  await expect(page.getByText('Complete invalid number fields to see estimates.')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__reviewSeen), 'a lone "-" is transitional, not a highlighted field').toBe(0);
+  await expect(review).toHaveCount(0);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#recipe-batch')).toHaveAttribute('aria-invalid', 'true');
+  await expect(review).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  await review.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+  await expect(page.locator('#recipe-batch')).toHaveAttribute('aria-describedby', 'recipe-batch-description recipe-batch-note');
+  await expect(page.locator('#recipe-batch-description')).toHaveText('Enter a number');
+});
+
+for (const width of [1440, 390]) {
+  test(`Review highlighted fields keeps the button's natural width, left-aligned with the header fields at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Batch volume (L)').fill('-5');
+    const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+    await expect(review).toBeVisible();
+    // Natural width: forcing max-content changes nothing, and it never spans the header.
+    const measured = await review.evaluate(el => {
+      const own = el.getBoundingClientRect();
+      const previous = (el as HTMLElement).style.width;
+      (el as HTMLElement).style.width = 'max-content';
+      const natural = el.getBoundingClientRect().width;
+      (el as HTMLElement).style.width = previous;
+      const header = el.closest('header')!.getBoundingClientRect();
+      const name = document.getElementById('recipe-title')!.getBoundingClientRect();
+      return { own: own.width, left: own.left, natural, header: header.width, nameLeft: name.left };
+    });
+    expect(Math.abs(measured.own - measured.natural), `width ${measured.own} vs natural ${measured.natural}`).toBeLessThanOrEqual(1);
+    expect(measured.own).toBeLessThan(measured.header / 2);
+    expect(Math.abs(measured.left - measured.nameLeft)).toBeLessThanOrEqual(1);
+  });
+}
+
+test('Review highlighted fields started from Saved versions selects the Recipe tab and focuses the exact control', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+  await expect(review).toBeVisible();
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Saved versions', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await review.click();
+  await expect(page.getByRole('tab', { name: 'Recipe', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+});
+
+test('Review highlighted fields never blinks and nothing moves while another field is edited with an Invalid outstanding', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('-5');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  const review = page.getByRole('button', { name: 'Review highlighted fields', exact: true });
+  await expect(review).toBeVisible();
+  await expect(issues(page).getByRole('button', { name: 'Batch volume cannot be negative.', exact: true })).toBeVisible();
+  await page.locator('#recipe-boil').focus();
+  // Sample every frame: the command is present and the tab strip below it never moves (measured from the command, so scrolling of the page does not count).
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__frames = 0; w.__missing = 0; w.__tops = new Set<number>();
+    const tick = () => {
+      const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Review highlighted fields');
+      const tabs = document.querySelector('[role=tablist]');
+      w.__frames++;
+      if (!button) w.__missing++;
+      if (tabs && button) w.__tops.add(Math.round(tabs.getBoundingClientRect().top - button.getBoundingClientRect().top));
+      w.__raf = requestAnimationFrame(tick);
+    };
+    w.__raf = requestAnimationFrame(tick);
+  });
+  for (const key of ['6', '0', '1', '2', '3']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(120);
+  }
+  await expect(page.locator('#recipe-boil')).toHaveValue('60123');
+  await page.waitForTimeout(1500);
+  const seen = await page.evaluate(() => { const w = window as any; cancelAnimationFrame(w.__raf); return { frames: w.__frames, missing: w.__missing, tops: [...w.__tops] }; });
+  expect(seen.frames).toBeGreaterThan(30);
+  expect(seen.missing, 'the Review command was absent in some frame').toBe(0);
+  expect(seen.tops, `the tab strip moved: ${seen.tops}`).toHaveLength(1);
+  await review.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-batch');
+});
+
+test('a link to a conditional control goes to the control that governs it, never to an absent input', async ({ page }) => {
+  // Mash water follows the thickness method, so the Mash water field is not on the page.
+  const mashProfile = `Thickness ${Date.now()}`;
+  await createEquipmentProfile(page, mashProfile, PROFILE_VALUES, 'natural');
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Batch volume (L)').fill('1');
+  await page.locator('#recipe-boil').fill('60');
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  await page.getByLabel('Search fermentables').fill('Joe White Signature');
+  await page.getByRole('button', { name: /Joe White Signature Lager/ }).click();
+  await page.getByLabel('Amount in recipe (kg)').fill('4');
+  await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await chooseEquipmentProfile(page, mashProfile);
+  await page.locator('#recipe-mash-method').selectOption('profile_thickness');
+  await expect(page.locator('#recipe-mash-water')).toHaveCount(0);
+  const sparge = issues(page).getByRole('button', { name: /Mash water is more than the water available/ });
+  await expect(sparge).toBeVisible();
+  await sparge.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-mash-method');
+  await expect(page.locator('#recipe-mash-method')).toBeFocused();
+});
+
+test('a link to an inherited chilling value goes to the Chilling override, never to an absent input', async ({ page }) => {
+  // An inherited forced chilling with no rate: the rate field only exists once Chilling is overridden.
+  const profile = `Forced ${Date.now()}`;
+  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'forced');
+  await page.goto('/recipe-editor/new');
+  await addHop(page, 'Cascade', '60');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await chooseEquipmentProfile(page, profile);
+  await page.getByText('Equipment settings', { exact: true }).click();
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
+  await expect(page.locator('#recipe-chilling-rate')).toHaveCount(0);
+  const rate = issues(page).getByRole('button', { name: /Cooling rate is missing/ });
+  await expect(rate).toBeVisible();
+  await rate.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-chilling');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
+  await page.locator('#recipe-chilling').selectOption('forced');
+  await expect(page.locator('#recipe-chilling-rate')).toBeVisible();
+  await expect(issues(page).getByRole('button', { name: /Cooling rate is missing/ })).toBeVisible();
+  await issues(page).getByRole('button', { name: /Cooling rate is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-chilling-rate');
+});
+
+test('inline messages are associated with every field family', async ({ page }) => {
+  await recipeWithNumbers(page);
+  const described = async (id: string, state: 'true' | 'false', text: RegExp | string) => {
+    const field = page.locator(`[id="${id}"]`);
+    await expect(field).toHaveAttribute('aria-invalid', state);
+    await expect(field).toHaveAttribute('aria-describedby', new RegExp(`${id}-description`));
+    await expect(page.locator(`[id="${id}-description"]`)).toContainText(text);
+  };
+  // Mash method select (start requirement, not an error) once the method is cleared.
+  await page.locator('#recipe-mash-method').selectOption('');
+  await described('recipe-mash-method', 'false', 'Choose a mash water method');
+  // Fermentable stage and type selects.
+  const row = page.getByRole('group', { name: /^Joe White Signature Lager/ });
+  await row.getByLabel('Stage', { exact: true }).selectOption('');
+  await expect(row.locator('[id$="-stage"]')).toHaveAttribute('aria-describedby', /-stage-description$/);
+  await expect(page.locator(`#${await row.locator('[id$="-stage"]').getAttribute('id')}-description`)).toContainText('Choose a supported stage');
+  // Fermentable type select: an extract in the Mash stage is a real mismatch.
+  await row.getByLabel('Stage', { exact: true }).selectOption('mash');
+  await row.getByText('Addition details').click();
+  const type = row.locator('[id$="-type"]');
+  await type.selectOption('extract');
+  const typeId = (await type.getAttribute('id'))!;
+  await expect(type).toHaveAttribute('aria-describedby', new RegExp(`${typeId}-description$`));
+  await expect(page.locator(`[id="${typeId}-description"]`)).toContainText('Choose a type that matches the stage');
+  await issues(page).getByRole('button', { name: /needs a type that matches its stage/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(typeId);
+  // A mash step field and an equipment override field report a real error.
+  await page.locator('#recipe-section-mash').getByRole('button', { name: 'Add step', exact: true }).click();
+  const stepTime = page.locator('#recipe-section-mash').getByLabel('Time (min)', { exact: true });
+  await stepTime.fill('-5');
+  const stepId = await stepTime.getAttribute('id');
+  await described(stepId!, 'true', 'Enter a non-negative value');
+  await page.locator('#recipe-boil-off').fill('-1');
+  await described('recipe-boil-off', 'true', 'Enter a non-negative value');
+  // Yeast and other-ingredient amounts, where the raw and validator paths differ.
+  for (const [opener, dialogName, name] of [['Add yeast', 'Add yeast', 'US-05'], ['Add other ingredient', 'Add other ingredient', 'Irish moss']] as const) {
+    await page.getByRole('button', { name: opener, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: dialogName, exact: true });
+    await dialog.getByLabel('Name', { exact: true }).fill(name);
+    await dialog.getByLabel('Amount', { exact: true }).fill('1');
+    await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+    const amount = page.getByRole('group', { name: new RegExp(`^${name}`) }).getByLabel('Amount', { exact: true });
+    await amount.fill('-1');
+    await described((await amount.getAttribute('id'))!, 'true', 'Enter a non-negative value');
+    await amount.fill('2');
+    await expect(amount).toHaveAttribute('aria-invalid', 'false');
+  }
+});
+
+test('diagnostics from an earlier draft are marked out of date and never counted while previews are paused', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.locator('#recipe-boil').fill('60');
+  await addHop(page, 'Cascade', '90');
+  await expect(issues(page).getByRole('button', { name: /is longer than the boil time/ })).toBeVisible();
+  await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+  // A malformed value pauses previews, so the hop's entry cannot be rechecked after the boil time changes.
+  await page.locator('#recipe-boil').fill('120');
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.fill('7x');
+  await page.keyboard.press('Tab');
+  await expect(page.getByText('Complete invalid number fields to see estimates.')).toBeVisible();
+  await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+  await expect(issues(page).getByRole('button', { name: /is longer than the boil time/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Review highlighted fields', exact: true }).click();
+  await expect.poll(() => focusedId(page), 'Review goes to the settled malformed field, not the stale hop entry').toBe('recipe-batch');
+  await volume.fill('20');
+  await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+  await expect(issues(page).getByRole('button', { name: /is longer than the boil time/ })).toHaveCount(0);
+});
+
+test('an empty draft links Add at least one fermentable to the add control', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).focus();
+  await issues(page).getByRole('button', { name: 'Add at least one fermentable.', exact: true }).click();
+  await expect.poll(() => focusedId(page)).toBe('fermentables-add');
+});
+
+test('summary links reach a step field, a select, an override and yeast and other amounts by their exact ids', async ({ page }) => {
+  await recipeWithNumbers(page);
+  // A mash step with a negative time.
+  await page.locator('#recipe-section-mash').getByRole('button', { name: 'Add step', exact: true }).click();
+  const stepTime = page.locator('#recipe-section-mash').getByLabel('Time (min)', { exact: true });
+  await stepTime.fill('-5');
+  const stepId = (await stepTime.getAttribute('id'))!;
+  await issues(page).getByRole('button', { name: /^Mash step 1 of 1: Time cannot be negative\.$/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(stepId);
+  // A fermentable stage select.
+  const row = page.getByRole('group', { name: /^Joe White Signature Lager/ });
+  const stageId = (await row.locator('[id$="-stage"]').getAttribute('id'))!;
+  await row.getByLabel('Stage', { exact: true }).selectOption('');
+  await issues(page).getByRole('button', { name: /Stage needs a supported stage/ }).click();
+  await expect.poll(() => focusedId(page)).toBe(stageId);
+  // An equipment override.
+  await page.locator('#recipe-boil-off').fill('-1');
+  await issues(page).getByRole('button', { name: /Boil-off cannot be negative/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-boil-off');
+  expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
+  // Yeast and other-ingredient amounts, whose raw and validator paths differ.
+  for (const [opener, dialogName, name] of [['Add yeast', 'Add yeast', 'US-05'], ['Add other ingredient', 'Add other ingredient', 'Irish moss']] as const) {
+    await page.getByRole('button', { name: opener, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: dialogName, exact: true });
+    await dialog.getByLabel('Name', { exact: true }).fill(name);
+    await dialog.getByLabel('Amount', { exact: true }).fill('1');
+    await dialog.getByRole('button', { name: 'Add to recipe', exact: true }).click();
+    const amount = page.getByRole('group', { name: new RegExp(`^${name}`) }).getByLabel('Amount', { exact: true });
+    const amountId = (await amount.getAttribute('id'))!;
+    await amount.fill('-1');
+    await issues(page).getByRole('button', { name: new RegExp(`${name}.*Amount cannot be negative`) }).click();
+    await expect.poll(() => focusedId(page)).toBe(amountId);
+  }
+});
+
+for (const scheme of ['light', 'dark'] as const) {
+  test(`an out-of-date issues list keeps at least 4.5:1 text contrast in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/design-system');
+    if (scheme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'));
+    const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
+    await expect(list).toBeVisible();
+    const ratios = await list.evaluate(el => {
+      const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
+      const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
+      let opacity = 1;
+      for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+      let bg = [255, 255, 255];
+      for (let node: Element | null = el; node; node = node.parentElement) {
+        const c = rgb(getComputedStyle(node).backgroundColor);
+        if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
+      }
+      return [...el.querySelectorAll('li, button')].map(entry => {
+        const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05);
+      });
+    });
+    expect(ratios.length).toBeGreaterThan(0);
+    for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+test('wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link', async ({ page }) => {
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/design-system');
+    const whiteSpace = (name: string | RegExp) => page.getByRole('button', { name }).first().evaluate(el => getComputedStyle(el).whiteSpace);
+    expect(await whiteSpace('Add ingredient')).toBe('nowrap');
+    expect(await whiteSpace('View history')).toBe('nowrap');
+    const wrap = page.getByRole('button', { name: /^Wrap · a whole-row link/ });
+    expect(await wrap.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('normal');
+    const box = (await wrap.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
 });

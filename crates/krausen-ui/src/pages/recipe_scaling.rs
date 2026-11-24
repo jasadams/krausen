@@ -480,7 +480,7 @@ pub fn ScaleDialog(
                         // Retry goes away with the record: the result takes focus
                         // instead of letting it fall to the page.
                         #[cfg(target_arch = "wasm32")]
-                        request_animation_frame(move || crate::pages::recipe_editor::focus_element("scale-result"));
+                        request_animation_frame(move || crate::utils::focus::focus_element("scale-result"));
                     } else if let Some(document) = document {
                         on_applied.run((document, applied));
                         status.set(format!("Scaled recipe saved as revision {applied}."));
@@ -791,7 +791,7 @@ pub fn DuplicateDialog(
                     // Retry goes away with the record: the result takes focus
                     // instead of letting it fall to the page.
                     #[cfg(target_arch = "wasm32")]
-                    request_animation_frame(move || crate::pages::recipe_editor::focus_element("duplicate-result"));
+                    request_animation_frame(move || crate::utils::focus::focus_element("duplicate-result"));
                 }
                 Ok(DuplicateOutcome::Duplicated {
                     recipe_id: new_id,
