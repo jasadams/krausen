@@ -1,7 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { DEFAULT_TEST_USER, createSecondUser, db, getDefaultWorkspaceId, loginUser, sqlText, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createSecondUser, db, getDefaultWorkspaceId, loginUser, setAccountTheme, sqlText, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
@@ -136,7 +138,7 @@ for (const theme of ['light', 'dark'] as const) {
   ]) {
     test(`import action geometry preserves all states ${theme} ${viewport.width}${viewport.enlarged ? ' enlarged text' : ''}`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
+      setAccountTheme(theme);
       await page.goto('/beerxml');
       if (theme === 'dark') await expect(page.locator('html')).toHaveClass(/dark/);
       else await expect(page.locator('html')).not.toHaveClass(/dark/);
@@ -490,7 +492,7 @@ test('an uncertain import retries the same request without creating another reci
 
 test('import remains usable on a narrow dark display by keyboard', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+  setAccountTheme('dark');
   await page.goto('/beerxml');
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByLabel('Paste BeerXML').focus();

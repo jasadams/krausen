@@ -785,6 +785,21 @@ export async function setAppearance(page: Page, theme: 'light' | 'dark'): Promis
   await expect(page).toHaveURL(origin);
 }
 
+/**
+ * Set the default account's saved appearance. The app treats the account's saved
+ * preference as the source of truth on every authenticated load (it overrides a
+ * `krausen-theme` value seeded in localStorage), and the preference lives on the
+ * shared account, so it outlives the test that chose it. A test that needs a
+ * particular appearance states it here before navigating, instead of relying on
+ * what an earlier test left behind.
+ */
+export function setAccountTheme(theme: 'light' | 'dark'): void {
+  sqliteExec(
+    `UPDATE users SET extra_metadata = json_set(COALESCE(extra_metadata, '{}'), '$.theme', ${sqlText(theme)}) WHERE email = ${sqlText(DEFAULT_TEST_USER.email)}`
+  );
+  walCheckpoint();
+}
+
 /** Activate the shell Settings link through the account popup (desktop shell). */
 export async function openSettings(page: Page): Promise<void> {
   const popup = await openAccount(page, page.locator('.app-shell__desktop'));

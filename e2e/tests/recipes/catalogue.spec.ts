@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
-import { DEFAULT_TEST_USER, db, loginUser, setAppearance, sqlText } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, db, loginUser, setAccountTheme, setAppearance, sqlText } from '../../helpers/test-helpers';
 
 async function waitForCatalogueSearch(page: Page) {
   await page.waitForResponse(response => {
@@ -15,6 +15,8 @@ async function waitForCatalogueSearch(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 

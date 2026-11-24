@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, openAccount, openSettings, seedWorkspace, setAppearance, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, openAccount, openSettings, seedWorkspace, setAccountTheme, setAppearance, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
@@ -104,9 +106,13 @@ test('disposed initial recovery authorization cannot write into the retired edit
     await started;
     await openSettings(page);
     await expect(page).toHaveURL(/settings\/profile/);
+    // The held style response reaches the page when released; wait for that
+    // delivery itself (the Profile page may keep other requests open, so network
+    // idleness says nothing about it).
+    const delivered = page.waitForResponse(response => response.url().includes('/list_formulation_styles'));
     release();
+    await delivered;
     await page.unrouteAll({ behavior: 'wait' });
-    await page.waitForLoadState('networkidle');
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     expect(errors).toEqual([]);
     await expect(page).toHaveURL(/settings\/profile/);
@@ -357,7 +363,7 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
     await finished;
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(account).toBeFocused();
-  } finally { release(); }
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
@@ -1717,7 +1723,7 @@ test('shared preview exposes style ranges and rejects an older response', async 
 
 test('editor controls remain usable on mobile and in dark mode', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+  setAccountTheme('dark');
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('heading', { name: 'Recipe editor' })).toBeVisible();
   await expect(page.locator('html')).toHaveClass(/dark/);
@@ -1835,7 +1841,7 @@ test('editor state controls keep raw labels and focus across representative pres
   ]) {
     await page.setViewportSize({ width: setting.width, height: setting.height });
     await page.emulateMedia({ reducedMotion: setting.fallback ? 'reduce' : 'no-preference' });
-    await page.addInitScript(theme => localStorage.setItem('krausen-theme', theme), setting.theme);
+    setAccountTheme(setting.theme as 'light' | 'dark');
     await page.goto('/recipe-editor/new');
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     if (setting.fallback) {
