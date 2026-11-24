@@ -598,8 +598,8 @@ test('file preview, explicit import and saved/original downloads share native va
   // A saved version selected in Saved versions supplies its own source: no
   // choice and no typed revision number, even with the dirty draft retained.
   const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
-  // The unsaved draft makes leaving ask first; Leave is chosen explicitly.
-  page.once('dialog', (dialog) => dialog.accept());
+  // Undo the draft so leaving does not retain it for recovery, then edit again on the versions tab.
+  await page.getByRole('button', { name: 'Undo' }).click();
   await page.goto(`/recipe-editor/${id}?section=versions&revision=1`);
   await page.getByLabel('Recipe name', { exact: true }).fill('Draft kept while exporting a version');
   const selected = await openExport(page);

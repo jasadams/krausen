@@ -40,6 +40,14 @@ export async function expectTabContainment(
         const w = window as unknown as { __previous?: Element | null; __boundary?: Element | null };
         w.__previous = document.activeElement;
         w.__boundary = (backwards ? tabbable[0] : tabbable[tabbable.length - 1]) ?? null;
+        // A programmatically focused, non-tabbable element in front of the first
+        // tabbable control (such as the dialog heading) or behind the last one is
+        // part of the same boundary region: Tab order leaves the container from it.
+        const previous = document.activeElement;
+        const edge = w.__boundary;
+        const inRegion = !!previous && !!edge && root.contains(previous) && previous !== edge &&
+          !!(edge.compareDocumentPosition(previous) & (backwards ? Node.DOCUMENT_POSITION_PRECEDING : Node.DOCUMENT_POSITION_FOLLOWING));
+        if (inRegion) w.__boundary = previous;
       },
       { selector: containerSelector, backwards: shift },
     );
