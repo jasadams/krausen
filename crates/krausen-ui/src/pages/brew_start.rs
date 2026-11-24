@@ -265,7 +265,7 @@ fn distinct_reasons(summary: &krausen_types::process_summary::ProcessSummary) ->
     summary
         .diagnostics
         .iter()
-        .filter(|d| seen.insert((d.path.as_str(), d.code.as_str())))
+        .filter(|d| seen.insert(crate::pages::recipe_diagnostics::problem_key(d)))
         .map(|d| crate::pages::recipe_diagnostics::summary_message(summary, d))
         .collect()
 }

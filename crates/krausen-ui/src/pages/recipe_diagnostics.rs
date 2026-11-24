@@ -240,6 +240,17 @@ fn order(doc: &RecipeDocumentV1, path: &str) -> (u8, usize) {
     }
 }
 
+/// What makes two diagnostics the same problem: the path and code, where the
+/// validator's override path (`equipment_overrides.*`) and effective path
+/// (`equipment.*`) for one setting count as one. Message text never decides it.
+pub(crate) fn problem_key(d: &Diagnostic) -> (String, String) {
+    let path = match d.path.strip_prefix("equipment_overrides.") {
+        Some(field) => format!("equipment.{field}"),
+        None => d.path.clone(),
+    };
+    (path, d.code.clone())
+}
+
 /// Every distinct diagnostic that still applies to `doc`, in editor order.
 /// Distinctness is the (path, code) pair, never the message text, so two rows
 /// with the same problem stay two entries. A diagnostic for a row that has since
@@ -250,16 +261,9 @@ pub fn present_all(draft: &RecipeDraft, diagnostics: &[Diagnostic]) -> Vec<Prese
     let mut presented: Vec<(usize, Presented)> = diagnostics
         .iter()
         .enumerate()
-        .filter(|(_, d)| seen.insert((d.path.clone(), d.code.clone())))
+        .filter(|(_, d)| seen.insert(problem_key(d)))
         .filter_map(|(index, d)| present_one(draft, d).map(|p| (index, p)))
         .collect();
-    // The validator reports one problem under both its override and effective
-    // paths (equipment_overrides.* and equipment.*); the brewer sees it once.
-    let mut same_problem = std::collections::BTreeSet::new();
-    presented.retain(|(_, p)| match &p.route {
-        Route::Field { dom_id } => same_problem.insert((dom_id.clone(), p.code.clone(), p.severity == Readiness::Invalid)),
-        Route::Explain => true,
-    });
     presented.sort_by_key(|(index, p)| (order(doc, &p.path), *index));
     presented.into_iter().map(|(_, p)| p).collect()
 }
@@ -350,7 +354,7 @@ pub fn summary_message(summary: &krausen_types::process_summary::ProcessSummary,
 pub fn readiness_summary(validation: &Validation) -> String {
     let count = |severity: Readiness| {
         let mut seen = std::collections::BTreeSet::new();
-        validation.diagnostics.iter().filter(|d| d.severity == severity && seen.insert((&d.path, &d.code))).count()
+        validation.diagnostics.iter().filter(|d| d.severity == severity && seen.insert(problem_key(d))).count()
     };
     let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
     match validation.state {
@@ -621,6 +625,25 @@ mod tests {
         ]);
         assert_eq!(list.len(), 3, "{list:?}");
         assert_eq!(list.iter().filter(|p| p.message.starts_with("Boil-off")).count(), 1);
+    }
+
+    #[test]
+    fn two_different_problems_that_share_a_governing_control_stay_two_and_the_count_matches_the_list() {
+        use krausen_types::validation::Validation;
+        let draft = RecipeDraft::new(doc());
+        let diagnostics = vec![
+            diag("equipment.chilling.rate_per_minute", "missing", Readiness::Incomplete),
+            diag("equipment.chilling.plateau_c", "missing", Readiness::Incomplete),
+            diag("equipment_overrides.boil_off_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment.boil_off_l_per_hour", "negative", Readiness::Invalid),
+        ];
+        let list = present_all(&draft, &diagnostics);
+        assert_eq!(list.iter().filter(|p| p.severity == Readiness::Incomplete).count(), 2, "rate and plateau both govern via Chilling but are two problems");
+        let validation = Validation { state: Readiness::Invalid, diagnostics };
+        assert_eq!(readiness_summary(&validation), "Invalid: 1 value to correct");
+        let incomplete = Validation { state: Readiness::Incomplete, diagnostics: validation.diagnostics.into_iter().filter(|d| d.severity == Readiness::Incomplete).collect() };
+        assert_eq!(readiness_summary(&incomplete), "Incomplete: 2 inputs needed to start a brew");
+        assert_eq!(list.len(), 3);
     }
 
     #[test]
