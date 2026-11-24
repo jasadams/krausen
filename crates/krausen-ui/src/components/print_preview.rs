@@ -28,7 +28,10 @@ fn isolate_page(keep: &web_sys::Element, owner: &str) -> Vec<web_sys::Element> {
         for index in 0..siblings.length() {
             let Some(sibling) = siblings.item(index) else { continue };
             let foreign = sibling.has_attribute("inert") && !sibling.has_attribute(OWNER_ATTRIBUTE);
-            if sibling.is_same_node(Some(&current)) || foreign {
+            // The preview surface is the task itself and is never isolated, whatever
+            // the order in which it and the isolation were mounted.
+            let task_surface = sibling.matches(".print-preview").unwrap_or(false);
+            if sibling.is_same_node(Some(&current)) || foreign || task_surface {
                 continue;
             }
             if sibling.set_attribute("inert", "").is_ok() && sibling.set_attribute(OWNER_ATTRIBUTE, owner).is_ok() {
@@ -69,8 +72,8 @@ fn next_owner() -> String {
 /// A task whose preview is temporarily unmounted (the editor hides protected
 /// content while it revalidates access) mounts this alongside it, so the page
 /// stays isolated across the gap instead of becoming reachable. Place it where
-/// the preview mounts: siblings of this marker are isolated, later siblings
-/// (the preview itself) are not touched.
+/// the preview mounts: every sibling of this marker except the preview surface
+/// (`.print-preview`) is isolated, whichever of them mounted first.
 #[component]
 pub fn PageIsolation(active: Signal<bool>) -> impl IntoView {
     let marker = NodeRef::<leptos::html::Span>::new();

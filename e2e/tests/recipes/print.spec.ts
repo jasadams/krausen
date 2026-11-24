@@ -250,6 +250,7 @@ test('the print preview is a real boundary: heading focus, inert page, Escape re
   const preview = page.getByRole('dialog', { name: 'Print preview' });
   await expect(preview).toBeVisible();
   await expect(preview.getByRole('heading', { name: 'Print preview' }), 'focus moves to the preview heading').toBeFocused();
+  expect(await preview.evaluate((element) => !!element.closest('[inert]')), 'the preview itself is never inert').toBe(false);
   await expect(preview, 'the hint is the dialog description').toHaveAccessibleDescription(/paper size and margins/);
   await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
   // Keyboard focus never reaches the page behind the overlay.
