@@ -1180,7 +1180,7 @@ for (const width of [320, 390]) {
     // below it, so "Ready" does not float and no outcome starts lower.
     const statusTop = async () => {
       const [summaryBox, statusBox] = await Promise.all([summary.boundingBox(), status.boundingBox()]);
-      return statusBox!.top - summaryBox!.top;
+      return statusBox!.y - summaryBox!.y;
     };
     const currentStatusTop = await statusTop();
     const staleRegion = summary.locator('.k-stale[aria-hidden="true"]');
