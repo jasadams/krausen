@@ -18,6 +18,9 @@ async function createScalableRecipe(page: import('@playwright/test').Page, title
   await page.getByLabel('Amount in recipe (kg)').fill('4');
   await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
   await expect(page.getByLabel('Amount (kg)', { exact: true })).toHaveValue(/^4(\.0+)?$/);
+  // The committed addition returns focus to the new row's quantity (ACC-004). Typing
+  // elsewhere before that settles would append to the amount (observed: 4 -> 480 kg).
+  await expect(page.getByLabel('Amount (kg)', { exact: true })).toBeFocused();
   await page.locator('#recipe-attenuation').fill('80');
   await page.locator('#recipe-mash-method').selectOption('manual');
   await page.locator('#recipe-mash-water').fill('15');
@@ -465,9 +468,9 @@ test('a retained Scale replay never rolls the editor back past a newer saved rev
   const id = page.url().match(/recipe-editor\/([0-9a-f-]+)/)![1];
   await page.getByRole('button', { name: 'Recipe actions' }).click();
   await page.getByRole('button', { name: 'Scale…' }).click();
-  await page.getByLabel('Target fermenter volume (L)').fill('40');
+  await page.getByLabel('Target fermenter volume (L)').fill('25');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
-  await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
+  await expect(page.getByText(/20 L to 25 L/)).toBeVisible();
   // The server commits revision 2, the response is lost.
   await page.route('**/execute_scale_apply*', async (route) => { await route.fetch(); await route.abort(); });
   await page.getByRole('button', { name: 'Apply scaling' }).click();
@@ -478,6 +481,8 @@ test('a retained Scale replay never rolls the editor back past a newer saved rev
   await page.reload();
   const name = page.getByLabel('Recipe name', { exact: true });
   await expect(name).toHaveValue(title);
+  // Save is ignored while the editor's recovery and context checks run: wait until they settled.
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' })).toBeVisible();
   // The user keeps working on the scaled head and saves revision 3.
   await name.fill(`${title} saved later`);
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
@@ -519,6 +524,7 @@ test('a retained Duplicate replay over a newer saved revision reports the copy i
   await page.reload();
   const name = page.getByLabel('Recipe name', { exact: true });
   await expect(name).toHaveValue(title);
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' })).toBeVisible();
   await name.fill(`${title} saved later`);
   await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
