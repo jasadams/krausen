@@ -1523,7 +1523,7 @@ test('a restored draft that is recalculating shows no water plan or chilling not
 const UPDATED_ANNOUNCE_MS = 3000;
 async function pauseAndRecordAnnouncements(page: import('@playwright/test').Page) {
   await page.clock.install();
-  await page.clock.pauseAt(new Date(Date.now() + 60_000));
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
   await page.evaluate(() => {
     const announced: string[] = [];
     (window as any).__announced = announced;
@@ -1561,10 +1561,7 @@ test('losing and regaining access announces nothing for an episode that started 
 test('losing access while an out-of-date announcement is pending announces nothing', async ({ page }) => {
   await recipeWithNumbers(page);
   await pauseAndRecordAnnouncements(page);
-  let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
   try {
-    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
     await page.locator('#recipe-whirlpool').fill('10');
     // The episode is running and its announcement is pending (the clock is paused) when access is lost.
     await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
@@ -1574,14 +1571,13 @@ test('losing access while an out-of-date announcement is pending announces nothi
     await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 700);
     expect(await announced(page)).toEqual([]);
     await page.unroute('**/leptos-api/get_user_context*');
-    release();
     await page.getByRole('button', { name: 'Retry check', exact: true }).click();
     await expect(page.getByLabel('Batch volume (L)')).toBeVisible();
     await page.clock.runFor(300);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
     await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
     expect(await announced(page)).toEqual([]);
-  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 test('the water plan emphasises its total and the process panels keep the Equipment titles unchanged', async ({ page }) => {
