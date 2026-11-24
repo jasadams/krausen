@@ -490,6 +490,9 @@ test('a retained Scale replay never rolls the editor back past a newer saved rev
   // The recorded outcome is reported truthfully; the editor keeps revision 3.
   await expect(dialog).toContainText('An earlier Scale was saved as revision 2');
   await expect(dialog).toContainText('has changed since');
+  // The operation's result takes focus: it never drops to the document body when Retry goes away.
+  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog#scale-dialog')), 'focus stays inside the dialog').toBe(true);
+  await expect(dialog.locator('#scale-result')).toBeFocused();
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toHaveCount(0);
   await dialog.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
   await expect(name, 'the newer saved edit is still shown').toHaveValue(`${title} saved later`);
@@ -526,6 +529,8 @@ test('a retained Duplicate replay over a newer saved revision reports the copy i
   await dialog.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(dialog).toContainText('An earlier Duplicate created a copy of revision 1');
   await expect(dialog).toContainText('Find the copy in Recipes');
+  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog#duplicate-dialog')), 'focus stays inside the dialog').toBe(true);
+  await expect(dialog.locator('#duplicate-result')).toBeFocused();
   expect(page.url(), 'the page is not replaced by the copy').toBe(url);
   await expect(name).toHaveValue(`${title} saved later`);
   expect(Number(sqliteExec('SELECT COUNT(*) FROM recipes'))).toBe(before + 1);

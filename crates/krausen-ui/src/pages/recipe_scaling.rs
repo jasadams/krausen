@@ -477,6 +477,10 @@ pub fn ScaleDialog(
                         message.set(format!(
                             "An earlier Scale was saved as revision {applied}; the recipe has changed since, so the editor was left as it is."
                         ));
+                        // Retry goes away with the record: the result takes focus
+                        // instead of letting it fall to the page.
+                        #[cfg(target_arch = "wasm32")]
+                        request_animation_frame(move || crate::pages::recipe_editor::focus_element("scale-result"));
                     } else if let Some(document) = document {
                         on_applied.run((document, applied));
                         status.set(format!("Scaled recipe saved as revision {applied}."));
@@ -625,7 +629,7 @@ pub fn ScaleDialog(
                         on_change=Callback::new(move |value: String| target.set(value))
                     />
                 </Show>
-                <p role="status">{move || message.get()}</p>
+                <p id="scale-result" tabindex="-1" role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || !form_visible.get()) on:click=move |_| {
                         if let Some(request) = retry.get_untracked() { submit.run(request); }
@@ -784,6 +788,10 @@ pub fn DuplicateDialog(
                     message.set(format!(
                         "An earlier Duplicate created a copy of revision {source_revision} (as revision {new_revision} of a new recipe); this recipe has changed since, so you were not taken to it. Find the copy in Recipes."
                     ));
+                    // Retry goes away with the record: the result takes focus
+                    // instead of letting it fall to the page.
+                    #[cfg(target_arch = "wasm32")]
+                    request_animation_frame(move || crate::pages::recipe_editor::focus_element("duplicate-result"));
                 }
                 Ok(DuplicateOutcome::Duplicated {
                     recipe_id: new_id,
@@ -903,7 +911,7 @@ pub fn DuplicateDialog(
                         on_change=Callback::new(move |value: String| title.set(value))
                     />
                 </Show>
-                <p role="status">{move || message.get()}</p>
+                <p id="duplicate-result" tabindex="-1" role="status">{move || message.get()}</p>
                 <Show when=move || retry.get().is_some()>
                     <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || busy.get() || !form_visible.get()) on:click=move |_| {
                         if let Some(request) = retry.get_untracked() { submit.run(request); }
