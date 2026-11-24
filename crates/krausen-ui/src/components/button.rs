@@ -62,7 +62,9 @@ pub enum ButtonSize {
 // the default-enabled colors so disabled primary buttons read as neutral gray,
 // not "pale amber". Ghost / Link / Pill variants keep `opacity-50` for their
 // transparent disabled state.
-const BASE: &str = "inline-flex items-center justify-center gap-[var(--k-space-2)] whitespace-nowrap rounded-[var(--k-radius-sm)] text-[length:var(--k-font-sm)] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
+// Text wrapping belongs to the size: every size keeps its label on one line except
+// `ButtonSize::Wrap`, so no size ever emits both and nothing needs `!important`.
+const BASE: &str = "inline-flex items-center justify-center gap-[var(--k-space-2)] rounded-[var(--k-radius-sm)] text-[length:var(--k-font-sm)] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0";
 
 fn variant_classes(variant: ButtonVariant) -> &'static str {
     match variant {
@@ -96,22 +98,22 @@ fn variant_classes(variant: ButtonVariant) -> &'static str {
 
 fn size_classes(size: ButtonSize) -> &'static str {
     match size {
-        ButtonSize::Default => "min-h-[var(--k-control-height)] px-[var(--k-space-4)] py-0 max-[760px]:min-h-[44px]",
+        ButtonSize::Default => "whitespace-nowrap min-h-[var(--k-control-height)] px-[var(--k-space-4)] py-0 max-[760px]:min-h-[44px]",
         // Small: approved compact height and horizontal spacing.
-        ButtonSize::Sm => "min-h-[32px] px-[var(--k-space-3)] py-0 text-[length:var(--k-font-sm)] max-[760px]:min-h-[44px]",
+        ButtonSize::Sm => "whitespace-nowrap min-h-[32px] px-[var(--k-space-3)] py-0 text-[length:var(--k-font-sm)] max-[760px]:min-h-[44px]",
         // Large
-        ButtonSize::Lg => "px-8 py-3",
+        ButtonSize::Lg => "whitespace-nowrap px-8 py-3",
         // Icon-only: approved control-sized square, enlarged for narrow touch screens.
-        ButtonSize::Icon => "h-[var(--k-control-height)] w-[var(--k-control-height)] p-0 max-[760px]:h-[44px] max-[760px]:w-[44px]",
+        ButtonSize::Icon => "whitespace-nowrap h-[var(--k-control-height)] w-[var(--k-control-height)] p-0 max-[760px]:h-[44px] max-[760px]:w-[44px]",
         // Compact icon-only: 28px square for dense action rows
-        ButtonSize::IconSm => "h-7 w-7 p-0",
+        ButtonSize::IconSm => "whitespace-nowrap h-7 w-7 p-0",
         // Extra-small icon-only: 20px square for inline tab/chip actions
-        ButtonSize::IconXs => "h-5 w-5 p-0",
+        ButtonSize::IconXs => "whitespace-nowrap h-5 w-5 p-0",
         // Extra-small: reduced vertical padding, same 13px text as Sm
-        ButtonSize::Xs => "px-3 py-1 text-[13px]",
+        ButtonSize::Xs => "whitespace-nowrap px-3 py-1 text-[13px]",
         // Pill sub-tab: compact padding, xs font, rounded
-        ButtonSize::Pill => "px-3 py-1 text-xs rounded",
-        ButtonSize::Wrap => "h-auto min-h-[44px] max-w-full justify-start px-0 py-2 text-left whitespace-normal! [overflow-wrap:anywhere]",
+        ButtonSize::Pill => "whitespace-nowrap px-3 py-1 text-xs rounded",
+        ButtonSize::Wrap => "whitespace-normal h-auto min-h-[44px] max-w-full justify-start px-0 py-2 text-left [overflow-wrap:anywhere]",
     }
 }
 
@@ -310,5 +312,10 @@ mod tests {
         assert!(BASE.contains("gap-[var(--k-space-2)]"));
         assert!(size_classes(ButtonSize::Default).contains("px-[var(--k-space-4)]"));
         assert!(size_classes(ButtonSize::Sm).contains("px-[var(--k-space-3)]"));
+        for size in [ButtonSize::Default, ButtonSize::Sm, ButtonSize::Lg, ButtonSize::Icon, ButtonSize::IconSm, ButtonSize::IconXs, ButtonSize::Xs, ButtonSize::Pill] {
+            assert!(size_classes(size).contains("whitespace-nowrap") && !size_classes(size).contains("whitespace-normal"), "every size but Wrap keeps one line");
+        }
+        assert!(size_classes(ButtonSize::Wrap).contains("whitespace-normal") && !size_classes(ButtonSize::Wrap).contains("whitespace-nowrap"));
+        assert!(!BASE.contains("whitespace-"), "the base class must not fix wrapping");
     }
 }

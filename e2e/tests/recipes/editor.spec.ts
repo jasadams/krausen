@@ -2904,6 +2904,11 @@ for (const { width, scheme } of [{ width: 320, scheme: 'light' }, { width: 390, 
       expect(box.height, 'whole target at least 44px tall').toBeGreaterThanOrEqual(44);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
     }
+    // Wrapping belongs to the Wrap size alone: ordinary buttons still keep their label on one line.
+    expect(await links.first().evaluate(el => getComputedStyle(el).whiteSpace)).toBe('normal');
+    for (const name of ['Add hop', 'Add yeast', 'Undo']) {
+      expect(await page.getByRole('button', { name, exact: true }).first().evaluate(el => getComputedStyle(el).whiteSpace), name).toBe('nowrap');
+    }
     await links.first().click();
     await expect.poll(() => focusedId(page)).toMatch(/-yield-alpha$/);
     const focused = (await page.locator(`#${await focusedId(page)}`).boundingBox())!;
