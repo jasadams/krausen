@@ -19,6 +19,7 @@ pub mod label;
 pub mod modal;
 pub mod navigation_progress;
 pub mod popover;
+pub mod print_preview;
 pub mod printable_recipe;
 pub mod recipe_revision_history;
 pub mod search_input;
@@ -57,6 +58,7 @@ pub use tooltip::Tooltip;
 
 pub use brewery_kit::{BreweryAddition, BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
 
+pub use print_preview::{PageIsolation, PrintPreviewTask};
 pub use printable_recipe::PrintableRecipe;
 pub use recipe_revision_history::{RecipeRevisionHistory, SelectedSavedRevision};
 pub use brew_evidence_rows::{BrewMeasurementRow, BrewProvenanceFact};

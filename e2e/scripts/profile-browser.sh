@@ -35,6 +35,7 @@ editor_state_pattern='ordinary bookmark|cleared print task|initial recovery auth
 ./node_modules/.bin/playwright test tests/recipes/print.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/catalogue.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/scaling.spec.ts --reporter=line
+./node_modules/.bin/playwright test tests/helpers/focus-boundary.spec.ts --reporter=line
 ./node_modules/.bin/playwright test tests/recipes/brew-start.spec.ts --reporter=line
 # The populated history assertion in brew-start.spec.ts is env-gated by
 # KRAUSEN_VISUAL_BREW_ID and is exercised manually against the exact visual

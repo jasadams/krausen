@@ -1449,6 +1449,37 @@ test('recipe brew history and frozen historical print are reachable', async ({ p
   await expect(page.getByText('Historical print preview')).toBeVisible();
   await expect(page.getByText(/Historical brew .* frozen recipe revision 2/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  // KRA-43: the frozen preview gets the same real boundary; its content is unchanged.
+  const frozen = page.getByRole('dialog', { name: 'Historical print preview' });
+  await expect(frozen.getByRole('heading', { name: 'Historical print preview' })).toBeFocused();
+  await expect(frozen.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
+  // What is printed is unchanged: the toolbar shows its original text and the
+  // new Back control never reaches the paper.
+  await page.emulateMedia({ media: 'print' });
+  const toolbarText = await frozen.locator('.print-preview__toolbar').innerText();
+  // The eyebrow is upper-cased by CSS, which innerText reflects.
+  expect(toolbarText.toLowerCase()).toContain('historical print preview');
+  expect(toolbarText).toContain('Print / Save as PDF');
+  expect(toolbarText).not.toContain('Back to brew');
+  // The hint keeps the styling the frozen print always had.
+  const hintStyle = await frozen.locator('#print-preview-hint').evaluate((hint) => {
+    const probe = document.createElement('p');
+    probe.className = 'note-caption';
+    hint.parentElement!.appendChild(probe);
+    const pick = (el: Element) => { const c = getComputedStyle(el); return [c.fontSize, c.lineHeight, c.maxWidth, c.color]; };
+    const result = { hint: pick(hint), caption: pick(probe), classes: hint.className };
+    probe.remove();
+    return result;
+  });
+  expect(hintStyle.classes).toBe('note-caption');
+  expect(hintStyle.hint).toEqual(hintStyle.caption);
+  await expect(frozen.getByRole('button', { name: 'Back to brew' })).toBeHidden();
+  await expect(frozen.getByRole('heading', { name: 'Recorded actuals' })).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
+  await page.keyboard.press('Escape');
+  await expect(frozen).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Print frozen plan' })).toBeFocused();
 });
 
 test('brew pages carry the authorized Recipes → recipe → Brews → brew trail and sibling links', async ({ page }) => {

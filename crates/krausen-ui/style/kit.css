@@ -492,6 +492,8 @@
 .print-sheet__footer { margin-top: var(--k-space-8); padding-top: var(--k-space-3); border-top: 1px solid var(--k-color-border); }
 .print-sheet__digest { font-family: var(--k-font-mono); font-size: var(--k-font-xs); overflow-wrap: anywhere; }
 @media (max-width: 700px) { .print-preview { padding: 0; } .print-preview__toolbar { border-radius: 0; margin-bottom: 0; } .print-preview__sheet { padding: var(--k-space-5); border-radius: 0; border-inline: 0; } .print-sheet__metrics, .print-sheet__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .print-sheet__table { font-size: var(--k-font-sm); } }
+/* The Back control closes the on-screen task; it is never part of the printed sheet. */
+@media print { .print-preview__back { display: none !important; } }
 @media print {
   @page { size: A4; margin: 14mm; }
   body.krausen-printing .h-dvh { display: block; height: auto; overflow: visible; }

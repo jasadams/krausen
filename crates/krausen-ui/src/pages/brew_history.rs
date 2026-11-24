@@ -781,6 +781,12 @@ pub fn BrewAnalysisPage() -> impl IntoView {
         });
     });
 
+    // Back/Escape from the frozen preview returns focus to its opener.
+    let close_print = Callback::new(move |()| {
+        print.set(None);
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || crate::pages::recipe_editor::focus_element("print-frozen-plan"));
+    });
     let load_print = Callback::new(move |()| {
         let Some(intent) = identity.get_untracked() else {
             return;
@@ -872,7 +878,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                 </div>
                 <div class="recipe-editor__actions">
                     <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_comparison.run(())>"Refresh"</Button>
-                    <Button variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_print.run(())>"Print frozen plan"</Button>
+                    <Button id="print-frozen-plan" variant=ButtonVariant::Secondary disabled=busy on:click=move |_| load_print.run(())>"Print frozen plan"</Button>
                 </div>
             </header>
             <p role="status">{move || message.get()}</p>
@@ -1070,16 +1076,14 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                     )
                 }).unwrap_or_else(|| "No actual formulation amendment.".to_owned());
                 view! {
-                    <section class="print-preview" aria-label="Historical print preview">
-                        <div class="print-preview__toolbar">
-                            <div>
-                                <p class="kit-showcase__eyebrow">"Historical print preview"</p>
-                                <p class="note-caption">
-                                    {format!("Frozen recipe revision {}. Planned targets are printed with recorded actuals listed separately.", print.selected_recipe_revision)}
-                                </p>
-                            </div>
-                            <Button on:click=move |_| { #[cfg(target_arch = "wasm32")] if let Some(window) = web_sys::window() { let _ = window.print(); } }>"Print / Save as PDF"</Button>
-                        </div>
+                    <crate::components::PrintPreviewTask
+                        heading="Historical print preview"
+                        hint=format!("Frozen recipe revision {}. Planned targets are printed with recorded actuals listed separately.", print.selected_recipe_revision)
+                        back_label="Back to brew"
+                        hint_class="note-caption"
+                        print_state=false
+                        on_close=close_print
+                    >
                         <div class="print-preview__sheet"><PrintableRecipe summary=print.summary/></div>
                         <BreweryPanel
                             title="Recorded actuals"
@@ -1119,7 +1123,7 @@ pub fn BrewAnalysisPage() -> impl IntoView {
                                 </dl>
                             </BreweryDisclosure>
                         </BreweryPanel>
-                    </section>
+                    </crate::components::PrintPreviewTask>
                 }
             })}
         </div>

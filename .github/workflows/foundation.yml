@@ -100,6 +100,8 @@ jobs:
       - run: cargo test -p krausen-ui --features ssr --lib components::layout::tests
       - run: cargo test -p krausen-ui --features ssr --lib catalogue_picker::tests
       - run: cargo test -p krausen-ui --features ssr --lib recipe_scaling::tests
+      - run: cargo test -p krausen-ui --features ssr --lib recipe_output::tests
+      - run: cargo test -p krausen-ui --features ssr --lib transform_recovery::tests
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
       - run: bash scripts/lint/check-client-eval-test.sh
