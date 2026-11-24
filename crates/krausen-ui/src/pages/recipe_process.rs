@@ -44,6 +44,9 @@ pub(crate) struct AcceptedPreview {
     pub(crate) preview: Signal<Option<Preview>>,
     /// Why there is no estimate for the current draft right now.
     pub(crate) phase: Signal<EstimatePhase>,
+    /// Whether the editor is shown. Nothing is announced about an estimate the
+    /// person cannot see.
+    pub(crate) visible: Signal<bool>,
 }
 
 /// The preview's state for the current draft when it has no accepted estimate.
@@ -379,7 +382,7 @@ impl Announcement {
 
 #[component]
 pub fn ProcessSections(draft: RwSignal<RecipeDraft>) -> impl IntoView {
-    let AcceptedPreview { preview: accepted, phase } = expect_context::<AcceptedPreview>();
+    let AcceptedPreview { preview: accepted, phase, visible } = expect_context::<AcceptedPreview>();
     let preview = RwSignal::new(None::<Preview>);
     // Out of date at once: the old numbers are dimmed, hidden from assistive
     // technology and named by a visible cue the moment the draft changes. While a
@@ -400,14 +403,30 @@ pub fn ProcessSections(draft: RwSignal<RecipeDraft>) -> impl IntoView {
             preview.set(Some(next));
         }
     });
+    // A retained estimate describes one draft document. A restore or a saved-recipe
+    // replacement changes the draft epoch, so the old document's water plan must not
+    // be shown for the new draft (UX-007). Same fence as the summary's `last_preview`.
+    let draft_epoch = Memo::new(move |_| draft.with(|d| d.epoch()));
+    Effect::new(move |previous: Option<u64>| {
+        let epoch = draft_epoch.get();
+        if previous.is_some_and(|before| before != epoch) {
+            preview.set(None);
+        }
+        epoch
+    });
     Effect::new(move |_| {
         let is_stale = stale.get();
+        let is_visible = visible.get();
         let mut ticket = 0;
         pending.update_value(|n| {
             *n += 1;
             ticket = *n;
         });
-        if is_stale {
+        if !is_visible {
+            // An episode that starts while the editor is hidden is never announced:
+            // forget it, so returning access does not end it with "Estimate updated" (ACC-005).
+            state.set(Announcement::default());
+        } else if is_stale {
             state.update(|announcement| announcement.begin());
             #[cfg(target_arch = "wasm32")]
             set_timeout(
