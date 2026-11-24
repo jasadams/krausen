@@ -621,9 +621,10 @@ test('an unavailable create keeps the pending command locked and retries identic
     return result.Entries?.items?.some((entry: any) => entry.entry_id === requests[0].entry_id) === true;
   });
   await create.getByRole('button', { name: 'Retry previous request' }).click();
-  await retrySearch;
-  await page.unroute('**/leptos-api/execute_ingredient_command*');
-  await page.waitForLoadState('networkidle');
+  // Wait for the delivery of the response the test bound to, then for the
+  // route handlers to finish; the row assertion below waits for the render.
+  await (await retrySearch).finished();
+  await page.unrouteAll({ behavior: 'wait' });
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
   expect(requests).toHaveLength(2);
   expect(requests[1].entry_id).toBe(requests[0].entry_id);
