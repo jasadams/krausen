@@ -377,7 +377,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                     on_close=Callback::new(move |()| {
                         print_example.set(false);
                         #[cfg(target_arch = "wasm32")]
-                        request_animation_frame(move || crate::pages::recipe_editor::focus_element("showcase-print-preview-open"));
+                        request_animation_frame(move || crate::utils::focus::focus_element("showcase-print-preview-open"));
                     })
                 >
                     <div class="print-preview__sheet"><PrintableRecipe summary=printable_example()/></div>

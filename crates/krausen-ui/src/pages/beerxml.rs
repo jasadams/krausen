@@ -1013,7 +1013,7 @@ pub(super) fn BeerXmlExport(
     });
     let focus_result = move |id: &'static str| {
         #[cfg(target_arch = "wasm32")]
-        request_animation_frame(move || crate::pages::recipe_editor::focus_element(id));
+        request_animation_frame(move || crate::utils::focus::focus_element(id));
         #[cfg(not(target_arch = "wasm32"))]
         let _ = id;
     };
