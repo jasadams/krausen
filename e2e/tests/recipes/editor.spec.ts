@@ -111,7 +111,7 @@ test('disposed initial recovery authorization cannot write into the retired edit
     // idleness says nothing about it).
     const delivered = page.waitForResponse(response => response.url().includes('/list_formulation_styles'));
     release();
-    await delivered;
+    await (await delivered).finished();
     await page.unrouteAll({ behavior: 'wait' });
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     expect(errors).toEqual([]);
@@ -1843,6 +1843,7 @@ test('editor state controls keep raw labels and focus across representative pres
     await page.emulateMedia({ reducedMotion: setting.fallback ? 'reduce' : 'no-preference' });
     setAccountTheme(setting.theme as 'light' | 'dark');
     await page.goto('/recipe-editor/new');
+    await expect(page.locator('html')).toHaveClass(setting.theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     if (setting.fallback) {
       // Controlled browser-font fallback, not an OS zoom/device/AT claim.
@@ -1877,11 +1878,10 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
   for (const theme of ['light', 'dark']) {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(value => localStorage.setItem('krausen-theme', value), theme);
       await page.goto('/design-system');
       await expect(page.getByRole('heading', { name: 'Good design, on repeat.' })).toBeVisible();
-      // Existing login isolation initializes Light on navigation. Exercise the
-      // real appearance control and assert the actual theme, not stored intent.
+      // Each test starts from Light (beforeEach). Exercise the real appearance
+      // control and assert the actual theme.
       if (await page.locator('html').evaluate(element => element.classList.contains('dark')) !== (theme === 'dark')) {
         // Appearance is chosen in Profile; use the desktop shell for it.
         const restore = page.viewportSize()!;

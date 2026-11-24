@@ -36,6 +36,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.setViewportSize(viewport);
         setAccountTheme(theme);
         await page.goto('/design-system');
+        await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
         await expect(page.getByRole('tab', { name: 'Recipe' })).toBeVisible();
         await page.getByRole('tab', { name: 'Recipe' }).focus();
         await page.keyboard.press('ArrowRight');
@@ -78,6 +79,7 @@ test.describe('approved recipe and shared kit composition', () => {
         await page.setViewportSize(viewport);
         setAccountTheme(theme);
         await page.goto('/beerxml');
+        await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
         await page.getByLabel('Paste BeerXML').fill(munichHelles);
         await page.locator('#beerxml-colour').selectOption('srm');
         await page.locator('#beerxml-efficiency').selectOption('override');

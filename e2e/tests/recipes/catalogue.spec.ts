@@ -821,11 +821,13 @@ async function kra37DialogSnapshot(page: Page, id: string) {
 test('shared dialogs center the real fermentable picker after open scroll and resize', async ({ page }, testInfo) => {
   for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
     await page.goto('/recipe-editor/new');
-    // Existing login isolation can set Light. Use the actual appearance control.
+    // Each test starts from Light (beforeEach). Use the actual appearance control.
     await setAppearance(page, theme as 'light' | 'dark');
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    // Returning from Profile remounts the editor, which hides its content while it
+    // verifies access; scroll only once that has finished.
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
     await opener.click();
     const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
