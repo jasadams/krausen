@@ -1760,6 +1760,9 @@ fn FormulationPreview(
         if draft.with_untracked(|d| d.readiness().is_some()) { draft.update(|d| d.clear_readiness()); }
         message_generation.set(draft_generation);
         if !visible {
+            // No estimate is being worked on while the editor is hidden: do not keep the
+            // last outcome for whoever sees the editor next.
+            phase.set(crate::pages::recipe_process::EstimatePhase::Calculating);
             return;
         }
         let Ok(document) = draft.with_untracked(|d| d.snapshot()) else {
@@ -1947,6 +1950,7 @@ fn FormulationPreview(
     provide_context(crate::pages::recipe_process::AcceptedPreview {
         preview: accepted,
         phase: current_phase,
+        visible: context_visible.into(),
     });
     view! { <div class="recipe-editor__preview-summary" class:recipe-editor__preview-summary--stale=move || accepted.get().is_none()><BreweryPanel title="The beer, at a glance" eyebrow="Your formulation" description="Estimates use the current draft." mobile_compact=true presentation=crate::components::PanelPresentation::Summary>
         <div class="recipe-editor__estimate-outcome">

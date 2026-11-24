@@ -1478,6 +1478,143 @@ test('switching recipes never shows the previous recipe\'s estimate', async ({ p
   expect(arrival[0], 'previous recipe estimate shown on arrival').toBe(0);
 });
 
+// KRA-59 (UX-007): a restored draft is a different document from the saved recipe the hidden
+// editor behind the recovery panel has already estimated. Neither the Water plan nor the
+// chilling note under Boil & whirlpool may keep that recipe's numbers, in any estimate state.
+async function reloadToRetainedDraft(page: import('@playwright/test').Page, edit: () => Promise<void>) {
+  await recipeWithNumbers(page);
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Retained plan ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await edit();
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('krausen-draft-v1:')))).toBe(true);
+  page.once('dialog', async dialog => { await dialog.accept(); });
+  await page.reload();
+  await expect(page.getByTestId('estimate-source')).toContainText('matching saved revision 1');
+}
+
+test('a restored draft with no estimate shows no water plan or chilling note from the saved recipe', async ({ page }) => {
+  await reloadToRetainedDraft(page, () => page.getByLabel('Batch volume (L)').fill('-'));
+  await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Restore draft' }).click();
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('-');
+  await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+  await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+  await expect(page.locator('#recipe-section-mash .k-metric-list')).toHaveCount(0);
+  await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+});
+
+test('a restored draft that is recalculating shows no water plan or chilling note from the saved recipe', async ({ page }) => {
+  await reloadToRetainedDraft(page, () => page.locator('#recipe-mash-water').fill('12'));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+  try {
+    await page.getByRole('button', { name: 'Restore draft' }).click();
+    await expect(page.locator('#recipe-mash-water')).toHaveValue('12');
+    await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+    await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+    await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+    release();
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('12.0');
+    await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+// An in-place switch to a newer saved revision (replace_saved, no remount) is also another
+// document: the old revision's Water plan and chilling note must not stay while the new estimate
+// is calculated. Held with a promise the test releases, so nothing depends on timing.
+test('a focus refetch to a newer saved revision shows no water plan or chilling note from the old revision', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Refetch ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  const other = await page.context().newPage();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await other.goto(page.url());
+    await other.locator('#recipe-mash-water').fill('12');
+    await other.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(other.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#recipe-mash-water')).toHaveValue('12');
+    await expect(page.getByTestId('estimate-source')).toHaveText('No estimate yet.');
+    await expect(page.locator('#recipe-section-mash').getByRole('heading', { name: 'Water plan' })).toHaveCount(0);
+    await expect(page.getByTestId('chilling-context')).toHaveCount(0);
+    release();
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('12.0');
+    await expect(page.getByTestId('chilling-context')).toHaveCount(1);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); await other.close(); }
+});
+
+// KRA-59 (ACC-005): the editor is hidden while access is checked or lost. An estimate episode
+// that starts there is not something the person can see, so it is never announced, and access
+// returning does not end it with "Estimate updated". The page clock is paused so the
+// announcement timers (mirrored by ANNOUNCE_DEBOUNCE_MS and UPDATED_ANNOUNCE_MS) run only when
+// the test advances them: no outcome depends on how fast the server or the machine is.
+const UPDATED_ANNOUNCE_MS = 3000;
+async function pauseAndRecordAnnouncements(page: import('@playwright/test').Page) {
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.evaluate(() => {
+    const announced: string[] = [];
+    (window as any).__announced = announced;
+    const target = document.querySelector('[data-testid="estimate-announce"]')!;
+    new MutationObserver(() => { if (target.textContent) announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+  });
+}
+const announced = (page: import('@playwright/test').Page) => page.evaluate(() => (window as any).__announced as string[]);
+
+test('losing and regaining access announces nothing for an episode that started while hidden', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await pauseAndRecordAnnouncements(page);
+  const volume = page.getByLabel('Batch volume (L)');
+  try {
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(volume).toBeHidden();
+    // Past the announcement debounce: an episode running while hidden would be announced now.
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 700);
+    expect(await announced(page)).toEqual([]);
+    await page.unroute('**/leptos-api/get_user_context*');
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(volume).toBeVisible();
+    // The new estimate is calculated after the preview's own 250 ms delay.
+    await page.clock.runFor(300);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('');
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+// The debounce timer of an episode that was pending when access was lost must not fire later.
+test('losing access while an out-of-date announcement is pending announces nothing', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await pauseAndRecordAnnouncements(page);
+  try {
+    await page.locator('#recipe-whirlpool').fill('10');
+    // The episode is running and its announcement is pending (the clock is paused) when access is lost.
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByLabel('Batch volume (L)')).toBeHidden();
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 700);
+    expect(await announced(page)).toEqual([]);
+    await page.unroute('**/leptos-api/get_user_context*');
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(page.getByLabel('Batch volume (L)')).toBeVisible();
+    await page.clock.runFor(300);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('the water plan emphasises its total and the process panels keep the Equipment titles unchanged', async ({ page }) => {
   await recipeWithWaterPlan(page);
   const rows = page.locator('#recipe-section-mash .k-metric-list .k-metric');
