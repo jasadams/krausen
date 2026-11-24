@@ -39,9 +39,9 @@ for (const unavailable of ['missing', 'disabled', 'idless'] as const) {
 test('cleared print task returns to a visible editor successor after authorized retry', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
-  await page.getByText('Export and print', { exact: true }).click();
-  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
-  const print = page.getByRole('region', { name: 'Print preview', exact: true });
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
+  const print = page.getByRole('dialog', { name: 'Print preview', exact: true });
   await expect(print).toBeVisible();
   await print.getByRole('button', { name: 'Back to editor', exact: true }).focus();
   await page.route('**/leptos-api/get_user_context*', async route => {
@@ -143,9 +143,9 @@ test('obsolete preview context preflight cannot destroy a newer print task', asy
     });
     await volume.fill('22');
     await newer;
-    await page.getByText('Export and print', { exact: true }).click();
-    await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
-    const print = page.getByRole('region', { name: 'Print preview', exact: true });
+    await page.getByRole('button', { name: 'Recipe actions' }).click();
+    await page.getByRole('button', { name: 'Print…' }).click();
+    const print = page.getByRole('dialog', { name: 'Print preview', exact: true });
     await expect(print).toBeVisible();
     release();
     await oldCompleted;
@@ -305,8 +305,8 @@ test('typed print denial never labels a hidden editor as access verified', async
     const response = await route.fetch();
     await route.fulfill({ response, json: 'Forbidden' });
   });
-  await page.getByText('Export and print', { exact: true }).click();
-  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
   await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
   await expect(page.getByText('Access verified', { exact: true })).toHaveCount(0);
@@ -667,9 +667,9 @@ test('authorized focus revalidation preserves an open print task and cleans up o
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
   await page.getByLabel('Recipe name', { exact: true }).fill('Print context continuity');
-  await page.getByText('Export and print', { exact: true }).click();
-  await page.getByRole('button', { name: 'Preview unsaved draft', exact: true }).click();
-  const preview = page.getByRole('region', { name: 'Print preview', exact: true });
+  await page.getByRole('button', { name: 'Recipe actions' }).click();
+  await page.getByRole('button', { name: 'Print…' }).click();
+  const preview = page.getByRole('dialog', { name: 'Print preview', exact: true });
   await expect(preview).toBeVisible();
   await expect(preview).toContainText('Print context continuity');
   await preview.getByRole('button', { name: 'Back to editor', exact: true }).focus();

@@ -133,7 +133,7 @@ impl EditorFocus {
     fn capture() -> Option<Self> {
         let element = web_sys::window()?.document()?.active_element()?;
         let id = element.id();
-        let print_return = element.closest("[aria-label='Print preview']").ok().flatten().is_some();
+        let print_return = element.closest(".print-preview").ok().flatten().is_some();
         // Input and textarea share these DOM properties; use the native API
         // without changing value or synthesizing input/Undo events.
         let property = |name: &str| js_sys::Reflect::get(element.as_ref(), &name.into()).ok();
@@ -150,7 +150,7 @@ impl EditorFocus {
         // takes precedence over our old bookmark.
         if document.active_element().is_some_and(|active| active.tag_name() != "BODY" && active.tag_name() != "HTML") { return; }
         let try_focus = try_focus_element;
-        let print = document.query_selector("[aria-label='Print preview']").ok().flatten();
+        let print = document.query_selector(".print-preview").ok().flatten();
         let original = document.get_element_by_id(&self.id)
             .filter(|_| print.is_none() || self.print_return)
             .filter(|element| try_focus(element));
@@ -400,6 +400,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let print_preview = RwSignal::new(None::<ProcessSummary>);
     let scale_open = RwSignal::new(false);
     let duplicate_open = RwSignal::new(false);
+    let print_open = RwSignal::new(false);
+    let export_open = RwSignal::new(false);
     let scale_uncertain = RwSignal::new(false);
     let duplicate_uncertain = RwSignal::new(false);
     let on_scaled = Callback::new(
@@ -1243,7 +1245,13 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             print_preview.set(None);
         }
     });
-    let close_print = Callback::new(move |()| print_preview.set(None));
+    // Closing the preview returns focus to the opener (Recipe actions); the page
+    // behind stayed mounted, so draft, scroll and selection are untouched.
+    let close_print = Callback::new(move |()| {
+        print_preview.set(None);
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || focus_element("recipe-actions-trigger"));
+    });
     // Section and inspected saved version live in additive URL state (see
     // utils::nav_state); the editable draft is never replaced by either.
     let route_params = use_params_map();
@@ -1252,32 +1260,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let initial_section = query.with_untracked(|q| RecipeSection::parse(q.get("section").as_deref()));
     let active_tab = RwSignal::new(initial_section.key().to_owned());
     let actions_open = RwSignal::new(false);
-    // Scale/Duplicate are opened from the Recipe actions popover, which closes
-    // first; return focus to its trigger once the dialog closes with nothing focused.
-    #[cfg(target_arch = "wasm32")]
-    {
-        let was_open = StoredValue::new(false);
-        let opening_route = StoredValue::new(String::new());
-        Effect::new(move |_| {
-            let open = scale_open.get() || duplicate_open.get();
-            let previous = was_open.get_value();
-            was_open.set_value(open);
-            let route = || web_sys::window().and_then(|w| w.location().pathname().ok()).unwrap_or_default();
-            if open && !previous {
-                opening_route.set_value(route());
-            } else if previous && !open {
-                let opened_at = opening_route.get_value();
-                request_animation_frame(move || {
-                    // A successful Duplicate navigates away; arrival focus on the new
-                    // page owns focus, so the old opener must not reclaim it.
-                    if route() != opened_at { return; }
-                    let idle = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element())
-                        .is_none_or(|active| active.tag_name() == "BODY" || active.tag_name() == "HTML");
-                    if idle { focus_element("recipe-actions-trigger"); }
-                });
-            }
-        });
-    }
+    // Scale and Duplicate need a clean saved recipe; the dialogs explain this
+    // when invoked and never save implicitly. The shared dialog returns focus.
+    let transform_prerequisite_signal = Signal::derive(move || {
+        crate::pages::recipe_output::transform_prerequisite(revision.get().is_some(), draft.with(|d| d.dirty))
+    });
     let style_options = Signal::derive(move || {
         let mut options = vec![(String::new(), "No style".to_owned())];
         options.extend(styles.get().into_iter().map(|style| (style.name.clone(), format!("{} · {}", style.style_id.unwrap_or_default(), style.name))));
@@ -1334,8 +1321,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         }),
         scale: Callback::new(move |()| scale_open.set(true)),
         duplicate: Callback::new(move |()| duplicate_open.set(true)),
-        print: Callback::new(move |()| reveal("recipe-output-disclosure", "recipe-output-disclosure")),
-        export: Callback::new(move |()| reveal("recipe-output-disclosure", "recipe-output-disclosure")),
+        print: Callback::new(move |()| print_open.set(true)),
+        export: Callback::new(move |()| export_open.set(true)),
         equipment: Callback::new(move |()| reveal("recipe-equipment-disclosure", "equipment-profile-select")),
     };
 
@@ -1421,8 +1408,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         <RecipeHeader draft=draft revision=revision status=status retained=retained pending=pending conflict=Signal::derive(move || conflict.with(|c| c.is_some())) equipment=equipment_summary title=title on_title=title_change style_value=selected_style style_options=style_options on_style=change_style actions=header_actions actions_open=actions_open>
             <NumberField id=BATCH_FIELD.0 label=BATCH_FIELD.1 unit="L" described_by="recipe-batch-note" path="batch_size_l" draft=draft read=|d: &RecipeDocumentV1| d.batch_size_l write=|d: &mut RecipeDocumentV1,n| d.batch_size_l=n/>
         </RecipeHeader>
-        <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled/>
-        <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status/>
+        <ScaleDialog open=scale_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=scale_uncertain pending=pending status=status on_applied=on_scaled prerequisite=transform_prerequisite_signal/>
+        <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview open=print_open selected=selected_revision/>
+        <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft open=export_open selected=selected_revision/>
+        <DuplicateDialog open=duplicate_open identity=identity recipe_id=recipe_id revision=revision context_lost=context_lost uncertain=duplicate_uncertain pending=pending status=status prerequisite=transform_prerequisite_signal/>
         <div class="recipe-editor__navigation"><BreweryTabs id="editor" label="Recipe sections" items=vec![("recipe".into(), "Recipe".into()), ("versions".into(), "Saved versions".into()), ("brews".into(), "Brews".into())] active=active_tab/></div>
         <crate::pages::brew_start::StartBrewTask
             open=start_open historical=start_historical identity=identity context_visible=context_visible
@@ -1439,10 +1428,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             <BreweryDisclosure id="recipe-equipment-disclosure" title="Equipment settings">
                 <crate::pages::recipe_equipment::RecipeEquipment draft=draft identity=identity context_visible=context_visible recipe_id=recipe_id summary=equipment_summary/>
 </BreweryDisclosure>
-            <BreweryDisclosure id="recipe-output-disclosure" title="Export and print">
-                <crate::pages::beerxml::BeerXmlExport identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft/>
-                <PrintRecipe identity=identity context_visible=context_visible recipe_id=recipe_id revision=revision draft=draft preview=print_preview/>
-            </BreweryDisclosure>
         </div></FormulationPreview></div>
         </div>
         <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
@@ -1456,12 +1441,21 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             </Show>
         </div>
     </div>
+    // The page behind a print preview stays inert for as long as the task is open,
+    // including while a revalidation unmounts the preview itself.
+    // It is released while access is unavailable or expired, so the notice and its
+    // Retry check stay usable; a denial clears the preview altogether.
+    <crate::components::PageIsolation active=Signal::derive(move || print_preview.with(|preview| preview.is_some()) && (context_visible.get() || access.get() == EditorAccess::Checking))/>
     {
         move || {
             print_preview
                 .get()
                 .filter(|_| context_visible.get())
-                .map(|summary| view! { <PrintPreview summary=summary on_close=close_print/> })
+                .map(|summary| view! {
+                    <crate::components::PrintPreviewTask heading="Print preview" hint="Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins." isolate=false on_close=close_print>
+                        <div class="print-preview__sheet"><crate::components::PrintableRecipe summary=summary/></div>
+                    </crate::components::PrintPreviewTask>
+                })
         }
     }
     }
@@ -1475,15 +1469,23 @@ fn PrintRecipe(
     revision: RwSignal<Option<i64>>,
     draft: RwSignal<RecipeDraft>,
     preview: RwSignal<Option<ProcessSummary>>,
+    open: RwSignal<bool>,
+    selected: RwSignal<Option<i64>>,
 ) -> impl IntoView {
+    use crate::pages::recipe_output::{OutputSource, SourceChoice, resolve_source};
     let access = expect_context::<RwSignal<EditorAccess>>();
     let ContextCheckGeneration(check_generation) = expect_context::<ContextCheckGeneration>();
     let status = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    // Closing the task retires an in-flight request: its late result must not
+    // open a preview the user already dismissed.
+    let task_generation = RwSignal::new(0_u64);
+    let source = Signal::derive(move || resolve_source(revision.get(), draft.with(|d| d.dirty), selected.get()));
     let run = Callback::new(move |selection: ProcessSummarySelection| {
         if busy.get_untracked() || !context_visible.get_untracked() {
             return;
         }
+        let task = task_generation.get_untracked();
         let draft_generation = match &selection {
             ProcessSummarySelection::Draft { .. } => {
                 Some(draft.with_untracked(|draft| draft.generation))
@@ -1499,17 +1501,21 @@ fn PrintRecipe(
         busy.set(true);
         status.set("Preparing the print summary…".into());
         leptos::task::spawn_local(async move {
+            // A closed, superseded or revalidated run never touches the state of
+            // the run that replaced it; the effect below owns `busy` for those.
+            let mine = move || task_generation.try_get_untracked() == Some(task);
             let context_result = check_editor_access(&expected).await;
             if context_visible.try_get_untracked().is_none() {
                 return;
             }
             if check_generation.try_get_untracked() != Some(context_epoch) {
-                busy.set(false);
                 return;
             }
             if context_result != EditorAccess::Verified {
                 hold_editor(access, context_visible, context_result);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             let result =
@@ -1538,12 +1544,13 @@ fn PrintRecipe(
                 return;
             }
             if check_generation.try_get_untracked() != Some(context_epoch) {
-                busy.set(false);
                 return;
             }
             if context_result != EditorAccess::Verified {
                 hold_editor(access, context_visible, context_result);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             // Authority denial must invalidate a mounted editor even when the
@@ -1555,21 +1562,29 @@ fn PrintRecipe(
             ) {
                 let outcome = if matches!(&result, Ok(ProcessSummaryOutcome::Forbidden)) { EditorAccess::Forbidden } else { EditorAccess::Mismatch };
                 hold_editor(access, context_visible, outcome);
-                busy.set(false);
+                if mine() {
+                    busy.set(false);
+                }
                 return;
             }
             if draft_generation.is_some_and(|generation| {
                 draft.try_with_untracked(|draft| draft.generation) != Some(generation)
             }) {
-                busy.set(false);
-                status.set("The draft changed. Prepare the print summary again.".into());
+                if mine() {
+                    busy.set(false);
+                    status.set("The draft changed. Preview the print summary again.".into());
+                }
+                return;
+            }
+            if !mine() {
                 return;
             }
             busy.set(false);
             match result {
                 Ok(ProcessSummaryOutcome::Summary(summary)) => {
-                    status.set("Review the sheet, then print or save it as a PDF.".into());
+                    status.set(String::new());
                     preview.set(Some(summary));
+                    open.set(false);
                 }
                 Ok(ProcessSummaryOutcome::NotFound) => status.set(
                     "This saved revision is not available in this workspace. Save the recipe before printing it."
@@ -1609,92 +1624,80 @@ fn PrintRecipe(
             }
         });
     });
-    let saved = move |_| {
-        let (Some(id), Some(number)) = (recipe_id.get_untracked(), revision.get_untracked()) else {
-            status.set("Save the recipe before printing a saved revision.".into());
-            return;
-        };
-        run.run(ProcessSummarySelection::Saved {
-            recipe_id: id,
-            revision: number,
-        });
-    };
-    let unsaved = move |_| {
-        let document = match draft.with_untracked(|draft| draft.snapshot()) {
-            Ok(document) => document,
-            Err(_) => {
-                status.set("Complete invalid number fields before printing the draft.".into());
-                return;
+    let prepare = Callback::new(move |chosen: OutputSource| {
+        status.set(String::new());
+        match chosen {
+            OutputSource::Saved { revision: number } => {
+                let Some(id) = recipe_id.get_untracked() else {
+                    status.set("Save the recipe before printing a saved revision.".into());
+                    return;
+                };
+                run.run(ProcessSummarySelection::Saved { recipe_id: id, revision: number });
             }
-        };
-        run.run(ProcessSummarySelection::Draft {
-            recipe_id: recipe_id.get_untracked(),
-            base_revision: revision.get_untracked(),
-            document,
-        });
-    };
+            OutputSource::Draft => {
+                let document = match draft.with_untracked(|draft| draft.snapshot()) {
+                    Ok(document) => document,
+                    Err(_) => {
+                        status.set("Complete invalid number fields before printing the draft.".into());
+                        return;
+                    }
+                };
+                run.run(ProcessSummarySelection::Draft {
+                    recipe_id: recipe_id.get_untracked(),
+                    base_revision: revision.get_untracked(),
+                    document,
+                });
+            }
+        }
+    });
+    // Opening resets the task; a known source is prepared at once, an ambiguous
+    // one waits for the short choice. Closing retires any in-flight request.
+    // It also runs again when a revalidation restores the editor, so a request
+    // dropped by the check is prepared afresh instead of leaving the task stuck.
+    Effect::new(move |_| {
+        if open.get() && context_visible.get() {
+            status.set(String::new());
+            if let SourceChoice::Known(chosen) = source.get_untracked() {
+                prepare.run(chosen);
+            }
+        } else {
+            task_generation.update(|n| *n = n.wrapping_add(1));
+            busy.set(false);
+        }
+    });
+    let description = Signal::derive(move || match source.get() {
+        SourceChoice::Known(chosen) => format!(
+            "Source: {}. The sheet names its source and the resolved equipment and context.",
+            chosen.label()
+        ),
+        SourceChoice::Choose { .. } => {
+            "Your draft has changes that are not saved. Choose which source to print.".to_owned()
+        }
+    });
     view! {
-        <BreweryPanel
+        <crate::components::BreweryDialog
+            id="print-task"
             title="Print recipe"
-            description="Print the current saved revision or this unsaved draft. The sheet names its source and resolved equipment and context."
+            description=description
+            open=open
+            wide=true
+            return_focus_fallback="recipe-actions-trigger".to_owned()
+            actions=std::sync::Arc::new(move || view! {
+                <Button variant=crate::components::ButtonVariant::Ghost on:click=move |_| open.set(false)>"Close"</Button>
+                {move || match source.get() {
+                    SourceChoice::Choose { saved, draft: draft_source } => view! {
+                        <Button variant=crate::components::ButtonVariant::Secondary disabled=busy on:click=move |_| prepare.run(saved)>{format!("Preview {}", saved.label().to_lowercase())}</Button>
+                        <Button disabled=busy on:click=move |_| prepare.run(draft_source)>"Preview unsaved draft"</Button>
+                    }.into_any(),
+                    SourceChoice::Known(_) => ().into_any(),
+                }}
+            }.into_any())
         >
-            <p>"The browser print dialog handles paper size, margins and saving as PDF. A draft is labelled Unsaved and never replaces saved history."</p>
-            <div class="recipe-editor__actions">
-                <Button on:click=saved disabled=busy>"Preview saved revision"</Button>
-                <Button variant=crate::components::ButtonVariant::Secondary on:click=unsaved disabled=busy>"Preview unsaved draft"</Button>
+            <div class="space-y-4">
+                <p>"The browser print dialog handles paper size, margins and saving as PDF. A draft is labelled Unsaved and never replaces saved history."</p>
+                <p role="status">{move || if busy.get() { "Preparing the print summary…".to_owned() } else { status.get() }}</p>
             </div>
-            <p role="status">{move || status.get()}</p>
-        </BreweryPanel>
-    }
-}
-
-#[component]
-fn PrintPreview(summary: ProcessSummary, on_close: Callback<()>) -> impl IntoView {
-    let status = RwSignal::new(String::new());
-    #[cfg(target_arch = "wasm32")]
-    {
-        let body = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.body());
-        if let Some(body) = &body {
-            if body.class_list().add_1("krausen-printing").is_err() {
-                tracing::warn!("Unable to prepare the print-only page state");
-                status.set("The print layout may include the application controls.".into());
-            }
-        }
-        on_cleanup(move || {
-            if let Some(body) = body {
-                if body.class_list().remove_1("krausen-printing").is_err() {
-                    tracing::warn!("Unable to clear the print-only page state");
-                }
-            }
-        });
-    }
-    let print = move |_| {
-        #[cfg(target_arch = "wasm32")]
-        if let Some(window) = web_sys::window() {
-            if window.print().is_err() {
-                status.set("The browser print dialog could not open.".into());
-            }
-        }
-    };
-    view! {
-        <section class="print-preview" aria-label="Print preview">
-            <div class="print-preview__toolbar">
-                <div>
-                    <p class="kit-showcase__eyebrow">"Print preview"</p>
-                    <p class="print-preview__hint">"Check the sheet, then print or save it as a PDF. The browser dialog controls paper size and margins."</p>
-                </div>
-                <div class="recipe-editor__actions">
-                    <Button on:click=print>"Print / Save as PDF"</Button>
-                    <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| on_close.run(())>"Back to editor"</Button>
-                </div>
-                <p role="status">{move || status.get()}</p>
-            </div>
-            <div class="print-preview__sheet">
-                <crate::components::PrintableRecipe summary=summary/>
-            </div>
-        </section>
+        </crate::components::BreweryDialog>
     }
 }
 
