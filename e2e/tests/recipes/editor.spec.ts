@@ -1537,9 +1537,40 @@ test('losing and regaining access announces nothing for an episode that started 
   await expect(volume).toBeVisible();
   await expect(page.getByTestId('estimate-stale')).toHaveText('');
   await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
+  // Longer than "Estimate updated" stays in the status (UPDATED_ANNOUNCE_MS, 3000).
   await page.waitForTimeout(3500);
   expect(await page.evaluate(() => (window as any).__announced)).toEqual([]);
   await expect(page.getByTestId('estimate-announce')).toHaveText('');
+});
+
+// The debounce timer of an episode that was pending when access was lost must not fire later.
+test('losing access while an out-of-date announcement is pending announces nothing', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await page.evaluate(() => {
+    const announced: string[] = [];
+    (window as any).__announced = announced;
+    const target = document.querySelector('[data-testid="estimate-announce"]')!;
+    new MutationObserver(() => { if (target.textContent) announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
+  });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+  try {
+    await page.locator('#recipe-whirlpool').fill('10');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    // The episode is running and its announcement is still pending when access is lost.
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByLabel('Batch volume (L)')).toBeHidden();
+    await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 700);
+    await page.unroute('**/leptos-api/get_user_context*');
+    release();
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(page.getByLabel('Batch volume (L)')).toBeVisible();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.waitForTimeout(3500);
+    expect(await page.evaluate(() => (window as any).__announced)).toEqual([]);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 test('the water plan emphasises its total and the process panels keep the Equipment titles unchanged', async ({ page }) => {
