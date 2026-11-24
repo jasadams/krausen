@@ -1302,6 +1302,58 @@ for (const width of [320, 390]) {
   });
 }
 
+// KRA-34 with KRA-49: the issues list lives inside the same summary. The
+// estimate states change under a list of issues that is present throughout, and
+// neither the list nor its "Out of date" cue may add or remove a row, or the
+// controls below the summary move while a person is typing.
+for (const width of [320, 390]) {
+  test(`the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await readyEstimateRecipe(page);
+    await addHop(page, 'Cascade', '60');
+    const summary = page.locator('.recipe-editor__preview-summary');
+    const list = issues(page);
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ })).toHaveCount(1);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    const measure = () => page.evaluate(() => {
+      const summary = document.querySelector('.recipe-editor__preview-summary')!;
+      const below = document.querySelector('.recipe-editor__sections')!;
+      const rect = summary.getBoundingClientRect();
+      return { height: rect.height, below: below.getBoundingClientRect().top - rect.top };
+    });
+    const expectSame = (label: string, actual: { height: number; below: number }, expected: { height: number; below: number }) => {
+      expect(Math.abs(actual.height - expected.height), `${label}: summary height ${actual.height} vs ${expected.height}`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
+    };
+    const current = await measure();
+    const batch = page.getByLabel('Batch volume (L)');
+
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await batch.fill('21');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed while recalculating').toHaveCount(1);
+    expectSame('recalculating with issues', await measure(), current);
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.unroute('**/leptos-api/preview_formulation*');
+    expectSame('current again with issues', await measure(), current);
+
+    await batch.fill('-');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed when the draft settles invalid').toHaveCount(1);
+    expectSame('settled invalid with issues', await measure(), current);
+
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await batch.fill('23');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed when the preview is unavailable').toHaveCount(1);
+    expectSame('settled unavailable with issues', await measure(), current);
+    await expect(summary.locator('.k-metric')).toHaveCount(6);
+  });
+}
+
 test('a late preview response cannot replace a settled invalid estimate', async ({ page }) => {
   test.slow();
   await page.setViewportSize({ width: 320, height: 900 });
