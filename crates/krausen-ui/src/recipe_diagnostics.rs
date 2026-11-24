@@ -179,10 +179,16 @@ pub fn validator_paths(raw: &str) -> Vec<String> {
     let mut paths = vec![raw.to_owned()];
     if let Some(service) = crate::pages::ingredient_addition::service_path_for_raw(raw) {
         paths.push(service);
-    } else if let Some(field) = raw.strip_prefix("equipment_overrides.") {
-        paths.push(format!("equipment.{field}"));
+    } else if let Some(effective) = effective_equipment_path(raw) {
+        paths.push(effective);
     }
     paths
+}
+
+/// The validator's effective-value path for an equipment override path: it reports
+/// one setting under both `equipment_overrides.X` and `equipment.X`.
+fn effective_equipment_path(path: &str) -> Option<String> {
+    path.strip_prefix("equipment_overrides.").map(|field| format!("equipment.{field}"))
 }
 
 fn key_for(path: &str, code: &str) -> String {
@@ -238,11 +244,7 @@ fn order(doc: &RecipeDocumentV1, path: &str) -> (u8, usize) {
 /// validator's override path (`equipment_overrides.*`) and effective path
 /// (`equipment.*`) for one setting count as one. Message text never decides it.
 pub(crate) fn problem_key(d: &Diagnostic) -> (String, String) {
-    let path = match d.path.strip_prefix("equipment_overrides.") {
-        Some(field) => format!("equipment.{field}"),
-        None => d.path.clone(),
-    };
-    (path, d.code.clone())
+    (effective_equipment_path(&d.path).unwrap_or_else(|| d.path.clone()), d.code.clone())
 }
 
 /// Every distinct diagnostic that still applies to `doc`, in editor order.
