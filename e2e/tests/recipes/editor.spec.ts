@@ -1517,59 +1517,70 @@ test('a restored draft that is recalculating shows no water plan or chilling not
 
 // KRA-59 (ACC-005): the editor is hidden while access is checked or lost. An estimate episode
 // that starts there is not something the person can see, so it is never announced, and access
-// returning does not end it with "Estimate updated".
-test('losing and regaining access announces nothing for an episode that started while hidden', async ({ page }) => {
-  await recipeWithNumbers(page);
+// returning does not end it with "Estimate updated". The page clock is paused so the
+// announcement timers (mirrored by ANNOUNCE_DEBOUNCE_MS and UPDATED_ANNOUNCE_MS) run only when
+// the test advances them: no outcome depends on how fast the server or the machine is.
+const UPDATED_ANNOUNCE_MS = 3000;
+async function pauseAndRecordAnnouncements(page: import('@playwright/test').Page) {
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now() + 60_000));
   await page.evaluate(() => {
     const announced: string[] = [];
     (window as any).__announced = announced;
     const target = document.querySelector('[data-testid="estimate-announce"]')!;
     new MutationObserver(() => { if (target.textContent) announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
   });
+}
+const announced = (page: import('@playwright/test').Page) => page.evaluate(() => (window as any).__announced as string[]);
+
+test('losing and regaining access announces nothing for an episode that started while hidden', async ({ page }) => {
+  await recipeWithNumbers(page);
+  await pauseAndRecordAnnouncements(page);
   const volume = page.getByLabel('Batch volume (L)');
-  await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(volume).toBeHidden();
-  // Longer than the announcement debounce, so a hidden episode would have been announced.
-  await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 700);
-  await page.unroute('**/leptos-api/get_user_context*');
-  await page.getByRole('button', { name: 'Retry check', exact: true }).click();
-  await expect(volume).toBeVisible();
-  await expect(page.getByTestId('estimate-stale')).toHaveText('');
-  await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
-  // Longer than "Estimate updated" stays in the status (UPDATED_ANNOUNCE_MS, 3000).
-  await page.waitForTimeout(3500);
-  expect(await page.evaluate(() => (window as any).__announced)).toEqual([]);
-  await expect(page.getByTestId('estimate-announce')).toHaveText('');
+  try {
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(volume).toBeHidden();
+    // Past the announcement debounce: an episode running while hidden would be announced now.
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 700);
+    expect(await announced(page)).toEqual([]);
+    await page.unroute('**/leptos-api/get_user_context*');
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(volume).toBeVisible();
+    // The new estimate is calculated after the preview's own 250 ms delay.
+    await page.clock.runFor(300);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('');
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 // The debounce timer of an episode that was pending when access was lost must not fire later.
 test('losing access while an out-of-date announcement is pending announces nothing', async ({ page }) => {
   await recipeWithNumbers(page);
-  await page.evaluate(() => {
-    const announced: string[] = [];
-    (window as any).__announced = announced;
-    const target = document.querySelector('[data-testid="estimate-announce"]')!;
-    new MutationObserver(() => { if (target.textContent) announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
-  });
+  await pauseAndRecordAnnouncements(page);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
   try {
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
     await page.locator('#recipe-whirlpool').fill('10');
+    // The episode is running and its announcement is pending (the clock is paused) when access is lost.
     await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
-    // The episode is running and its announcement is still pending when access is lost.
     await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByLabel('Batch volume (L)')).toBeHidden();
-    await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 700);
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 700);
+    expect(await announced(page)).toEqual([]);
     await page.unroute('**/leptos-api/get_user_context*');
     release();
     await page.getByRole('button', { name: 'Retry check', exact: true }).click();
     await expect(page.getByLabel('Batch volume (L)')).toBeVisible();
+    await page.clock.runFor(300);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
-    await page.waitForTimeout(3500);
-    expect(await page.evaluate(() => (window as any).__announced)).toEqual([]);
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
