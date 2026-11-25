@@ -1093,6 +1093,8 @@ fn CheckEmailView(
 
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
+    use crate::test_support::extract_between;
+
     /// This file's own source, for the signed-out form guard below. The
     /// browser suite starts from an authenticated account, so no selected
     /// runtime test visits /login or /signup; the server redirect tests cover
@@ -1103,9 +1105,15 @@ mod tests {
     /// the assertions do not count their own literals.
     const TEST_MOD_MARKER: &str = "#[cfg(all(test, feature = \"ssr\"))]\nmod tests {";
     fn production_src() -> &'static str {
-        SRC.split(TEST_MOD_MARKER)
-            .next()
-            .expect("TEST_MOD_MARKER must be found in SRC")
+        extract_between(SRC, "// SPDX-License-Identifier", TEST_MOD_MARKER)
+    }
+
+    fn credentials_view() -> &'static str {
+        extract_between(SRC, "fn CredentialsView(", "fn TwoFactorView(")
+    }
+
+    fn signup_view() -> &'static str {
+        extract_between(SRC, "fn SignupView(", "fn CheckEmailView(")
     }
 
     #[track_caller]
@@ -1117,7 +1125,7 @@ mod tests {
     // its two recovery paths; a missing control strands the visitor.
     #[test]
     fn signed_out_entry_offers_password_login_and_both_recovery_paths() {
-        let src = production_src();
+        let credentials = credentials_view();
         for required in [
             "id=\"login-email\"",
             "type=\"email\"",
@@ -1128,25 +1136,30 @@ mod tests {
             "\"Create an account\"",
             "href=\"/account/recover\"",
             "\"Can't sign in?\"",
-            "<AuthLayout title=title subtitle=subtitle>",
         ] {
-            assert_contains(src, required);
+            assert_contains(credentials, required);
         }
+        assert_contains(production_src(), "<AuthLayout title=title subtitle=subtitle>");
     }
 
     // /signup is the same component in signup mode; the direct self-hosted
     // path needs an email field before it can create the account.
     #[test]
     fn signup_mode_starts_in_the_signup_view_with_its_email_field() {
-        let src = production_src();
+        let signup = signup_view();
         for required in [
-            "let initial_view = if signup_mode {",
-            "LoginView::Signup",
             "id=\"signup-email\"",
             "type=\"email\"",
-            "\"Create your account\"",
+            "id=\"signup-name\"",
+            "id=\"signup-password\"",
+            "type=\"password\"",
+            "button_type=\"submit\"",
         ] {
-            assert_contains(src, required);
+            assert_contains(signup, required);
         }
+        let production = production_src();
+        assert_contains(production, "let initial_view = if signup_mode {");
+        assert_contains(production, "LoginView::Signup");
+        assert_contains(production, "\"Create your account\"");
     }
 }

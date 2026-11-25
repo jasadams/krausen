@@ -1536,7 +1536,7 @@ mod tests {
     const TOKENS: &str = include_str!("../../krausen-ui/style/approved-tokens.css");
 
     /// The production half of a `pub async fn` method, from its declaration
-    /// to the next method's declaration.
+    /// to its own closing brace (or the next method's declaration).
     fn method_src(name: &str) -> &'static str {
         let src = production_src();
         let marker = format!("pub async fn {name}(");
@@ -1544,7 +1544,12 @@ mod tests {
             .find(&marker)
             .unwrap_or_else(|| panic!("missing {marker:?}"));
         let rest = &src[start + marker.len()..];
-        let end = rest.find("\n    pub async fn ").unwrap_or(rest.len());
+        let end = rest
+            .find("\n    }\n")
+            .into_iter()
+            .chain(rest.find("\n    pub async fn "))
+            .min()
+            .unwrap_or(rest.len());
         &rest[..end]
     }
 

@@ -1578,13 +1578,12 @@ mod tests {
     /// This file's own source, for the shell-wiring guards below. The
     /// selected browser tests exercise the popup and the workspace guard; the
     /// shared component ownership, the logout guard and the absence of a
-    /// global Brews destination are facts only the source names.
+    /// global Brews destination, and the retired nav label are facts only the
+    /// source names.
     const SRC: &str = include_str!("layout.rs");
     const TEST_MOD_MARKER: &str = "#[cfg(test)]\nmod tests {";
     fn production_src() -> &'static str {
-        SRC.split(TEST_MOD_MARKER)
-            .next()
-            .expect("TEST_MOD_MARKER must be found in SRC")
+        crate::test_support::extract_between(SRC, "// SPDX-License-Identifier", TEST_MOD_MARKER)
     }
 
     #[test]
@@ -1594,6 +1593,7 @@ mod tests {
         assert_contains(src, "editor_guard.request(EditorDestination::Logout)");
         assert_contains(src, "open=editor_guard.notice");
         assert_missing(src, "href=\"/brews\"");
+        assert_missing(src, "aria-label=\"The details\"");
     }
 
     #[track_caller]

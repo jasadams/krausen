@@ -480,9 +480,7 @@ mod tests {
     const SRC: &str = include_str!("recipes.rs");
     const TEST_MOD_MARKER: &str = "#[cfg(all(test, feature = \"ssr\"))]\nmod tests {";
     fn production_src() -> &'static str {
-        SRC.split(TEST_MOD_MARKER)
-            .next()
-            .expect("TEST_MOD_MARKER must be found in SRC")
+        crate::test_support::extract_between(SRC, "// SPDX-License-Identifier", TEST_MOD_MARKER)
     }
 
     #[test]
