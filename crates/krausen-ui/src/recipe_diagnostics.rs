@@ -366,6 +366,17 @@ pub fn readiness_summary(validation: &Validation) -> String {
     }
 }
 
+/// The batch volume to present beside the estimates. A preview's context repeats
+/// the submitted value even when the validator rejected it; that rejected input is
+/// not an estimate, so only the validator's verdict decides whether to show it
+/// (UX-007). Component availability is still the caller's state.
+pub(crate) fn estimated_batch_volume(validation: &Validation, batch_size_l: Option<f64>) -> Option<f64> {
+    let rejected = validation.diagnostics.iter().any(|diagnostic| {
+        diagnostic.path == "batch_size_l" && diagnostic.severity == Readiness::Invalid
+    });
+    if rejected { None } else { batch_size_l }
+}
+
 /// First control a brewer must correct before the recipe can be saved: a
 /// malformed number whose format feedback is already showing, else the first
 /// retained Invalid diagnostic whose field has not been edited since (an edit
@@ -676,5 +687,25 @@ mod tests {
         let invalid = Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] };
         assert_eq!(readiness_summary(&invalid), "Invalid: 1 value to correct");
         assert_eq!(readiness_summary(&Validation { state: Readiness::Ready, diagnostics: vec![] }), "Ready");
+    }
+
+    #[test]
+    fn a_validator_rejected_batch_volume_is_not_an_estimate() {
+        // The preview context repeats the submitted draft, including a value the
+        // validator rejected. Only that verdict decides whether it is shown.
+        for (code, value) in [("negative", -5.0), ("out_of_range", 0.0)] {
+            let validation = Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", code, Readiness::Invalid)] };
+            assert_eq!(estimated_batch_volume(&validation, Some(value)), None, "{code} is not an estimate");
+        }
+    }
+
+    #[test]
+    fn an_accepted_batch_volume_stays_and_other_invalid_fields_do_not_hide_it() {
+        let ready = Validation { state: Readiness::Ready, diagnostics: vec![] };
+        assert_eq!(estimated_batch_volume(&ready, Some(20.0)), Some(20.0));
+        let other_field = Validation { state: Readiness::Invalid, diagnostics: vec![diag("hops[h1].amount_g", "negative", Readiness::Invalid)] };
+        assert_eq!(estimated_batch_volume(&other_field, Some(20.0)), Some(20.0), "a different invalid value does not make the batch an estimate");
+        let missing = Validation { state: Readiness::Incomplete, diagnostics: vec![diag("batch_size_l", "missing", Readiness::Incomplete)] };
+        assert_eq!(estimated_batch_volume(&missing, None), None);
     }
 }
