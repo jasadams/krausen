@@ -27,8 +27,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 die() { echo "krausen-dev: $*" >&2; exit 1; }
 need_docker() { docker info >/dev/null 2>&1 || die "Docker is not running"; }
-# Bash's /dev/tcp probes without an external tool; the subshell closes the socket.
+# Is something already listening on this port? A connect probe alone is not
+# reliable: a listener whose accept queue is full refuses new connections, so
+# the probe reports a held port as free and `up` would fail inside `docker run`
+# instead of failing clearly before creating anything. lsof answers the real
+# question on macOS and on machines that have it; the probe stays as the
+# fallback for a host without lsof (it may also see a process lsof cannot).
 port_in_use() {
+  if command -v lsof >/dev/null 2>&1 \
+    && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
   (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
 }
 
@@ -117,11 +126,17 @@ cmd_up() {
   docker run --rm --user 0 --cpus 2 --memory 1g --pids-limit 256 \
     -v "$VOLUME:/data" --entrypoint chown "$IMAGE" 1000:1000 /data
   # Published on loopback only: never -p PORT:PORT.
-  docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
+  if ! docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
     -p "127.0.0.1:$PORT:$PORT" -v "$VOLUME:/data" \
     -e DATABASE_URL=sqlite:///data/krausen.db \
     -e KRAUSEN_MODE -e PORT -e BASE_URL -e FRONTEND_URL -e JWT_SECRET_KEY -e ENCRYPTION_KEY \
-    "$IMAGE" >/dev/null
+    "$IMAGE" >/dev/null; then
+    # A failed run can still have created the container, and the preflight
+    # above cannot see every reason Docker refuses a bind. Remove what this
+    # attempt created so a later `up` starts clean and nothing is left behind.
+    docker rm -f "$SERVER" >/dev/null 2>&1 || true
+    die "could not start $SERVER on 127.0.0.1:$PORT; if the port is taken, stop that process or set KRAUSEN_DEV_PORT to a free port"
+  fi
   docker run -d --name "$SQLITE" --user 1000:1000 --cpus 2 --memory 1g --pids-limit 256 \
     -v "$VOLUME:/data" --entrypoint sleep "$SQLITE_IMAGE" infinity >/dev/null
   write_shim
