@@ -473,6 +473,10 @@ mod presentation_tests {
         assert_eq!(format_measurement_value(1.05, "sg"), "1.050 SG");
         assert_eq!(format_measurement_value(22.0, "l"), "22 L");
         assert_eq!(format_measurement_value(95.0, "c"), "95 °C");
+        assert_eq!(format_measurement_value(1.234, "kg"), "1.23 kg");
+        assert_eq!(format_measurement_value(12.0, "g"), "12 g");
+        assert_eq!(format_measurement_value(60.0, "min"), "60 min");
+        assert_eq!(format_measurement_value(7.0, "ebc"), "7 EBC");
         let hot = measurement_status_text(false, None, "l", Some("unlike_sample_temperature"));
         assert!(hot.contains("20 °C reference"));
         assert!(!hot.contains("unlike_"));
