@@ -3712,6 +3712,46 @@ test('diagnostics from an earlier draft are marked out of date and never counted
   await expect(issues(page).getByRole('button', { name: /is longer than the boil time/ })).toHaveCount(0);
 });
 
+// KRA-51 (UX-007, ACC-005): losing and regaining access re-runs the preview at the SAME draft
+// generation. The estimate is cleared then, so the list that came from the same check must not
+// keep looking current either. The page clock is paused so no outcome depends on timing.
+test('diagnostics from an earlier draft stay marked out of date when access is regained at the same draft generation', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.locator('#recipe-boil').fill('60');
+  await addHop(page, 'Cascade', '90');
+  const entry = issues(page).getByRole('button', { name: /is longer than the boil time/ });
+  await expect(entry).toBeVisible();
+  await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+  await pauseAndRecordAnnouncements(page);
+  const volume = page.getByLabel('Batch volume (L)');
+  try {
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(volume).toBeHidden();
+    await page.unroute('**/leptos-api/get_user_context*');
+    // The regained preview cannot answer: the estimate stays unavailable at this generation.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort('failed'));
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(volume).toBeVisible();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    // Nothing has changed in the draft, but the estimate is cleared; so is the list's claim to be current.
+    await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+    await page.clock.runFor(300);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+    await expect(entry).toBeVisible();
+    // A successful recheck makes the same list current again.
+    await page.unroute('**/leptos-api/preview_formulation*');
+    await page.getByRole('button', { name: 'Retry calculation', exact: true }).click();
+    await page.clock.runFor(300);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+    // The cue is not a live region: nothing was announced on this path.
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('an empty draft links Add at least one fermentable to the add control', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).focus();
