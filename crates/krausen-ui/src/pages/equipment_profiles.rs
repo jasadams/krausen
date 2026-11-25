@@ -295,26 +295,6 @@ fn write_pending(_: &str, _: Option<&EquipmentCommand>) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn focus_element(id: &str) {
-    use wasm_bindgen::JsCast;
-    let id = id.to_owned();
-    // Wait for the replacement control to exist before choosing its successor.
-    request_animation_frame(move || {
-        if let Some(element) = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.get_element_by_id(&id))
-            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-        {
-            if element.focus().is_err() {
-                tracing::warn!("Unable to move focus to {id}");
-            }
-        }
-    });
-}
-#[cfg(not(target_arch = "wasm32"))]
-fn focus_element(_: &str) {}
-
-#[cfg(target_arch = "wasm32")]
 fn set_select_value(id: &str, value: &str) {
     use wasm_bindgen::JsCast;
     if let Some(select) = web_sys::window()
@@ -560,7 +540,9 @@ pub fn EquipmentManager(
                             apply.run(item);
                             status.set(message.into());
                             set_select_value("equipment-profile-edit", &id);
-                            focus_element("equipment-profile-edit");
+                            // Wait for the reloaded list to render before moving focus.
+                            #[cfg(target_arch = "wasm32")]
+                            request_animation_frame(move || crate::utils::focus::focus_element("equipment-profile-edit"));
                         }
                         AfterSave::Leave(attempt) => {
                             // `apply` advanced the generation; the saved state is the current one.
@@ -765,7 +747,9 @@ pub fn EquipmentManager(
     Effect::new(move |previous: Option<bool>| {
         let open = switch_target.get().is_some();
         if open && previous != Some(true) {
-            focus_element("profile-switch-choice");
+            // The choice is rendered by this effect, so focus it in the next frame.
+            #[cfg(target_arch = "wasm32")]
+            request_animation_frame(move || crate::utils::focus::focus_element("profile-switch-choice"));
         }
         open
     });
@@ -776,7 +760,8 @@ pub fn EquipmentManager(
             .with_untracked(|list| list.iter().find(|p| p.profile_id == id).cloned());
         apply.run(item);
         set_select_value("equipment-profile-edit", &id);
-        focus_element("equipment-profile-edit");
+        #[cfg(target_arch = "wasm32")]
+        request_animation_frame(move || crate::utils::focus::focus_element("equipment-profile-edit"));
     };
 
     let locked = Signal::derive(move || busy.get() || pending.get().is_some());
@@ -835,7 +820,12 @@ pub fn EquipmentManager(
                         <Button variant=ButtonVariant::Secondary disabled=locked on:click=move |_| {
                             if let Some(id) = switch_target.get_untracked() { finish_switch(id); }
                         }>"Discard changes and switch"</Button>
-                        <Button variant=ButtonVariant::Secondary on:click=move |_| { switch_target.set(None); focus_element("equipment-profile-edit"); }>"Stay on profile"</Button>
+                        <Button variant=ButtonVariant::Secondary on:click=move |_| {
+                            switch_target.set(None);
+                            // The notice that held focus is removed; move to its successor after render.
+                            #[cfg(target_arch = "wasm32")]
+                            request_animation_frame(move || crate::utils::focus::focus_element("equipment-profile-edit"));
+                        }>"Stay on profile"</Button>
                     }.into_any())/>
                 </div>
             </Show>
