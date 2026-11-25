@@ -283,4 +283,10 @@ mod tests {
         assert_eq!(current_location("/recipes", "?q=x"), "/recipes?q=x");
         assert_eq!(current_location("/recipes", ""), "/recipes");
     }
+
+    #[test]
+    fn brews_href_points_at_the_recipe_local_brews_page() {
+        assert_eq!(brews_href("r1"), "/recipes/r1/brews");
+        assert_eq!(brews_href("a/b"), "/recipes/a%2Fb/brews");
+    }
 }

@@ -123,3 +123,69 @@ pub fn AuthLayout(
         </div>
     }
 }
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use crate::test_support::extract_between;
+
+    const LAYOUT: &str = include_str!("auth_layout.rs");
+    const KIT: &str = include_str!("../../components/brewery_kit.rs");
+    const KIT_CSS: &str = include_str!("../../../style/kit.css");
+    const TOKENS: &str = include_str!("../../../style/approved-tokens.css");
+
+    /// Production code only, so the assertions do not count this module's
+    /// own repeated brand literals.
+    const TEST_MOD_MARKER: &str = "#[cfg(all(test, feature = \"ssr\"))]\nmod tests {";
+    fn production_layout() -> &'static str {
+        extract_between(LAYOUT, "// SPDX-License-Identifier", TEST_MOD_MARKER)
+    }
+
+    /// The shared `BreweryBrand` function body, not the whole kit file: a
+    /// second unrelated `<img>` elsewhere must not satisfy this guard.
+    fn brewery_brand() -> &'static str {
+        extract_between(KIT, "pub fn BreweryBrand(", "\n}\n")
+    }
+
+    // The auth pages render the shared barley mark on desktop (inverse) and
+    // mobile, not the legacy purple placeholder assets. No selected browser
+    // test visits a signed-out page, so the ownership and token wiring are
+    // pinned here; the shared heading is the page's h1 landmark.
+    #[test]
+    fn auth_layout_uses_the_shared_barley_brand_for_desktop_and_mobile() {
+        let layout = production_layout();
+        assert_eq!(
+            layout.matches("<BreweryBrand").count(),
+            2,
+            "desktop and mobile must both render BreweryBrand"
+        );
+        assert!(
+            layout.contains("<BreweryBrand inverse=true/>"),
+            "the dark desktop panel needs the inverse wordmark"
+        );
+        assert!(
+            layout.contains("<BreweryBrand/>"),
+            "the mobile mark is not inverse"
+        );
+        assert!(
+            !layout.contains("krausen_full_logo"),
+            "auth must not load the legacy placeholder assets"
+        );
+        assert!(layout.contains("<h1 class=\"text-3xl font-display text-foreground mb-2\">"));
+        assert!(
+            brewery_brand().contains("src=\"/public/brewery-mark.svg\""),
+            "BreweryBrand must use the production mark"
+        );
+        assert!(KIT_CSS.contains(".k-brand--inverse { color: var(--k-color-auth-foreground); }"));
+
+        let light = extract_between(TOKENS, ":root {", "\n}");
+        assert!(
+            light.contains("--k-color-auth-foreground: var(--k-color-brand-foreground);"),
+            "the light auth foreground belongs to the light root palette"
+        );
+        let dark = extract_between(TOKENS, ":root.dark {", "\n}");
+        assert!(
+            dark.contains("--k-color-auth-foreground: var(--k-color-foreground);"),
+            "the dark auth foreground belongs to the dark root palette"
+        );
+    }
+}
