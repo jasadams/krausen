@@ -1359,6 +1359,79 @@ for (const width of [320, 390]) {
   });
 }
 
+// KRA-50 with UX-007: the preview context repeats the submitted batch volume even
+// when the validator rejected it. That rejected input is not an estimate and must
+// never appear beside the calculated figures in any summary state.
+for (const width of [320, 390]) {
+  test(`an invalid batch volume shows a dash for Into fermenter in every summary state at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await readyEstimateRecipe(page);
+    const summary = page.locator('.recipe-editor__preview-summary');
+    const metric = (label: string) => summary.locator('.k-metric').filter({ hasText: label }).locator('.k-metric__value');
+    const fermenter = metric('Into fermenter');
+    const status = summary.locator('[role="status"]');
+    // Bitterness is 0.0 because this recipe has no hops, which is a truthful
+    // estimate even when the batch is rejected (CALCULATIONS: no hops is zero IBU).
+    const estimated = ['Original gravity', 'Final gravity', 'Alcohol', 'Colour'].map(metric);
+    const allDashes = async () => {
+      const texts = await Promise.all([...estimated, fermenter].map(locator => locator.textContent()));
+      return texts.every(text => text?.startsWith('—'));
+    };
+    const batch = page.getByLabel('Batch volume (L)');
+
+    // A valid batch is a real estimate and keeps its value.
+    await expect(status).toHaveText('Ready');
+    await expect(fermenter).toHaveText('20.0L');
+
+    // Current: the accepted preview reports the negative batch as invalid, so its
+    // context's -5 is not a figure. Every metric, including Into fermenter, is a dash.
+    await batch.fill('-5');
+    await expect(status).toHaveText(/^Invalid:/);
+    expect(await allDashes(), '-5: a rejected batch volume is not shown as a current estimate').toBe(true);
+    await expect(fermenter).toHaveText('—L');
+    await expect(summary.getByRole('button', { name: 'Retry calculation' })).toHaveCount(0);
+
+    // Recalculating: the retained invalid preview stays behind the same rule, so
+    // another edit cannot bring its rejected -5 back beside the old figures.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.locator('#recipe-whirlpool').focus();
+    await page.keyboard.type('5');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    expect(await allDashes(), 'recalculating: the retained rejected batch volume is not shown').toBe(true);
+    await page.waitForTimeout(400);
+    expect(await allDashes(), 'recalculating: still a dash after the debounce').toBe(true);
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await expect(status).toHaveText(/^Invalid:/);
+    await page.unroute('**/leptos-api/preview_formulation*');
+
+    // Unavailable: while the draft still holds -5, a failed request settles
+    // without an estimate and without the context value the draft still carries.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+    await page.locator('#recipe-whirlpool').fill('6');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    expect(await allDashes(), 'unavailable: a rejected batch volume is not shown').toBe(true);
+    await page.unroute('**/leptos-api/preview_formulation*');
+
+    // Zero is invalid by the same validator verdict.
+    await batch.fill('0');
+    await expect(status).toHaveText(/^Invalid:/);
+    expect(await allDashes(), 'zero: the validator rejects the batch volume, so every figure is a dash').toBe(true);
+
+    // Malformed never reaches the validator, so there is no estimate to show.
+    await batch.fill('-');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+    expect(await allDashes(), 'malformed: no estimate, so every figure is a dash').toBe(true);
+
+    // A valid batch restores the figure unchanged.
+    await batch.fill('24');
+    await expect(status).toHaveText('Ready');
+    await expect(fermenter).toHaveText('24.0L');
+  });
+}
+
 test('a late preview response cannot replace a settled invalid estimate', async ({ page }) => {
   test.slow();
   await page.setViewportSize({ width: 320, height: 900 });

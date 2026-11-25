@@ -771,6 +771,23 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_cue_keeps_the_visible_reason_quiet_and_announces_politely() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! {
+                <BreweryStaleCue text=Signal::derive(|| Some("Out of date, recalculating".to_owned()))
+                    announce=Signal::derive(|| Some("Out of date, recalculating".to_owned()))
+                    testid="estimate-stale" announce_testid="estimate-announce"/>
+            }.to_html();
+            assert!(html.contains("class=\"k-stale__cue\""));
+            assert!(html.contains("aria-hidden=\"true\""));
+            assert!(html.contains("class=\"sr-only\""));
+            assert!(html.contains("role=\"status\""));
+            assert_eq!(html.matches("Out of date, recalculating").count(), 2);
+        });
+    }
+
+    #[test]
     fn a_stale_estimate_hides_its_controls_from_assistive_technology() {
         let owner = Owner::new();
         owner.with(|| {
