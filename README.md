@@ -71,9 +71,9 @@ only, with a throwaway database on a Docker volume and test-only secrets:
 scripts/dev/krausen-dev build      # image; BuildKit caches reuse crates, compiled cache is per checkout
 scripts/dev/krausen-dev up         # fresh empty database and server; the e2e global setup signs up local@localhost
 scripts/dev/krausen-dev check      # fails unless 127.0.0.1 answers 200 and the LAN address does not
-eval "$(scripts/dev/krausen-dev env)"   # PATH shim, BASE_URL, KRAUSEN_E2E_DATABASE_PATH
+eval "$(scripts/dev/krausen-dev env)"   # this checkout's PATH shim, BASE_URL and database path
 scripts/dev/krausen-dev browsers   # Playwright headless-shell Chromium
-scripts/dev/krausen-dev down       # remove containers, the volume and the sqlite3 shim
+scripts/dev/krausen-dev down       # remove this checkout's containers, volume and sqlite3 shim
 ```
 
 The e2e helpers call `sqlite3 <path>`; with the exported `PATH` that goes to a helper
@@ -82,14 +82,30 @@ shared between the host and Docker's VM loses writes. `down` deletes the `sqlite
 shell that already ran the `env` exports needs `up` again (or a new shell) afterwards. For a native run set
 `BIND_ADDR=127.0.0.1` so the server listens on loopback only (default `0.0.0.0`).
 
+Every checkout gets one id: `KRAUSEN_BUILD_CACHE_ID` when set, otherwise a
+16-character hash of the checkout's absolute path. The default image tag is
+`krausen-dev:<id>`, the containers are `krausen-dev-server-<id>` and
+`krausen-dev-sqlite-<id>`, the database volume is `krausen-dev-data-<id>`, and
+the `sqlite3` shim lives under `~/.cache/krausen-dev/<id>/shim`. `KRAUSEN_DEV_IMAGE`
+and `KRAUSEN_DEV_STATE` still override the image tag and state directory. Set
+`KRAUSEN_BUILD_CACHE_ID` in the shell that runs both `build` and `up`, so the run
+uses the image it just built.
+
+The loopback port is `41465 + (cksum(id) % 1000)` unless `KRAUSEN_DEV_PORT` chooses
+one. It is stable for a checkout across `up`, `check` and `env`; when choosing a
+port explicitly, export `KRAUSEN_DEV_PORT` for `env` as well as `up`. If anything
+already holds the port, `up` fails and says so rather than silently choosing
+another one. Because the image, containers, volume, shim and port all belong to
+one checkout, two checkouts can `build` and `up` side by side, each server running
+its own image against its own database, and `down` in one leaves the other running.
+
 The image build keeps its cargo registry, git and compiled `/build/target` caches
-between builds, but every cache-mount id includes `KRAUSEN_BUILD_CACHE_ID`. The
-target directory must be per checkout so two images cannot link each other's code;
-the download caches are also per checkout because concurrent cold builds otherwise
-race while cargo unpacks the same crate. `krausen-dev` derives the id from the
-checkout's absolute path; set `KRAUSEN_BUILD_CACHE_ID` to override it. A raw
-`docker build` must pass `--build-arg KRAUSEN_BUILD_CACHE_ID=<unique value>`;
-without it the build fails with a clear error instead of silently sharing a cache.
+between builds, but every cache-mount id includes the same `KRAUSEN_BUILD_CACHE_ID`.
+The target directory must be per checkout so two images cannot link each other's
+code; the download caches are also per checkout because concurrent cold builds
+otherwise race while cargo unpacks the same crate. A raw `docker build` must pass
+`--build-arg KRAUSEN_BUILD_CACHE_ID=<unique value>`; without it the build fails
+with a clear error instead of silently sharing a cache.
 
 ## Running in Development
 
