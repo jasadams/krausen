@@ -249,5 +249,28 @@ mod tests {
             assert_missing(consumer, "class=\"k-step-group\"");
         }
         assert_contains(KIT, "class=\"k-step-group\"");
+
+        // One mobile breakpoint for touch sizing; layout follows the group's
+        // width through the container query. The compact grid is the default
+        // and `lh` keeps its em fallback for engines without it.
+        let step_css = &KIT_CSS[KIT_CSS.find(".k-step-group {").expect("step group styles")..];
+        let mut breakpoints = std::collections::BTreeSet::new();
+        for (index, _) in step_css.match_indices("@media (max-width: ") {
+            let rest = &step_css[index + "@media (max-width: ".len()..];
+            let end = rest.find("px)").expect("breakpoint width");
+            breakpoints.insert(&rest[..end]);
+        }
+        assert_eq!(
+            breakpoints,
+            std::collections::BTreeSet::from(["600"]),
+            "touch sizing must use one mobile breakpoint"
+        );
+        assert_contains(step_css, "@container (min-width: 40rem)");
+        let base = extract_between(step_css, ".k-step {", "@container");
+        assert_contains(
+            base,
+            "grid-template-columns: 1.25rem repeat(3, minmax(0, 1fr))",
+        );
+        assert_contains(step_css, "min-height: 3em; min-height: 2lh;");
     }
 }
