@@ -592,6 +592,13 @@ mod tests {
         draft.apply_validation(generation, Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] });
         assert!(draft.diagnostics_current());
         assert_eq!(first_invalid(&draft).map(|p| p.path), Some("batch_size_l".into()));
+        // The check is no longer trusted at the same generation (context loss, retry):
+        // the list is out of date as long as the estimate is cleared, and stays targetable.
+        draft.clear_readiness();
+        assert!(!draft.diagnostics_current());
+        assert_eq!(first_invalid(&draft).map(|p| p.path), Some("batch_size_l".into()));
+        assert!(draft.apply_validation(generation, Validation { state: Readiness::Invalid, diagnostics: vec![diag("batch_size_l", "negative", Readiness::Invalid)] }));
+        assert!(draft.diagnostics_current(), "a settled check at this generation makes it current again");
         draft.edit(|doc| doc.title = "moved on".into());
         assert!(!draft.diagnostics_current());
         assert_eq!(draft.diagnostics().len(), 1, "still shown, marked out of date");

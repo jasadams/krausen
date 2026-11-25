@@ -275,9 +275,11 @@ impl RecipeDraft {
         self.readiness.filter(|(generation, _)| *generation == self.generation).map(|(_, state)| state)
     }
     /// Whether the retained diagnostics describe the draft as it is now. False once
-    /// the draft has moved on and no check has run yet.
+    /// the draft has moved on and no check has run yet, and also while the check that
+    /// produced them is no longer trusted (`clear_readiness`: context loss or retry at
+    /// the same generation), for as long as the estimate stays cleared.
     pub fn diagnostics_current(&self) -> bool {
-        self.diagnostics_generation == self.generation
+        self.diagnostics_generation == self.generation && self.readiness().is_some()
     }
     /// The last settled server diagnostics, retained across edits so the summary
     /// keeps its shape while the brewer types; readiness stays generation-scoped.
