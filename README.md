@@ -68,7 +68,7 @@ benchmarked or promised by the design review.
 only, with a throwaway database on a Docker volume and test-only secrets:
 
 ```bash
-scripts/dev/krausen-dev build      # image; BuildKit cache mounts reuse compiled crates
+scripts/dev/krausen-dev build      # image; BuildKit caches reuse crates, compiled cache is per checkout
 scripts/dev/krausen-dev up         # fresh empty database and server; the e2e global setup signs up local@localhost
 scripts/dev/krausen-dev check      # fails unless 127.0.0.1 answers 200 and the LAN address does not
 eval "$(scripts/dev/krausen-dev env)"   # PATH shim, BASE_URL, KRAUSEN_E2E_DATABASE_PATH
@@ -81,6 +81,15 @@ container next to the server. Do not open the database file from the host: a SQL
 shared between the host and Docker's VM loses writes. `down` deletes the `sqlite3` shim, so a
 shell that already ran the `env` exports needs `up` again (or a new shell) afterwards. For a native run set
 `BIND_ADDR=127.0.0.1` so the server listens on loopback only (default `0.0.0.0`).
+
+The image build keeps its cargo registry, git and compiled `/build/target` caches
+between builds, but every cache-mount id includes `KRAUSEN_BUILD_CACHE_ID`. The
+target directory must be per checkout so two images cannot link each other's code;
+the download caches are also per checkout because concurrent cold builds otherwise
+race while cargo unpacks the same crate. `krausen-dev` derives the id from the
+checkout's absolute path; set `KRAUSEN_BUILD_CACHE_ID` to override it. A raw
+`docker build` must pass `--build-arg KRAUSEN_BUILD_CACHE_ID=<unique value>`;
+without it the build fails with a clear error instead of silently sharing a cache.
 
 ## Running in Development
 

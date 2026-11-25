@@ -49,6 +49,9 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64
+          # One fresh CI VM with one checkout and no exported mount contents: a constant id keeps the compile layer cacheable.
+          build-args: |
+            KRAUSEN_BUILD_CACHE_ID=ci-release
           push: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
           tags: ghcr.io/jasadams/krausen:${{ github.event_name == 'push' && github.ref_name || github.sha }}
           cache-from: type=gha,scope=krausen-image
