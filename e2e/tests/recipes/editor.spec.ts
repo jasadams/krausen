@@ -3746,6 +3746,9 @@ test('diagnostics from an earlier draft stay marked out of date when access is r
     await page.clock.runFor(300);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
     await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+    // The cue is not a live region: nothing was announced on this path.
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual([]);
   } finally { await page.unrouteAll({ behavior: 'wait' }); }
 });
 
