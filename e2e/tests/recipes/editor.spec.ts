@@ -2765,8 +2765,11 @@ test('a revoked session cannot read the retained draft until reauthentication', 
   const userId = getDefaultUserId();
   // Sign out everywhere: advance the cutoff and revoke the refresh tokens, so the
   // server cannot silently refresh the session either.
-  db.exec(`UPDATE users SET sessions_valid_from = ${Date.now() * 1000} WHERE user_id = '${userId}'`);
-  db.exec(`UPDATE refresh_tokens SET is_active = 0 WHERE user_id = '${userId}'`);
+  // One transaction on the database's own clock: the editor's preview recalculation
+  // can refresh the session at any moment, and a refresh that lands between two
+  // separate statements (or between reading the host clock and writing it) mints a
+  // token newer than the cutoff, which stays valid and defeats the revocation.
+  db.exec(`BEGIN IMMEDIATE; UPDATE users SET sessions_valid_from = CAST(unixepoch('subsec') * 1000000 AS INTEGER) WHERE user_id = '${userId}'; UPDATE refresh_tokens SET is_active = 0 WHERE user_id = '${userId}'; COMMIT;`);
   walCheckpoint();
   const other = await page.context().newPage();
   await other.goto('/recipe-editor/new');
@@ -2775,8 +2778,16 @@ test('a revoked session cannot read the retained draft until reauthentication', 
   // The newly opened route can be redirected by the shared authentication
   // boundary. The existing original-scope editor owns the held draft notice.
   await page.bringToFront();
+  // Nothing else is guaranteed to ask the server again after the revocation (the
+  // editor's own recalculation may have finished just before it, and bringToFront
+  // raises no focus event when the browser already treats this window as active),
+  // so raise the window focus event the editor's access recheck listens for.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Session expired', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry check', exact: true })).toBeVisible();
+  // The shared authentication boundary redirects the new window to sign-in; let that
+  // navigation finish before signing in there, or the two navigations abort each other.
+  await expect(other).toHaveURL(/\/login/);
   await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await other.goto('/recipe-editor/new');
   await expect(other.getByText('A retained draft is available')).toBeVisible();
