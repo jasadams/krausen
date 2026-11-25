@@ -5,6 +5,20 @@ FROM rust:1.98-bookworm@sha256:c49256cbe5ea0188bc658a689500d70c41eb51f009a7a7be2
 ARG CARGO_BUILD_JOBS=4
 ARG VERIFY_BUILD_LIMITS=0
 ARG LIMIT_CHECK_NONCE=0
+# Required: identifies this checkout's build caches (see the cache mounts below).
+# Two checkouts must never share a target directory, because one image can then
+# link the other checkout's compiled code. They must not share the cargo download
+# caches either: concurrent cold builds race while cargo unpacks the same crate.
+# scripts/dev/krausen-dev derives the id from the checkout path and CI passes its
+# own id; a plain docker build must pass
+# --build-arg KRAUSEN_BUILD_CACHE_ID=<unique value>. There is deliberately no
+# shared default: missing means fail here instead of silently sharing a cache.
+ARG KRAUSEN_BUILD_CACHE_ID
+RUN test -n "$KRAUSEN_BUILD_CACHE_ID" || { \
+      echo 'error: KRAUSEN_BUILD_CACHE_ID is required so compiled output is not shared between checkouts.' >&2; \
+      echo 'error: pass --build-arg KRAUSEN_BUILD_CACHE_ID=<unique per checkout or build>; scripts/dev/krausen-dev sets it for you.' >&2; \
+      exit 1; \
+    }
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 # Coordinated local builds can fail closed before compilation if limits vanish.
 RUN if [ "$VERIFY_BUILD_LIMITS" = 1 ]; then \
@@ -43,11 +57,15 @@ RUN npm ci --prefix crates/krausen-ui --ignore-scripts --no-audit --no-fund
 ENV PATH="/build/crates/krausen-ui/node_modules/.bin:${PATH}"
 RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
 # Cache mounts keep the cargo registry and compiled crates between builds, so a
-# rebuild after a small change recompiles only what changed. The binary is copied
-# out because the cache mount is not part of the image.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+# rebuild after a small change recompiles only what changed. Every cache id
+# includes KRAUSEN_BUILD_CACHE_ID: concurrent cold builds sharing the registry
+# mount race while cargo unpacks the same crate, and a shared target directory can
+# link another checkout's code. Each checkout therefore owns its registry, git and
+# target caches. The binary is copied out because the cache mount is not part of
+# the image.
+RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=krausen-git-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/git \
+    --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target \
     cd crates/krausen-ui && trunk build --release --locked \
     && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \

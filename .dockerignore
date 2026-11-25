@@ -1,5 +1,8 @@
 .git
 .github
+# Agent worktrees under .claude/worktrees are separate checkouts; a build must
+# not copy another checkout's working tree into its context.
+.claude
 target
 **/target
 **/node_modules

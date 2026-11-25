@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local, isolated Krausen for development and Playwright runs.
 #
-#   scripts/dev/krausen-dev build      build the image (BuildKit cache mounts; reuses compiled crates)
+#   scripts/dev/krausen-dev build      build the image (BuildKit cache mounts; compiled cache keyed per checkout)
 #   scripts/dev/krausen-dev up         fresh disposable database + server on 127.0.0.1 only
 #   scripts/dev/krausen-dev check      prove 127.0.0.1 answers 200 and the LAN address does not
 #   scripts/dev/krausen-dev env        print the exports the e2e suite needs (use: eval "$(... env)")
@@ -22,6 +22,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PORT="${KRAUSEN_DEV_PORT:-41465}"
 . "$ROOT/e2e/scripts/test-env.sh"
 
+# The build caches must belong to this checkout only: a shared target directory can
+# link another worktree's code into the image, and a shared registry races when
+# concurrent builds unpack the same crate. cmd_build hashes the absolute checkout
+# path so every checkout gets a stable, distinct id. Set KRAUSEN_BUILD_CACHE_ID to
+# override it (CI supplies its own; a raw docker build must do the same).
+
 IMAGE="${KRAUSEN_DEV_IMAGE:-krausen-dev:local}"
 STATE="${KRAUSEN_DEV_STATE:-$HOME/.cache/krausen-dev}"
 SERVER=krausen-dev-server
@@ -35,7 +41,12 @@ need_docker() { docker info >/dev/null 2>&1 || die "Docker is not running"; }
 
 cmd_build() {
   need_docker
-  DOCKER_BUILDKIT=1 docker build --build-arg CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" -t "$IMAGE" "$ROOT"
+  local cache_key
+  cache_key="${KRAUSEN_BUILD_CACHE_ID:-$(printf '%s' "$ROOT" | git hash-object --stdin | cut -c1-16)}"
+  DOCKER_BUILDKIT=1 docker build \
+    --build-arg CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+    --build-arg KRAUSEN_BUILD_CACHE_ID="$cache_key" \
+    -t "$IMAGE" "$ROOT"
 }
 
 cmd_down() {
