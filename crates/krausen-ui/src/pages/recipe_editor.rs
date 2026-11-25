@@ -2013,9 +2013,11 @@ fn PreviewMetrics(
     let style = if reference_style_current { preview.as_ref().and_then(|preview| preview.style.as_ref()) } else { None };
     let comparison = if reference_style_current { preview.as_ref().and_then(|preview| preview.style_comparison.as_ref()) } else { None };
     // The fermenter batch is the draft that was actually calculated; it is a
-    // different quantity from total water, which belongs to the water plan.
+    // different quantity from total water, which belongs to the water plan. The
+    // preview's context repeats the submitted value even when the validator
+    // rejected it, so presentation follows the validator's verdict (UX-007).
     let fermenter = current
-        .then(|| preview.as_ref().and_then(|preview| preview.context.as_ref().and_then(|context| context.draft.batch_size_l)))
+        .then(|| preview.as_ref().and_then(|preview| crate::recipe_diagnostics::estimated_batch_volume(&preview.validation, preview.context.as_ref().and_then(|context| context.draft.batch_size_l))))
         .flatten();
     let value = |pick: fn(&krausen_types::formulation::Targets) -> Option<f64>| {
         current.then(|| preview.as_ref().and_then(|preview| pick(&preview.targets))).flatten()
