@@ -1109,6 +1109,26 @@ test('a failure after the announcement is announced once instead of leaving the 
   await page.unroute('**/leptos-api/preview_formulation*');
 });
 
+// The out-of-date cue sits under the section title on a narrow panel. When its text
+// wraps (a longer font, a translation) it must still not push the fields below it.
+// The wrap is forced with letter spacing, so the test does not depend on platform fonts.
+test('the out-of-date cue does not move the fields below it when its text wraps at 320px', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await recipeWithNumbers(page);
+  const mash = page.locator('#recipe-section-mash');
+  const whirlpool = page.locator('#recipe-whirlpool');
+  await page.addStyleTag({ content: '.k-stale__cue { letter-spacing: 0.08em; }' });
+  await whirlpool.focus();
+  const offset = async () => (await whirlpool.boundingBox())!.y - (await mash.boundingBox())!.y;
+  const top = await offset();
+  await page.keyboard.type('-');
+  const cue = page.getByTestId('estimate-stale');
+  await expect(cue).toHaveText('Estimate unavailable until the inputs are valid');
+  const lineHeight = await cue.evaluate(el => parseFloat(getComputedStyle(el).lineHeight));
+  expect((await cue.boundingBox())!.height, 'the cue wrapped onto a second line').toBeGreaterThan(lineHeight * 1.5);
+  expect(Math.abs((await offset()) - top), 'focused input moved when the wrapped cue appeared').toBeLessThan(0.25);
+});
+
 for (const width of [1440, 601, 390, 320]) {
   test(`an invalid or unavailable estimate shows dashes and its own outcome at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1755,6 +1775,28 @@ test('the chilling note states the effective chilling and the model limitation',
   await page.getByRole('button', { name: 'Retry calculation' }).click();
   await expect(note).toContainText('Effective chilling: not specified.');
 });
+
+// A label that wraps further than its neighbours (a longer font, a larger text size, a
+// translation) must not move one control away from the others. The wrap is forced
+// with letter spacing, so the test does not depend on which fonts a platform has.
+// (Below 28rem every label already reserves two lines, which the 320px estimate test covers.)
+for (const { width, spacing } of [{ width: 1280, spacing: '0.3em' }, { width: 1100, spacing: '0.3em' }]) {
+  test(`process step controls stay level when one measurement label wraps further at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const mash = page.locator('#recipe-section-mash');
+    await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+    const step = mash.getByRole('group', { name: /^Mash step 1 of 1/ });
+    const [time, temperature, volume] = ['Time (min)', 'Temperature (°C)', 'Volume (L)'].map(label => step.getByLabel(label, { exact: true }));
+    const label = step.locator('.k-field__label', { hasText: 'Temperature (°C)' });
+    const naturalHeight = (await label.boundingBox())!.height;
+    await page.addStyleTag({ content: `#recipe-section-mash .k-step > :nth-child(5) > .k-field__label { letter-spacing: ${spacing}; }` });
+    await expect.poll(async () => (await label.boundingBox())!.height, 'the forced wrap takes effect').toBeGreaterThan(naturalHeight + 1);
+    const tops = await Promise.all([time, temperature, volume].map(async input => (await input.boundingBox())!.y));
+    expect(Math.max(...tops) - Math.min(...tops), `input tops ${tops}`).toBeLessThan(0.5);
+  });
+}
 
 test('the process kit example shows the step row, stale outcomes and out-of-flow live line', async ({ page }) => {
   await page.goto('/design-system');
