@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, openAccount, openSettings, seedWorkspace, setAppearance, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultUserId, getDefaultWorkspaceId, loginUser, openAccount, openSettings, seedWorkspace, setAccountTheme, setAppearance, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
@@ -93,20 +95,26 @@ test('disposed initial recovery authorization cannot write into the retired edit
   const held = new Promise<void>(resolve => { release = resolve; });
   let seen!: () => void;
   const started = new Promise<void>(resolve => { seen = resolve; });
+  // Only the first request is held; later ones are not intercepted, so no handler
+  // is still fetching when the route is removed.
   await page.route('**/leptos-api/list_formulation_styles*', async route => {
     const response = await route.fetch();
     seen();
     await held;
     await route.fulfill({ response });
-  });
+  }, { times: 1 });
   try {
     await page.goto('/recipe-editor/new');
     await started;
     await openSettings(page);
     await expect(page).toHaveURL(/settings\/profile/);
+    // The held style response reaches the page when released; wait for that
+    // delivery itself (the Profile page may keep other requests open, so network
+    // idleness says nothing about it).
+    const delivered = page.waitForResponse(response => response.url().includes('/list_formulation_styles'));
     release();
+    await (await delivered).finished();
     await page.unrouteAll({ behavior: 'wait' });
-    await page.waitForLoadState('networkidle');
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     expect(errors).toEqual([]);
     await expect(page).toHaveURL(/settings\/profile/);
@@ -340,13 +348,15 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
   const started = new Promise<void>(resolve => { seen = resolve; });
   let completed!: () => void;
   const finished = new Promise<void>(resolve => { completed = resolve; });
+  // Only the first request is held. Later ones are not intercepted at all, so no
+  // handler is still fetching when the route is removed at the end of the test.
   await page.route('**/leptos-api/get_user_context*', async route => {
     const response = await route.fetch();
     seen();
     await held;
     await route.fulfill({ response });
     completed();
-  });
+  }, { times: 1 });
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await started;
@@ -357,7 +367,7 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
     await finished;
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(account).toBeFocused();
-  } finally { release(); }
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
@@ -1099,6 +1109,26 @@ test('a failure after the announcement is announced once instead of leaving the 
   await page.unroute('**/leptos-api/preview_formulation*');
 });
 
+// The out-of-date cue sits under the section title on a narrow panel. When its text
+// wraps (a longer font, a translation) it must still not push the fields below it.
+// The wrap is forced with letter spacing, so the test does not depend on platform fonts.
+test('the out-of-date cue does not move the fields below it when its text wraps at 320px', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await recipeWithNumbers(page);
+  const mash = page.locator('#recipe-section-mash');
+  const whirlpool = page.locator('#recipe-whirlpool');
+  await page.addStyleTag({ content: '.k-stale__cue { letter-spacing: 0.08em; }' });
+  await whirlpool.focus();
+  const offset = async () => (await whirlpool.boundingBox())!.y - (await mash.boundingBox())!.y;
+  const top = await offset();
+  await page.keyboard.type('-');
+  const cue = page.getByTestId('estimate-stale');
+  await expect(cue).toHaveText('Estimate unavailable until the inputs are valid');
+  const lineHeight = await cue.evaluate(el => parseFloat(getComputedStyle(el).lineHeight));
+  expect((await cue.boundingBox())!.height, 'the cue wrapped onto a second line').toBeGreaterThan(lineHeight * 1.5);
+  expect(Math.abs((await offset()) - top), 'focused input moved when the wrapped cue appeared').toBeLessThan(0.25);
+});
+
 for (const width of [1440, 601, 390, 320]) {
   test(`an invalid or unavailable estimate shows dashes and its own outcome at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1746,6 +1776,28 @@ test('the chilling note states the effective chilling and the model limitation',
   await expect(note).toContainText('Effective chilling: not specified.');
 });
 
+// A label that wraps further than its neighbours (a longer font, a larger text size, a
+// translation) must not move one control away from the others. The wrap is forced
+// with letter spacing, so the test does not depend on which fonts a platform has.
+// (Below 28rem every label already reserves two lines, which the 320px estimate test covers.)
+for (const { width, spacing } of [{ width: 1280, spacing: '0.3em' }, { width: 1100, spacing: '0.3em' }]) {
+  test(`process step controls stay level when one measurement label wraps further at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const mash = page.locator('#recipe-section-mash');
+    await mash.getByRole('button', { name: 'Add step', exact: true }).click();
+    const step = mash.getByRole('group', { name: /^Mash step 1 of 1/ });
+    const [time, temperature, volume] = ['Time (min)', 'Temperature (°C)', 'Volume (L)'].map(label => step.getByLabel(label, { exact: true }));
+    const label = step.locator('.k-field__label', { hasText: 'Temperature (°C)' });
+    const naturalHeight = (await label.boundingBox())!.height;
+    await page.addStyleTag({ content: `#recipe-section-mash .k-step > :nth-child(5) > .k-field__label { letter-spacing: ${spacing}; }` });
+    await expect.poll(async () => (await label.boundingBox())!.height, 'the forced wrap takes effect').toBeGreaterThan(naturalHeight + 1);
+    const tops = await Promise.all([time, temperature, volume].map(async input => (await input.boundingBox())!.y));
+    expect(Math.max(...tops) - Math.min(...tops), `input tops ${tops}`).toBeLessThan(0.5);
+  });
+}
+
 test('the process kit example shows the step row, stale outcomes and out-of-flow live line', async ({ page }) => {
   await page.goto('/design-system');
   const step = page.getByRole('group', { name: 'Mash step 1 of 1, Saccharification' });
@@ -1927,7 +1979,7 @@ test('shared preview exposes style ranges and rejects an older response', async 
 
 test('editor controls remain usable on mobile and in dark mode', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+  setAccountTheme('dark');
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('heading', { name: 'Recipe editor' })).toBeVisible();
   await expect(page.locator('html')).toHaveClass(/dark/);
@@ -2045,8 +2097,9 @@ test('editor state controls keep raw labels and focus across representative pres
   ]) {
     await page.setViewportSize({ width: setting.width, height: setting.height });
     await page.emulateMedia({ reducedMotion: setting.fallback ? 'reduce' : 'no-preference' });
-    await page.addInitScript(theme => localStorage.setItem('krausen-theme', theme), setting.theme);
+    setAccountTheme(setting.theme as 'light' | 'dark');
     await page.goto('/recipe-editor/new');
+    await expect(page.locator('html')).toHaveClass(setting.theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     if (setting.fallback) {
       // Controlled browser-font fallback, not an OS zoom/device/AT claim.
@@ -2081,11 +2134,10 @@ test('showcase kit supports themes, screen sizes and keyboard dialogs', async ({
   for (const theme of ['light', 'dark']) {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(value => localStorage.setItem('krausen-theme', value), theme);
       await page.goto('/design-system');
       await expect(page.getByRole('heading', { name: 'Good design, on repeat.' })).toBeVisible();
-      // Existing login isolation initializes Light on navigation. Exercise the
-      // real appearance control and assert the actual theme, not stored intent.
+      // Each test starts from Light (beforeEach). Exercise the real appearance
+      // control and assert the actual theme.
       if (await page.locator('html').evaluate(element => element.classList.contains('dark')) !== (theme === 'dark')) {
         // Appearance is chosen in Profile; use the desktop shell for it.
         const restore = page.viewportSize()!;
@@ -2828,8 +2880,11 @@ test('a revoked session cannot read the retained draft until reauthentication', 
   const userId = getDefaultUserId();
   // Sign out everywhere: advance the cutoff and revoke the refresh tokens, so the
   // server cannot silently refresh the session either.
-  db.exec(`UPDATE users SET sessions_valid_from = ${Date.now() * 1000} WHERE user_id = '${userId}'`);
-  db.exec(`UPDATE refresh_tokens SET is_active = 0 WHERE user_id = '${userId}'`);
+  // One transaction on the database's own clock: the editor's preview recalculation
+  // can refresh the session at any moment, and a refresh that lands between two
+  // separate statements (or between reading the host clock and writing it) mints a
+  // token newer than the cutoff, which stays valid and defeats the revocation.
+  db.exec(`BEGIN IMMEDIATE; UPDATE users SET sessions_valid_from = CAST(unixepoch('subsec') * 1000000 AS INTEGER) WHERE user_id = '${userId}'; UPDATE refresh_tokens SET is_active = 0 WHERE user_id = '${userId}'; COMMIT;`);
   walCheckpoint();
   const other = await page.context().newPage();
   await other.goto('/recipe-editor/new');
@@ -2838,8 +2893,16 @@ test('a revoked session cannot read the retained draft until reauthentication', 
   // The newly opened route can be redirected by the shared authentication
   // boundary. The existing original-scope editor owns the held draft notice.
   await page.bringToFront();
+  // Nothing else is guaranteed to ask the server again after the revocation (the
+  // editor's own recalculation may have finished just before it, and bringToFront
+  // raises no focus event when the browser already treats this window as active),
+  // so raise the window focus event the editor's access recheck listens for.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Session expired', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry check', exact: true })).toBeVisible();
+  // The shared authentication boundary redirects the new window to sign-in; let that
+  // navigation finish before signing in there, or the two navigations abort each other.
+  await expect(other).toHaveURL(/\/login/);
   await loginUser(other, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await other.goto('/recipe-editor/new');
   await expect(other.getByText('A retained draft is available')).toBeVisible();

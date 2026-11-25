@@ -562,6 +562,8 @@
 .k-panel--stacked > .k-panel__body { display: grid; gap: var(--k-space-4); container-type: inline-size; }
 /* A section header that carries a stale cue keeps the title line plus one cue line where the cue wraps below the title, so it never pushes later fields. */
 @container (max-width: 34rem) { .k-section__header:has(> .k-stale__cue) { min-height: calc(var(--k-font-body) * 1.5 + var(--k-space-3) + var(--k-font-sm) * 1.25); align-content: start; } }
+/* On the narrowest panel the cue text itself can wrap (a longer font, a translation), so it keeps two cue lines. */
+@container (max-width: 20rem) { .k-section__header:has(> .k-stale__cue) { min-height: calc(var(--k-font-body) * 1.5 + var(--k-space-3) + var(--k-font-sm) * 1.25 * 2); } }
 .k-panel--stacked .k-section__header h3 { font-size: var(--k-font-body); }
 /* Fields in a row that reserve no space for messages (a message pushes what follows). */
 .k-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--k-space-3) var(--k-space-4); align-items: start; }
@@ -576,23 +578,36 @@
    working row) puts name and Remove on row 1 and the measurements on row 2; a
    group at least 40rem wide puts everything on one row. */
 .k-step-group { min-width: 0; container-type: inline-size; }
-.k-step { display: grid; grid-template-columns: 1.25rem repeat(3, minmax(0, 1fr)); align-items: start; column-gap: var(--k-space-3); row-gap: var(--k-space-1); padding: var(--k-space-2) 0; border-bottom: 1px solid var(--k-color-border); }
-.k-step > :nth-child(1) { grid-row: 1; }
-.k-step > :nth-child(2) { grid-column: 2 / span 2; grid-row: 1; }
-.k-step > :nth-child(3) { grid-column: 4; grid-row: 1; }
-.k-step > :nth-child(4) { grid-column: 2; grid-row: 2; }
-.k-step > :nth-child(5) { grid-column: 3; grid-row: 2; }
-.k-step > :nth-child(6) { grid-column: 4; grid-row: 2; }
+.k-step { display: grid; grid-template-columns: 1.25rem repeat(3, minmax(0, 1fr)); align-items: start; column-gap: var(--k-space-3); row-gap: 0; padding: var(--k-space-2) 0; border-bottom: 1px solid var(--k-color-border); }
+.k-step > :nth-child(2) { grid-column: 2 / span 2; }
+.k-step > :nth-child(3) { grid-column: 4; }
+.k-step > :nth-child(4) { grid-column: 2; }
+.k-step > :nth-child(5) { grid-column: 3; }
+.k-step > :nth-child(6) { grid-column: 4; }
 .k-step__index { display: flex; align-items: center; min-height: var(--k-control-height); color: var(--k-color-muted); font-size: var(--k-font-sm); font-variant-numeric: tabular-nums; }
 .k-step__action .k-button { min-height: var(--k-control-height); }
 @container (min-width: 40rem) {
-  .k-step { grid-template-columns: 1.25rem minmax(0, 2fr) auto repeat(3, minmax(0, 1fr)); row-gap: 0; }
-  .k-step > :nth-child(n) { grid-column: auto; grid-row: auto; }
+  .k-step { grid-template-columns: 1.25rem minmax(0, 2fr) auto repeat(3, minmax(0, 1fr)); }
+  .k-step > :nth-child(n) { grid-column: auto; }
 }
 /* Where three measurement labels cannot share a line, every label reserves two
    (3em where `lh` is unknown) so the inputs stay level. */
 @container (max-width: 28rem) {
   .k-step > :nth-child(n+4):nth-child(-n+6) > .k-field__label { min-height: 3em; min-height: 2lh; }
+}
+/* Whatever a label wraps to (a longer font, a larger text size, a translation), the
+   controls of one row stay level: each cell takes three rows of the step's grid
+   (label, control, message) and those rows are shared by the cells of the row, so
+   the tallest label sets the control row for all of them, and a message under one
+   field only grows its own row. The gaps between the parts are margins, because an
+   empty message row must not leave a gap. */
+.k-step > :nth-child(n) { display: grid; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+.k-step > :nth-child(-n+3) { grid-row: 1 / span 3; }
+.k-step > :nth-child(n+4):nth-child(-n+6) { grid-row: 4 / span 3; padding-top: var(--k-space-1); }
+.k-step > :nth-child(n) > .k-field__label { margin-bottom: var(--k-space-1); }
+.k-step > :nth-child(n) > :is(.k-field__hint, .k-field__error) { margin-top: var(--k-space-1); }
+@container (min-width: 40rem) {
+  .k-step > :nth-child(n+1):nth-child(-n+6) { grid-row: 1 / span 3; padding-top: 0; }
 }
 /* Touch: whole 44px targets on phones, as the ingredient rows. */
 @media (max-width: 600px) {

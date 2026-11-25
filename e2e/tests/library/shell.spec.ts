@@ -1,12 +1,12 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import {
   DEFAULT_TEST_USER, getDefaultUserId, getDefaultWorkspaceId, db, loginUser, openAccount,
-  seedWorkspace, setAppearance, walCheckpoint,
+  seedWorkspace, setAccountTheme, setAppearance, walCheckpoint,
 } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.addInitScript(() => localStorage.setItem('krausen-theme', 'light'));
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await page.goto('/recipes');
 });
@@ -102,8 +102,8 @@ for (const theme of ['light', 'dark']) {
     await page.goto('/design-system');
     await expect(page).toHaveURL(/\/design-system$/);
     await expect(page.getByRole('heading', { name: 'Good design, on repeat.' })).toBeVisible();
-    // Full navigation reapplies this spec's light init preference. Establish the
-    // requested theme through the real appearance control on the showcase too.
+    // Establish the requested theme through the real appearance control on the
+    // showcase too.
     if (theme === 'dark') await setAppearance(page, 'dark');
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     // Exercise a real shared kit field, not just the route's static heading.

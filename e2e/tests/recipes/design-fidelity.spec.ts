@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, loginUser, setAccountTheme } from '../../helpers/test-helpers';
 
 // Equivalent ingredients, not fixed prototype calculation results.
 const munichHelles = `<RECIPES><RECIPE><NAME>Munich Helles</NAME><VERSION>1</VERSION><BATCH_SIZE>20.5</BATCH_SIZE><BOIL_TIME>60</BOIL_TIME><EFFICIENCY>78</EFFICIENCY><FERMENTABLES><FERMENTABLE><NAME>Joe White Signature Lager</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>3.9</AMOUNT><YIELD>80</YIELD><COLOR>1.8</COLOR></FERMENTABLE><FERMENTABLE><NAME>Weyermann Munich I</NAME><VERSION>1</VERSION><TYPE>Grain</TYPE><AMOUNT>0.3</AMOUNT><YIELD>78</YIELD><COLOR>7.1</COLOR></FERMENTABLE></FERMENTABLES><HOPS><HOP><NAME>Hallertau Mittelfrüh</NAME><VERSION>1</VERSION><ALPHA>3.8</ALPHA><AMOUNT>0.025</AMOUNT><USE>Boil</USE><TIME>60</TIME></HOP><HOP><NAME>Hallertau Mittelfrüh</NAME><VERSION>1</VERSION><ALPHA>3.8</ALPHA><AMOUNT>0.025</AMOUNT><USE>Boil</USE><TIME>15</TIME></HOP></HOPS><YEASTS><YEAST><NAME>Fermentis S-23</NAME><VERSION>1</VERSION><TYPE>Lager</TYPE><FORM>Dry</FORM><AMOUNT>0.011</AMOUNT></YEAST></YEASTS><STYLE><NAME>Munich Helles</NAME><VERSION>1</VERSION><STYLE_GUIDE>BJCP 2021</STYLE_GUIDE></STYLE></RECIPE></RECIPES>`;
@@ -8,6 +8,8 @@ const munichHelles = `<RECIPES><RECIPE><NAME>Munich Helles</NAME><VERSION>1</VER
 // recovery, preview, start-brew and keyboard regression suites.
 test.describe('approved recipe and shared kit composition', () => {
   test.beforeEach(async ({ page }) => {
+    // The saved appearance is shared account state: start every test from Light.
+    setAccountTheme('light');
     await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   });
 
@@ -32,8 +34,9 @@ test.describe('approved recipe and shared kit composition', () => {
     for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
       test(`${theme} ${viewport.width}px`, async ({ page }, testInfo) => {
         await page.setViewportSize(viewport);
-        await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
+        setAccountTheme(theme);
         await page.goto('/design-system');
+        await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
         await expect(page.getByRole('tab', { name: 'Recipe' })).toBeVisible();
         await page.getByRole('tab', { name: 'Recipe' }).focus();
         await page.keyboard.press('ArrowRight');
@@ -74,8 +77,9 @@ test.describe('approved recipe and shared kit composition', () => {
       });
       test(`populated Munich Helles ${theme} ${viewport.width}px`, async ({ page }, testInfo) => {
         await page.setViewportSize(viewport);
-        await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
+        setAccountTheme(theme);
         await page.goto('/beerxml');
+        await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
         await page.getByLabel('Paste BeerXML').fill(munichHelles);
         await page.locator('#beerxml-colour').selectOption('srm');
         await page.locator('#beerxml-efficiency').selectOption('override');

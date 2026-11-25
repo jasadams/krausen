@@ -80,8 +80,9 @@ test('library navigation uses the shared dirty-editor guard', async ({ page }) =
 
 test('delayed historical revision responses cannot replace a new selection or survive context recheck', async ({ page }) => {
   test.setTimeout(60_000);
-  const a = `History A ${Date.now()}`;
-  const b = `History B ${Date.now()}`;
+  const suffix = Date.now();
+  const a = `History A ${suffix}`;
+  const b = `History B ${suffix}`;
   for (const title of [a, b]) {
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(title);
@@ -89,6 +90,8 @@ test('delayed historical revision responses cannot replace a new selection or su
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   }
   await page.goto('/recipes');
+  // The library lists oldest first, 50 at a time; narrow it to this test's two recipes.
+  await page.getByLabel('Search recipes').fill(`${suffix}`);
   await expect(page.getByRole('heading', { name: a })).toBeVisible();
   await expect(page.getByRole('heading', { name: b })).toBeVisible();
   let started!: () => void;
@@ -153,6 +156,8 @@ test('delayed legacy source responses respect selection and context recheck', as
   }
   walCheckpoint();
   await page.goto('/recipes');
+  // The library lists oldest first, 50 at a time; narrow it to this test's two recipes.
+  await page.getByLabel('Search recipes').fill(`${suffix}`);
   await expect(page.getByRole('heading', { name: a })).toBeVisible();
   await expect(page.getByRole('heading', { name: b })).toBeVisible();
   let started!: () => void;
@@ -261,8 +266,9 @@ test('denied archive hides displayed history and rejects a late revision respons
 
 test('a stale denied revision response still redacts the current selection', async ({ page }) => {
   test.setTimeout(60_000);
-  const a = `Denied stale A ${Date.now()}`;
-  const b = `Denied stale B ${Date.now()}`;
+  const suffix = Date.now();
+  const a = `Denied stale A ${suffix}`;
+  const b = `Denied stale B ${suffix}`;
   for (const title of [a, b]) {
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(title);
@@ -270,6 +276,8 @@ test('a stale denied revision response still redacts the current selection', asy
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
   }
   await page.goto('/recipes');
+  // The library lists oldest first, 50 at a time; narrow it to this test's two recipes.
+  await page.getByLabel('Search recipes').fill(`${suffix}`);
   await expect(page.getByRole('heading', { name: a })).toBeVisible();
   await expect(page.getByRole('heading', { name: b })).toBeVisible();
   let started!: () => void;

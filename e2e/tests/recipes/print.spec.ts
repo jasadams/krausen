@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_TEST_USER, loginUser } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, loginUser, setAccountTheme } from '../../helpers/test-helpers';
 import { expectTabContainment } from '../../helpers/focus-boundary';
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
   await page.addInitScript(() => {
     (window as unknown as { __printed?: boolean }).__printed = false;
@@ -212,7 +214,7 @@ test('a delayed summary denial redacts a mounted editor even after a draft edit'
 });
 
 test('print uses the light paper palette in dark mode and the print class never leaks', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+  setAccountTheme('dark');
   await page.goto('/recipe-editor/new');
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByLabel('Recipe name', { exact: true }).fill('Dark print');
@@ -361,7 +363,7 @@ test('the page behind the preview stays inert when the editor remounts the previ
 
 for (const [width, height] of [[320, 568], [390, 844]]) {
   test(`the print preview fits ${width}x${height} in dark mode with reachable Back and paper palette`, async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('krausen-theme', 'dark'));
+    setAccountTheme('dark');
     await page.setViewportSize({ width, height });
     await importRecipe(page, SIMPLE_RECIPE(`Print narrow ${width} ${Date.now()}`));
     await openPrint(page);

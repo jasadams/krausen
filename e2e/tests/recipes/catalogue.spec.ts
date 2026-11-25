@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
-import { DEFAULT_TEST_USER, db, loginUser, setAppearance, sqlText } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, db, loginUser, setAccountTheme, setAppearance, sqlText } from '../../helpers/test-helpers';
 
 async function waitForCatalogueSearch(page: Page) {
   await page.waitForResponse(response => {
@@ -15,6 +15,8 @@ async function waitForCatalogueSearch(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // The saved appearance is shared account state: start every test from Light.
+  setAccountTheme('light');
   await loginUser(page, DEFAULT_TEST_USER.email, DEFAULT_TEST_USER.password);
 });
 
@@ -619,9 +621,10 @@ test('an unavailable create keeps the pending command locked and retries identic
     return result.Entries?.items?.some((entry: any) => entry.entry_id === requests[0].entry_id) === true;
   });
   await create.getByRole('button', { name: 'Retry previous request' }).click();
-  await retrySearch;
-  await page.unroute('**/leptos-api/execute_ingredient_command*');
-  await page.waitForLoadState('networkidle');
+  // Wait for the delivery of the response the test bound to, then for the
+  // route handlers to finish; the row assertion below waits for the render.
+  await (await retrySearch).finished();
+  await page.unrouteAll({ behavior: 'wait' });
   await expect(picker.getByRole('button', { name: entryName })).toHaveCount(1);
   expect(requests).toHaveLength(2);
   expect(requests[1].entry_id).toBe(requests[0].entry_id);
@@ -819,11 +822,13 @@ async function kra37DialogSnapshot(page: Page, id: string) {
 test('shared dialogs center the real fermentable picker after open scroll and resize', async ({ page }, testInfo) => {
   for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.addInitScript(value => localStorage.setItem('krausen-theme', value), theme);
     await page.goto('/recipe-editor/new');
-    // Existing login isolation can set Light. Use the actual appearance control.
+    // Each test starts from Light (beforeEach). Use the actual appearance control.
     await setAppearance(page, theme as 'light' | 'dark');
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+    // Returning from Profile remounts the editor, which hides its content while it
+    // verifies access; scroll only once that has finished.
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
     const opener = page.getByRole('button', { name: 'Add fermentable', exact: true });
     await opener.click();
     const picker = page.getByRole('dialog', { name: 'Build your grain bill', exact: true });
