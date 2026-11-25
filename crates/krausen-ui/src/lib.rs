@@ -15,6 +15,10 @@ pub mod utils;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+/// Cross-file recipe/showcase composition guards (test-only).
+#[cfg(all(test, feature = "ssr"))]
+mod recipe_composition;
+
 pub use app::App;
 
 /// Register all server functions with the Leptos runtime.
