@@ -1090,3 +1090,63 @@ fn CheckEmailView(
         </div>
     }
 }
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    /// This file's own source, for the signed-out form guard below. The
+    /// browser suite starts from an authenticated account, so no selected
+    /// runtime test visits /login or /signup; the server redirect tests cover
+    /// the routing, and these literals pin the controls it renders.
+    const SRC: &str = include_str!("login.rs");
+
+    /// Production code only, cutting off at this module's own declaration so
+    /// the assertions do not count their own literals.
+    const TEST_MOD_MARKER: &str = "#[cfg(all(test, feature = \"ssr\"))]\nmod tests {";
+    fn production_src() -> &'static str {
+        SRC.split(TEST_MOD_MARKER)
+            .next()
+            .expect("TEST_MOD_MARKER must be found in SRC")
+    }
+
+    #[track_caller]
+    fn assert_contains(haystack: &str, needle: &str) {
+        assert!(haystack.contains(needle), "missing {needle:?}");
+    }
+
+    // The signed-out entry point has to offer a complete password login and
+    // its two recovery paths; a missing control strands the visitor.
+    #[test]
+    fn signed_out_entry_offers_password_login_and_both_recovery_paths() {
+        let src = production_src();
+        for required in [
+            "id=\"login-email\"",
+            "type=\"email\"",
+            "id=\"login-password\"",
+            "type=\"password\"",
+            "button_type=\"submit\"",
+            "\"Sign In\"",
+            "\"Create an account\"",
+            "href=\"/account/recover\"",
+            "\"Can't sign in?\"",
+            "<AuthLayout title=title subtitle=subtitle>",
+        ] {
+            assert_contains(src, required);
+        }
+    }
+
+    // /signup is the same component in signup mode; the direct self-hosted
+    // path needs an email field before it can create the account.
+    #[test]
+    fn signup_mode_starts_in_the_signup_view_with_its_email_field() {
+        let src = production_src();
+        for required in [
+            "let initial_view = if signup_mode {",
+            "LoginView::Signup",
+            "id=\"signup-email\"",
+            "type=\"email\"",
+            "\"Create your account\"",
+        ] {
+            assert_contains(src, required);
+        }
+    }
+}

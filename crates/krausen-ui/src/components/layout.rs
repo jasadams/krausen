@@ -1574,4 +1574,35 @@ mod tests {
             assert!(mobile.contains("aria-label=\"Account menu, brewer@example.test\""));
         });
     }
+
+    /// This file's own source, for the shell-wiring guards below. The
+    /// selected browser tests exercise the popup and the workspace guard; the
+    /// shared component ownership, the logout guard and the absence of a
+    /// global Brews destination are facts only the source names.
+    const SRC: &str = include_str!("layout.rs");
+    const TEST_MOD_MARKER: &str = "#[cfg(test)]\nmod tests {";
+    fn production_src() -> &'static str {
+        SRC.split(TEST_MOD_MARKER)
+            .next()
+            .expect("TEST_MOD_MARKER must be found in SRC")
+    }
+
+    #[test]
+    fn shell_uses_the_shared_popover_guards_logout_and_has_no_global_brews_tab() {
+        let src = production_src();
+        assert_contains(src, "<crate::components::BreweryPopover");
+        assert_contains(src, "editor_guard.request(EditorDestination::Logout)");
+        assert_contains(src, "open=editor_guard.notice");
+        assert_missing(src, "href=\"/brews\"");
+    }
+
+    #[track_caller]
+    fn assert_contains(haystack: &str, needle: &str) {
+        assert!(haystack.contains(needle), "missing {needle:?}");
+    }
+
+    #[track_caller]
+    fn assert_missing(haystack: &str, needle: &str) {
+        assert!(!haystack.contains(needle), "unexpected {needle:?}");
+    }
 }

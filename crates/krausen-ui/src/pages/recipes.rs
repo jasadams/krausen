@@ -470,3 +470,40 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
         </div>
     </div> }
 }
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    /// This file's own source. The selected library browser suites exercise
+    /// the rows, history and recovery paths; this guard names the ownership
+    /// facts they cannot: the shared history component, the deferred archive
+    /// retry and the absence of a page-local history implementation.
+    const SRC: &str = include_str!("recipes.rs");
+    const TEST_MOD_MARKER: &str = "#[cfg(all(test, feature = \"ssr\"))]\nmod tests {";
+    fn production_src() -> &'static str {
+        SRC.split(TEST_MOD_MARKER)
+            .next()
+            .expect("TEST_MOD_MARKER must be found in SRC")
+    }
+
+    #[test]
+    fn library_rows_delegate_history_and_recover_from_a_pending_request() {
+        let src = production_src();
+        for required in [
+            "class=\"recipe-library__row\"",
+            "nav_state::brews_href(&item.recipe_id)",
+            "\"Retry previous request\"",
+            "<RecipeRevisionHistory",
+            "on_authority_failure=invalidate_context",
+        ] {
+            assert!(src.contains(required), "missing {required:?}");
+        }
+        for forbidden in [
+            "<li><BreweryPanel",
+            "LibraryCommand::History(",
+            "LibraryCommand::Revision(",
+            "fn HistoricalRecipe(",
+        ] {
+            assert!(!src.contains(forbidden), "unexpected {forbidden:?}");
+        }
+    }
+}

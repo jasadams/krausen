@@ -1529,4 +1529,175 @@ mod tests {
             assert_eq!(kind.to_string(), expected);
         }
     }
+
+    // ── Brand, asset and message-contract guards moved from
+    // crates/krausen-auth/tests/email_brand_source.py, which no runner ran. ──
+
+    const TOKENS: &str = include_str!("../../krausen-ui/style/approved-tokens.css");
+
+    /// The production half of a `pub async fn` method, from its declaration
+    /// to the next method's declaration.
+    fn method_src(name: &str) -> &'static str {
+        let src = production_src();
+        let marker = format!("pub async fn {name}(");
+        let start = src
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing {marker:?}"));
+        let rest = &src[start + marker.len()..];
+        let end = rest.find("\n    pub async fn ").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    /// The production half of a free function, from its declaration to the
+    /// next free function declaration.
+    fn free_fn_src(name: &str) -> &'static str {
+        let src = production_src();
+        let marker = format!("\nfn {name}(");
+        let start = src
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing {marker:?}"));
+        let rest = &src[start + marker.len()..];
+        let end = rest.find("\nfn ").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    #[track_caller]
+    fn assert_contains(haystack: &str, needle: &str) {
+        assert!(haystack.contains(needle), "missing {needle:?}");
+    }
+
+    /// No template may fall back to the legacy purple placeholder palette.
+    #[test]
+    fn no_email_template_uses_the_legacy_purple() {
+        assert!(!production_src().to_lowercase().contains("#4f46e5"));
+    }
+
+    /// Both shared templates render the approved colours, and those colours
+    /// are the ones the UI token file publishes.
+    #[test]
+    fn shared_email_templates_use_the_approved_colour_tokens() {
+        for name in ["email_template", "admin_email_template"] {
+            let template = free_fn_src(name);
+            for colour in ["#f7f6f2", "#292c25", "#a34728", "#1c211c", "#f0eee5"] {
+                assert_contains(template, colour);
+                assert_contains(TOKENS, colour);
+            }
+            assert_contains(template, "src=\"cid:krausen_logo\"");
+            assert_contains(template, "alt=\"Krausen\"");
+            assert_contains(template, ">krausen");
+        }
+    }
+
+    /// The embedded raster is the approved barley mark, not a substitute.
+    #[test]
+    fn email_logo_is_the_approved_barley_raster() {
+        use sha2::{Digest, Sha256};
+        assert!(LOGO_BYTES.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_eq!(
+            format!("{:x}", Sha256::digest(LOGO_BYTES)),
+            "6353ffdc4ea7ce8bb917c4d80a03d481835ca43d571eb60085641701e743f066"
+        );
+    }
+
+    /// Ownership mail is wrapped by the one shared brand template.
+    #[test]
+    fn ownership_transfer_uses_the_shared_email_template() {
+        assert_contains(method_src("send_ownership_transfer"), "email_template(");
+    }
+
+    /// Each message keeps its exact links, expiry promise and HTML escaping.
+    /// A wrong link strands the reader; an unescaped name is an injection.
+    #[test]
+    fn every_message_keeps_its_links_expiry_and_escaping_contract() {
+        let invitation = format!(
+            "{}{}",
+            method_src("send_workspace_invitation"),
+            free_fn_src("build_workspace_invitation_email")
+        );
+        let expected: [(&str, &str, &[&str], usize); 5] = [
+            (
+                "workspace invitation",
+                &invitation,
+                &[
+                    "href=\"{escaped_accept_url}\"",
+                    "href=\"{frontend_url}/unsubscribe?email={escaped_email}\"",
+                    "href=\"{frontend_url}/privacy\"",
+                    "href=\"{frontend_url}/terms\"",
+                    "href=\"{frontend_url}\"",
+                    "This invitation will expire in 7 days.",
+                ],
+                5,
+            ),
+            (
+                "ownership transfer",
+                method_src("send_ownership_transfer"),
+                &["href=\"{frontend_url}/settings/team\"", "They have 7 days to accept."],
+                1,
+            ),
+            (
+                "passkey recovery",
+                method_src("send_passkey_recovery"),
+                &[
+                    "href=\"{escaped_link}\"",
+                    "href=\"{escaped_frontend}\"",
+                    "This link expires in 15 minutes and can only be used once.",
+                ],
+                2,
+            ),
+            (
+                "account recovery",
+                method_src("send_account_recovery"),
+                &[
+                    "href=\"{escaped_link}\"",
+                    "href=\"{escaped_frontend}\"",
+                    "This link expires in 15 minutes and can only be used once.",
+                ],
+                2,
+            ),
+            (
+                "verification",
+                method_src("send_verification_email"),
+                &[
+                    "href=\"{escaped_link}\"",
+                    "href=\"{escaped_frontend}\"",
+                    "This link expires in 24 hours.",
+                ],
+                2,
+            ),
+        ];
+        for (label, body, expected_parts, hrefs) in expected {
+            for part in expected_parts {
+                assert!(body.contains(part), "{label} must keep {part:?}");
+            }
+            assert_eq!(body.matches("href=\"").count(), hrefs, "{label} href count");
+            assert_contains(body, "Some(&text_body)");
+        }
+
+        for (label, method, link) in [
+            ("passkey recovery", method_src("send_passkey_recovery"), "recovery_link"),
+            ("account recovery", method_src("send_account_recovery"), "recovery_link"),
+            ("verification", method_src("send_verification_email"), "verification_link"),
+        ] {
+            assert!(method.contains("html_escape(display_name)"), "{label} name escaping");
+            assert!(
+                method.contains(&format!("html_escape({link})")),
+                "{label} link escaping"
+            );
+        }
+
+        let invitation = free_fn_src("build_workspace_invitation_email");
+        for required in [
+            "{frontend_url}/accept-invite/{invitation_id}",
+            "html_escape(&accept_url)",
+            "html_escape(email)",
+            "html_escape(inviter_name)",
+            "html_escape(workspace_name)",
+        ] {
+            assert_contains(invitation, required);
+        }
+        let admin = method_src("send_admin_notification");
+        for field in ["label", "value", "subject"] {
+            assert_contains(admin, &format!("html_escape({field})"));
+        }
+    }
 }
