@@ -481,7 +481,7 @@ test('the held editor height ends once the estimate after a passing re-check has
 // access read is held and they are answered together, scrolled with a control focused as in the
 // single re-check tests. The editor must leave Checking and keep its place.
 for (const events of [1, 2]) {
-  test(`${events === 1 ? 'a' : 'two overlapping'} access re-check${events === 1 ? '' : 's'} with every read held and answered together leave${events === 1 ? 's' : ''} Checking in place`, async ({ page }) => {
+  test(events === 1 ? 'a single access re-check with its read held and answered leaves Checking in place' : 'two overlapping access re-checks with every read held and answered together leave Checking in place', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 600 });
     await page.goto('/recipe-editor/new');
     await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
