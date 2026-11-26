@@ -132,6 +132,9 @@ struct EditorFocus {
 impl EditorFocus {
     fn capture() -> Option<Self> {
         let element = web_sys::window()?.document()?.active_element()?;
+        // Nothing was focused, so there is nothing to give back: moving focus to the heading
+        // afterwards would also scroll the page to the top.
+        if element.tag_name() == "BODY" || element.tag_name() == "HTML" { return None; }
         let id = element.id();
         let print_return = element.closest(".print-preview").ok().flatten().is_some();
         // Input and textarea share these DOM properties; use the native API
@@ -331,10 +334,19 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     ));
     #[cfg(target_arch = "wasm32")]
     let focus_before_check = StoredValue::new(None::<EditorFocus>);
+    // The editor's height when a re-check began. It is held (as a minimum) until the first
+    // estimate after a passing check has settled, because the estimate and its field hints are
+    // cleared meanwhile and the shorter page would otherwise clamp the scroll position.
+    let height_hold = RwSignal::new(None::<f64>);
+    // A denied or lost check releases the hold at once; only a passing one keeps it.
+    Effect::new(move |_| {
+        if !context_visible.get() && access.get() != EditorAccess::Checking { height_hold.set(None); }
+    });
     let recheck = Callback::new(move |()| {
         #[cfg(target_arch = "wasm32")]
         if context_visible.get_untracked() {
             focus_before_check.set_value(EditorFocus::capture());
+            height_hold.set(web_sys::window().and_then(|w| w.document()).and_then(|d| d.query_selector(".recipe-editor").ok().flatten()).map(|e| e.get_bounding_client_rect().height()));
         }
         access.set(EditorAccess::Checking);
         context_visible.set(false);
@@ -1359,7 +1371,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             navigate(&target, leptos_router::NavigateOptions { replace: true, ..Default::default() });
         }
     });
-    // While access is being checked the content stays laid out, inert and invisible, so a
+    // While access is being checked the content stays laid out but invisible (visibility:hidden:
+    // not focusable, not clickable, not in the accessibility tree), so a
     // check that passes returns the person to the same scroll position. The notice is taken
     // out of the flow then (zero-height sticky host) so it cannot push the content down.
     let checking = Signal::derive(move || !context_visible.get() && access.get() == EditorAccess::Checking);
@@ -1383,7 +1396,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| recovery_choice.set(Vec::new())>"Start a separate draft"</Button>
                 <p role="status">{move || status.text.get()}</p></section>
         </Show>
-        <div class="recipe-editor" class:recipe-editor--checking=inert_now inert=move || inert_now.get().then_some("") hidden=editor_hidden>
+        <div class="recipe-editor" class:recipe-editor--checking=inert_now style:min-height=move || height_hold.get().map(|h| format!("{h}px")) hidden=editor_hidden>
         {move || conflict.get().map(|current| {
             let revision_number = current.revision;
             let remote_for_reload = current.clone();
@@ -1431,7 +1444,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             request_save=Callback::new(move |()| { if pending.get_untracked() { return false; } save(); pending.get_untracked() })
         />
         <div role="tabpanel" id="editor-panel-recipe" aria-labelledby="editor-tab-recipe" hidden=move || active_tab.get() != "recipe">
-        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate revision=revision><div class="recipe-editor__sections">
+        <div class="recipe-editor__layout"><FormulationPreview draft=draft identity=identity context_visible=context_visible gate=preview_gate revision=revision height_hold=height_hold><div class="recipe-editor__sections">
             <crate::pages::ingredient_addition::IngredientAdditions draft=draft identity=identity context_visible=context_visible/>
             <crate::pages::recipe_process::ProcessSections draft=draft/>
             <BreweryDisclosure id="recipe-equipment-disclosure" title="Equipment settings">
@@ -1440,12 +1453,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         </div></FormulationPreview></div>
         </div>
         <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
-            <Show when=move || active_tab.get() == "versions" && context_visible.get()>
+            <Show when=move || active_tab.get() == "versions" && (context_visible.get() || checking.get())>
                 {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
             </Show>
         </div>
         <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">
-            <Show when=move || active_tab.get() == "brews" && context_visible.get()>
+            <Show when=move || active_tab.get() == "brews" && (context_visible.get() || checking.get())>
                 {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() on_authority_failure=history_authority_failure/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
             </Show>
         </div>
@@ -1741,6 +1754,7 @@ fn FormulationPreview(
     context_visible: RwSignal<bool>,
     gate: StoredValue<crate::pages::recipe_preview_gate::PreviewGate>,
     revision: RwSignal<Option<i64>>,
+    height_hold: RwSignal<Option<f64>>,
     children: Children,
 ) -> impl IntoView {
     use krausen_types::formulation::{Preview, PreviewOutcome, PreviewRequest};
@@ -1753,6 +1767,10 @@ fn FormulationPreview(
     let message_generation = RwSignal::new(0_u64);
     // Why there is no current estimate, for the process sections' stale cue.
     let phase = RwSignal::new(crate::pages::recipe_process::EstimatePhase::Calculating);
+    // The first estimate after a passing re-check has settled: the held editor height ends.
+    Effect::new(move |_| {
+        if context_visible.get() && phase.get() != crate::pages::recipe_process::EstimatePhase::Calculating { height_hold.set(None); }
+    });
     let trigger = Memo::new(move |_| {
         (
             draft.with(|d| d.generation),
