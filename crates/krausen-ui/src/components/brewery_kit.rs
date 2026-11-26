@@ -79,17 +79,13 @@ pub fn BreweryBadge(
     #[prop(default = false)] wrap: bool,
     children: Children,
 ) -> impl IntoView {
-    let class = match (tone, wrap) {
-        ("success", false) => "k-badge k-badge--success",
-        ("warning", false) => "k-badge k-badge--warning",
-        ("accent", false) => "k-badge k-badge--accent",
-        (_, false) => "k-badge",
-        ("success", true) => "k-badge k-badge--success k-badge--wrap",
-        ("warning", true) => "k-badge k-badge--warning k-badge--wrap",
-        ("accent", true) => "k-badge k-badge--accent k-badge--wrap",
-        (_, true) => "k-badge k-badge--wrap",
+    let class = match tone {
+        "success" => "k-badge k-badge--success",
+        "warning" => "k-badge k-badge--warning",
+        "accent" => "k-badge k-badge--accent",
+        _ => "k-badge",
     };
-    view! { <span class=class>{children()}</span> }
+    view! { <span class=class class:k-badge--wrap=wrap>{children()}</span> }
 }
 
 /// Compact, titled surface shared by the editor and component showcase.

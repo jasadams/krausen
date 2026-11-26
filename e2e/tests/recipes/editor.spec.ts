@@ -1353,6 +1353,7 @@ const badgeGeometry = (page: import('@playwright/test').Page, selector: string) 
     clippedY: badge.scrollHeight - badge.clientHeight,
     height: rect.height,
     whiteSpace: getComputedStyle(badge).whiteSpace,
+    radius: parseFloat(getComputedStyle(badge).borderTopLeftRadius),
     text: badge.textContent,
     change: changeRect && { left: changeRect.left, right: changeRect.right, top: changeRect.top, bottom: changeRect.bottom },
   };
@@ -1379,6 +1380,8 @@ for (const width of [1440, 390, 320]) {
     expect(g.textBottom, 'the whole name is inside the badge, not clipped below').toBeLessThanOrEqual(g.bottom + 0.5);
     expect(g.clippedX, 'badge content is not wider than the badge').toBeLessThanOrEqual(1);
     expect(g.clippedY, 'badge content is not taller than the badge').toBeLessThanOrEqual(1);
+    // A wrapped badge is taller than one line: a full pill radius would curve away from the first and last characters.
+    expect(g.radius, 'a wrapped badge keeps a small corner radius, not a pill').toBeLessThanOrEqual(14);
     if (g.change) {
       const apart = g.change.left >= g.right - 0.5 || g.change.top >= g.bottom - 0.5 || g.change.right <= g.left + 0.5 || g.change.bottom <= g.top + 0.5;
       expect(apart, 'the badge does not overlap Change equipment').toBe(true);
