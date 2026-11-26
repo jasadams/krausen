@@ -64,6 +64,11 @@ LC_ALL=C sort -u "$tmp/paths" | while IFS= read -r p; do
 done > "$tmp/dirty"
 tr '\n' '\0' < "$tmp/dirty" | xargs -0 -r touch --
 mkdir -p "$(dirname "$manifest")"
-cp "$tmp/dirty" "$manifest.pending"
-cp "$tmp/new" "$manifest.new"
+# Write beside the destination and rename, so a kill mid-write never leaves a truncated
+# pending list (which would lose the paths an earlier failed build compiled from).
+dir="$(dirname "$manifest")"
+cp "$tmp/dirty" "$dir/.pending.tmp"
+mv "$dir/.pending.tmp" "$manifest.pending"
+cp "$tmp/new" "$dir/.new.tmp"
+mv "$dir/.new.tmp" "$manifest.new"
 echo "refresh-changed-mtimes: $(wc -l < "$tmp/dirty" | tr -d ' ') file(s) new, changed or pending since the last successful build; mtimes refreshed"
