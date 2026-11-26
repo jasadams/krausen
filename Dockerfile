@@ -63,13 +63,25 @@ RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
 # link another checkout's code. Each checkout therefore owns its registry, git and
 # target caches. The binary is copied out because the cache mount is not part of
 # the image.
+# Cargo trusts file mtimes, and COPY keeps the context's original ones, so an edit
+# older than the cached output would be skipped. refresh-changed-mtimes.sh gives
+# every file whose content differs from the last build a current mtime (compared by
+# SHA-256 against a manifest stored in the target cache), so cargo compiles every
+# changed workspace crate and still reuses unchanged crates and all dependencies.
+# sharing=locked on the target mount makes refresh, compile and commit one unit: a
+# second build with the same cache id waits, so it cannot compile between this build's
+# refresh and its cargo step and make stale files look fresh.
+# The new manifest is installed only after both compiles succeed, so a failed build
+# is retried against the manifest of the last build that really finished.
 RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/registry \
     --mount=type=cache,id=krausen-git-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/git \
-    --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target \
-    cd crates/krausen-ui && trunk build --release --locked \
+    --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target,sharing=locked \
+    sh /build/scripts/refresh-changed-mtimes.sh refresh /build /build/target/.krausen-source-manifest \
+    && cd crates/krausen-ui && trunk build --release --locked \
     && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
-    && cp target/release/krausen /build/krausen-bin
+    && cp target/release/krausen /build/krausen-bin \
+    && sh /build/scripts/refresh-changed-mtimes.sh commit /build/target/.krausen-source-manifest
 
 FROM debian:bookworm-slim@sha256:a3bba7dc7dbcc1f37c2856c51fc9a7fac96608f50cb87b1b4e4d8b8c85ae988e AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
