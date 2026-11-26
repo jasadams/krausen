@@ -1767,10 +1767,6 @@ fn FormulationPreview(
     let message_generation = RwSignal::new(0_u64);
     // Why there is no current estimate, for the process sections' stale cue.
     let phase = RwSignal::new(crate::pages::recipe_process::EstimatePhase::Calculating);
-    // The first estimate after a passing re-check has settled: the held editor height ends.
-    Effect::new(move |_| {
-        if context_visible.get() && phase.get() != crate::pages::recipe_process::EstimatePhase::Calculating { height_hold.set(None); }
-    });
     let trigger = Memo::new(move |_| {
         (
             draft.with(|d| d.generation),
@@ -1948,6 +1944,11 @@ fn FormulationPreview(
     let accepted = Signal::derive(move || {
         let current = draft.with(|d| d.generation);
         result.get().filter(|(generation, preview)| *generation == current && context_visible.get() && gate.try_with_value(|g| g.accepted_context() == preview.context_digest.as_deref()).unwrap_or(false)).map(|(_, preview)| preview)
+    });
+    // The first estimate after a passing re-check has settled (accepted, or invalid or unavailable;
+    // `phase` stays Calculating while an accepted estimate is showing): the held editor height ends.
+    Effect::new(move |_| {
+        if context_visible.get() && (accepted.get().is_some() || phase.get() != crate::pages::recipe_process::EstimatePhase::Calculating) { height_hold.set(None); }
     });
     let settled_message = Signal::derive(move || {
         let text = message.get();

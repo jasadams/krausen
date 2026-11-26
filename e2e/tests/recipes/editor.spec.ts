@@ -456,6 +456,22 @@ test('a passing access re-check keeps the position of a brewer scrolled to the v
   } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+test('the held editor height ends once the estimate after a passing re-check has settled', async ({ page }) => {
+  await recipeWithNumbers(page);
+  const mash = page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' });
+  await expect(mash).toContainText('15.0');
+  const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    expect(await page.locator('.recipe-editor').evaluate(element => element.style.minHeight)).not.toBe('');
+    check.release();
+    await check.finished;
+    await expect(mash).toContainText('15.0');
+    await expect.poll(() => page.locator('.recipe-editor').evaluate(element => element.style.minHeight)).toBe('');
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('a denied access re-check hides the editor content at once', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto('/recipe-editor/new');
