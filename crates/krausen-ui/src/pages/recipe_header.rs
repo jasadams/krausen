@@ -242,7 +242,7 @@ pub fn RecipeHeader(
                 <div class="recipe-header__equipment">
                     <span class="k-field__label">"Equipment"</span>
                     <div class="recipe-header__equipment-body">
-                        <BreweryBadge tone="accent">{move || equipment_context(&equipment.get())}</BreweryBadge>
+                        <BreweryBadge tone="accent" wrap=true>{move || equipment_context(&equipment.get())}</BreweryBadge>
                         <Button variant=ButtonVariant::Ghost size=crate::components::ButtonSize::Sm on:click=move |_| actions.equipment.run(())>"Change equipment"</Button>
                     </div>
                 </div>

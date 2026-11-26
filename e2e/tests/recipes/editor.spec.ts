@@ -1332,6 +1332,78 @@ for (const width of [1440, 601, 390, 320]) {
   });
 }
 
+// KRA-56: the header badge is the main place the equipment profile name appears
+// on phones, so a long name must be readable in full: it wraps inside the shared
+// badge instead of being clipped, with no horizontal scroll or overlap.
+const LONG_PROFILE_NAME = `Pilot system with an unusually long equipment profile name that keeps going ${'x'.repeat(40)} end`;
+const badgeGeometry = (page: import('@playwright/test').Page, selector: string) => page.evaluate((selector) => {
+  const badge = document.querySelector(selector) as HTMLElement;
+  const rect = badge.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(badge);
+  const text = range.getBoundingClientRect();
+  const change = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Change equipment');
+  const changeRect = change?.getBoundingClientRect();
+  return {
+    viewport: window.innerWidth,
+    pageScroll: document.documentElement.scrollWidth,
+    left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+    textLeft: text.left, textRight: text.right, textBottom: text.bottom,
+    clippedX: badge.scrollWidth - badge.clientWidth,
+    clippedY: badge.scrollHeight - badge.clientHeight,
+    height: rect.height,
+    whiteSpace: getComputedStyle(badge).whiteSpace,
+    radius: parseFloat(getComputedStyle(badge).borderTopLeftRadius),
+    text: badge.textContent,
+    change: changeRect && { left: changeRect.left, right: changeRect.right, top: changeRect.top, bottom: changeRect.bottom },
+  };
+}, selector);
+
+for (const width of [1440, 390, 320]) {
+  test(`a long equipment profile name is readable in full in the header badge at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const profile = `${LONG_PROFILE_NAME} ${width}`;
+    await createEquipmentProfile(page, profile, PROFILE_VALUES, 'natural');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    await page.getByText('Equipment settings', { exact: true }).click();
+    await chooseEquipmentProfile(page, profile);
+    const badge = page.locator('.recipe-header__equipment .k-badge');
+    await expect(badge).toContainText(profile);
+    // The full name is text in the page, not only a tooltip.
+    expect(await badge.textContent()).toContain(profile);
+    const g = await badgeGeometry(page, '.recipe-header__equipment .k-badge');
+    expect(g.pageScroll, 'no horizontal page scroll').toBeLessThanOrEqual(g.viewport);
+    expect(g.left, 'badge starts inside the viewport').toBeGreaterThanOrEqual(0);
+    expect(g.right, 'badge ends inside the viewport').toBeLessThanOrEqual(g.viewport);
+    expect(g.textRight, 'the whole name is inside the badge, not clipped').toBeLessThanOrEqual(g.right + 0.5);
+    expect(g.textBottom, 'the whole name is inside the badge, not clipped below').toBeLessThanOrEqual(g.bottom + 0.5);
+    expect(g.clippedX, 'badge content is not wider than the badge').toBeLessThanOrEqual(1);
+    expect(g.clippedY, 'badge content is not taller than the badge').toBeLessThanOrEqual(1);
+    // A wrapped badge is taller than one line: a full pill radius would curve away from the first and last characters.
+    expect(g.radius, 'a wrapped badge keeps a small corner radius, not a pill').toBeLessThanOrEqual(14);
+    if (g.change) {
+      const apart = g.change.left >= g.right - 0.5 || g.change.top >= g.bottom - 0.5 || g.change.right <= g.left + 0.5 || g.change.bottom <= g.top + 0.5;
+      expect(apart, 'the badge does not overlap Change equipment').toBe(true);
+    }
+  });
+}
+
+test('short equipment names keep a one-line badge at 320px and the showcase shows the long-name case', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto('/design-system');
+  const longBadge = page.getByTestId('showcase-long-name-badge').locator('.k-badge');
+  await expect(longBadge).toBeVisible();
+  const g = await badgeGeometry(page, '[data-testid="showcase-long-name-badge"] .k-badge');
+  expect(g.pageScroll, 'showcase has no horizontal page scroll').toBeLessThanOrEqual(g.viewport);
+  expect(g.right).toBeLessThanOrEqual(g.viewport);
+  expect(g.textRight).toBeLessThanOrEqual(g.right + 0.5);
+  expect(g.clippedX).toBeLessThanOrEqual(1);
+  const short = page.locator('.kit-showcase__badges .k-badge', { hasText: 'Saved' }).first();
+  const shortBox = (await short.boundingBox())!;
+  expect(shortBox.height, 'a short badge stays one line').toBeLessThan(30);
+});
+
 // KRA-49: the estimates summary is the fixed rail/stack above the sections. Its
 // height must not change while an estimate is replaced or settles without one,
 // or every control under it moves while a person is typing.

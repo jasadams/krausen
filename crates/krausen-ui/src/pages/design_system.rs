@@ -256,6 +256,7 @@ pub fn DesignSystemPage() -> impl IntoView {
                 <BreweryPanel title="A grounded palette" eyebrow="Foundations / Colour" description="Semantic tokens, rather than page-specific colours.">
                     <div class="kit-showcase__swatches"><TokenSwatch role=SwatchRole::Background/><TokenSwatch role=SwatchRole::Surface/><TokenSwatch role=SwatchRole::Ink/><TokenSwatch role=SwatchRole::Copper/><TokenSwatch role=SwatchRole::Sage/><TokenSwatch role=SwatchRole::Border/></div>
                     <div class="kit-showcase__badges"><BreweryBadge tone="success">"Saved"</BreweryBadge><BreweryBadge tone="warning">"Unsaved"</BreweryBadge><BreweryBadge tone="accent">"All grain"</BreweryBadge></div>
+                    <div class="kit-showcase__badges" data-testid="showcase-long-name-badge"><BreweryBadge tone="accent" wrap=true>"Pilot system with an unusually long equipment profile name that keeps going xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx end · No recipe overrides"</BreweryBadge></div>
                 </BreweryPanel>
                 <BreweryPanel title="Type with a point of view" eyebrow="Foundations / Typography">
                     <div class="kit-showcase__stack"><p class="kit-type-specimen">"Made to be brewed."</p><p>"DM Sans keeps the everyday clear and effortless."</p><p class="kit-number-specimen">"1.045　 20.5 L　 78%"</p><p class="kit-showcase__token">"INSTRUMENT SERIF / DM SANS / GEIST MONO"</p></div>

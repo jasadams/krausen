@@ -74,6 +74,9 @@ pub fn BreweryFieldRow(children: Children) -> impl IntoView {
 #[component]
 pub fn BreweryBadge(
     #[prop(default = "neutral")] tone: &'static str,
+    /// Let a long user-supplied name wrap inside the badge instead of staying on
+    /// one line and being clipped on a phone.
+    #[prop(default = false)] wrap: bool,
     children: Children,
 ) -> impl IntoView {
     let class = match tone {
@@ -82,7 +85,7 @@ pub fn BreweryBadge(
         "accent" => "k-badge k-badge--accent",
         _ => "k-badge",
     };
-    view! { <span class=class>{children()}</span> }
+    view! { <span class=class class:k-badge--wrap=wrap>{children()}</span> }
 }
 
 /// Compact, titled surface shared by the editor and component showcase.

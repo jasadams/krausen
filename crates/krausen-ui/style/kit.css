@@ -61,6 +61,7 @@
 .k-section__header h3 { font-size: var(--k-font-lg); font-weight: 600; }
 .k-section__body { min-width: 0; }
 .k-badge { display: inline-flex; align-items: center; gap: var(--k-space-1); border-radius: var(--k-radius-pill); padding: 4px 9px; font-size: var(--k-font-xs); font-weight: 500; line-height: 1.2; white-space: nowrap; background: var(--k-color-surface-subtle); color: var(--k-color-muted); }
+.k-badge--wrap { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; border-radius: calc((1.2em + 8px) / 2); }
 .k-badge--success { background: var(--k-color-success-soft); color: var(--k-color-success); }
 .k-badge--warning { background: var(--k-color-warning-soft); color: var(--k-color-warning); }
 .k-badge--accent { background: var(--k-color-accent); color: var(--k-color-accent-foreground); }
