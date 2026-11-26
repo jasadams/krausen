@@ -477,6 +477,40 @@ test('the held editor height ends once the estimate after a passing re-check has
   } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// Re-checks that overlap (two focus or visibility events close together on a slow network): every
+// access read is held and they are answered together, scrolled with a control focused as in the
+// single re-check tests. The editor must leave Checking and keep its place.
+for (const events of [1, 2]) {
+  test(`${events === 1 ? 'a' : 'two overlapping'} access re-check${events === 1 ? '' : 's'} with every read held and answered together leave${events === 1 ? 's' : ''} Checking in place`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const field = page.locator('#recipe-whirlpool');
+    await field.focus();
+    await page.locator('.app-shell__main').evaluate(element => { element.scrollTop = 120; });
+    await expect.poll(async () => (await mainScroll(page)).top).toBe(120);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let arrived = 0;
+    await page.route('**/leptos-api/get_user_context*', async route => {
+      const response = await route.fetch();
+      arrived += 1;
+      await held;
+      await route.fulfill({ response });
+    });
+    try {
+      for (let event = 0; event < events; event++) await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect.poll(() => arrived).toBeGreaterThanOrEqual(events);
+      await expect(field).toBeHidden();
+      release();
+      await expect(field).toBeVisible();
+      await expect(page.getByText('Checking access…', { exact: true })).toHaveCount(0);
+      expect((await mainScroll(page)).top).toBe(120);
+      await expect(field).toBeFocused();
+    } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+  });
+}
+
 test('a denied access re-check hides the editor content at once', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto('/recipe-editor/new');
