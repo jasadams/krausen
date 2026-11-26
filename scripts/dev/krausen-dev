@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Local, isolated Krausen for development and Playwright runs.
 #
-#   scripts/dev/krausen-dev build      build the image (BuildKit cache mounts; compiled cache keyed per checkout)
+#   scripts/dev/krausen-dev build      build this checkout's image (BuildKit cache mounts, per-checkout cache)
 #   scripts/dev/krausen-dev up         fresh disposable database + server on 127.0.0.1 only
 #   scripts/dev/krausen-dev check      prove 127.0.0.1 answers 200 and the LAN address does not
 #   scripts/dev/krausen-dev env        print the exports the e2e suite needs (use: eval "$(... env)")
 #   scripts/dev/krausen-dev browsers   install Playwright's headless-shell Chromium
-#   scripts/dev/krausen-dev down       remove the containers, the database volume and the sqlite3 shim
+#   scripts/dev/krausen-dev down       remove this checkout's containers, database volume and sqlite3 shim
+#
+# Every name belongs to one checkout: the image tag, both containers, the volume
+# and the shim directory are derived from the same id that keys the build caches
+# (KRAUSEN_BUILD_CACHE_ID, else a hash of the absolute checkout path). The default
+# loopback port is deterministic from that id; set KRAUSEN_DEV_PORT to choose one
+# explicitly. Two checkouts can therefore build and `up` side by side.
 #
 # The database lives on a Docker volume inside Docker's VM and is reached by tests only
 # through the generated `sqlite3` shim, because a SQLite file shared between the host and
@@ -18,34 +24,66 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# One definition of the disposable installation, shared with e2e/scripts/profile-browser.sh.
-PORT="${KRAUSEN_DEV_PORT:-41465}"
-. "$ROOT/e2e/scripts/test-env.sh"
-
-# The build caches must belong to this checkout only: a shared target directory can
-# link another worktree's code into the image, and a shared registry races when
-# concurrent builds unpack the same crate. cmd_build hashes the absolute checkout
-# path so every checkout gets a stable, distinct id. Set KRAUSEN_BUILD_CACHE_ID to
-# override it (CI supplies its own; a raw docker build must do the same).
-
-IMAGE="${KRAUSEN_DEV_IMAGE:-krausen-dev:local}"
-STATE="${KRAUSEN_DEV_STATE:-$HOME/.cache/krausen-dev}"
-SERVER=krausen-dev-server
-SQLITE=krausen-dev-sqlite
-VOLUME=krausen-dev-data
-# The sqlite3 helper image, pinned like every Dockerfile base.
-SQLITE_IMAGE='keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66'
 
 die() { echo "krausen-dev: $*" >&2; exit 1; }
 need_docker() { docker info >/dev/null 2>&1 || die "Docker is not running"; }
+# Is something already listening on this port? A connect probe alone is not
+# reliable: a listener whose accept queue is full refuses new connections, so
+# the probe reports a held port as free and `up` would fail inside `docker run`
+# instead of failing clearly before creating anything. lsof answers the real
+# question on macOS and on machines that have it; the probe stays as the
+# fallback for a host without lsof (it may also see a process lsof cannot).
+port_in_use() {
+  if command -v lsof >/dev/null 2>&1 \
+    && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+  (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
+}
+
+# One id, taken from the same place the build caches are keyed (KRA-53), names
+# everything this checkout owns. Hashing the absolute checkout path keeps two
+# checkouts from starting each other's image or sharing a database.
+# KRAUSEN_BUILD_CACHE_ID overrides it for builds and runs alike; a raw docker
+# build must pass the same id as --build-arg.
+CHECKOUT_ID="${KRAUSEN_BUILD_CACHE_ID:-$(printf '%s' "$ROOT" | git hash-object --stdin | cut -c1-16)}"
+case "$CHECKOUT_ID" in
+  '' | [!A-Za-z0-9]* | *[!A-Za-z0-9_.-]*)
+    die "KRAUSEN_BUILD_CACHE_ID must start with a letter or digit and contain only letters, digits, '.', '_' or '-': $CHECKOUT_ID"
+    ;;
+esac
+
+# The port is deterministic per checkout unless KRAUSEN_DEV_PORT chooses one, so
+# `up`, `check` and `env` agree without shared state. The derived range stays
+# below the ephemeral ports; a taken port is an error, never a silent fallback.
+derived_port() {
+  local checksum
+  checksum=$(printf '%s' "$CHECKOUT_ID" | cksum | awk '{print $1}')
+  echo $((41465 + checksum % 1000))
+}
+PORT="${KRAUSEN_DEV_PORT:-$(derived_port)}"
+case "$PORT" in
+  '' | *[!0-9]*) die "KRAUSEN_DEV_PORT must be a number between 1 and 65535: $PORT" ;;
+esac
+[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
+  || die "KRAUSEN_DEV_PORT must be a number between 1 and 65535: $PORT"
+
+# One definition of the disposable installation, shared with e2e/scripts/profile-browser.sh.
+. "$ROOT/e2e/scripts/test-env.sh"
+
+IMAGE="${KRAUSEN_DEV_IMAGE:-krausen-dev:$CHECKOUT_ID}"
+STATE="${KRAUSEN_DEV_STATE:-$HOME/.cache/krausen-dev/$CHECKOUT_ID}"
+SERVER="krausen-dev-server-$CHECKOUT_ID"
+SQLITE="krausen-dev-sqlite-$CHECKOUT_ID"
+VOLUME="krausen-dev-data-$CHECKOUT_ID"
+# The sqlite3 helper image, pinned like every Dockerfile base.
+SQLITE_IMAGE='keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66'
 
 cmd_build() {
   need_docker
-  local cache_key
-  cache_key="${KRAUSEN_BUILD_CACHE_ID:-$(printf '%s' "$ROOT" | git hash-object --stdin | cut -c1-16)}"
   DOCKER_BUILDKIT=1 docker build \
     --build-arg CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
-    --build-arg KRAUSEN_BUILD_CACHE_ID="$cache_key" \
+    --build-arg KRAUSEN_BUILD_CACHE_ID="$CHECKOUT_ID" \
     -t "$IMAGE" "$ROOT"
 }
 
@@ -72,18 +110,35 @@ cmd_up() {
   need_docker
   docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE not found; run: $0 build"
   cmd_down
+  # Give Docker a moment to release our own just-removed port, then fail clearly
+  # instead of silently colliding with another checkout or an unrelated listener.
+  for _ in $(seq 1 20); do
+    port_in_use || break
+    sleep 0.1
+  done
+  if port_in_use; then
+    die "port 127.0.0.1:$PORT for checkout $CHECKOUT_ID is already in use; stop that process or set KRAUSEN_DEV_PORT to a free port"
+  fi
   trap 'echo "krausen-dev: up failed; run \`$0 down\` to clean up" >&2' EXIT
   docker volume create "$VOLUME" >/dev/null
-  # The server runs as uid 1000; a new volume is owned by root.
-  docker run --rm --user 0 -v "$VOLUME:/data" --entrypoint chown "$IMAGE" 1000:1000 /data
+  # Every container is bounded to the same limits. The server runs as uid 1000;
+  # a new volume is owned by root.
+  docker run --rm --user 0 --cpus 2 --memory 1g --pids-limit 256 \
+    -v "$VOLUME:/data" --entrypoint chown "$IMAGE" 1000:1000 /data
   # Published on loopback only: never -p PORT:PORT.
-  docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
+  if ! docker run -d --name "$SERVER" --cpus 2 --memory 1g --pids-limit 256 \
     -p "127.0.0.1:$PORT:$PORT" -v "$VOLUME:/data" \
     -e DATABASE_URL=sqlite:///data/krausen.db \
     -e KRAUSEN_MODE -e PORT -e BASE_URL -e FRONTEND_URL -e JWT_SECRET_KEY -e ENCRYPTION_KEY \
-    "$IMAGE" >/dev/null
-  docker run -d --name "$SQLITE" --user 1000:1000 --cpus 1 --memory 256m -v "$VOLUME:/data" \
-    --entrypoint sleep "$SQLITE_IMAGE" infinity >/dev/null
+    "$IMAGE" >/dev/null; then
+    # A failed run can still have created the container, and the preflight
+    # above cannot see every reason Docker refuses a bind. Remove what this
+    # attempt created so a later `up` starts clean and nothing is left behind.
+    docker rm -f "$SERVER" >/dev/null 2>&1 || true
+    die "could not start $SERVER on 127.0.0.1:$PORT; if the port is taken, stop that process or set KRAUSEN_DEV_PORT to a free port"
+  fi
+  docker run -d --name "$SQLITE" --user 1000:1000 --cpus 2 --memory 1g --pids-limit 256 \
+    -v "$VOLUME:/data" --entrypoint sleep "$SQLITE_IMAGE" infinity >/dev/null
   write_shim
   for _ in $(seq 1 90); do
     if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/login"; then
@@ -143,5 +198,5 @@ case "${1:-}" in
   check) cmd_check ;;
   env) cmd_env ;;
   browsers) cmd_browsers ;;
-  *) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
