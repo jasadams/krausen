@@ -71,4 +71,5 @@ jobs:
       - run: cd crates/krausen-ui && trunk build
       - run: sh scripts/check-dist-nonce.sh
       - run: sh scripts/check-dist-nonce-test.sh
+      - run: sh scripts/refresh-changed-mtimes-test.sh
       - run: e2e/scripts/profile-browser.sh
