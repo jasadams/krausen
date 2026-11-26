@@ -63,10 +63,16 @@ RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
 # link another checkout's code. Each checkout therefore owns its registry, git and
 # target caches. The binary is copied out because the cache mount is not part of
 # the image.
+# Cargo trusts file mtimes, and COPY keeps the context's original ones, so an edit
+# older than the cached output would be skipped. refresh-changed-mtimes.sh gives
+# every file whose content differs from the last build a current mtime (compared by
+# SHA-256 against a manifest stored in the target cache), so cargo compiles every
+# changed workspace crate and still reuses unchanged crates and all dependencies.
 RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/registry \
     --mount=type=cache,id=krausen-git-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/git \
     --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target \
-    cd crates/krausen-ui && trunk build --release --locked \
+    sh /build/scripts/refresh-changed-mtimes.sh /build /build/target/.krausen-source-manifest \
+    && cd crates/krausen-ui && trunk build --release --locked \
     && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
     && cp target/release/krausen /build/krausen-bin
