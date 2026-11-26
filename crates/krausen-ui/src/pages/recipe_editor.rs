@@ -21,7 +21,7 @@ use krausen_types::{
 };
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
-use crate::utils::focus::{focus_element, try_focus_element};
+use crate::utils::focus::{focus_element, try_focus_element, try_focus_element_in_place};
 use crate::utils::focus::jump_after_render;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
@@ -153,7 +153,7 @@ impl EditorFocus {
         let print = document.query_selector(".print-preview").ok().flatten();
         let original = document.get_element_by_id(&self.id)
             .filter(|_| print.is_none() || self.print_return)
-            .filter(|element| try_focus(element));
+            .filter(|element| try_focus_element_in_place(element));
         if let Some(element) = original {
           if let Some((start, end, direction)) = self.selection {
             if let Some(set_range) = js_sys::Reflect::get(element.as_ref(), &"setSelectionRange".into()).ok().and_then(|v| v.dyn_into::<js_sys::Function>().ok()) {
@@ -1359,9 +1359,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             navigate(&target, leptos_router::NavigateOptions { replace: true, ..Default::default() });
         }
     });
+    // While access is being checked the content stays laid out, inert and invisible, so a
+    // check that passes returns the person to the same scroll position. The notice is taken
+    // out of the flow then (zero-height sticky host) so it cannot push the content down.
+    let checking = Signal::derive(move || !context_visible.get() && access.get() == EditorAccess::Checking);
+    let editor_ready = Signal::derive(move || recovery_ready.get() && recovery_choice.get().is_empty());
+    let inert_now = Signal::derive(move || checking.get() && editor_ready.get());
+    let editor_hidden = Signal::derive(move || (!context_visible.get() && !checking.get()) || !editor_ready.get());
     view! { <Show when=move || !context_visible.get()>
+        <div class="recipe-editor-check-host" class:recipe-editor-check-host--checking=checking>
         {move || view! { <BreweryNotice title=access.get().title() body=access.get().guidance() warning=true/> }}
         <Button variant=ButtonVariant::Secondary disabled=Signal::derive(move || access.get() == EditorAccess::Checking) on:click=move |_| recheck.run(())>"Retry check"</Button>
+        </div>
     </Show>
         <Show when=move || context_visible.get() && !recovery_choice.get().is_empty()>
             <section class="recipe-editor"><BreweryNotice title="A retained draft is available" body="Local drafts are not saved recipe revisions. Restore one or discard them before continuing."/>
@@ -1374,7 +1383,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| recovery_choice.set(Vec::new())>"Start a separate draft"</Button>
                 <p role="status">{move || status.text.get()}</p></section>
         </Show>
-        <div class="recipe-editor" hidden=move || !context_visible.get() || !recovery_ready.get() || !recovery_choice.get().is_empty()>
+        <div class="recipe-editor" class:recipe-editor--checking=inert_now inert=move || inert_now.get().then_some("") hidden=editor_hidden>
         {move || conflict.get().map(|current| {
             let revision_number = current.revision;
             let remote_for_reload = current.clone();

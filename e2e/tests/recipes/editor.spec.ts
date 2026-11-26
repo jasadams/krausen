@@ -370,6 +370,82 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// KRA-61 (UX-007, ACC-002): returning to the window starts an access re-check. While it runs the
+// editor content stays laid out (inert, invisible, out of the accessibility tree) so the scroll
+// position and the focused control survive a check that passes; a denial hides it at once.
+async function holdContextCheck(page: import('@playwright/test').Page, fulfil: (route: import('@playwright/test').Route, response: import('@playwright/test').APIResponse) => Promise<void>) {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await fulfil(route, response);
+    completed();
+  }, { times: 1 });
+  return { release, started, finished };
+}
+const mainScroll = (page: import('@playwright/test').Page) => page.locator('.app-shell__main').evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight }));
+
+test('a passing access re-check keeps the editor scroll position, layout and focused control', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const field = page.locator('#recipe-whirlpool');
+  await field.scrollIntoViewIfNeeded();
+  await field.focus();
+  await page.locator('.app-shell__main').evaluate(element => { element.scrollTop = 120; });
+  await expect.poll(async () => (await mainScroll(page)).top).toBe(120);
+  const before = await mainScroll(page);
+  expect(before.height).toBeGreaterThan(1000);
+  const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    await expect(field).toBeHidden();
+    // The layout does not collapse while the check runs, and the content is inert.
+    // (The stale estimate's diagnostics are cleared while it runs, so the height may differ by a few lines, never collapse.)
+    const during = await mainScroll(page);
+    expect(during.top).toBe(before.top);
+    expect(during.height).toBeGreaterThan(before.height - 150);
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
+    await expect(page.locator('.recipe-editor')).not.toHaveAttribute('hidden', /.*/);
+    expect(await field.evaluate(element => document.activeElement === element)).toBe(false);
+    check.release();
+    await check.finished;
+    await expect(field).toBeVisible();
+    await expect(field).toBeFocused();
+    expect((await mainScroll(page)).top).toBe(before.top);
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+test('a denied access re-check hides the editor content at once', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const field = page.locator('#recipe-whirlpool');
+  await field.focus();
+  const check = await holdContextCheck(page, async (route, response) => {
+    const context = await response.json();
+    await route.fulfill({ response, json: { ...context, workspace_id: 'kra-61-denied-context' } });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
+    check.release();
+    await check.finished;
+    await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toBeVisible();
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('hidden', '');
+    await expect(page.locator('.recipe-editor')).not.toHaveAttribute('inert', /.*/);
+    await expect(field).toBeHidden();
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
