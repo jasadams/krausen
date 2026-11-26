@@ -51,12 +51,27 @@ fn focus_first_available_unless_moved_inner(origins: Option<Vec<String>>, candid
 /// enabled and not inside a hidden/inert subtree.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn try_focus_element(element: &web_sys::Element) -> bool {
+    focus_checked(element, false)
+}
+
+/// As `try_focus_element`, but never scrolls: returns focus to a control without moving the page.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn try_focus_element_in_place(element: &web_sys::Element) -> bool {
+    focus_checked(element, true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn focus_checked(element: &web_sys::Element, prevent_scroll: bool) -> bool {
     use wasm_bindgen::JsCast;
     if element.closest("[hidden], [inert], :disabled").ok().flatten().is_some()
         || element.get_client_rects().length() == 0
         || web_sys::window().and_then(|w| w.get_computed_style(element).ok().flatten())
             .and_then(|style| style.get_property_value("visibility").ok()).is_some_and(|v| v == "hidden") { return false; }
-    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| target.focus().is_ok())
+    element.dyn_ref::<web_sys::HtmlElement>().is_some_and(|target| {
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(prevent_scroll);
+        target.focus_with_options(&options).is_ok()
+    })
         && web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|active| active == *element)
 }
 

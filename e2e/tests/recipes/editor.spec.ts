@@ -370,6 +370,169 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// KRA-61 (UX-007, ACC-002): returning to the window starts an access re-check. While it runs the
+// editor content stays laid out (invisible, unfocusable, out of the accessibility tree) so the scroll
+// position and the focused control survive a check that passes; a denial hides it at once.
+async function holdContextCheck(page: import('@playwright/test').Page, fulfil: (route: import('@playwright/test').Route, response: import('@playwright/test').APIResponse) => Promise<void>) {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  // Only the first request is held. A route's `times` limit is not enough: two requests that
+  // arrive together would both reach the handler, so later ones are passed on explicitly.
+  let first = true;
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    const response = await route.fetch();
+    seen();
+    await held;
+    await fulfil(route, response);
+    completed();
+  });
+  return { release, started, finished };
+}
+// Invisible content is neither focusable (Tab and click cannot enter it) nor in the accessibility tree.
+async function expectEditorInvisibleAndUnreachable(page: import('@playwright/test').Page, pressTab: boolean) {
+  await expect(page.locator('.recipe-editor')).toHaveCSS('visibility', 'hidden');
+  await expect(page.getByRole('textbox', { name: 'Recipe name', exact: true })).toHaveCount(0);
+  // Tab is a deliberate focus move, so only the case that does not go on to restore focus presses it.
+  if (pressTab) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('.recipe-editor'))).toBe(false);
+  }
+}
+const mainScroll = (page: import('@playwright/test').Page) => page.locator('.app-shell__main').evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight }));
+
+test('a passing access re-check keeps the editor scroll position, layout and focused control', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const field = page.locator('#recipe-whirlpool');
+  await field.scrollIntoViewIfNeeded();
+  await field.focus();
+  await page.locator('.app-shell__main').evaluate(element => { element.scrollTop = 120; });
+  await expect.poll(async () => (await mainScroll(page)).top).toBe(120);
+  const before = await mainScroll(page);
+  expect(before.height).toBeGreaterThan(1000);
+  const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    await expect(field).toBeHidden();
+    // The layout does not collapse while the check runs, and the content cannot be reached.
+    // (The stale estimate's diagnostics are cleared while it runs, so the height may differ by a few lines, never collapse.)
+    const during = await mainScroll(page);
+    expect(during.top).toBe(before.top);
+    expect(during.height).toBeGreaterThan(before.height - 150);
+    await expectEditorInvisibleAndUnreachable(page, false);
+    await expect(page.locator('.recipe-editor')).not.toHaveAttribute('hidden', /.*/);
+    expect(await field.evaluate(element => document.activeElement === element)).toBe(false);
+    check.release();
+    await check.finished;
+    await expect(field).toBeVisible();
+    await expect(field).toBeFocused();
+    expect((await mainScroll(page)).top).toBe(before.top);
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+test('a passing access re-check keeps the position of a brewer scrolled to the very bottom', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const main = page.locator('.app-shell__main');
+  await main.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(async () => (await mainScroll(page)).top).toBeGreaterThan(1000);
+  const before = await mainScroll(page);
+  const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    expect(await mainScroll(page)).toEqual(before);
+    check.release();
+    await check.finished;
+    await expect(page.getByLabel('Recipe name', { exact: true })).toBeVisible();
+    // The first estimate after the check has settled (its hint is back), then the position is still the same.
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    await expect(page.locator('#recipe-batch-description')).toBeVisible();
+    expect((await mainScroll(page)).top).toBe(before.top);
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+test('the held editor height ends once the estimate after a passing re-check has settled', async ({ page }) => {
+  await recipeWithNumbers(page);
+  const mash = page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' });
+  await expect(mash).toContainText('15.0');
+  const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    expect(await page.locator('.recipe-editor').evaluate(element => element.style.minHeight)).not.toBe('');
+    check.release();
+    await check.finished;
+    await expect(mash).toContainText('15.0');
+    await expect.poll(() => page.locator('.recipe-editor').evaluate(element => element.style.minHeight)).toBe('');
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
+// Re-checks that overlap (two focus or visibility events close together on a slow network): every
+// access read is held and they are answered together, scrolled with a control focused as in the
+// single re-check tests. The editor must leave Checking and keep its place.
+for (const events of [1, 2]) {
+  test(events === 1 ? 'a single access re-check with its read held and answered leaves Checking in place' : 'two overlapping access re-checks with every read held and answered together leave Checking in place', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    const field = page.locator('#recipe-whirlpool');
+    await field.focus();
+    await page.locator('.app-shell__main').evaluate(element => { element.scrollTop = 120; });
+    await expect.poll(async () => (await mainScroll(page)).top).toBe(120);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let arrived = 0;
+    await page.route('**/leptos-api/get_user_context*', async route => {
+      const response = await route.fetch();
+      arrived += 1;
+      await held;
+      await route.fulfill({ response });
+    });
+    try {
+      for (let event = 0; event < events; event++) await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect.poll(() => arrived).toBeGreaterThanOrEqual(events);
+      await expect(field).toBeHidden();
+      release();
+      await expect(field).toBeVisible();
+      await expect(page.getByText('Checking access…', { exact: true })).toHaveCount(0);
+      expect((await mainScroll(page)).top).toBe(120);
+      await expect(field).toBeFocused();
+    } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+  });
+}
+
+test('a denied access re-check hides the editor content at once', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const field = page.locator('#recipe-whirlpool');
+  await field.focus();
+  const check = await holdContextCheck(page, async (route, response) => {
+    const context = await response.json();
+    await route.fulfill({ response, json: { ...context, workspace_id: 'kra-61-denied-context' } });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    await expectEditorInvisibleAndUnreachable(page, true);
+    check.release();
+    await check.finished;
+    await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toBeVisible();
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('hidden', '');
+    await expect(field).toBeHidden();
+  } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
@@ -701,6 +864,8 @@ test('authorized focus revalidation preserves an open print task and cleans up o
     await expect(preview).toBeVisible();
     await expect(preview).toContainText('Print context continuity');
     expect(await preview.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    // KRA-61: the editor behind the open task stays inert across a passing re-check.
+    await expect(page.locator('.recipe-editor')).toHaveAttribute('inert', '');
     await preview.getByRole('button', { name: 'Back to editor', exact: true }).click();
     await expect(preview).toHaveCount(0);
     await expect(page.locator('body')).not.toHaveClass(/krausen-printing/);
