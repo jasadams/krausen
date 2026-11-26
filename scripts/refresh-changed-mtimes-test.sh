@@ -20,14 +20,14 @@ check() {
 stamp_all() { find . -type f -not -path './target/*' -exec touch -t 200001010000 {} +; }
 # Paths of files the script touched (newer than the marker), one per line, sorted.
 touched() { find . -type f -newer "$marker" -not -path './target/*' | sort; }
-run() { sh "$script" "$tree" "$manifest" > /dev/null; }
-install() { mv "$manifest.new" "$manifest"; }
+run() { sh "$script" refresh "$tree" "$manifest" > /dev/null; }
+install() { sh "$script" commit "$manifest"; }
 
 stamp_all
 run
 check "no manifest: every source file touched, node_modules not" "./src/a
 ./src/b" "$(touched)"
-check "the new manifest is not installed by the script" "no" "$([ -f "$manifest" ] && echo yes || echo no)"
+check "refresh does not install the new manifest" "no" "$([ -f "$manifest" ] && echo yes || echo no)"
 install
 
 stamp_all; run
@@ -47,4 +47,17 @@ install
 
 rm src/b; stamp_all; run
 check "deleted file: nothing else touched" "" "$(touched)"
+install
+
+# Edit, the build compiles it, a later step fails, the edit is reverted, rebuild.
+# The cache holds output built from the failed attempt's content, so the reverted
+# file must be touched again although it matches the installed manifest.
+echo edited > src/a; stamp_all; run              # failed build: no install
+echo changed > src/a; stamp_all; run             # content back to the manifest's
+check "edit, failed build, revert: the file is still touched" "./src/a" "$(touched)"
+stamp_all; run                                   # a second failed build
+check "pending survives a second failed build" "./src/a" "$(touched)"
+install
+stamp_all; run
+check "after a successful build nothing is pending" "" "$(touched)"
 exit "$fail"

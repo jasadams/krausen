@@ -73,12 +73,12 @@ RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
 RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/registry \
     --mount=type=cache,id=krausen-git-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/git \
     --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target \
-    sh /build/scripts/refresh-changed-mtimes.sh /build /build/target/.krausen-source-manifest \
+    sh /build/scripts/refresh-changed-mtimes.sh refresh /build /build/target/.krausen-source-manifest \
     && cd crates/krausen-ui && trunk build --release --locked \
     && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
     && cp target/release/krausen /build/krausen-bin \
-    && mv /build/target/.krausen-source-manifest.new /build/target/.krausen-source-manifest
+    && sh /build/scripts/refresh-changed-mtimes.sh commit /build/target/.krausen-source-manifest
 
 FROM debian:bookworm-slim@sha256:a3bba7dc7dbcc1f37c2856c51fc9a7fac96608f50cb87b1b4e4d8b8c85ae988e AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
