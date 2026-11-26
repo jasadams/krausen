@@ -380,13 +380,18 @@ async function holdContextCheck(page: import('@playwright/test').Page, fulfil: (
   const started = new Promise<void>(resolve => { seen = resolve; });
   let completed!: () => void;
   const finished = new Promise<void>(resolve => { completed = resolve; });
+  // Only the first request is held. A route's `times` limit is not enough: two requests that
+  // arrive together would both reach the handler, so later ones are passed on explicitly.
+  let first = true;
   await page.route('**/leptos-api/get_user_context*', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
     const response = await route.fetch();
     seen();
     await held;
     await fulfil(route, response);
     completed();
-  }, { times: 1 });
+  });
   return { release, started, finished };
 }
 // Invisible content is neither focusable (Tab and click cannot enter it) nor in the accessibility tree.
