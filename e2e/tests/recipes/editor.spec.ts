@@ -1544,9 +1544,9 @@ for (const width of [320, 390, 601, 700, 850]) {
     await expect(retry).toBeVisible();
     expect(await retry.getAttribute('title'), 'the retry has no extra hover tooltip').toBeNull();
     const retryBox = (await retry.boundingBox())!;
-    // The kit enlarges the retry to a 44px touch target only on phones
-    // (<=760px); at the one-column tablet/desktop widths it keeps the shared
-    // control height, so this asserts the phone target only where the kit sets it.
+    // The shared Button (components/button.rs) is a 44px target at 760px and below
+    // and keeps the shared control height above it, so this asserts the 44px target
+    // exactly where the component sets it.
     expect(retryBox.width, 'retry touch target width').toBeGreaterThanOrEqual(44);
     if (width <= 760) expect(retryBox.height, 'retry touch target height').toBeGreaterThanOrEqual(44);
     else expect(retryBox.height, 'retry control height').toBeGreaterThanOrEqual(32);
