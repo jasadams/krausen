@@ -95,8 +95,8 @@ Cargo decides whether a crate is up to date from file modification times, and th
 build copies source files with their original times. A file edited earlier than the last
 cached build (an edit made while a build ran, a `git checkout` of older files, `touch -t`)
 would therefore be skipped and the image would keep the old code. Before compiling,
-`scripts/refresh-changed-mtimes.sh` compares the SHA-256 of every file in the build
-context with a manifest stored in the target cache and gives each new or changed file a
+`scripts/refresh-changed-mtimes.sh` compares the SHA-256 of every source file in the build
+context with a manifest stored in the target cache (once the previous build fully succeeded) and gives each new or changed file a
 current time, so every workspace crate whose content changed is compiled whatever its
 timestamps. Unchanged crates and all registry dependencies stay cached.
 

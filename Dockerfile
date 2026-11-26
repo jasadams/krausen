@@ -68,6 +68,8 @@ RUN sed -i '/^cargo_profile = /d' crates/krausen-ui/Trunk.toml
 # every file whose content differs from the last build a current mtime (compared by
 # SHA-256 against a manifest stored in the target cache), so cargo compiles every
 # changed workspace crate and still reuses unchanged crates and all dependencies.
+# The new manifest is installed only after both compiles succeed, so a failed build
+# is retried against the manifest of the last build that really finished.
 RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/registry \
     --mount=type=cache,id=krausen-git-$KRAUSEN_BUILD_CACHE_ID,target=/usr/local/cargo/git \
     --mount=type=cache,id=krausen-target-$KRAUSEN_BUILD_CACHE_ID,target=/build/target \
@@ -75,7 +77,8 @@ RUN --mount=type=cache,id=krausen-registry-$KRAUSEN_BUILD_CACHE_ID,target=/usr/l
     && cd crates/krausen-ui && trunk build --release --locked \
     && sh /build/scripts/check-dist-nonce.sh dist/index.html \
     && cd /build && cargo build --locked --release -p krausen-server --bin krausen \
-    && cp target/release/krausen /build/krausen-bin
+    && cp target/release/krausen /build/krausen-bin \
+    && mv /build/target/.krausen-source-manifest.new /build/target/.krausen-source-manifest
 
 FROM debian:bookworm-slim@sha256:a3bba7dc7dbcc1f37c2856c51fc9a7fac96608f50cb87b1b4e4d8b8c85ae988e AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
