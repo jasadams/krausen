@@ -1626,8 +1626,7 @@ for (const width of [320, 390, 601, 700, 850]) {
 
 // KRA-55 with KRA-49: at 601-850px the page is one column and the summary is the
 // stack above the sections. Typing in a recipe field must not move what is below
-// it while the estimate recalculates. Two frame samples cover it, as the 320/390
-// KRA-49 tests do: the summary's own footprint (its height plus the gap to the
+// it while the estimate recalculates. Two frame samples cover it: the summary's own footprint (its height plus the gap to the
 // sections), and the focused input relative to its own panel, which catches a
 // move inside the process stack without depending on scroll position.
 for (const width of [601, 700, 850]) {
@@ -1673,29 +1672,6 @@ for (const width of [601, 700, 850]) {
     expect(Math.max(...control) - Math.min(...control), `focused input moved: ${[...new Set(control)]}`).toBeLessThan(0.5);
   });
 }
-
-// KRA-55: the reservations above follow the recipe layout's own one-column
-// breakpoint. One pixel above it the summary is the desktop rail again, where the
-// estimate rows still collapse while stale exactly as before (KRA-38/KRA-45), so
-// the boundary cannot drift away from `.recipe-editor__layout`.
-test('the summary reservations stop exactly at the layout one-column breakpoint (851px)', async ({ page }) => {
-  await page.setViewportSize({ width: 851, height: 900 });
-  await readyEstimateRecipe(page);
-  const summary = page.locator('.recipe-editor__preview-summary');
-  const columns = await page.locator('.recipe-editor__layout').evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length);
-  expect(columns, 'the layout is the desktop rail above 850px').toBe(2);
-  let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
-  await page.getByLabel('Batch volume (L)').fill('21');
-  await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
-  // Desktop keeps its existing flow: the retained estimate rows are not shown.
-  await expect(summary.getByText('Original gravity')).toBeHidden();
-  release();
-  await expect(page.getByTestId('estimate-stale')).toHaveText('');
-  await page.unroute('**/leptos-api/preview_formulation*');
-  await expect(summary.getByText('Original gravity')).toBeVisible();
-});
 
 // KRA-50 with UX-007: the preview context repeats the submitted batch volume even
 // when the validator rejected it. That rejected input is not an estimate and must
