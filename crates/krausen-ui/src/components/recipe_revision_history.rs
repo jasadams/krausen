@@ -81,8 +81,8 @@ pub fn RecipeRevisionHistory(
     recipe_id: String,
     recipe_title: String,
     refresh_key: Signal<i64>,
-    #[prop(optional)]
-    on_authority_failure: Option<Callback<()>>,
+    /// How a lost authority is reported: through the editor's access check, or a host callback.
+    authority: HistoryAuthority,
     /// Exact saved version addressed by the page URL (`None`: none inspected).
     #[prop(into)]
     selected_revision: Signal<Option<i64>>,
@@ -95,7 +95,6 @@ pub fn RecipeRevisionHistory(
     #[prop(optional)]
     loaded: Option<RwSignal<Vec<RevisionSummary>>>,
 ) -> impl IntoView {
-    let authority = HistoryAuthority::new(on_authority_failure);
     let intent = StoredValue::new(intent);
     let recipe_id = StoredValue::new(recipe_id);
     let page = RwSignal::new(None::<HistoryPage>);

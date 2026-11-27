@@ -47,39 +47,57 @@ struct ContextCheckGeneration(RwSignal<u64>);
 #[derive(Clone, Copy)]
 pub(crate) struct EditorAuthorityHold {
     pub(crate) generation: RwSignal<u64>,
-    pub(crate) on_failure: Callback<(u64, EditorAccess)>,
+    on_failure: Callback<EditorAccess>,
+}
+
+impl EditorAuthorityHold {
+    /// Reports an authority outcome seen by a task that began under check `epoch`. An outcome from
+    /// before the current check is ignored (`false`); otherwise the editor presents it (`true`).
+    pub(crate) fn report(self, epoch: u64, outcome: EditorAccess) -> bool {
+        if self.generation.try_get_untracked() != Some(epoch) { return false; }
+        self.on_failure.run(outcome);
+        true
+    }
 }
 
 /// How a saved-versions or brews panel reports a lost authority. Inside the editor the report goes
 /// through [`EditorAuthorityHold`], stamped with the check epoch current when the panel's request
 /// began, so an answer older than the current re-check is ignored like the editor's other authority
-/// callbacks. Outside the editor (no hold) the host's own callback is run.
+/// callbacks. A library page supplies its own callback. The host is chosen by the caller, so a
+/// panel cannot be mounted without saying how its losses are reported.
 #[derive(Clone, Copy)]
-pub(crate) struct HistoryAuthority {
-    hold: Option<EditorAuthorityHold>,
-    fallback: Option<Callback<()>>,
+pub struct HistoryAuthority(HistoryHost);
+
+#[derive(Clone, Copy)]
+enum HistoryHost {
+    Editor(EditorAuthorityHold),
+    Callback(Callback<()>),
+    Standalone,
 }
 
 /// One request's report, bound to the epoch current when the request began.
 #[derive(Clone, Copy)]
 pub(crate) struct HistoryAuthorityRequest {
-    hold: Option<EditorAuthorityHold>,
+    host: HistoryHost,
     epoch: Option<u64>,
-    fallback: Option<Callback<()>>,
 }
 
 impl HistoryAuthority {
-    /// Called while the panel is built, where the editor's context is available.
-    pub(crate) fn new(fallback: Option<Callback<()>>) -> Self {
-        Self { hold: use_context::<EditorAuthorityHold>(), fallback }
+    /// For panels inside the recipe editor; call it where the editor's context is available.
+    pub(crate) fn editor() -> Self {
+        Self(HistoryHost::Editor(expect_context::<EditorAuthorityHold>()))
     }
+    /// For a host that redacts itself through its own callback.
+    pub fn callback(callback: Callback<()>) -> Self { Self(HistoryHost::Callback(callback)) }
+    /// For a page that has nothing to redact.
+    pub fn standalone() -> Self { Self(HistoryHost::Standalone) }
     /// Called when a request starts, before anything is awaited.
     pub(crate) fn begin(self) -> HistoryAuthorityRequest {
-        HistoryAuthorityRequest {
-            hold: self.hold,
-            epoch: self.hold.and_then(|hold| hold.generation.try_get_untracked()),
-            fallback: self.fallback,
-        }
+        let epoch = match self.0 {
+            HistoryHost::Editor(hold) => hold.generation.try_get_untracked(),
+            _ => None,
+        };
+        HistoryAuthorityRequest { host: self.0, epoch }
     }
 }
 
@@ -88,22 +106,15 @@ impl HistoryAuthorityRequest {
     /// the panel reloads against the access it has now, and `false` tells the caller to drop the
     /// answer instead of showing it.
     pub(crate) fn lost_or_reload(self, reload: RwSignal<u64>) -> bool {
-        let honoured = self.report();
+        let honoured = match (self.host, self.epoch) {
+            (HistoryHost::Editor(hold), Some(epoch)) => hold.report(epoch, EditorAccess::Forbidden),
+            // The editor was already gone when the request began: nothing is left to redact.
+            (HistoryHost::Editor(_), None) => true,
+            (HistoryHost::Callback(callback), _) => { let _ = callback.try_run(()); true }
+            (HistoryHost::Standalone, _) => true,
+        };
         if !honoured { reload.update(|v| *v += 1); }
         honoured
-    }
-    fn report(self) -> bool {
-        match self.hold {
-            Some(hold) => {
-                let Some(epoch) = self.epoch else { return true; };
-                match hold.generation.try_get_untracked() {
-                    Some(current) if current != epoch => false,
-                    Some(_) => { let _ = hold.on_failure.try_run((epoch, EditorAccess::Forbidden)); true }
-                    None => true,
-                }
-            }
-            None => { if let Some(callback) = self.fallback { let _ = callback.try_run(()); } true }
-        }
     }
 }
 
@@ -364,8 +375,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     });
     provide_context(EditorAuthorityHold {
         generation: check_generation,
-        on_failure: Callback::new(move |(epoch, outcome)| {
-            if check_generation.try_get_untracked() != Some(epoch) { return; }
+        on_failure: Callback::new(move |outcome| {
             if outcome == EditorAccess::Forbidden {
                 history_authority_failure.run(());
             } else {
@@ -1528,12 +1538,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         </div>
         <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
             <Show when=move || active_tab.get() == "versions" && (context_visible.get() || checking.get())>
-                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
+                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) authority=HistoryAuthority::editor() selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
             </Show>
         </div>
         <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">
             <Show when=move || active_tab.get() == "brews" && (context_visible.get() || checking.get())>
-                {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked()/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
+                {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() authority=HistoryAuthority::editor()/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
             </Show>
         </div>
     </div>

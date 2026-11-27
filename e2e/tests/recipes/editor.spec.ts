@@ -643,6 +643,9 @@ async function answerHistoryForbiddenAround(
       releaseHistory();
       await historyFinished;
       await frames();
+      // The older answer must not change what the brewer sees while the check is still running.
+      await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
+      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
       check.release();
       await check.finished;
     } else {

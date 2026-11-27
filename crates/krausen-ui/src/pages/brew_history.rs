@@ -43,6 +43,9 @@ pub fn BrewHistoryView(
     #[prop(optional)] embedded: bool,
     #[prop(optional, into)] recipe_id: Option<String>,
     #[prop(optional)] intent: Option<OperationIntent>,
+    /// How a lost authority is reported; a page that has nothing to redact leaves it out.
+    #[prop(optional)]
+    authority: Option<HistoryAuthority>,
 ) -> impl IntoView {
     let params = use_params_map();
     let route_recipe = Signal::derive(move || params.read().get("id").unwrap_or_default());
@@ -54,7 +57,7 @@ pub fn BrewHistoryView(
             .unwrap_or_else(|| route_recipe.get())
     });
     let captured_intent = intent;
-    let authority = HistoryAuthority::new(None);
+    let authority = authority.unwrap_or_else(HistoryAuthority::standalone);
     let records = RwSignal::new(Vec::<RecipeBrewSummary>::new());
     let identity = RwSignal::new(None::<OperationIntent>);
     let next_cursor = RwSignal::new(None::<String>);

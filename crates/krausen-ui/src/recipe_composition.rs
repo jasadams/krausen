@@ -91,7 +91,7 @@ mod tests {
             "(\"versions\".into(), \"Saved versions\".into())",
             "(\"brews\".into(), \"Brews\".into())",
             "<crate::components::RecipeRevisionHistory",
-            "BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked()/>",
+            "BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() authority=HistoryAuthority::editor()/>",
         ] {
             assert_contains(EDITOR, required);
         }
