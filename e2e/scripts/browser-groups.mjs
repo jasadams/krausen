@@ -11,7 +11,7 @@
 //
 // <groups> is a comma- or space-separated list of group names, or "all".
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -189,6 +189,7 @@ if (command === 'select') {
       console.error(`browser-groups: ${file} failed`);
     }
   }
+  rmSync(dir, { recursive: true, force: true });
   process.exit(failed === 0 ? 0 : 1);
 } else if (command === 'manifest') {
   console.log(listGroups(resolveGroups('all')).map(testId).sort().join('\n'));
@@ -217,6 +218,7 @@ if (command === 'select') {
     const resolved = resolvedCount(mine, scratch);
     if (resolved !== mine.length) unresolved.push(`shard ${index}/${count}: ${mine.length} planned, ${resolved} resolved by Playwright`);
   }
+  rmSync(scratch, { recursive: true, force: true });
   const missingFromShards = [...ids].filter(id => ran.get(id) !== 1);
   if (unrecorded.length) console.log(`note: ${unrecorded.length} selected test(s) are not in the manifest yet (run "manifest" to record them):\n  ${unrecorded.join('\n  ')}`);
   if (lost.length || missingFromShards.length || unresolved.length) {
