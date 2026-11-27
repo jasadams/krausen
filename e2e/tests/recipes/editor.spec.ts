@@ -388,8 +388,8 @@ test('a later access re-check never restores the focus recorded by an earlier on
   };
   const style = gate();
   const second = gate();
-  // Request 1 is the window-focus check, which records the focus. Request 2 is the style list's
-  // context check once that check has passed; it is held, then answered with another workspace so
+  // Request 1 is the window-focus check, which records the focus. Request 2 is a context check made
+  // by the editor's style list or equipment library once that check has passed; it is held, then answered with another workspace so
   // the editor re-checks through `context_visible.set(false)`. The first request after that answer
   // is the re-check itself (the preview's own check has settled by then), and is held so the test can
   // look at the hidden editor. Every other request passes untouched.
