@@ -145,8 +145,9 @@ fields it does not list are removed, not hidden.
   revisioned settings, so an old revision never claims to be the default. Save
   carries an optional `is_default` (absent leaves it unchanged). Archiving the
   default profile clears it in the same transaction; an archived profile cannot be
-  made default. New recipes select the default profile and seed `batch_size_l`
-  from its batch size when set; existing recipes are untouched.
+  made default. New recipes select the default profile; the profile's batch size
+  is stored and shown but does not seed them (a per-user default batch size is
+  KRA-74). Existing recipes are untouched.
 - **No profile migration.** Profile data from before the spec is not converted. A
   stored profile's removed fields are ignored on read, and a profile-level
   `efficiency_override_fraction` is cleared on read; such a profile is Incomplete

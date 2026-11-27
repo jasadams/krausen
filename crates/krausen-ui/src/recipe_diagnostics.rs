@@ -12,7 +12,7 @@ use crate::pages::{
         AdditionCategory, category_for_head, diagnostic_field, diagnostic_row_field, field_label,
     },
     recipe_editor::BATCH_FIELD,
-    recipe_equipment::{CHILLING_FIELD, chilling_control_hidden, diagnostic_spec},
+    recipe_equipment::{COOLING_FIELD, diagnostic_spec},
     recipe_process::{diagnostic_step, fields as process_fields, show_kettle_top_up, show_manual_mash_water, step_field_label},
 };
 use crate::pages::recipe_draft::RecipeDraft;
@@ -40,8 +40,6 @@ const CODES: &[CodeText] = &[
     CodeText { code: "non_finite", inline: "Enter a finite number", tail: "is not a valid number" },
     CodeText { code: "exposure_exceeds_boil", inline: "Longer than the boil time", tail: "is longer than the boil time" },
     CodeText { code: "negative_sparge", inline: "More than the water available", tail: "is more than the water available" },
-    CodeText { code: "opening_exceeds_diameter", inline: "Wider than the kettle diameter", tail: "is wider than the kettle diameter" },
-    CodeText { code: "plateau_not_below_boil", inline: "Must be below the boil temperature", tail: "must be below the boil temperature" },
     CodeText { code: "unsupported_fermentable_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported stage (mash or boil)" },
     CodeText { code: "unsupported_hop_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported use" },
     CodeText { code: "unsupported_fermentable_kind_or_stage", inline: "Choose a type that matches the stage to start a brew", tail: "needs a type that matches its stage" },
@@ -114,7 +112,7 @@ fn fixed_field(path: &str) -> Option<(&'static str, &'static str)> {
         "process.mash_water_l" => f::MASH_WATER,
         "process.mash_water_method" => f::MASH_METHOD,
         "process.apparent_attenuation_fraction" => f::ATTENUATION,
-        "equipment.chilling" | "equipment_overrides.chilling" => CHILLING_FIELD,
+        "equipment.cooling_method" | "equipment_overrides.cooling_method" => COOLING_FIELD,
         _ => return None,
     };
     Some((label, id))
@@ -128,7 +126,6 @@ fn governed(draft: &RecipeDraft, mut located: Located) -> Located {
     let (governing, note) = match dom_id.as_str() {
         id if id == process_fields::MASH_WATER.0 && !show_manual_mash_water(draft) => (process_fields::MASH_METHOD.0, "Change Mash water method to adjust it."),
         id if id == process_fields::TOP_UP.0 && !show_kettle_top_up(draft) => (process_fields::MASH_METHOD.0, "Choose a Mash water method to enter it."),
-        id if chilling_control_hidden(doc, id) => (CHILLING_FIELD.0, "Set Chilling for this recipe to enter it."),
         _ => return located,
     };
     located.route = Route::Field { dom_id: governing.into() };
@@ -505,15 +502,13 @@ mod tests {
             diag("process.mash_water_method", "missing_or_unsupported_mash_water_method", Readiness::Incomplete),
             diag("process.mash_steps[m1].time_minutes", "negative", Readiness::Invalid),
             diag("hops[h1].stage", "unsupported_hop_stage", Readiness::Incomplete),
-            diag("equipment.chilling", "missing", Readiness::Incomplete),
-            diag("equipment.kettle_opening_cm", "opening_exceeds_diameter", Readiness::Invalid),
+            diag("equipment.cooling_method", "missing", Readiness::Incomplete),
             diag("fermentables", "empty_fermentables", Readiness::Incomplete),
         ]);
         let ids: Vec<_> = list.iter().map(|p| match &p.route { Route::Field { dom_id } => dom_id.as_str(), Route::Explain => "-" }).collect();
         assert!(ids.contains(&"recipe-mash-method") && ids.contains(&"process.mash_steps-m1-time_minutes"));
         assert!(ids.contains(&"hops-h1-stage"), "{ids:?}");
-        assert!(ids.contains(&"recipe-chilling") && ids.contains(&"fermentables-add"), "{ids:?}");
-        assert!(ids.contains(&"recipe-opening"), "{ids:?}");
+        assert!(ids.contains(&"recipe-cooling-method") && ids.contains(&"fermentables-add"), "{ids:?}");
     }
 
     fn field_id(p: &Presented) -> &str {
@@ -551,13 +546,6 @@ mod tests {
         doc.process.mash_water_method = Some("manual".into());
         assert_eq!(field_id(&present_all(&RecipeDraft::new(doc.clone()), &sparge)[0]), "recipe-mash-water");
 
-        use krausen_types::brewery::ChillingV1;
-        let rate = [diag("equipment.chilling.rate_per_minute", "missing", Readiness::Incomplete)];
-        let inherited = present_all(&RecipeDraft::new(doc.clone()), &rate);
-        assert_eq!(field_id(&inherited[0]), "recipe-chilling", "no chilling override: the rate field is not rendered");
-        assert!(inherited[0].message.contains("Set Chilling for this recipe"), "{}", inherited[0].message);
-        doc.equipment_overrides.chilling = Some(ChillingV1::Forced { rate_per_minute: None, plateau_c: None });
-        assert_eq!(field_id(&present_all(&RecipeDraft::new(doc), &rate)[0]), "recipe-chilling-rate");
     }
 
     #[test]
@@ -565,7 +553,7 @@ mod tests {
         assert_eq!(validator_paths("yeast[y1].amount"), ["yeast[y1].amount", "ingredients[y1].amount"]);
         assert_eq!(validator_paths("other_ingredients[o1].amount"), ["other_ingredients[o1].amount", "ingredients[o1].amount"]);
         assert_eq!(validator_paths("yeast[y1].attenuation"), ["yeast[y1].attenuation", "yeast[y1].specification.attenuation_fraction"]);
-        assert_eq!(validator_paths("equipment_overrides.kettle_opening_cm"), ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]);
+        assert_eq!(validator_paths("equipment_overrides.kettle_diameter_cm"), ["equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm"]);
         assert_eq!(validator_paths("batch_size_l"), ["batch_size_l"]);
     }
 
@@ -620,14 +608,12 @@ mod tests {
         // The codes crates/krausen-brewery/src/validation.rs can emit.
         for code in [
             "missing", "unfinished_quantity", "negative", "out_of_range", "non_finite", "exposure_exceeds_boil",
-            "negative_sparge", "opening_exceeds_diameter", "plateau_not_below_boil", "unsupported_fermentable_stage",
+            "negative_sparge", "unsupported_fermentable_stage",
             "unsupported_hop_stage", "unsupported_fermentable_kind_or_stage", "unsupported_cooled_hop_addition",
             "missing_or_unsupported_mash_water_method",
         ] {
             assert!(code_text(code).is_some(), "{code} would read as generic");
         }
-        let plateau = plain_message(&diag("equipment.chilling.plateau_c", "plateau_not_below_boil", Readiness::Invalid));
-        assert_eq!(plateau, "Equipment cooling plateau must be below the boil temperature.");
     }
 
     #[test]
@@ -640,21 +626,21 @@ mod tests {
             diag("hops[h2].amount_g", "negative", Readiness::Invalid),
         ]);
         assert_eq!(list.len(), 3, "{list:?}");
-        assert_eq!(list.iter().filter(|p| p.message.starts_with("Boil-off")).count(), 1);
+        assert_eq!(list.iter().filter(|p| p.message.starts_with("Boil loss")).count(), 1);
     }
 
     #[test]
-    fn two_different_problems_that_share_a_governing_control_stay_two_and_the_count_matches_the_list() {
+    fn two_different_problems_stay_two_and_the_count_matches_the_list() {
         use krausen_types::validation::Validation;
         let draft = RecipeDraft::new(doc());
         let diagnostics = vec![
-            diag("equipment.chilling.rate_per_minute", "missing", Readiness::Incomplete),
-            diag("equipment.chilling.plateau_c", "missing", Readiness::Incomplete),
+            diag("equipment.cooling_method", "missing", Readiness::Incomplete),
+            diag("equipment.cooling_flow_rate_l_per_minute", "missing", Readiness::Incomplete),
             diag("equipment_overrides.boil_loss_l_per_hour", "negative", Readiness::Invalid),
             diag("equipment.boil_loss_l_per_hour", "negative", Readiness::Invalid),
         ];
         let list = present_all(&draft, &diagnostics);
-        assert_eq!(list.iter().filter(|p| p.severity == Readiness::Incomplete).count(), 2, "rate and plateau both govern via Chilling but are two problems");
+        assert_eq!(list.iter().filter(|p| p.severity == Readiness::Incomplete).count(), 2, "cooling method and flow rate are two problems");
         let validation = Validation { state: Readiness::Invalid, diagnostics };
         assert_eq!(readiness_summary(&validation), "Invalid: 1 value to correct");
         let incomplete = Validation { state: Readiness::Incomplete, diagnostics: validation.diagnostics.into_iter().filter(|d| d.severity == Readiness::Incomplete).collect() };

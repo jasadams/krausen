@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use krausen_types::{
-    brewery::{ChillingV1, EquipmentProfile, EquipmentSettingsV1, RecipeDocumentV1},
+    brewery::{CoolingMethodV1, EquipmentProfile, EquipmentSettingsV1, RecipeDocumentV1},
     request_context::OperationIntent,
 };
 use leptos::prelude::*;
@@ -111,13 +111,13 @@ pub fn library_decidable(loaded: bool, load_failed: bool, profile_known: bool, h
     load_failed || (loaded && (profile_known || !has_more))
 }
 
-/// Number of settings this recipe overrides; the chilling mode and its values count once.
+/// Number of settings this recipe overrides; the cooling method counts with the numeric ones.
 pub fn override_count(overrides: &EquipmentSettingsV1) -> usize {
     SPECS
         .iter()
         .filter(|spec| (spec.read)(overrides).is_some())
         .count()
-        + usize::from(overrides.chilling.is_some())
+        + usize::from(overrides.cooling_method.is_some())
 }
 
 struct Spec {
@@ -129,29 +129,23 @@ struct Spec {
     read: fn(&EquipmentSettingsV1) -> Option<f64>,
     write: fn(&mut EquipmentSettingsV1, Option<f64>),
 }
-struct ChillingSpec {
-    mode: &'static str,
-    spec: Spec,
-}
-impl std::ops::Deref for ChillingSpec {
-    type Target = Spec;
-    fn deref(&self) -> &Spec {
-        &self.spec
-    }
-}
-
-static SPECS: [Spec; 11] = [
+static SPECS: [Spec; 16] = [
     Spec { id: "recipe-efficiency-override", label: "Brewhouse efficiency override", unit: "%", scale: 100.0, path: "equipment_overrides.efficiency_override_fraction", read: |s| s.efficiency_override_fraction, write: |s, v| s.efficiency_override_fraction = v },
+    Spec { id: "recipe-mash-volume", label: "Mash tun volume", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_volume_l", read: |s| s.mash_tun_volume_l, write: |s, v| s.mash_tun_volume_l = v },
     Spec { id: "recipe-efficiency", label: "Mash efficiency", unit: "%", scale: 100.0, path: "equipment_overrides.mash_efficiency_fraction", read: |s| s.mash_efficiency_fraction, write: |s, v| s.mash_efficiency_fraction = v },
-    Spec { id: "recipe-boil-off", label: "Boil-off", unit: "L/h", scale: 1.0, path: "equipment_overrides.boil_loss_l_per_hour", read: |s| s.boil_loss_l_per_hour, write: |s, v| s.boil_loss_l_per_hour = v },
-    Spec { id: "recipe-loss", label: "Transfer loss", unit: "L", scale: 1.0, path: "equipment_overrides.trub_and_chiller_loss_l", read: |s| s.trub_and_chiller_loss_l, write: |s, v| s.trub_and_chiller_loss_l = v },
-    Spec { id: "recipe-deadspace", label: "Pre-boil deadspace", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_deadspace_l", read: |s| s.mash_tun_deadspace_l, write: |s, v| s.mash_tun_deadspace_l = v },
-    Spec { id: "recipe-absorption", label: "Grain absorption", unit: "L/kg", scale: 1.0, path: "equipment_overrides.mash_grain_absorption_l_per_kg", read: |s| s.mash_grain_absorption_l_per_kg, write: |s, v| s.mash_grain_absorption_l_per_kg = v },
+    Spec { id: "recipe-mash-deadspace", label: "Mash tun deadspace", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_deadspace_l", read: |s| s.mash_tun_deadspace_l, write: |s, v| s.mash_tun_deadspace_l = v },
     Spec { id: "recipe-thickness", label: "Mash thickness", unit: "L/kg", scale: 1.0, path: "equipment_overrides.mash_thickness_l_per_kg", read: |s| s.mash_thickness_l_per_kg, write: |s, v| s.mash_thickness_l_per_kg = v },
-    Spec { id: "recipe-capacity", label: "Kettle capacity", unit: "L", scale: 1.0, path: "equipment_overrides.boil_volume_l", read: |s| s.boil_volume_l, write: |s, v| s.boil_volume_l = v },
+    Spec { id: "recipe-mash-loss", label: "Mash tun loss", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_loss_l", read: |s| s.mash_tun_loss_l, write: |s, v| s.mash_tun_loss_l = v },
+    Spec { id: "recipe-absorption", label: "Mash grain absorption", unit: "L/kg", scale: 1.0, path: "equipment_overrides.mash_grain_absorption_l_per_kg", read: |s| s.mash_grain_absorption_l_per_kg, write: |s, v| s.mash_grain_absorption_l_per_kg = v },
+    Spec { id: "recipe-sparge-volume", label: "Sparge vessel volume", unit: "L", scale: 1.0, path: "equipment_overrides.sparge_vessel_volume_l", read: |s| s.sparge_vessel_volume_l, write: |s, v| s.sparge_vessel_volume_l = v },
+    Spec { id: "recipe-sparge-absorption", label: "Sparge grain absorption", unit: "L/kg", scale: 1.0, path: "equipment_overrides.sparge_grain_absorption_l_per_kg", read: |s| s.sparge_grain_absorption_l_per_kg, write: |s, v| s.sparge_grain_absorption_l_per_kg = v },
+    Spec { id: "recipe-sparge-deadspace", label: "Sparge deadspace volume", unit: "L", scale: 1.0, path: "equipment_overrides.sparge_deadspace_l", read: |s| s.sparge_deadspace_l, write: |s, v| s.sparge_deadspace_l = v },
+    Spec { id: "recipe-capacity", label: "Boil volume", unit: "L", scale: 1.0, path: "equipment_overrides.boil_volume_l", read: |s| s.boil_volume_l, write: |s, v| s.boil_volume_l = v },
+    Spec { id: "recipe-shrinkage", label: "Wort shrinkage", unit: "%", scale: 100.0, path: "equipment_overrides.wort_shrinkage_fraction", read: |s| s.wort_shrinkage_fraction, write: |s, v| s.wort_shrinkage_fraction = v },
+    Spec { id: "recipe-boil-off", label: "Boil loss", unit: "L/hr", scale: 1.0, path: "equipment_overrides.boil_loss_l_per_hour", read: |s| s.boil_loss_l_per_hour, write: |s, v| s.boil_loss_l_per_hour = v },
+    Spec { id: "recipe-loss", label: "Trub and chiller loss", unit: "L", scale: 1.0, path: "equipment_overrides.trub_and_chiller_loss_l", read: |s| s.trub_and_chiller_loss_l, write: |s, v| s.trub_and_chiller_loss_l = v },
     Spec { id: "recipe-diameter", label: "Kettle diameter", unit: "cm", scale: 1.0, path: "equipment_overrides.kettle_diameter_cm", read: |s| s.kettle_diameter_cm, write: |s, v| s.kettle_diameter_cm = v },
-    Spec { id: "recipe-opening", label: "Kettle opening", unit: "cm", scale: 1.0, path: "equipment_overrides.kettle_opening_cm", read: |s| s.kettle_opening_cm, write: |s, v| s.kettle_opening_cm = v },
-    Spec { id: "recipe-boil-temp", label: "Boil temperature", unit: "°C", scale: 1.0, path: "equipment_overrides.boil_temperature_c", read: |s| s.boil_temperature_c, write: |s, v| s.boil_temperature_c = v },
+    Spec { id: "recipe-cooling-flow", label: "Flow rate", unit: "L/min", scale: 1.0, path: "equipment_overrides.cooling_flow_rate_l_per_minute", read: |s| s.cooling_flow_rate_l_per_minute, write: |s, v| s.cooling_flow_rate_l_per_minute = v },
 ];
 
 /// Control id and label for an equipment diagnostic. `equipment.*` names the
@@ -159,12 +153,12 @@ static SPECS: [Spec; 11] = [
 pub(crate) fn diagnostic_spec(path: &str) -> Option<(&'static str, &'static str)> {
     let field = path.strip_prefix("equipment.").or_else(|| path.strip_prefix("equipment_overrides."))?;
     let wanted = format!("equipment_overrides.{field}");
-    SPECS.iter().chain(CHILLING_SPECS.iter().map(|c| &c.spec)).find(|spec| spec.path == wanted).map(|spec| (spec.id, spec.label))
+    SPECS.iter().find(|spec| spec.path == wanted).map(|spec| (spec.id, spec.label))
 }
 
-/// `(DOM id, visible label)` of the chilling mode select, declared once for the
+/// `(DOM id, visible label)` of the cooling method select, declared once for the
 /// control and the diagnostic registry.
-pub(crate) const CHILLING_FIELD: (&str, &str) = ("recipe-chilling", "Chilling");
+pub(crate) const COOLING_FIELD: (&str, &str) = ("recipe-cooling-method", "Cooling method");
 
 /// Appends a start requirement to a field's existing explanatory hint.
 fn with_need(need: Option<String>, hint: String) -> String {
@@ -173,27 +167,6 @@ fn with_need(need: Option<String>, hint: String) -> String {
         None => hint,
     }
 }
-
-/// True when `dom_id` is a chilling-value control that is not rendered because
-/// the recipe's chilling override is a different mode (or none).
-pub(crate) fn chilling_control_hidden(doc: &RecipeDocumentV1, dom_id: &str) -> bool {
-    CHILLING_SPECS
-        .iter()
-        .find(|chill| chill.spec.id == dom_id)
-        .is_some_and(|chill| chilling_mode(&doc.equipment_overrides.chilling) != chill.mode)
-}
-
-static CHILLING_SPECS: [ChillingSpec; 3] = [
-    ChillingSpec { mode: "forced", spec: Spec { id: "recipe-chilling-rate", label: "Cooling rate", unit: "per min", scale: 1.0, path: "equipment_overrides.chilling.rate_per_minute",
-        read: |s| match &s.chilling { Some(ChillingV1::Forced { rate_per_minute, .. }) => *rate_per_minute, _ => None },
-        write: |s, v| if let Some(ChillingV1::Forced { rate_per_minute, .. }) = &mut s.chilling { *rate_per_minute = v } } },
-    ChillingSpec { mode: "forced", spec: Spec { id: "recipe-chilling-plateau", label: "Cooling plateau", unit: "°C", scale: 1.0, path: "equipment_overrides.chilling.plateau_c",
-        read: |s| match &s.chilling { Some(ChillingV1::Forced { plateau_c, .. }) => *plateau_c, _ => None },
-        write: |s, v| if let Some(ChillingV1::Forced { plateau_c, .. }) = &mut s.chilling { *plateau_c = v } } },
-    ChillingSpec { mode: "counterflow", spec: Spec { id: "recipe-chilling-flow", label: "Counterflow rate", unit: "L/min", scale: 1.0, path: "equipment_overrides.chilling.litres_per_minute",
-        read: |s| match &s.chilling { Some(ChillingV1::Counterflow { litres_per_minute }) => *litres_per_minute, _ => None },
-        write: |s, v| if let Some(ChillingV1::Counterflow { litres_per_minute }) = &mut s.chilling { *litres_per_minute = v } } },
-];
 
 /// Effective equipment values for a review, each marked with where it comes from:
 /// a recipe override, the saved profile, or the recipe's own settings when no
@@ -223,20 +196,11 @@ pub fn effective_lines(
             ))
         })
         .collect();
-    // Chilling is one override whose mode decides which values exist.
-    if effective.chilling.is_some() {
-        let overridden = overrides.chilling.is_some();
-        let mode = chilling_mode(&effective.chilling);
-        let mode = if mode.is_empty() { "natural" } else { mode };
-        lines.push((format!("Chilling: {mode} · {}", origin(overridden)), overridden));
-        for chilling in CHILLING_SPECS.iter().filter(|c| c.mode == mode) {
-            if let Some(value) = (chilling.read)(effective) {
-                lines.push((
-                    format!("{}: {} {} · {}", chilling.label, shown(value, chilling.scale), chilling.unit, origin(overridden)),
-                    overridden,
-                ));
-            }
-        }
+    if let Some(method) = effective.cooling_method {
+        lines.push((
+            format!("Cooling method: {} · {}", cooling_label(method), origin(overrides.cooling_method.is_some())),
+            overrides.cooling_method.is_some(),
+        ));
     }
     lines
 }
@@ -245,12 +209,21 @@ fn shown(value: f64, scale: f64) -> String {
     (((value * scale) * 1e6).round() / 1e6).to_string()
 }
 
-fn chilling_mode(chilling: &Option<ChillingV1>) -> &'static str {
-    match chilling {
+fn cooling_key(method: Option<CoolingMethodV1>) -> &'static str {
+    match method {
         None => "",
-        Some(ChillingV1::Natural) => "natural",
-        Some(ChillingV1::Forced { .. }) => "forced",
-        Some(ChillingV1::Counterflow { .. }) => "counterflow",
+        Some(CoolingMethodV1::Natural) => "natural",
+        Some(CoolingMethodV1::ImmersionChiller) => "immersion_chiller",
+        Some(CoolingMethodV1::IceBath) => "ice_bath",
+        Some(CoolingMethodV1::CounterflowChiller) => "counterflow_chiller",
+    }
+}
+fn cooling_label(method: CoolingMethodV1) -> &'static str {
+    match method {
+        CoolingMethodV1::Natural => "Natural",
+        CoolingMethodV1::ImmersionChiller => "Immersion chiller",
+        CoolingMethodV1::IceBath => "Ice bath",
+        CoolingMethodV1::CounterflowChiller => "Counterflow chiller",
     }
 }
 
@@ -386,31 +359,39 @@ pub fn RecipeEquipment(
         let query = [profile, back].into_iter().flatten().collect::<Vec<_>>().join("&");
         if query.is_empty() { "/equipment".to_owned() } else { format!("/equipment?{query}") }
     });
-    let chilling = Signal::derive(move || draft.with(|d| chilling_mode(&d.document().equipment_overrides.chilling).to_owned()));
-    let chilling_change = Callback::new(move |value: String| {
+    let cooling = Signal::derive(move || draft.with(|d| cooling_key(d.document().equipment_overrides.cooling_method).to_owned()));
+    let cooling_change = Callback::new(move |value: String| {
         draft.update(|d| {
-            d.edit_clearing("equipment_overrides.chilling.", |doc| {
-                doc.equipment_overrides.chilling = match value.as_str() {
-                    "natural" => Some(ChillingV1::Natural),
-                    "forced" => Some(ChillingV1::Forced { rate_per_minute: None, plateau_c: None }),
-                    "counterflow" => Some(ChillingV1::Counterflow { litres_per_minute: None }),
+            d.edit(|doc| {
+                doc.equipment_overrides.cooling_method = match value.as_str() {
+                    "natural" => Some(CoolingMethodV1::Natural),
+                    "immersion_chiller" => Some(CoolingMethodV1::ImmersionChiller),
+                    "ice_bath" => Some(CoolingMethodV1::IceBath),
+                    "counterflow_chiller" => Some(CoolingMethodV1::CounterflowChiller),
                     _ => None,
                 };
             })
         })
     });
-    let chilling_error = Signal::derive(move || draft.with(|d| d.validation_error("equipment.chilling").map(str::to_owned)));
-    let chilling_need = Signal::derive(move || draft.with(|d| d.validation_hint("equipment.chilling").map(str::to_owned)));
-    let chilling_hint = Signal::derive(move || {
-        let inherited = usable_profile.get().map(|p| (p.name.clone(), chilling_mode(&p.settings.chilling)));
-        match (chilling.get().as_str(), inherited) {
-            ("", Some((name, ""))) => format!("Not overridden. {name} has no chilling mode."),
-            ("", Some((name, mode))) => format!("Inherited: effective {mode} chilling from {name}."),
+    let cooling_error = Signal::derive(move || draft.with(|d| d.validation_error("equipment.cooling_method").map(str::to_owned)));
+    let cooling_need = Signal::derive(move || draft.with(|d| d.validation_hint("equipment.cooling_method").map(str::to_owned)));
+    let cooling_hint = Signal::derive(move || {
+        let inherited = usable_profile.get().map(|p| (p.name.clone(), cooling_key(p.settings.cooling_method)));
+        match (cooling.get().as_str(), inherited) {
+            ("", Some((name, ""))) => format!("Not overridden. {name} has no cooling method."),
+            ("", Some((name, method))) => format!("Inherited: effective {method} cooling from {name}."),
             ("", None) => "Not overridden. No profile values to inherit.".to_owned(),
-            (mode, _) => format!("Overridden for this recipe: effective {mode} chilling."),
+            (method, _) => format!("Overridden for this recipe: effective {method} cooling."),
         }
     });
-    let chilling_hint = Signal::derive(move || with_need(chilling_need.get(), chilling_hint.get()));
+    let cooling_hint = Signal::derive(move || with_need(cooling_need.get(), cooling_hint.get()));
+    let cooling_options: Vec<(String, String)> = vec![
+        (String::new(), "Inherit / not specified".to_owned()),
+        ("natural".into(), "Natural".into()),
+        ("immersion_chiller".into(), "Immersion chiller".into()),
+        ("ice_bath".into(), "Ice bath".into()),
+        ("counterflow_chiller".into(), "Counterflow chiller".into()),
+    ];
     view! {
         <BrewerySection title="Equipment for this recipe">
             <div class="recipe-editor__fields">
@@ -450,16 +431,11 @@ pub fn RecipeEquipment(
             <div class="recipe-editor__fields">
                 {SPECS.iter().map(|spec| view! { <OverrideField spec=spec draft=draft profile=usable_profile profile_name=profile_name profile_known=profile_known/> }).collect_view()}
                 <div>
-                    <BreweryDraftSelect id=CHILLING_FIELD.0 label=CHILLING_FIELD.1 value=chilling on_change=chilling_change error=chilling_error hint=chilling_hint options=vec![("".into(), "Inherit / not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
-                    <Show when=move || chilling.get() != "">
-                        <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_label="Reset Chilling to inherited" on:click=move |_| chilling_change.run(String::new())>"Reset"</Button>
+                    <BreweryDraftSelect id=COOLING_FIELD.0 label=COOLING_FIELD.1 value=cooling on_change=cooling_change error=cooling_error hint=cooling_hint options=cooling_options.clone()/>
+                    <Show when=move || cooling.get() != "">
+                        <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm aria_label="Reset Cooling method to inherited" on:click=move |_| cooling_change.run(String::new())>"Reset"</Button>
                     </Show>
                 </div>
-                {CHILLING_SPECS.iter().map(|chill| view! {
-                    <Show when=move || chilling.get() == chill.mode>
-                        <OverrideField spec=&chill.spec draft=draft profile=usable_profile profile_name=profile_name profile_known=profile_known/>
-                    </Show>
-                }).collect_view()}
             </div>
         </BrewerySection>
     }
@@ -478,7 +454,9 @@ mod tests {
             revision: 1,
             metadata_revision: 1,
             archived,
+            is_default: false,
             settings,
+            about: Default::default(),
             provenance: krausen_types::brewery::EquipmentProvenance { source: "manual".into(), assumptions: vec![] },
             saved_by: "u".into(),
             saved_at: 0,
@@ -486,14 +464,14 @@ mod tests {
     }
 
     #[test]
-    fn every_recipe_override_field_is_counted_including_each_chilling_value() {
+    fn every_recipe_override_field_is_counted_including_the_cooling_method() {
         let mut overrides = EquipmentSettingsV1::default();
         assert_eq!(override_count(&overrides), 0);
         overrides.efficiency_override_fraction = Some(0.7);
         overrides.mash_efficiency_fraction = Some(0.75);
-        overrides.kettle_opening_cm = Some(30.0);
+        overrides.kettle_diameter_cm = Some(30.0);
         assert_eq!(override_count(&overrides), 3);
-        overrides.chilling = Some(ChillingV1::Forced { rate_per_minute: Some(0.5), plateau_c: None });
+        overrides.cooling_method = Some(CoolingMethodV1::CounterflowChiller);
         assert_eq!(override_count(&overrides), 4);
     }
 
@@ -504,15 +482,30 @@ mod tests {
             (spec.write)(&mut all, Some(1.0));
             assert_eq!((spec.read)(&all), Some(1.0), "{}", spec.id);
         }
-        assert_eq!(override_count(&all), 11);
-        let mut ids: Vec<_> = SPECS.iter().map(|s| s.id).chain(CHILLING_SPECS.iter().map(|s| s.id)).collect();
-        let mut paths: Vec<_> = SPECS.iter().map(|s| s.path).chain(CHILLING_SPECS.iter().map(|s| s.path)).collect();
+        assert_eq!(override_count(&all), 16);
+        let mut ids: Vec<_> = SPECS.iter().map(|s| s.id).collect();
+        let mut paths: Vec<_> = SPECS.iter().map(|s| s.path).collect();
         let total = ids.len();
         ids.sort();
         ids.dedup();
         paths.sort();
         paths.dedup();
         assert_eq!((ids.len(), paths.len()), (total, total));
+    }
+
+    #[test]
+    fn the_overrides_offer_every_spec_calculation_field() {
+        let labels: Vec<_> = SPECS.iter().map(|s| s.label).collect();
+        for wanted in [
+            "Mash tun volume", "Mash efficiency", "Mash tun deadspace", "Mash thickness", "Mash tun loss",
+            "Mash grain absorption", "Sparge vessel volume", "Sparge grain absorption", "Sparge deadspace volume",
+            "Boil volume", "Wort shrinkage", "Boil loss", "Trub and chiller loss", "Kettle diameter", "Flow rate",
+            "Brewhouse efficiency override",
+        ] {
+            assert!(labels.contains(&wanted), "{wanted}");
+        }
+        assert!(diagnostic_spec("equipment.mash_tun_loss_l").is_some());
+        assert!(diagnostic_spec("equipment.kettle_opening_cm").is_none(), "removed from the profile and the overrides");
     }
 
     #[test]
@@ -559,33 +552,25 @@ mod tests {
         assert!(override_hint("L", 1.0, None, None, Some("Garage"), false).contains("not available"));
     }
 
-    fn lines(chilling: ChillingV1, overridden: bool) -> Vec<String> {
-        let effective = EquipmentSettingsV1 { chilling: Some(chilling.clone()), ..Default::default() };
-        let overrides = EquipmentSettingsV1 { chilling: overridden.then_some(chilling), ..Default::default() };
+    fn lines(method: CoolingMethodV1, overridden: bool) -> Vec<String> {
+        let effective = EquipmentSettingsV1 { cooling_method: Some(method), cooling_flow_rate_l_per_minute: Some(4.0), ..Default::default() };
+        let overrides = EquipmentSettingsV1 { cooling_method: overridden.then_some(method), ..Default::default() };
         effective_lines(&effective, &overrides, true).into_iter().map(|(line, _)| line).collect()
     }
 
     #[test]
-    fn natural_chilling_lists_its_mode_and_origin() {
-        assert_eq!(lines(ChillingV1::Natural, false), vec!["Chilling: natural · from profile"]);
-    }
-
-    #[test]
-    fn forced_chilling_lists_mode_and_values_attributed_to_the_override() {
-        let found = lines(ChillingV1::Forced { rate_per_minute: Some(1.5), plateau_c: Some(20.0) }, true);
+    fn the_cooling_method_and_flow_rate_are_listed_with_their_origin() {
+        let found = lines(CoolingMethodV1::CounterflowChiller, true);
         assert_eq!(
             found,
             vec![
-                "Chilling: forced · recipe override",
-                "Cooling rate: 1.5 per min · recipe override",
-                "Cooling plateau: 20 °C · recipe override",
+                "Flow rate: 4 L/min · from profile",
+                "Cooling method: Counterflow chiller · recipe override",
             ]
         );
-    }
-
-    #[test]
-    fn counterflow_chilling_lists_its_flow() {
-        let found = lines(ChillingV1::Counterflow { litres_per_minute: Some(4.0) }, false);
-        assert_eq!(found, vec!["Chilling: counterflow · from profile", "Counterflow rate: 4 L/min · from profile"]);
+        assert_eq!(
+            lines(CoolingMethodV1::Natural, false),
+            vec!["Flow rate: 4 L/min · from profile", "Cooling method: Natural · from profile"]
+        );
     }
 }

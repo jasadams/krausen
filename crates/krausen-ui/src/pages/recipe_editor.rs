@@ -285,6 +285,13 @@ pub fn RecipeEditorPage() -> impl IntoView {
                     .workspace_id
                     .ok_or_else(|| ServerFnError::new("Workspace required"))?,
             };
+            let seed = if id == "new" {
+                crate::pages::equipment_profiles::load_default_profile(&identity)
+                    .await
+                    .map(|profile| profile.new_recipe_seed())
+            } else {
+                None
+            };
             let result = if id == "new" {
                 None
             } else {
@@ -312,16 +319,16 @@ pub fn RecipeEditorPage() -> impl IntoView {
                 };
                 Some(result?)
             };
-            Ok::<_, ServerFnError>((identity, result))
+            Ok::<_, ServerFnError>((identity, result, seed))
         }
     });
     view! { <Suspense fallback=|| view! { <p>"Loading recipe…"</p> }>
         {move || Suspend::new(async move { match load.await {
-            Ok((identity, None)) => view! { <RecipeForm identity=identity initial=None/> }.into_any(),
-            Ok((identity, Some(RecipeReadOutcome::Found(snapshot)))) => view! { <RecipeForm identity=identity initial=Some(snapshot)/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::NotFound))) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::Forbidden))) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::ContextChanged))) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
+            Ok((identity, None, seed)) => view! { <RecipeForm identity=identity initial=None seed=seed/> }.into_any(),
+            Ok((identity, Some(RecipeReadOutcome::Found(snapshot)), _)) => view! { <RecipeForm identity=identity initial=Some(snapshot) seed=None/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::NotFound), _)) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::Forbidden), _)) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::ContextChanged), _)) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
             Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => view! { <BreweryNotice title="Session expired" body=EditorAccess::Expired.guidance() warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
             _ => view! { <BreweryNotice title="Unable to load recipe" body="Your recipe could not be loaded. Retry when the connection is available." warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
         } })}
@@ -358,7 +365,7 @@ pub(super) struct PendingRecipeSave {
 }
 
 #[component]
-fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
+fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: Option<RecipeDocumentV1>) -> impl IntoView {
     let identity = RwSignal::new(identity);
     let access = RwSignal::new(EditorAccess::Verified);
     let check_generation = RwSignal::new(0_u64);
@@ -392,14 +399,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
     let original_baseline_available = RwSignal::new(true);
+    // A new recipe starts from the workspace default equipment; a saved one from its document.
     let baseline = RwSignal::new(
         initial
             .as_ref()
             .map(|s| s.document.clone())
+            .or_else(|| seed.clone())
             .unwrap_or_default(),
     );
     let draft = RwSignal::new(RecipeDraft::new(
-        initial.map(|s| s.document).unwrap_or_default(),
+        initial.map(|s| s.document).or(seed).unwrap_or_default(),
     ));
     #[cfg(target_arch = "wasm32")]
     let focus_before_check = StoredValue::new(None::<EditorFocus>);

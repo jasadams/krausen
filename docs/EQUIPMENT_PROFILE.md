@@ -47,7 +47,7 @@ the shared kit. The section order is About, Mash, Sparge, Boil, Cooling, Notes.
 | Measurement | `about.measurement` (only `metric`) | Stored and shown |
 | Equipment type | `about.equipment_type` (`all_grain`, `extract`, `biab`) | Stored and shown |
 | Number of vessels | `about.vessel_count` | Stored and shown |
-| Batch size (L) | `about.batch_size_l` | Seeds a new recipe's batch size |
+| Batch size (L) | `about.batch_size_l` | Stored and shown; does not seed new recipes (a per-user default batch size is KRA-74) |
 | Sparge water alert, Sparge progress counter, Boil power control | `about` toggles | Stored and shown |
 | Mash tun volume | `mash_tun_volume_l` | Capacity check |
 | Mash efficiency | `mash_efficiency_fraction` | Calculation |

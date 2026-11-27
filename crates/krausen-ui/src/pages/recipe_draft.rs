@@ -512,20 +512,20 @@ mod tests {
 
     #[test]
     fn editing_an_equipment_override_retires_the_effective_equipment_path() {
-        edited_retires("equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm", "equipment.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm", "equipment.boil_off_l_per_h");
     }
 
     #[test]
     fn editing_an_equipment_override_retires_the_override_path_too() {
-        edited_retires("equipment_overrides.kettle_opening_cm", "equipment_overrides.kettle_opening_cm", "equipment_overrides.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment_overrides.kettle_diameter_cm", "equipment_overrides.boil_off_l_per_h");
     }
 
     #[test]
     fn clearing_an_override_retires_its_retained_entries_so_review_cannot_stay_on_it() {
         use krausen_types::validation::{Readiness::*, Validation};
         for (prefix, reported) in [
-            ("equipment_overrides.kettle_opening_cm", ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]),
-            ("equipment_overrides.chilling.", ["equipment_overrides.chilling.rate_per_minute", "equipment.chilling.rate_per_minute"]),
+            ("equipment_overrides.kettle_diameter_cm", ["equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm"]),
+            ("equipment_overrides.cooling_flow_rate_l_per_minute", ["equipment_overrides.cooling_flow_rate_l_per_minute", "equipment.cooling_flow_rate_l_per_minute"]),
         ] {
             let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
             draft.apply_validation(draft.generation, Validation {

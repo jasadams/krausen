@@ -1810,8 +1810,8 @@ mod regression_tests {
         );
         let boil = lines
             .iter()
-            .find(|(l, _)| l.starts_with("Boil-off"))
+            .find(|(l, _)| l.starts_with("Boil loss"))
             .unwrap();
-        assert_eq!(boil, &("Boil-off: 3 L/h · from profile".to_owned(), false));
+        assert_eq!(boil, &("Boil loss: 3 L/hr · from profile".to_owned(), false));
     }
 }

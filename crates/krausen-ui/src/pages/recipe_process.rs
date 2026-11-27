@@ -31,7 +31,7 @@ use crate::{
     },
 };
 use krausen_types::{
-    brewery::{ChillingV1, ProcessStep, RecipeDocumentV1},
+    brewery::{CoolingMethodV1, ProcessStep, RecipeDocumentV1},
     formulation::Preview,
 };
 use leptos::prelude::*;
@@ -284,12 +284,13 @@ pub(crate) fn show_kettle_top_up(draft: &RecipeDraft) -> bool {
 /// chilling"): natural cooling is an explicit choice; an unspecified choice
 /// leaves bitterness unavailable when the recipe has hops; a hop first added
 /// after the wort has cooled is not modelled.
-fn chilling_context(chilling: &Option<ChillingV1>, has_hops: bool) -> String {
-    let choice = match chilling {
-        Some(ChillingV1::Natural) => "Effective chilling: natural cooling after flameout.".to_owned(),
-        Some(ChillingV1::Forced { .. }) => "Effective chilling: forced chilling after flameout, using the rate and plateau from Equipment.".to_owned(),
-        Some(ChillingV1::Counterflow { .. }) => "Effective chilling: counterflow chilling after flameout, using the flow rate from Equipment.".to_owned(),
-        None if has_hops => "Effective chilling: not specified. A bitterness estimate needs a chilling choice in Equipment.".to_owned(),
+fn chilling_context(cooling: &Option<CoolingMethodV1>, has_hops: bool) -> String {
+    let choice = match cooling {
+        Some(CoolingMethodV1::Natural) => "Effective chilling: natural cooling after flameout.".to_owned(),
+        Some(CoolingMethodV1::ImmersionChiller) => "Effective chilling: immersion chiller after flameout, using the published immersion-chiller curve.".to_owned(),
+        Some(CoolingMethodV1::IceBath) => "Effective chilling: ice bath after flameout, using the published ice-bath curve.".to_owned(),
+        Some(CoolingMethodV1::CounterflowChiller) => "Effective chilling: counterflow chiller after flameout, using the flow rate from Equipment.".to_owned(),
+        None if has_hops => "Effective chilling: not specified. A bitterness estimate needs a cooling method in Equipment.".to_owned(),
         None => "Effective chilling: not specified.".to_owned(),
     };
     format!("{choice} Whirlpool hops are charged at flameout and stand for the whirlpool time; a hop first added after the wort has cooled is not modelled.")
@@ -297,7 +298,7 @@ fn chilling_context(chilling: &Option<ChillingV1>, has_hops: bool) -> String {
 
 fn preview_chilling(preview: &Preview) -> Option<String> {
     let context = preview.context.as_ref()?;
-    Some(chilling_context(&context.effective_equipment.chilling, !context.draft.hops.is_empty()))
+    Some(chilling_context(&context.effective_equipment.cooling_method, !context.draft.hops.is_empty()))
 }
 
 fn has_unsupported_process(doc: &RecipeDocumentV1) -> bool {
@@ -917,21 +918,20 @@ mod tests {
     #[test]
     fn chilling_context_states_the_canonical_model_for_every_choice() {
         let limit = "a hop first added after the wort has cooled is not modelled";
-        let forced = Some(ChillingV1::Forced { rate_per_minute: None, plateau_c: None });
-        let counterflow = Some(ChillingV1::Counterflow { litres_per_minute: None });
         for (chilling, has_hops, expected) in [
-            (Some(ChillingV1::Natural), true, "natural cooling after flameout"),
-            (forced, true, "forced chilling after flameout"),
-            (counterflow, false, "counterflow chilling after flameout"),
-            (None, true, "not specified. A bitterness estimate needs a chilling choice"),
+            (Some(CoolingMethodV1::Natural), true, "natural cooling after flameout"),
+            (Some(CoolingMethodV1::ImmersionChiller), true, "immersion chiller after flameout"),
+            (Some(CoolingMethodV1::IceBath), true, "ice bath after flameout"),
+            (Some(CoolingMethodV1::CounterflowChiller), false, "counterflow chiller after flameout"),
+            (None, true, "not specified. A bitterness estimate needs a cooling method"),
             (None, false, "not specified."),
         ] {
             let text = chilling_context(&chilling, has_hops);
             assert!(text.contains(expected), "{text}");
             assert!(text.contains(limit), "every state names the unmodelled late-hop case: {text}");
         }
-        assert!(!chilling_context(&None, false).contains("needs a chilling choice"), "no hops, no bitterness claim");
-        assert!(!chilling_context(&Some(ChillingV1::Natural), true).contains("not specified"), "natural is explicit, never 'not specified'");
+        assert!(!chilling_context(&None, false).contains("needs a cooling method"), "no hops, no bitterness claim");
+        assert!(!chilling_context(&Some(CoolingMethodV1::Natural), true).contains("not specified"), "natural is explicit, never 'not specified'");
     }
 
     #[test]

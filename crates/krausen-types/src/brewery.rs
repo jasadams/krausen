@@ -193,7 +193,7 @@ pub struct EquipmentAboutV1 {
     pub controller_type: Option<String>,
     pub recirculation_system: Option<String>,
     pub vessel_count: Option<u32>,
-    /// Seeds a new recipe's batch size, in litres.
+    /// Stored and shown; it does not seed new recipes. In litres.
     pub batch_size_l: Option<f64>,
     pub sparge_water_alert: bool,
     pub sparge_progress_counter: bool,
@@ -313,12 +313,12 @@ pub struct EquipmentProvenance {
     pub assumptions: Vec<String>,
 }
 impl EquipmentProfile {
-    /// The starting document of a new recipe that uses this profile: it selects
-    /// the profile and takes the profile's batch size.
+    /// The starting document of a new recipe that uses this profile. It selects
+    /// the profile only: the profile's batch size is stored and shown but does
+    /// not seed the recipe (a per-user default batch size is KRA-74).
     pub fn new_recipe_seed(&self) -> RecipeDocumentV1 {
         RecipeDocumentV1 {
             equipment_profile_id: Some(self.profile_id.clone()),
-            batch_size_l: self.about.batch_size_l,
             ..RecipeDocumentV1::default()
         }
     }

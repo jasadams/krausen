@@ -171,7 +171,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(default.profile_id, first_id);
     let seed = default.new_recipe_seed();
     assert_eq!(seed.equipment_profile_id.as_deref(), Some(first_id.as_str()));
-    assert_eq!(seed.batch_size_l, Some(20.0));
+    assert_eq!(seed.batch_size_l, None, "the profile's batch size does not seed new recipes");
 
     // A save that does not mention the default leaves it alone.
     let mut again = save_request(&intent, &first_id, "Renamed", None, (1, 1));
