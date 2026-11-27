@@ -30,6 +30,7 @@ jobs:
       - run: npm ci --prefix e2e
       # Fails the run if a test that the full selection covered stops running,
       # or if sharding would not run every selected test exactly once.
+      - run: sh e2e/scripts/browser-groups-test.sh
       - run: node e2e/scripts/browser-groups.mjs verify
       - id: plan
         env:

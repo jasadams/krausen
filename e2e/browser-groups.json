@@ -219,7 +219,12 @@
     ".github/**",
     "scripts/**",
     "crates/krausen-ui/src/server_fns/context.rs",
-    "crates/krausen-ui/src/server_fns/mod.rs"
+    "crates/krausen-ui/src/server_fns/mod.rs",
+    "crates/krausen-ui/src/lib.rs",
+    "crates/krausen-ui/src/main.rs",
+    "crates/krausen-ui/src/pages/mod.rs",
+    "crates/krausen-ui/src/types.rs",
+    "crates/krausen-app/src/lib.rs"
    ],
    "groups": "all"
   }

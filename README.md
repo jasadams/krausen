@@ -181,13 +181,13 @@ changes and merges cannot duplicate a local run:
   group when nothing maps). Dispatch it on the ready PR's branch:
 
   ```sh
-  gh workflow run foundation.yml --ref <pr-branch>
+  gh workflow run foundation.yml --ref <pr-branch>   # add -f base=<branch> if not main
   ```
 
 - **Full browser suite** (`browser-full.yml`): every selected browser test, split
   into parallel shards with one server and database each. Run it on the release
   commit; the release workflow will not build a version tag without a passing run
-  on that commit:
+  on that commit, on its first attempt (a re-run of failed jobs does not count):
 
   ```sh
   gh workflow run browser-full.yml --ref main

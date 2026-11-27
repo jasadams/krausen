@@ -67,7 +67,10 @@ function globToRegExp(glob) {
 function selectGroups(files) {
   const names = validateConfig();
   const selected = new Set();
-  let unmapped = false;
+  // No changed files (a branch equal to its base, or the wrong base) must not
+  // pass on the Rust checks alone, so it runs the smoke group like any change
+  // the mapping does not cover.
+  let unmapped = files.length === 0;
   for (const file of files) {
     let mapped = false;
     for (const rule of config.paths) {
@@ -96,6 +99,7 @@ function listGroup(name) {
   // blocks, whose titles are part of a test's identity for --test-list.
   const walk = (suite, describes) => {
     for (const spec of suite.specs ?? []) {
+      if (spec.tests.length !== 1) fail(`group ${name}: ${spec.file} › ${spec.title} runs in ${spec.tests.length} projects; the test identity does not include the project`);
       tests.push({ group: name, file: spec.file, title: [...describes, spec.title].join(' › '), project: spec.tests[0].projectName });
     }
     for (const child of suite.suites ?? []) walk(child, [...describes, child.title]);

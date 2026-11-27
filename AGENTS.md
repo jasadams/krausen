@@ -98,19 +98,22 @@ There are two tiers of CI, both dispatched by hand, never by push:
 
 1. **PR checks** (`foundation.yml`): the Rust tests and checks, plus only the browser
    groups that [e2e/browser-groups.json](e2e/browser-groups.json) maps to the paths the
-   PR changes. A change outside every mapped path runs the smoke group. Dispatch it
-   once on the ready PR's branch.
+   PR changes. A change outside every mapped path, or an empty diff, runs the smoke group. Dispatch
+   it once on the ready PR's branch (`gh workflow run foundation.yml --ref <branch>`; add
+   `-f base=<branch>` when the PR does not target `main`). To run the same browser groups
+   locally: `node e2e/scripts/browser-groups.mjs select --base origin/main`, then
+   `e2e/scripts/profile-browser.sh <groups, comma-separated>`.
 2. **Full browser suite** (`browser-full.yml`): every browser test the project selects,
    in parallel shards that each have their own server and database. Run it on the
    release commit. The release workflow refuses to build a version tag unless this
-   workflow passed on that exact commit.
+   workflow passed on that exact commit, on its first attempt: a re-run of failed jobs does
+   not count.
 
 Keep the acceptance tests, but do not run the full suite on every commit or again
 after merge. When a test fails, fix the cause and rerun only the failed test until it
 passes. Then run the PR checks once, either locally or in CI, not both. Repeat that
 focused-fix cycle if the run finds another failure. Run the full browser suite locally
-or in CI only before a release (or when a PR changes the browser harness itself, such
-as the mapping file, helpers or the Playwright config). Retries are off: an
+or in CI only before a release. Retries are off: an
 intermittent failure is a defect to fix, not to rerun.
 
 When a PR adds or moves a browser test, or a source path with its own tests, update
