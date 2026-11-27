@@ -1124,6 +1124,8 @@ async function recipeWithWaterPlan(page: import('@playwright/test').Page) {
 const ANNOUNCE_DEBOUNCE_MS = 800;
 // The editor waits 250 ms before it asks for a preview (TimeoutFuture in recipe_editor.rs); 300 leaves margin.
 const PREVIEW_DELAY_MS = 300;
+// How long "Estimate updated" stays in the status after an announced episode (UPDATED_ANNOUNCE_MS in recipe_process.rs).
+const UPDATED_ANNOUNCE_MS = 3000;
 const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3', 'profile-transfer-loss': '2', 'profile-deadspace': '0', 'profile-absorption': '0.8', 'profile-thickness': '2.5', 'profile-capacity': '30', 'profile-diameter': '35', 'profile-opening': '30', 'profile-boil-temperature': '100' };
 
 // A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
@@ -1977,7 +1979,6 @@ test('a focus refetch to a newer saved revision shows no water plan or chilling 
 // returning does not end it with "Estimate updated". The page clock is paused so the
 // announcement timers (mirrored by ANNOUNCE_DEBOUNCE_MS and UPDATED_ANNOUNCE_MS) run only when
 // the test advances them: no outcome depends on how fast the server or the machine is.
-const UPDATED_ANNOUNCE_MS = 3000;
 async function pauseAndRecordAnnouncements(page: import('@playwright/test').Page) {
   await page.clock.install();
   await page.clock.pauseAt(new Date(Date.now() + 1000));
@@ -2005,7 +2006,7 @@ test('losing and regaining access announces nothing for an episode that started 
     await page.getByRole('button', { name: 'Retry check', exact: true }).click();
     await expect(volume).toBeVisible();
     // The new estimate is calculated after the preview's own 250 ms delay.
-    await page.clock.runFor(300);
+    await page.clock.runFor(PREVIEW_DELAY_MS);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
     await expect(page.locator('#recipe-section-mash .k-metric').filter({ hasText: 'Mash water' })).toContainText('15.0');
     await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
@@ -2030,7 +2031,7 @@ test('losing access while an out-of-date announcement is pending announces nothi
     await page.unroute('**/leptos-api/get_user_context*');
     await page.getByRole('button', { name: 'Retry check', exact: true }).click();
     await expect(page.getByLabel('Batch volume (L)')).toBeVisible();
-    await page.clock.runFor(300);
+    await page.clock.runFor(PREVIEW_DELAY_MS);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
     await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
     expect(await announced(page)).toEqual([]);
