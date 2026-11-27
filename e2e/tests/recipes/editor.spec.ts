@@ -4094,8 +4094,9 @@ test('a save rejected as invalid after access was lost and regained leaves the d
     // The pre-loss save is rejected only now.
     release();
     await expect(save).toBeEnabled();
+    await expect(page.getByRole('status').filter({ hasText: 'Correct the invalid fields before saving.' })).toBeVisible();
     await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
-    // The late Invalid result changes no cue and announces nothing.
+    // The late Invalid result was applied (its status shows), changes no cue and adds nothing to the estimate live region.
     await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
     expect(await announced(page)).toEqual(before);
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
