@@ -45,7 +45,7 @@ mod tests {
             "Complete saved data",
             "current_context_matches",
             "refresh_key.try_get_untracked()",
-            "authority.lost_or_reload(reload)",
+            "authority.lost_or_reload(reload, !superseded())",
         ] {
             assert_contains(HISTORY, required);
         }

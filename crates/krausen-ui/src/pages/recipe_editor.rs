@@ -102,10 +102,11 @@ impl HistoryAuthority {
 }
 
 impl HistoryAuthorityRequest {
-    /// Reports the loss. A report older than the current re-check is ignored: `reload` is bumped so
-    /// the panel reloads against the access it has now, and `false` tells the caller to drop the
-    /// answer instead of showing it.
-    pub(crate) fn lost_or_reload(self, reload: RwSignal<u64>) -> bool {
+    /// Reports the loss. A report older than the current re-check is ignored, and `false` tells the
+    /// caller to drop the answer instead of showing it. When the load that produced it is still the
+    /// panel's current one (`current`), `reload` is bumped so the panel reloads against the access it
+    /// has now; a load that was already superseded has a successor that does that itself.
+    pub(crate) fn lost_or_reload(self, reload: RwSignal<u64>, current: bool) -> bool {
         let honoured = match (self.host, self.epoch) {
             // An editor that is gone (now, or already when the request began) has nothing to redact
             // and its panel is gone with it, so that is neither a stale report nor a reload.
@@ -114,7 +115,7 @@ impl HistoryAuthorityRequest {
             (HistoryHost::Callback(callback), _) => { let _ = callback.try_run(()); true }
             (HistoryHost::Standalone, _) => true,
         };
-        if !honoured { reload.update(|v| *v += 1); }
+        if !honoured && current { reload.update(|v| *v += 1); }
         honoured
     }
 }
