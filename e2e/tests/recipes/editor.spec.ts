@@ -4051,6 +4051,46 @@ test('diagnostics from an earlier draft stay marked out of date when access is r
   } finally { await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// KRA-66 (UX-007, ACC-005): a save started before access was lost is checked against the context
+// that was lost. When the server rejects it as Invalid after access returns at the SAME draft
+// generation, its diagnostics must not make the list look current: nothing has rechecked them.
+test('a save rejected as invalid after access was lost and regained leaves the diagnostics out of date', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await page.getByLabel('Recipe name', { exact: true }).fill(`Held invalid save ${Date.now()}`);
+  const volume = page.getByLabel('Batch volume (L)');
+  await volume.fill('-5');
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+  const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const received = new Promise<void>(resolve => { seen = resolve; });
+  await page.route('**/leptos-api/save_recipe*', async route => {
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    await save.click();
+    await received;
+    await page.route('**/leptos-api/get_user_context*', route => route.abort('failed'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(volume).toBeHidden();
+    await page.unroute('**/leptos-api/get_user_context*');
+    // The regained preview cannot answer, so nothing rechecks the diagnostics at this generation.
+    await page.route('**/leptos-api/preview_formulation*', route => route.abort('failed'));
+    await page.getByRole('button', { name: 'Retry check', exact: true }).click();
+    await expect(volume).toBeVisible();
+    await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+    // The pre-loss save is rejected only now.
+    release();
+    await expect(save).toBeEnabled();
+    await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('an empty draft links Add at least one fermentable to the add control', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).focus();
