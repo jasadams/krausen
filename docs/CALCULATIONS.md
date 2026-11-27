@@ -146,22 +146,21 @@ Post-boil dilution is unsupported V1, not another meaning of kettle top-up.
 ### Equipment profile V2: water chain and capacity checks
 
 Policy `krausen-formulation-v3` applies the [equipment profile
-spec](EQUIPMENT_PROFILE.md). It extends the water chain above with the new
-stage losses and adds capacity diagnostics. **With every new field absent the
-results equal `krausen-formulation-v2` exactly**, so a profile saved before the
-spec gives the same estimates. A numerical identity check against the V2 fixtures
-is part of the acceptance. Pre-V3 accepted digests are rejected with a context
-conflict, as for the V1→V2 step.
+spec](EQUIPMENT_PROFILE.md). It extends the water chain above with the spec's
+stage losses and adds capacity warnings. Pre-V3 accepted digests are rejected with
+a context conflict, as for the V1→V2 step. Existing profile data is not migrated:
+the profile is the spec's shape, and older profiles are reset to it.
 
-New or renamed inputs (profile fields, each overridable per recipe like the
-existing ones): mash tun deadspace `D_m` (the legacy `pre_boil_deadspace_l`), mash
-tun loss `M`, sparge deadspace `D_s`, mash grain absorption `A_m` (the legacy
-`grain_absorption_l_per_kg`), sparge grain absorption `A_s`, wort shrinkage `s` as
-a fraction in `[0, 1)`, trub and chiller loss `L` (the legacy `transfer_loss_l`),
-boil loss `E` L/h (the legacy `boil_off_l_per_hour`), and the vessel volumes
-`V_mash`, `V_sparge`, `V_boil` (the legacy `kettle_capacity_l`). `M`, `D_s`, `A_s`
-and `s` default to zero when absent, recorded as applied defaults with provenance,
-never silently. Boil loss `E` is a **hot** volume rate.
+Inputs (profile fields, each overridable per recipe like the existing ones): mash
+tun deadspace `D_m`, mash tun loss `M`, sparge deadspace `D_s`, mash grain
+absorption `A_m`, sparge grain absorption `A_s`, wort shrinkage `s` as a fraction
+in `[0, 1)`, trub and chiller loss `L` (the earlier "transfer loss"), boil loss
+`E` L/h (the earlier "boil-off"), and the vessel volumes `V_mash`, `V_sparge`,
+`V_boil`. `M`, `D_s`, `A_s` and `s` default to zero when absent, recorded as
+applied defaults with provenance, never silently. Boil loss `E` is a **hot**
+volume rate. Opening equals kettle diameter and the boil is 100 °C (fixed,
+visible assumptions); the cooling method resolves to a chilling curve before the
+pure engine is called ([spec](EQUIPMENT_PROFILE.md#fixed-assumptions-not-fields)).
 
 Wort shrinkage is the fractional volume lost when hot wort cools to the 20 °C
 reference basis. It replaces the V1 statement that no shrinkage is modelled: with
@@ -192,7 +191,7 @@ A vessel with no volume entered is not checked. Mash volume uses the visible
 assumption `grain_displacement_l_per_kg = 0.67` (decision D4):
 
 ```text
-mash_volume_l  = mash_water_l + G × 0.67        must be <= V_mash   (only with mashed grain)
+mash_volume_l  = mash_water_l + G × 0.67        must be <= V_mash   (only with mashed grain; warning only)
 sparge_volume_l = sparge_water_l                must be <= V_sparge (only when sparge > 0)
 kettle_peak_l  = pre_boil_hot_l                 must be <= V_boil
 ```
@@ -217,8 +216,8 @@ mash thickness 2.8 L/kg, `V_mash` = 30, `V_sparge` = 19, `V_boil` = 30:
 | Sparge vessel | 21.9 against 19 | exceeded by 2.9 L, flagged |
 | Kettle peak | 25.916666666667 against 30 | within |
 
-Legacy check: with `s`, `A_s`, `M`, `D_s` absent and `D_m` = 0, the 20 L worked
-case above still gives 25 / 28.36 L and 13.36 L sparge.
+Check: with `s`, `A_s`, `M`, `D_s` absent and `D_m` = 0, the 20 L worked case
+above still gives 25 / 28.36 L and 13.36 L sparge.
 
 ### Gravity, attenuation and colour
 

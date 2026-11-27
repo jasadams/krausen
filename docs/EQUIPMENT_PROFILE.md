@@ -25,6 +25,15 @@ Clarification (Jason, 2026-11-28): today's "Transfer loss" (wort lost after the
 boil) **is** "Trub and chiller loss", and "Boil-off" **is** "Boil loss (L/hr)". They
 are one field each, not two.
 
+Decision (Jason, 2026-11-28, final): the profile is **exactly** this spec. Fields
+the spec does not list are removed entirely: no separate pre-boil deadspace, no
+kettle opening, no boil temperature, no forced-cooling rate/plateau and no
+Brewhouse efficiency; there are no hidden stored fields and no extra UI.
+Calculations use only the spec fields plus the fixed assumptions below. Existing
+profile data is not migrated: it may be reset to the new shape. Saved recipe
+revisions and the immutable snapshots of historical brews are never rewritten and
+stay readable.
+
 The profile page presents exactly these sections and fields in this order, using
 the shared kit. The section order is About, Mash, Sparge, Boil, Cooling, Notes.
 
@@ -36,64 +45,56 @@ the shared kit. The section order is About, Mash, Sparge, Boil, Cooling, Notes.
 | Equipment name | profile name | Identity |
 | Equipment brand, Description, Controller type, Recirculation system, Notes | `about` block | Stored and shown |
 | Measurement | `about.measurement` (only `metric`) | Stored and shown |
-| Equipment type | `about.equipment_type` (`all_grain`, …) | Stored and shown |
+| Equipment type | `about.equipment_type` (`all_grain`, `extract`, `biab`) | Stored and shown |
 | Number of vessels | `about.vessel_count` | Stored and shown |
 | Batch size (L) | `about.batch_size_l` | Seeds a new recipe's batch size |
 | Sparge water alert, Sparge progress counter, Boil power control | `about` toggles | Stored and shown |
 | Mash tun volume | `mash_tun_volume_l` | Capacity check |
 | Mash efficiency | `mash_efficiency_fraction` | Calculation |
-| Mash tun deadspace | `pre_boil_deadspace_l` | Calculation |
+| Mash tun deadspace | `mash_tun_deadspace_l` | Calculation |
 | Mash thickness | `mash_thickness_l_per_kg` | Calculation |
 | Mash tun loss | `mash_tun_loss_l` | Calculation |
-| Grain absorption (mash) | `grain_absorption_l_per_kg` | Calculation |
+| Grain absorption (Mash) | `mash_grain_absorption_l_per_kg` | Calculation |
 | Sparge vessel volume | `sparge_vessel_volume_l` | Capacity check |
-| Grain absorption (sparge) | `sparge_grain_absorption_l_per_kg` | Calculation |
+| Grain absorption (Sparge) | `sparge_grain_absorption_l_per_kg` | Calculation |
 | Sparge deadspace volume | `sparge_deadspace_l` | Calculation |
-| Boil volume | `kettle_capacity_l` | Capacity check |
+| Boil volume | `boil_volume_l` | Capacity check |
 | Wort shrinkage | `wort_shrinkage_fraction` | Calculation |
-| Boil loss | `boil_off_l_per_hour` | Calculation |
-| Trub and chiller loss | `transfer_loss_l` | Calculation |
+| Boil loss | `boil_loss_l_per_hour` | Calculation |
+| Trub and chiller loss | `trub_and_chiller_loss_l` | Calculation |
 | Kettle diameter | `kettle_diameter_cm` | Calculation (post-flameout model) |
-| Cooling method, Flow rate | `chilling` (`counterflow.litres_per_minute`) | Calculation |
+| Cooling method | `cooling_method` (`natural`, `immersion_chiller`, `ice_bath`, `counterflow_chiller`) | Calculation |
+| Flow rate | `cooling_flow_rate_l_per_minute` | Calculation, counterflow only |
 
-## Today's 14 fields mapped onto the spec
+The calculation fields live in `EquipmentSettingsV1`, which recipes also use for
+per-recipe overrides and brews freeze; `about` is profile-only. The recipe-level
+"Brewhouse efficiency override" (`efficiency_override_fraction`) and BeerXML's
+efficiency choice are unchanged and are not profile fields.
 
-| Today's field (label) | Spec field | Treatment |
-| --- | --- | --- |
-| `efficiency_override_fraction` ("Brewhouse efficiency") | none | Removed from profiles. A profile that has it migrates: its value becomes Mash efficiency, because the effective efficiency today is `override.or(mash)`, so the estimate is unchanged. The recipe-level override and BeerXML's efficiency choice keep this field and are unchanged. |
-| `mash_efficiency_fraction` | Mash efficiency | Same field |
-| `boil_off_l_per_hour` ("Boil-off") | Boil loss (L/hr) | Same field (Jason, 2026-11-28) |
-| `transfer_loss_l` ("Transfer loss") | Trub and chiller loss | Same field (Jason, 2026-11-28) |
-| `pre_boil_deadspace_l` | Mash tun deadspace | Same water-chain term: unrecoverable water before the boil. Proposed mapping, see decision D1 |
-| `grain_absorption_l_per_kg` | Grain absorption (Mash) | Same field |
-| `mash_thickness_l_per_kg` | Mash thickness | Same field |
-| `kettle_capacity_l` | Boil volume | Same field; now also a capacity check |
-| `kettle_diameter_cm` | Kettle diameter | Same field |
-| `chilling.counterflow.litres_per_minute` ("Counterflow rate") | Cooling → Flow rate | Same field |
-| `chilling` method | Cooling method | Same field, see D3 |
-| `kettle_opening_cm`, `boil_temperature_c`, `chilling.forced.rate_per_minute`, `chilling.forced.plateau_c` | none | Calculation-feeding with no spec equivalent: see decisions D2 and D3 |
+## Fixed assumptions (not fields)
 
-## Decisions for Jason (calculation-feeding fields without a spec equivalent)
+Shown with every estimate that uses them and recorded in the calculation context:
 
-Until decided, these four fields stay stored and keep feeding the calculation
-exactly as today, so no estimate moves; they are not shown on the profile page,
-which presents only the spec. Removing them later is a separate migration that
-needs the listed effect to be acceptable.
+- The kettle is uncovered: opening equals kettle diameter.
+- The wort boils at 100 °C.
+- Cooling methods that need a curve use the published defaults of the mIBU
+  reference implementation in `krausen-calc`: natural is no active chilling;
+  immersion chiller is rate `0.4071·e^(-0.0754·V)` per minute (V = post-boil
+  litres) settling at 41 °C; ice bath is `0.6075·e^(-0.0704·V)` settling at 20 °C;
+  counterflow chiller uses the profile's Flow rate.
+- Grain displacement is 0.67 L/kg, used only by the mash tun overfill warning.
 
-| ID | Field | What it affects | Proposal |
-| --- | --- | --- | --- |
-| D1 | `pre_boil_deadspace_l` | Total water (+litres), so sparge water | Mapped to Mash tun deadspace (above). Confirm the mapping. |
-| D2a | `kettle_opening_cm` | Post-flameout cooling in the IBU model (lid effect); late hops/whirlpool IBU | Drop. Absent means uncovered (opening = diameter). A profile with a different opening moves whirlpool/flameout IBU slightly when dropped. |
-| D2b | `boil_temperature_c` | Start temperature of the post-flameout IBU model (altitude boiling point) | Drop; assume 100 °C as the visible assumption. An altitude profile with a lower value moves late-hop IBU when dropped. |
-| D3 | `chilling.forced.{rate_per_minute, plateau_c}` | Post-flameout cooling curve, late-hop IBU | Cooling method becomes Natural / Immersion chiller / Counterflow chiller. Immersion uses the engine's published volume-dependent rate and 41 °C plateau; explicit rate/plateau dropped. A profile with measured values moves late-hop IBU when dropped. |
-| D4 | new constant: grain displacement 0.67 L/kg | Mash tun capacity check only (water + grain volume), no estimate | A visible assumption in every preview that has a mash tun volume. Confirm or give another value. |
+## Renames from the earlier profile
 
-## Migration and unchanged estimates
+| Earlier field | Spec field |
+| --- | --- |
+| `boil_off_l_per_hour` | `boil_loss_l_per_hour` |
+| `transfer_loss_l` | `trub_and_chiller_loss_l` |
+| `pre_boil_deadspace_l` | `mash_tun_deadspace_l` (the one deadspace term; no separate pre-boil field) |
+| `grain_absorption_l_per_kg` | `mash_grain_absorption_l_per_kg` |
+| `kettle_capacity_l` | `boil_volume_l` |
 
-Stored equipment revisions and brew snapshots are immutable and are never
-rewritten. New fields are additive and optional; reading an older revision
-applies the single upgrade rule in the table above (Brewhouse efficiency folds
-into Mash efficiency) and nothing else. Absent new loss fields mean "not
-modelled" and are recorded as applied defaults of zero, so a legacy profile's
-totals equal today's. Details and the test are in
-[DATA_MODEL.md](DATA_MODEL.md#equipment-profile-record).
+The old names are accepted as read aliases so older recipe and brew snapshots
+still load. `kettle_opening_cm`, `boil_temperature_c`, `chilling` and a profile's
+`efficiency_override_fraction` are removed; old documents that carry them still
+load and the values are ignored.

@@ -124,43 +124,35 @@ Saved ingredient specifications remain copies; catalogue edits never replace the
 
 ### Equipment profile record
 
-The profile follows the [equipment profile spec](EQUIPMENT_PROFILE.md), a
-presentation and field contract owned by Jason's 2026-11-28 spec.
+The profile is exactly Jason's [equipment profile spec](EQUIPMENT_PROFILE.md);
+fields it does not list are removed, not hidden.
 
-- **Settings** stay `EquipmentSettingsV1` (the same sparse type recipes use for
-  overrides and brews freeze), extended additively with optional
-  `mash_tun_volume_l`, `mash_tun_loss_l`, `sparge_vessel_volume_l`,
-  `sparge_grain_absorption_l_per_kg`, `sparge_deadspace_l` and
-  `wort_shrinkage_fraction`. `schema_version` stays 1: old documents and frozen
-  brew snapshots deserialize unchanged with the new fields absent. Legacy names
-  keep their meaning, documented in the spec's mapping table.
+- **Settings** stay `EquipmentSettingsV1` (the sparse type recipes use for
+  overrides and brews freeze). It carries the spec's calculation fields under the
+  spec's names (renames and removals are listed in the spec; old names are read
+  aliases). Removed fields in older documents are ignored on read. `schema_version`
+  stays 1: no field changed meaning, and older recipe and brew documents still
+  deserialize.
 - **About block** (`EquipmentAboutV1`): brand, description, measurement, equipment
   type, controller type, recirculation system, vessel count, batch size, the three
   toggles and notes. It belongs to the profile only, never to recipe overrides or
   brew snapshots, so it is a separate `about_json` column on `equipment_revisions`
-  (added with a default of `{}` on both backends; the immutable-history triggers
-  fire on update/delete, not on `ADD COLUMN`) and a field of the profile and save
+  (added with a default of `{}`; the immutable-history triggers fire on
+  update/delete, not on `ADD COLUMN`) and a field of the profile and save
   contract. Equipment name remains the profile name.
 - **Workspace default**: at most one default per workspace, stored as a
-  `workspace_default_equipment (workspace_id PRIMARY KEY, profile_id, ...)` row,
-  not in revisioned settings, so changing it appends no settings revision and an
-  old revision never claims to be the default. It is set by a guarded command
-  with the expected profile metadata revision. Archiving the default profile
-  clears the default in the same transaction; an archived profile cannot be set.
-  New recipes select the default profile and seed `batch_size_l` from its batch
-  size when set; existing recipes are untouched.
-- **Brewhouse efficiency** is not a profile field. `efficiency_override_fraction`
-  remains on the recipe override type and in BeerXML import choice. Profile save
-  rejects it. Reading a stored profile revision that has it applies the one
-  upgrade rule: the value becomes `mash_efficiency_fraction`, the override is
-  cleared. The effective efficiency (`override.or(mash)`) is therefore identical.
-  Stored rows and brew snapshots are never rewritten.
-- **Unchanged estimates.** Policy `krausen-formulation-v3` equals V2 when the new
-  fields are absent ([calculations](CALCULATIONS.md#equipment-profile-v2-water-chain-and-capacity-checks)).
-  Tests on SQLite and PostgreSQL load a profile saved with all of today's fields
-  filled (including Brewhouse efficiency), compare its V3 targets with the V2
-  fixture values, and read an existing brew's frozen plan unchanged.
-- UI and MCP use the same save/get/list/set-default operations and permissions.
+  `workspace_default_equipment (workspace_id PRIMARY KEY, profile_id)` row, not in
+  revisioned settings, so an old revision never claims to be the default. Save
+  carries an optional `is_default` (absent leaves it unchanged). Archiving the
+  default profile clears it in the same transaction; an archived profile cannot be
+  made default. New recipes select the default profile and seed `batch_size_l`
+  from its batch size when set; existing recipes are untouched.
+- **No profile migration.** Profile data from before the spec is not converted. A
+  stored profile's removed fields are ignored on read, and a profile-level
+  `efficiency_override_fraction` is cleared on read; such a profile is Incomplete
+  until saved in the spec's shape. Stored equipment revisions, saved recipe
+  revisions and brew snapshots are never rewritten, and reading them must not fail.
+- UI and MCP use the same save/get/list operations and permissions.
 
 ## Brew start and calculation context
 

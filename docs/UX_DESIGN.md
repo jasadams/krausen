@@ -207,8 +207,8 @@ efficiency" in a profile; the recipe-level override stays under "Adjust for this
 recipe". Default equipment is a toggle in About. Capacity warnings appear beside
 the volumes they affect. Earlier grouping into efficiency/water/vessel/chilling
 sections and the "preserve every physical/chilling field" wording are superseded
-by that spec; fields that feed calculations without a spec equivalent await
-Jason's decision (see the spec) and keep working unchanged meanwhile.
+by that spec: fields it does not list (pre-boil deadspace, kettle opening, boil
+temperature, forced-cooling rate/plateau, Brewhouse efficiency) are removed.
 
 Equipment manager is a separate reusable task/new UI destination under IA-001,
 also reachable contextually without losing the recipe. Preserve list/pagination,
