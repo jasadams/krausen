@@ -611,6 +611,9 @@ async function answerHistoryForbiddenAround(
   order: typeof HISTORY_ORDERS[number],
   endpoint: string,
   startLoad: () => Promise<void>,
+  // The Brews panel makes one more, unheld, context request once its answer arrives, and reports
+  // the failure only after it; the Saved versions panel reports at once.
+  followUpContextCheck = false,
 ) {
   let releaseHistory!: () => void;
   const historyHeld = new Promise<void>(resolve => { releaseHistory = resolve; });
@@ -640,8 +643,11 @@ async function answerHistoryForbiddenAround(
     await check.started;
     await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
     if (order === 'while the check runs') {
+      // The held check's own response is only delivered on release, so the first one seen is the follow-up.
+      const followUp = followUpContextCheck ? page.waitForResponse(response => response.url().includes('/get_user_context')) : undefined;
       releaseHistory();
       await historyFinished;
+      await followUp;
       await frames();
       // The older answer must not change what the brewer sees while the check is still running.
       await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
@@ -683,7 +689,7 @@ for (const order of HISTORY_ORDERS) {
     await saveNewRecipe(page, 'Brews fence');
     // The Brews panel mounts, and loads, when its tab is opened.
     await answerHistoryForbiddenAround(page, order, '**/leptos-api/execute_brew_history*',
-      () => page.getByRole('tab', { name: 'Brews', exact: true }).click());
+      () => page.getByRole('tab', { name: 'Brews', exact: true }).click(), true);
     await expect(page.getByText('No brews have been started for this recipe.', { exact: true })).toBeVisible();
     await expect(page.getByText('You no longer have access to this workspace.', { exact: true })).toHaveCount(0);
   });
