@@ -4120,6 +4120,8 @@ for (const scheme of ['light', 'dark'] as const) {
         return (hi + 0.05) / (lo + 0.05);
       });
     });
+    // The appearance is saved account state shared with later tests: hand it back.
+    setAccountTheme('light');
     expect(ratios.length).toBeGreaterThan(0);
     for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
   });
