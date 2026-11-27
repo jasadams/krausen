@@ -22,4 +22,5 @@ all=$(node -e "console.log(Object.keys(JSON.parse(require('fs').readFileSync('$h
 for f in crates/krausen-ui/src/lib.rs crates/krausen-ui/src/main.rs crates/krausen-ui/src/pages/mod.rs crates/krausen-ui/src/types.rs crates/krausen-app/src/lib.rs crates/krausen-ui/src/app.rs e2e/helpers/test-helpers.ts; do
   expect "cross-cutting $f runs every group" "$all" "$f"
 done
+[ "$fail" -eq 0 ] && echo "all checks passed"
 exit $fail
