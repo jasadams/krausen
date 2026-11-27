@@ -4099,31 +4099,35 @@ for (const scheme of ['light', 'dark'] as const) {
     // The app applies the account's saved appearance after load and removes any
     // class a test adds by hand, so set the appearance the real way and wait for it.
     setAccountTheme(scheme);
-    await page.goto('/design-system');
-    await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
-    const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
-    await expect(list).toBeVisible();
-    const ratios = await list.evaluate(el => {
-      const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
-      const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
-      // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
-      let opacity = 1;
-      for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
-      let bg = [255, 255, 255];
-      for (let node: Element | null = el; node; node = node.parentElement) {
-        const c = rgb(getComputedStyle(node).backgroundColor);
-        if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
-      }
-      return [...el.querySelectorAll('li, button')].map(entry => {
-        const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
-        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
-        return (hi + 0.05) / (lo + 0.05);
+    try {
+      await page.goto('/design-system');
+      await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+      const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
+      await expect(list).toBeVisible();
+      const ratios = await list.evaluate(el => {
+        const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
+        const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+        // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
+        let opacity = 1;
+        for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+        let bg = [255, 255, 255];
+        for (let node: Element | null = el; node; node = node.parentElement) {
+          const c = rgb(getComputedStyle(node).backgroundColor);
+          if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
+        }
+        return [...el.querySelectorAll('li, button')].map(entry => {
+          const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+          const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+          return (hi + 0.05) / (lo + 0.05);
+        });
       });
-    });
-    // The appearance is saved account state shared with later tests: hand it back.
-    setAccountTheme('light');
-    expect(ratios.length).toBeGreaterThan(0);
-    for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratios.length).toBeGreaterThan(0);
+      for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+    } finally {
+      // The appearance is saved account state shared with later tests, including
+      // files that do not reset it: hand it back even when an assertion fails.
+      setAccountTheme('light');
+    }
   });
 }
 
