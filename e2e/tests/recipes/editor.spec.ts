@@ -4061,6 +4061,7 @@ test('a save rejected as invalid after access was lost and regained leaves the d
   await volume.fill('-5');
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('diagnostics-stale')).toHaveText('');
+  await pauseAndRecordAnnouncements(page);
   const save = page.getByRole('button', { name: /^Save (recipe|changes)$/ });
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -4084,10 +4085,19 @@ test('a save rejected as invalid after access was lost and regained leaves the d
     await page.getByRole('button', { name: 'Retry check', exact: true }).click();
     await expect(volume).toBeVisible();
     await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+    // The regained estimate announces its own episode; that is the baseline for what the late save may add.
+    await page.clock.runFor(300);
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    const before = await announced(page);
+    expect(before).toEqual(['Out of date, recalculating', 'Estimate unavailable']);
     // The pre-loss save is rejected only now.
     release();
     await expect(save).toBeEnabled();
     await expect(page.getByTestId('diagnostics-stale')).toContainText('Out of date');
+    // The late Invalid result changes no cue and announces nothing.
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    expect(await announced(page)).toEqual(before);
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
