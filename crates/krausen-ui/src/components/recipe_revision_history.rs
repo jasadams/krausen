@@ -2,7 +2,7 @@
 //! Shared, read-only revision history for the library and editor.
 use crate::{
     components::{BreweryNotice, BreweryPanel, Button, ButtonVariant},
-    pages::recipe_editor::{current_context_matches, HistoryAuthority, HistoryAuthorityRequest},
+    pages::recipe_editor::{current_context_matches, HistoryAuthority},
     server_fns::recipe_library::library_command_shared,
 };
 use krausen_types::{
@@ -108,7 +108,6 @@ pub fn RecipeRevisionHistory(
     // Bumped when a failure report was ignored as older than the current access re-check, so the
     // list and the inspected version reload instead of staying in their loading state.
     let reload = RwSignal::new(0_u64);
-    let report_lost = move |authority: HistoryAuthorityRequest| { if !authority.lost() { reload.update(|v| *v += 1); } };
     let generation = RwSignal::new(0_u64);
     let detail_generation = RwSignal::new(0_u64);
     let loading = RwSignal::new(false);
@@ -127,10 +126,10 @@ pub fn RecipeRevisionHistory(
         error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::History(query)).await;
-            if authority_failed(&result) { report_lost(authority); return; }
+            if authority_failed(&result) { authority.lost_or_reload(reload); return; }
             if generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if generation.try_get_untracked().is_some() { report_lost(authority); }
+                if generation.try_get_untracked().is_some() { authority.lost_or_reload(reload); }
                 return;
             }
             if generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
@@ -167,10 +166,10 @@ pub fn RecipeRevisionHistory(
         detail_error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::Revision(query)).await;
-            if authority_failed(&result) { report_lost(authority); return; }
+            if authority_failed(&result) { authority.lost_or_reload(reload); return; }
             if detail_generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if detail_generation.try_get_untracked().is_some() { report_lost(authority); }
+                if detail_generation.try_get_untracked().is_some() { authority.lost_or_reload(reload); }
                 return;
             }
             if detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }

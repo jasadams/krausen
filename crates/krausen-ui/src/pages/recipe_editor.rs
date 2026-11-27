@@ -84,9 +84,15 @@ impl HistoryAuthority {
 }
 
 impl HistoryAuthorityRequest {
-    /// Reports the loss. Returns `false` when the report was ignored as older than the current
-    /// re-check; the panel then reloads against the access it has now instead of showing the answer.
-    pub(crate) fn lost(self) -> bool {
+    /// Reports the loss. A report older than the current re-check is ignored: `reload` is bumped so
+    /// the panel reloads against the access it has now, and `false` tells the caller to drop the
+    /// answer instead of showing it.
+    pub(crate) fn lost_or_reload(self, reload: RwSignal<u64>) -> bool {
+        let honoured = self.report();
+        if !honoured { reload.update(|v| *v += 1); }
+        honoured
+    }
+    fn report(self) -> bool {
         match self.hold {
             Some(hold) => {
                 let Some(epoch) = self.epoch else { return true; };

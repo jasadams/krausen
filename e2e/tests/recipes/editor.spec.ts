@@ -618,7 +618,7 @@ async function answerHistoryForbiddenAround(
   const historyStarted = new Promise<void>(resolve => { historySeen = resolve; });
   let historyDone!: () => void;
   const historyFinished = new Promise<void>(resolve => { historyDone = resolve; });
-  // Armed by the caller's arm point: the first request to this endpoint after it is the load under test.
+  // Armed here, before `startLoad`: the first request to this endpoint is the load under test.
   let historyFirst = true;
   await page.route(endpoint, async route => {
     if (!historyFirst) { await route.continue(); return; }

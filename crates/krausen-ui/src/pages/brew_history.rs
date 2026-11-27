@@ -100,8 +100,7 @@ pub fn BrewHistoryView(
                     Ok(RecipeBrewHistoryOutcome::Forbidden)
                         | Ok(RecipeBrewHistoryOutcome::ContextChanged)
                 );
-            if denied && !authority.lost() {
-                reload.update(|v| *v += 1);
+            if denied && !authority.lost_or_reload(reload) {
                 return;
             }
             if generation.try_get_untracked() != Some(mine)
@@ -188,8 +187,7 @@ pub fn BrewHistoryView(
             identity.set(Some(expected.clone()));
             leptos::task::spawn_local(async move {
                 let context_ok = current_context_matches(&expected).await;
-                if !context_ok && !authority.lost() {
-                    reload.update(|v| *v += 1);
+                if !context_ok && !authority.lost_or_reload(reload) {
                     return;
                 }
                 if generation.try_get_untracked() != Some(mine)
@@ -208,8 +206,7 @@ pub fn BrewHistoryView(
         }
         leptos::task::spawn_local(async move {
             let context = crate::server_fns::context::get_user_context().await;
-            if context.is_err() && !authority.lost() {
-                reload.update(|v| *v += 1);
+            if context.is_err() && !authority.lost_or_reload(reload) {
                 return;
             }
             if generation.try_get_untracked() != Some(mine)
