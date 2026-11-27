@@ -1122,6 +1122,8 @@ async function recipeWithWaterPlan(page: import('@playwright/test').Page) {
 // Mirrors STALE_ANNOUNCE_DELAY_MS in recipe_process.rs: how long an estimate stays out of
 // date before it is announced. Tests hold or delay the preview response past or inside it.
 const ANNOUNCE_DEBOUNCE_MS = 800;
+// The editor waits 250 ms before it asks for a preview (TimeoutFuture in recipe_editor.rs); 300 leaves margin.
+const PREVIEW_DELAY_MS = 300;
 const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3', 'profile-transfer-loss': '2', 'profile-deadspace': '0', 'profile-absorption': '0.8', 'profile-thickness': '2.5', 'profile-capacity': '30', 'profile-diameter': '35', 'profile-opening': '30', 'profile-boil-temperature': '100' };
 
 // A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
@@ -1147,64 +1149,81 @@ async function recipeWithNumbers(page: import('@playwright/test').Page, profileN
 }
 const waterValues = (page: import('@playwright/test').Page) => page.locator('#recipe-section-mash .k-metric-list .k-metric__value').allTextContents();
 
+// KRA-60 (ACC-005): the page clock is paused (see pauseAndRecordAnnouncements) so the debounce, the
+// preview's own 250 ms delay and the "Estimate updated" timer run only when the test advances them;
+// held routes wait on a promise the test releases. No outcome depends on how fast the machine is.
 for (const width of [1440, 390, 320]) {
   test(`typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await recipeWithNumbers(page);
     const before = await waterValues(page);
     expect(before.some(text => text.includes('15.0'))).toBe(true);
+    await pauseAndRecordAnnouncements(page);
     // Hold every preview so the whole recalculation window is observable.
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
-    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
-    const whirlpool = page.locator('#recipe-whirlpool');
-    await whirlpool.focus();
-    // Sample the focused input's position on every animation frame for the whole window.
-    await page.evaluate(() => {
+    try {
+      await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+      const whirlpool = page.locator('#recipe-whirlpool');
+      await whirlpool.focus();
+      // The paused clock freezes animation frames, so the focused input's position is sampled at every
+      // step of the test and every 100 ms of clock time instead: before the first keypress, after each
+      // keypress and while the clock advances through the whole recalculation window.
       const samples: number[] = [];
-      (window as any).__samples = samples;
-      (window as any).__announced = [] as string[];
-      const input = document.getElementById('recipe-whirlpool')!;
-      const panel = document.getElementById('recipe-section-mash')!;
-      // Relative to the mash panel: what sits above the process sections (the estimates summary) is not ours.
-      const tick = () => { samples.push(Math.round((input.getBoundingClientRect().top - panel.getBoundingClientRect().top) * 100) / 100); requestAnimationFrame(tick); };
-      requestAnimationFrame(tick);
-      const target = document.querySelector('[data-testid="estimate-announce"]')!;
-      new MutationObserver(() => { if (target.textContent) (window as any).__announced.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
-    });
-    const mash = page.locator('#recipe-section-mash');
-    await page.keyboard.press('1');
-    // INT-001: while recalculating the old numbers stay but are dimmed, named and hidden from
-    // assistive technology at once; the announcement waits for the debounce.
-    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
-    await expect(page.getByTestId('estimate-announce')).toHaveText('');
-    await expect(mash.locator('.k-stale--active')).toHaveCount(1);
-    await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
-    expect(await waterValues(page), 'old numbers stay (dimmed) while recalculating').toEqual(before);
-    await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating', { timeout: ANNOUNCE_DEBOUNCE_MS + 2000 });
-    // The outcome settling as invalid is announced once (the status must not keep saying 'recalculating').
-    await page.keyboard.press('x');
-    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
-    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
-    // Going back to calculating and typing on is silent.
-    await page.keyboard.press('Backspace');
-    await page.keyboard.press('2');
-    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
-    await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 400);
-    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
-    release();
-    await expect(page.getByTestId('estimate-stale')).toHaveText('');
-    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
-    await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
-    await expect(mash.locator('.k-stale--active')).toHaveCount(0);
-    await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(0);
-    await expect(whirlpool).toBeFocused();
-    expect(await page.evaluate(() => (window as any).__announced), 'announced once, the settled outcome once, then the settle').toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
-    const samples: number[] = await page.evaluate(() => (window as any).__samples);
-    expect(samples.length, 'frames sampled across the window').toBeGreaterThan(30);
-    // Layout is stable to sub-pixel rounding (a hundredth of a pixel is font/rounding noise, not a shift).
-    expect(Math.max(...samples) - Math.min(...samples), `focused input moved: ${[...new Set(samples)]}`).toBeLessThan(0.25);
-    await page.unroute('**/leptos-api/preview_formulation*');
+      const sample = async () => {
+        samples.push(await page.evaluate(() => {
+          const input = document.getElementById('recipe-whirlpool')!;
+          const panel = document.getElementById('recipe-section-mash')!;
+          // Relative to the mash panel: what sits above the process sections (the estimates summary) is not ours.
+          return Math.round((input.getBoundingClientRect().top - panel.getBoundingClientRect().top) * 100) / 100;
+        }));
+      };
+      const advance = async (ms: number) => {
+        for (let elapsed = 0; elapsed < ms; elapsed += 100) { await page.clock.runFor(Math.min(100, ms - elapsed)); await sample(); }
+      };
+      await sample();
+      const mash = page.locator('#recipe-section-mash');
+      await page.keyboard.press('1');
+      await sample();
+      // INT-001: while recalculating the old numbers stay but are dimmed, named and hidden from
+      // assistive technology at once; the announcement waits for the debounce.
+      await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+      await expect(page.getByTestId('estimate-announce')).toHaveText('');
+      await expect(mash.locator('.k-stale--active')).toHaveCount(1);
+      await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
+      expect(await waterValues(page), 'old numbers stay (dimmed) while recalculating').toEqual(before);
+      // Just inside the debounce: still silent (the paused clock makes this exact, not a race).
+      await advance(ANNOUNCE_DEBOUNCE_MS - 100);
+      await expect(page.getByTestId('estimate-announce')).toHaveText('');
+      await advance(200);
+      await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+      // The outcome settling as invalid is announced once (the status must not keep saying 'recalculating').
+      await page.keyboard.press('x');
+      await sample();
+      await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable until the inputs are valid');
+      await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+      // Going back to calculating and typing on is silent.
+      await page.keyboard.press('Backspace');
+      await sample();
+      await page.keyboard.press('2');
+      await sample();
+      await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+      await advance(ANNOUNCE_DEBOUNCE_MS + 400);
+      await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+      release();
+      await advance(PREVIEW_DELAY_MS);
+      await expect(page.getByTestId('estimate-stale')).toHaveText('');
+      await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+      await advance(UPDATED_ANNOUNCE_MS + 500);
+      await expect(page.getByTestId('estimate-announce')).toHaveText('');
+      await expect(mash.locator('.k-stale--active')).toHaveCount(0);
+      await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(0);
+      await expect(whirlpool).toBeFocused();
+      expect(await announced(page), 'announced once, the settled outcome once, then the settle').toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
+      expect(samples.length, 'positions sampled across the window').toBeGreaterThan(30);
+      // Layout is stable to sub-pixel rounding (a hundredth of a pixel is font/rounding noise, not a shift).
+      expect(Math.max(...samples) - Math.min(...samples), `focused input moved: ${[...new Set(samples)]}`).toBeLessThan(0.25);
+    } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
   });
 }
 
@@ -1212,66 +1231,70 @@ test('a quick recalculation is not announced but a slow one is', async ({ page }
   await recipeWithNumbers(page);
   const whirlpool = page.locator('#recipe-whirlpool');
   await whirlpool.focus();
-  await page.evaluate(() => {
-    const seen: string[] = [];
-    (window as any).__announced = seen;
-    const target = document.querySelector('[data-testid="estimate-announce"]')!;
-    new MutationObserver(() => { if (target.textContent) seen.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
-  });
-  // A response that arrives well inside the debounce: the client's own 250ms wait, the access check and the
-  // calculation already take part of it, so the route adds only a fixed 50ms.
-  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, 50)); await route.continue(); });
-  await page.keyboard.type('12', { delay: 50 });
-  await expect(page.getByTestId('estimate-stale')).toHaveText('');
-  await page.waitForTimeout(ANNOUNCE_DEBOUNCE_MS + 400);
-  expect(await page.evaluate(() => (window as any).__announced), 'announced during a fast recalculation').toEqual([]);
-  await page.unroute('**/leptos-api/preview_formulation*');
-  // A response slower than the debounce is announced exactly once, then the settle.
-  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, ANNOUNCE_DEBOUNCE_MS + 700)); await route.continue(); });
-  await page.keyboard.type('3', { delay: 50 });
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
-  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate updated']);
-  await page.unroute('**/leptos-api/preview_formulation*');
+  await pauseAndRecordAnnouncements(page);
+  // The route is open (a fast response: only the client's own 250 ms wait, the access check and the
+  // calculation come before it) until the test closes the gate for the slow response.
+  let release!: () => void;
+  let gate: Promise<void> = Promise.resolve();
+  try {
+    await page.route('**/leptos-api/preview_formulation*', async route => { await gate; await route.continue(); });
+    await page.keyboard.type('12');
+    await page.clock.runFor(PREVIEW_DELAY_MS);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 400);
+    expect(await announced(page), 'announced during a fast recalculation').toEqual([]);
+    // A response slower than the debounce is announced exactly once, then the settle.
+    gate = new Promise<void>(resolve => { release = resolve; });
+    await page.keyboard.type('3');
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 100);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+    release();
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('');
+    expect(await announced(page)).toEqual(['Out of date, recalculating', 'Estimate updated']);
+  } finally { release?.(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 test('a failure after the announcement is announced once instead of leaving the status stale', async ({ page }) => {
   await recipeWithNumbers(page);
   const whirlpool = page.locator('#recipe-section-boil #recipe-whirlpool');
   await whirlpool.focus();
-  await page.evaluate(() => {
-    const seen: string[] = [];
-    (window as any).__announced = seen;
-    const target = document.querySelector('[data-testid="estimate-announce"]')!;
-    new MutationObserver(() => { if (target.textContent) seen.push(target.textContent); }).observe(target, { childList: true, characterData: true, subtree: true });
-  });
-  // The response is slow enough to be announced, THEN it fails (not an immediate failure).
-  await page.route('**/leptos-api/preview_formulation*', async route => { await new Promise(resolve => setTimeout(resolve, ANNOUNCE_DEBOUNCE_MS + 600)); await route.abort(); });
-  await page.keyboard.type('7');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable');
-  await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
-  await page.unroute('**/leptos-api/preview_formulation*');
-  await page.getByRole('button', { name: 'Retry calculation' }).click();
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('', { timeout: 6000 });
-  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate unavailable', 'Estimate updated']);
-  // The same when the held request is overtaken by an invalid value.
-  await page.evaluate(() => { (window as any).__announced.length = 0; });
+  await pauseAndRecordAnnouncements(page);
   let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
-  await whirlpool.focus(); // Retry took the focus
-  await page.keyboard.type('8');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
-  await page.keyboard.type('-');
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
-  await page.keyboard.press('Backspace');
-  release();
-  await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
-  expect(await page.evaluate(() => (window as any).__announced)).toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
-  await page.unroute('**/leptos-api/preview_formulation*');
+  try {
+    // The response is held past the announcement, THEN it fails (not an immediate failure).
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.abort(); });
+    await page.keyboard.type('7');
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 100);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+    release();
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.getByRole('button', { name: 'Retry calculation' }).click();
+    await page.clock.runFor(PREVIEW_DELAY_MS);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+    await page.clock.runFor(UPDATED_ANNOUNCE_MS + 500);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('');
+    expect(await announced(page)).toEqual(['Out of date, recalculating', 'Estimate unavailable', 'Estimate updated']);
+    // The same when the held request is overtaken by an invalid value.
+    await page.evaluate(() => { (window as any).__announced.length = 0; });
+    const heldAgain = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await heldAgain; await route.continue(); });
+    await whirlpool.focus(); // Retry took the focus
+    await page.keyboard.type('8');
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 100);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Out of date, recalculating');
+    await page.keyboard.type('-');
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
+    await page.keyboard.press('Backspace');
+    release();
+    await page.clock.runFor(PREVIEW_DELAY_MS);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+    expect(await announced(page)).toEqual(['Out of date, recalculating', 'Estimate unavailable until the inputs are valid', 'Estimate updated']);
+  } finally { release?.(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 // The out-of-date cue sits under the section title on a narrow panel. When its text
@@ -1302,6 +1325,7 @@ for (const width of [1440, 601, 390, 320]) {
     const whirlpool = page.locator('#recipe-whirlpool');
     const numbers = await waterValues(page);
     expect(numbers.some(text => text.includes('15.0'))).toBe(true);
+    await pauseAndRecordAnnouncements(page);
     await whirlpool.focus();
     const offset = async () => (await whirlpool.boundingBox())!.y - (await mash.boundingBox())!.y;
     const top = await offset();
@@ -1313,22 +1337,28 @@ for (const width of [1440, 601, 390, 320]) {
     expect((await waterValues(page)).join(' ')).not.toMatch(/\d\.\d/);
     expect((await mash.locator('.k-metric-list').boundingBox())!.height, 'plan height').toBe(planHeight);
     expect(Math.abs((await offset()) - top), 'focused input moved within the process sections when the cue appeared').toBeLessThan(0.25);
-    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid', { timeout: ANNOUNCE_DEBOUNCE_MS + 2000 });
+    await page.clock.runFor(ANNOUNCE_DEBOUNCE_MS + 100);
+    await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate unavailable until the inputs are valid');
     await expect(mash.locator('.k-stale[aria-hidden="true"]')).toHaveCount(1);
     await whirlpool.fill('10');
+    await page.clock.runFor(PREVIEW_DELAY_MS);
     await expect(page.getByTestId('estimate-stale')).toHaveText('');
     await expect.poll(() => waterValues(page)).toEqual(numbers);
     // A network failure is neutral, agrees with the preview panel's own message, and also shows dashes.
-    await page.route('**/leptos-api/preview_formulation*', route => route.abort());
-    await whirlpool.fill('12');
-    await expect(page.getByText('Preview unavailable. Your draft remains open.')).toBeVisible();
-    await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
-    await expect.poll(async () => (await waterValues(page)).every(text => text.startsWith('—'))).toBe(true);
-    await page.unroute('**/leptos-api/preview_formulation*');
-    await page.getByRole('button', { name: 'Retry calculation' }).click();
-    await expect(page.getByTestId('estimate-stale')).toHaveText('');
-    await expect.poll(() => waterValues(page)).toEqual(numbers);
-    await expect(mash.locator('.k-stale--active')).toHaveCount(0);
+    try {
+      await page.route('**/leptos-api/preview_formulation*', route => route.abort());
+      await whirlpool.fill('12');
+      await page.clock.runFor(PREVIEW_DELAY_MS);
+      await expect(page.getByText('Preview unavailable. Your draft remains open.')).toBeVisible();
+      await expect(page.getByTestId('estimate-stale')).toHaveText('Estimate unavailable');
+      await expect.poll(async () => (await waterValues(page)).every(text => text.startsWith('—'))).toBe(true);
+      await page.unrouteAll({ behavior: 'wait' });
+      await page.getByRole('button', { name: 'Retry calculation' }).click();
+      await page.clock.runFor(PREVIEW_DELAY_MS);
+      await expect(page.getByTestId('estimate-stale')).toHaveText('');
+      await expect.poll(() => waterValues(page)).toEqual(numbers);
+      await expect(mash.locator('.k-stale--active')).toHaveCount(0);
+    } finally { await page.unrouteAll({ behavior: 'wait' }); }
   });
 }
 
