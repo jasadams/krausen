@@ -124,14 +124,16 @@ pub fn RecipeRevisionHistory(
         loading.set(true);
         error.set(String::new());
         leptos::task::spawn_local(async move {
+            let superseded = move || generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh);
             let result = library_command_shared(LibraryCommand::History(query)).await;
+            // A superseded answer is dropped before anything is reported or reloaded.
+            if superseded() { return; }
             if authority_failed(&result) { authority.lost_or_reload(reload); return; }
-            if generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if generation.try_get_untracked().is_some() { authority.lost_or_reload(reload); }
+                if !superseded() { authority.lost_or_reload(reload); }
                 return;
             }
-            if generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
+            if superseded() { return; }
             loading.set(false);
             match result {
                 Ok(LibraryOutcome::History(next)) => {
@@ -164,14 +166,16 @@ pub fn RecipeRevisionHistory(
         detail_loading.set(true);
         detail_error.set(String::new());
         leptos::task::spawn_local(async move {
+            let superseded = move || detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh);
             let result = library_command_shared(LibraryCommand::Revision(query)).await;
+            // A superseded answer is dropped before anything is reported or reloaded.
+            if superseded() { return; }
             if authority_failed(&result) { authority.lost_or_reload(reload); return; }
-            if detail_generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if detail_generation.try_get_untracked().is_some() { authority.lost_or_reload(reload); }
+                if !superseded() { authority.lost_or_reload(reload); }
                 return;
             }
-            if detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
+            if superseded() { return; }
             detail_loading.set(false);
             match result {
                 Ok(LibraryOutcome::Revision(document)) => selected.set(Some((revision, document))),
