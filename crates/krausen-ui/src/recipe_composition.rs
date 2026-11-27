@@ -45,7 +45,7 @@ mod tests {
             "Complete saved data",
             "current_context_matches",
             "refresh_key.try_get_untracked()",
-            "on_authority_failure.try_run(())",
+            "authority.lost()",
         ] {
             assert_contains(HISTORY, required);
         }
@@ -91,7 +91,7 @@ mod tests {
             "(\"versions\".into(), \"Saved versions\".into())",
             "(\"brews\".into(), \"Brews\".into())",
             "<crate::components::RecipeRevisionHistory",
-            "BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() on_authority_failure=history_authority_failure",
+            "BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked()/>",
         ] {
             assert_contains(EDITOR, required);
         }

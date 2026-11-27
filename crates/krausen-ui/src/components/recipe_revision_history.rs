@@ -2,7 +2,7 @@
 //! Shared, read-only revision history for the library and editor.
 use crate::{
     components::{BreweryNotice, BreweryPanel, Button, ButtonVariant},
-    pages::recipe_editor::current_context_matches,
+    pages::recipe_editor::{current_context_matches, HistoryAuthority},
     server_fns::recipe_library::library_command_shared,
 };
 use krausen_types::{
@@ -81,7 +81,8 @@ pub fn RecipeRevisionHistory(
     recipe_id: String,
     recipe_title: String,
     refresh_key: Signal<i64>,
-    on_authority_failure: Callback<()>,
+    #[prop(optional)]
+    on_authority_failure: Option<Callback<()>>,
     /// Exact saved version addressed by the page URL (`None`: none inspected).
     #[prop(into)]
     selected_revision: Signal<Option<i64>>,
@@ -94,6 +95,7 @@ pub fn RecipeRevisionHistory(
     #[prop(optional)]
     loaded: Option<RwSignal<Vec<RevisionSummary>>>,
 ) -> impl IntoView {
+    let authority = HistoryAuthority::new(on_authority_failure);
     let intent = StoredValue::new(intent);
     let recipe_id = StoredValue::new(recipe_id);
     let page = RwSignal::new(None::<HistoryPage>);
@@ -114,16 +116,17 @@ pub fn RecipeRevisionHistory(
         let append = cursor.is_some();
         let sequence = generation.get_untracked();
         let expected_refresh = refresh_key.get_untracked();
+        let authority = authority.begin();
         let captured = intent.get_value();
         let query = HistoryQuery { intent: captured.clone(), recipe_id: recipe_id.get_value(), cursor, limit: 50 };
         loading.set(true);
         error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::History(query)).await;
-            if authority_failed(&result) { let _ = on_authority_failure.try_run(()); return; }
+            if authority_failed(&result) { authority.lost(); return; }
             if generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if generation.try_get_untracked().is_some() { let _ = on_authority_failure.try_run(()); }
+                if generation.try_get_untracked().is_some() { authority.lost(); }
                 return;
             }
             if generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
@@ -152,6 +155,7 @@ pub fn RecipeRevisionHistory(
         detail_generation.update(|v| *v += 1);
         let sequence = detail_generation.get_untracked();
         let expected_refresh = refresh_key.get_untracked();
+        let authority = authority.begin();
         let captured = intent.get_value();
         let query = RevisionQuery { intent: captured.clone(), recipe_id: recipe_id.get_value(), revision };
         selected.set(None);
@@ -159,10 +163,10 @@ pub fn RecipeRevisionHistory(
         detail_error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = library_command_shared(LibraryCommand::Revision(query)).await;
-            if authority_failed(&result) { let _ = on_authority_failure.try_run(()); return; }
+            if authority_failed(&result) { authority.lost(); return; }
             if detail_generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if detail_generation.try_get_untracked().is_some() { let _ = on_authority_failure.try_run(()); }
+                if detail_generation.try_get_untracked().is_some() { authority.lost(); }
                 return;
             }
             if detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }

@@ -11,7 +11,7 @@ use crate::{
         Checkbox, PrintableRecipe,
         brew_evidence_rows::{BrewMeasurementRow, BrewProvenanceFact},
     },
-    pages::recipe_editor::current_context_matches,
+    pages::recipe_editor::{current_context_matches, HistoryAuthority},
     server_fns::brew_history::{
         brew_comparison_shared, brew_feedback_apply_shared, brew_feedback_preview_shared,
         brew_history_shared, brew_print_shared,
@@ -58,6 +58,7 @@ pub fn BrewHistoryView(
             .unwrap_or_else(|| route_recipe.get())
     });
     let captured_intent = intent;
+    let authority = HistoryAuthority::new(on_authority_failure);
     let records = RwSignal::new(Vec::<RecipeBrewSummary>::new());
     let identity = RwSignal::new(None::<OperationIntent>);
     let next_cursor = RwSignal::new(None::<String>);
@@ -83,6 +84,7 @@ pub fn BrewHistoryView(
         generation.set(mine);
         busy.set(true);
         message.set("Loading brew history…".into());
+        let authority = authority.begin();
         leptos::task::spawn_local(async move {
             let outcome = brew_history_shared(RecipeBrewHistoryQuery {
                 intent: intent.clone(),
@@ -100,9 +102,7 @@ pub fn BrewHistoryView(
                         | Ok(RecipeBrewHistoryOutcome::ContextChanged)
                 );
             if denied {
-                if let Some(callback) = on_authority_failure.clone() {
-                    let _ = callback.try_run(());
-                }
+                authority.lost();
             }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
@@ -179,6 +179,7 @@ pub fn BrewHistoryView(
         message.set("Loading brew history…".into());
         let mine = generation.get_untracked().wrapping_add(1);
         generation.set(mine);
+        let authority = authority.begin();
         if let Some(expected) = captured_intent.clone() {
             // Embedded callers supply the editor's captured account/workspace.
             // Verify it against the current authenticated context instead of
@@ -187,9 +188,7 @@ pub fn BrewHistoryView(
             leptos::task::spawn_local(async move {
                 let context_ok = current_context_matches(&expected).await;
                 if !context_ok {
-                    if let Some(callback) = on_authority_failure.clone() {
-                        let _ = callback.try_run(());
-                    }
+                    authority.lost();
                 }
                 if generation.try_get_untracked() != Some(mine)
                     || recipe_id.try_get_untracked() != Some(recipe)
@@ -208,9 +207,7 @@ pub fn BrewHistoryView(
         leptos::task::spawn_local(async move {
             let context = crate::server_fns::context::get_user_context().await;
             if context.is_err() {
-                if let Some(callback) = on_authority_failure.clone() {
-                    let _ = callback.try_run(());
-                }
+                authority.lost();
             }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)

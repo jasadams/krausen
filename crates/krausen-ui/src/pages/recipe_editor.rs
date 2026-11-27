@@ -50,6 +50,50 @@ pub(crate) struct EditorAuthorityHold {
     pub(crate) on_failure: Callback<(u64, EditorAccess)>,
 }
 
+/// How a saved-versions or brews panel reports a lost authority. Inside the editor the report goes
+/// through [`EditorAuthorityHold`], stamped with the check epoch current when the panel's request
+/// began, so an answer older than the current re-check is ignored like the editor's other authority
+/// callbacks. Outside the editor (no hold) the host's own callback is run.
+#[derive(Clone, Copy)]
+pub(crate) struct HistoryAuthority {
+    hold: Option<EditorAuthorityHold>,
+    fallback: Option<Callback<()>>,
+}
+
+/// One request's report, bound to the epoch current when the request began.
+#[derive(Clone, Copy)]
+pub(crate) struct HistoryAuthorityRequest {
+    hold: Option<EditorAuthorityHold>,
+    epoch: Option<u64>,
+    fallback: Option<Callback<()>>,
+}
+
+impl HistoryAuthority {
+    /// Called while the panel is built, where the editor's context is available.
+    pub(crate) fn new(fallback: Option<Callback<()>>) -> Self {
+        Self { hold: use_context::<EditorAuthorityHold>(), fallback }
+    }
+    /// Called when a request starts, before anything is awaited.
+    pub(crate) fn begin(self) -> HistoryAuthorityRequest {
+        HistoryAuthorityRequest {
+            hold: self.hold,
+            epoch: self.hold.and_then(|hold| hold.generation.try_get_untracked()),
+            fallback: self.fallback,
+        }
+    }
+}
+
+impl HistoryAuthorityRequest {
+    pub(crate) fn lost(self) {
+        match self.hold {
+            Some(hold) => {
+                if let Some(epoch) = self.epoch { let _ = hold.on_failure.try_run((epoch, EditorAccess::Forbidden)); }
+            }
+            None => { if let Some(callback) = self.fallback { let _ = callback.try_run(()); } }
+        }
+    }
+}
+
 impl EditorAccess {
     fn title(self) -> &'static str {
         match self {
@@ -1471,12 +1515,12 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
         </div>
         <div role="tabpanel" id="editor-panel-versions" aria-labelledby="editor-tab-versions" hidden=move || active_tab.get() != "versions">
             <Show when=move || active_tab.get() == "versions" && (context_visible.get() || checking.get())>
-                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) on_authority_failure=history_authority_failure selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
+                {move || recipe_id.get().map(|id| view! { <crate::components::RecipeRevisionHistory intent=identity.get_untracked() recipe_id=id recipe_title=baseline.with_untracked(|d| d.title.clone()) refresh_key=Signal::derive(move || revision.get().unwrap_or_default()) selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next)) on_start=Callback::new(move |entry: krausen_types::recipe_library::RevisionSummary| { start_historical.set((Some(entry.revision) != revision.get_untracked()).then_some(entry)); start_open.set(true); }) loaded=version_labels/> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No saved versions yet" body="Save this recipe to create its first saved version."/> }.into_any())}
             </Show>
         </div>
         <div role="tabpanel" id="editor-panel-brews" aria-labelledby="editor-tab-brews" hidden=move || active_tab.get() != "brews">
             <Show when=move || active_tab.get() == "brews" && (context_visible.get() || checking.get())>
-                {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked() on_authority_failure=history_authority_failure/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
+                {move || recipe_id.get().map(|id| view! { <BreweryPanel title="Brew history" description="Brews started from this recipe."><crate::pages::brew_history::BrewHistoryView embedded=true recipe_id=id intent=identity.get_untracked()/></BreweryPanel> }.into_any()).unwrap_or_else(|| view! { <BreweryNotice title="No brews yet" body="Save this recipe before starting a brew."/> }.into_any())}
             </Show>
         </div>
     </div>

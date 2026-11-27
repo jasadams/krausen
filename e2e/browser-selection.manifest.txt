@@ -175,6 +175,7 @@ recipes/editor.spec.ts › a focus refetch to a newer saved revision shows no wa
 recipes/editor.spec.ts › a focused recipe heading is visible and not clipped
 recipes/editor.spec.ts › a forbidden history answer from before a passing access re-check is ignored after the check has passed
 recipes/editor.spec.ts › a forbidden history answer from before a passing access re-check is ignored while the check runs
+recipes/editor.spec.ts › a forbidden history answer from the current check epoch still shows the access-lost notice
 recipes/editor.spec.ts › a late committed save cannot leave or rewrite the address after confirmed context loss
 recipes/editor.spec.ts › a late preview response cannot replace a settled invalid estimate
 recipes/editor.spec.ts › a later access re-check never restores the focus recorded by an earlier one

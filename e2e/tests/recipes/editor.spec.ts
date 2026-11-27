@@ -660,6 +660,29 @@ for (const order of ['while the check runs', 'after the check has passed'] as co
   });
 }
 
+// KRA-68: the fence ignores only answers older than the current check. A history load that began
+// after the last check and is answered "forbidden" is a real loss and is still shown.
+test('a forbidden history answer from the current check epoch still shows the access-lost notice', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`History loss ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Inspect revision 1', exact: true })).toBeVisible();
+  let first = true;
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    await route.fulfill({ json: 'Forbidden' });
+  });
+  try {
+    await page.getByRole('button', { name: 'Inspect revision 1', exact: true }).click();
+    await expect(page.getByText('Access denied', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Recipe name', { exact: true })).toBeHidden();
+  } finally { await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
