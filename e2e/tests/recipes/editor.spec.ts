@@ -689,6 +689,43 @@ for (const order of HISTORY_ORDERS) {
   });
 }
 
+// KRA-68: an answer that arrives after the editor is gone has nothing to redact; it is neither shown
+// nor treated as stale (no reload of a panel that no longer exists), and raises no reactive panic.
+test('a forbidden history answer from a disposed editor is dropped without a reactive panic', async ({ page }) => {
+  await saveNewRecipe(page, 'History disposed');
+  await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Inspect revision 1', exact: true })).toBeVisible();
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  let first = true;
+  await page.route('**/leptos-api/execute_library_command*', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    const response = await route.fetch();
+    seen();
+    await held;
+    await route.fulfill({ response, json: 'Forbidden' });
+    completed();
+  });
+  try {
+    await page.getByRole('button', { name: 'Inspect revision 1', exact: true }).click();
+    await started;
+    await openSettings(page);
+    await expect(page).toHaveURL(/settings\/profile/);
+    release();
+    await finished;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(errors).toEqual([]);
+    await expect(page).toHaveURL(/settings\/profile/);
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 // KRA-68: the fence ignores only answers older than the current check. A history load that began
 // after the last check and is answered "forbidden" is a real loss and is still shown.
 test('a forbidden history answer from the current check epoch still shows the access-lost notice', async ({ page }) => {

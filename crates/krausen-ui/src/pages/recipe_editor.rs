@@ -107,8 +107,9 @@ impl HistoryAuthorityRequest {
     /// answer instead of showing it.
     pub(crate) fn lost_or_reload(self, reload: RwSignal<u64>) -> bool {
         let honoured = match (self.host, self.epoch) {
-            (HistoryHost::Editor(hold), Some(epoch)) => hold.report(epoch, EditorAccess::Forbidden),
-            // The editor was already gone when the request began: nothing is left to redact.
+            // An editor that is gone (now, or already when the request began) has nothing to redact
+            // and its panel is gone with it, so that is neither a stale report nor a reload.
+            (HistoryHost::Editor(hold), Some(epoch)) => hold.generation.try_get_untracked().is_none() || hold.report(epoch, EditorAccess::Forbidden),
             (HistoryHost::Editor(_), None) => true,
             (HistoryHost::Callback(callback), _) => { let _ = callback.try_run(()); true }
             (HistoryHost::Standalone, _) => true,
