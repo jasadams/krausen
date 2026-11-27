@@ -379,41 +379,53 @@ test('a later access re-check never restores the focus recorded by an earlier on
   const volume = page.getByLabel('Batch volume (L)');
   const name = page.getByLabel('Recipe name', { exact: true });
   await volume.focus();
-  let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
-  let seen!: () => void;
-  const started = new Promise<void>(resolve => { seen = resolve; });
-  let completed!: () => void;
-  const finished = new Promise<void>(resolve => { completed = resolve; });
+  const gate = () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let seen!: () => void;
+    const started = new Promise<void>(resolve => { seen = resolve; });
+    return { held, release, started, seen };
+  };
+  const style = gate();
+  const second = gate();
   // Request 1 is the window-focus check, which records the focus. Request 2 is the style list's
   // context check once that check has passed; it is held, then answered with another workspace so
-  // the editor re-checks through `context_visible.set(false)`. Later requests pass untouched.
+  // the editor re-checks through `context_visible.set(false)`. Request 3 is that re-check, held so
+  // the test can look at the hidden editor. Anything later passes untouched.
   let count = 0;
   await page.route('**/leptos-api/get_user_context*', async route => {
     const index = ++count;
-    if (index !== 2) { await route.continue(); return; }
-    const response = await route.fetch();
-    const context = await response.json();
-    seen();
-    await held;
-    await route.fulfill({ response, json: { ...context, workspace_id: 'stale-focus-fault' } });
-    completed();
+    if (index === 2) {
+      const response = await route.fetch();
+      const context = await response.json();
+      style.seen();
+      await style.held;
+      await route.fulfill({ response, json: { ...context, workspace_id: 'stale-focus-fault' } });
+    } else if (index === 3) {
+      const response = await route.fetch();
+      second.seen();
+      await second.held;
+      await route.fulfill({ response });
+    } else { await route.continue(); }
   });
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await started;
+    await style.started;
     await expect(volume).toBeVisible();
     await expect(volume).toBeFocused();
     // The user deliberately moves on to another control before the second check begins.
     await name.focus();
-    release();
-    await finished;
-    await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toHaveCount(0);
+    await expect(name).toBeFocused();
+    style.release();
+    await second.started;
+    await expect(name).toBeHidden();
+    second.release();
     await expect(name).toBeVisible();
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    expect(count).toBeGreaterThanOrEqual(3);
+    // Focus is where it was just before the second check, never where the first check recorded it.
+    await expect(name).toBeFocused();
     await expect(volume).not.toBeFocused();
-  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+  } finally { style.release(); second.release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
 // KRA-61 (UX-007, ACC-002): returning to the window starts an access re-check. While it runs the

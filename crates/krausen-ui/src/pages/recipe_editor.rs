@@ -344,9 +344,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     });
     let recheck = Callback::new(move |()| {
         #[cfg(target_arch = "wasm32")]
-        if context_visible.get_untracked() {
-            focus_before_check.set_value(EditorFocus::capture());
-            height_hold.set(web_sys::window().and_then(|w| w.document()).and_then(|d| d.query_selector(".recipe-editor").ok().flatten()).map(|e| e.get_bounding_client_rect().height()));
+        {
+            let document = web_sys::window().and_then(|w| w.document());
+            // A re-check entered through `context_visible.set(false)` starts with the editor already
+            // hidden, but focus may still sit in it until the next frame; that focus is recorded.
+            // With none there (a Retry starts from the held notice) the held check's bookmark is kept.
+            let focus_in_editor = document.as_ref().and_then(|d| d.active_element())
+                .is_some_and(|active| active.closest(".recipe-editor").ok().flatten().is_some());
+            let visible = context_visible.get_untracked();
+            if visible || focus_in_editor { focus_before_check.set_value(EditorFocus::capture()); }
+            if visible {
+                height_hold.set(document.and_then(|d| d.query_selector(".recipe-editor").ok().flatten()).map(|e| e.get_bounding_client_rect().height()));
+            }
         }
         access.set(EditorAccess::Checking);
         context_visible.set(false);
@@ -368,11 +377,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 };
             }
             if check_generation.try_get_untracked() != Some(generation) { return; }
-            // A passing check spends its bookmark, so a later re-check that records no focus of its
-            // own cannot restore it. A held outcome keeps it for the explicit retry, which starts
-            // while the editor is hidden and records nothing.
-            #[cfg(target_arch = "wasm32")]
-            let bookmark = if outcome == EditorAccess::Verified { focus_before_check.try_update_value(Option::take).flatten() } else { None };
             access.set(outcome);
             if outcome == EditorAccess::Verified {
                 context_visible.set(true);
@@ -380,7 +384,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 request_animation_frame(move || {
                     if context_visible.try_get_untracked() == Some(true)
                         && check_generation.try_get_untracked() == Some(generation) {
-                        if let Some(focus) = bookmark { focus.restore(); }
+                        // A passing check spends its bookmark here, so a later re-check that
+                        // records no focus of its own cannot restore it. A held outcome keeps it
+                        // for the explicit retry, and a check hidden again before this frame keeps
+                        // it for the next check.
+                        if let Some(focus) = focus_before_check.try_update_value(Option::take).flatten() { focus.restore(); }
                     }
                 });
             } else {
