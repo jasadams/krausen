@@ -601,6 +601,65 @@ test('a denied access re-check hides the editor content at once', async ({ page 
   } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// KRA-68 (ACC-002, UX-007): a saved-version load started before an access re-check is answered
+// "forbidden" either while the check runs or after it has passed. Either answer is older than the
+// check, so a passing check must leave the editor visible with no access-lost notice.
+for (const order of ['while the check runs', 'after the check has passed'] as const) {
+  test(`a forbidden history answer from before a passing access re-check is ignored ${order}`, async ({ page }) => {
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+    await page.getByLabel('Recipe name', { exact: true }).fill(`History fence ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Inspect revision 1', exact: true })).toBeVisible();
+    let releaseHistory!: () => void;
+    const historyHeld = new Promise<void>(resolve => { releaseHistory = resolve; });
+    let historySeen!: () => void;
+    const historyStarted = new Promise<void>(resolve => { historySeen = resolve; });
+    let historyDone!: () => void;
+    const historyFinished = new Promise<void>(resolve => { historyDone = resolve; });
+    // Armed only now: the first library command after this point is the detail load started below.
+    let historyFirst = true;
+    await page.route('**/leptos-api/execute_library_command*', async route => {
+      if (!historyFirst) { await route.continue(); return; }
+      historyFirst = false;
+      const response = await route.fetch();
+      historySeen();
+      await historyHeld;
+      await route.fulfill({ response, json: 'Forbidden' });
+      historyDone();
+    });
+    const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+    const frames = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const name = page.getByLabel('Recipe name', { exact: true });
+    try {
+      await page.getByRole('button', { name: 'Inspect revision 1', exact: true }).click();
+      await historyStarted;
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await check.started;
+      await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
+      if (order === 'while the check runs') {
+        releaseHistory();
+        await historyFinished;
+        await frames();
+        check.release();
+        await check.finished;
+      } else {
+        check.release();
+        await check.finished;
+        await expect(name).toBeVisible();
+        releaseHistory();
+        await historyFinished;
+        await frames();
+      }
+      await expect(name).toBeVisible();
+      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('Checking access…', { exact: true })).toHaveCount(0);
+    } finally { releaseHistory(); check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+  });
+}
+
 test('a disposed editor ignores a delayed focus read without reactive panic', async ({ page }) => {
   await page.goto('/recipe-editor/new');
   await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
