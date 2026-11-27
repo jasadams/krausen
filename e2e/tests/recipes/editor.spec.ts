@@ -3013,13 +3013,18 @@ test('profile pagination exposes later active and archived profiles', async ({ p
     async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
   );
   expect(refreshed).toBe(200);
+  // Profiles page in (recorded_at, profile_id) order and revisions are immutable,
+  // so these fixtures cannot be removed afterwards. Recording them after any
+  // profile a later test creates keeps those profiles on the first page of
+  // every picker instead of pushing them behind "Load more profiles".
+  const recordedAfterEveryTestProfile = 2000000000;
   const inserts: string[] = ['BEGIN'];
   for (let i = 0; i < 102; i++) {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
     const name = `Paged profile ${i}`;
     const archived = i === 101 ? 1 : 0;
     inserts.push(`INSERT INTO equipment_profiles(workspace_id,profile_id,name,current_revision,metadata_revision,archived) VALUES ('${workspace}','${id}','${name}',1,1,${archived})`);
-    inserts.push(`INSERT INTO equipment_revisions(workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ('${workspace}','${id}',1,'${name}',1,'{"schema_version":1}','{"source":"test","assumptions":[]}','fixture','${user}',1700000000)`);
+    inserts.push(`INSERT INTO equipment_revisions(workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ('${workspace}','${id}',1,'${name}',1,'{"schema_version":1}','{"source":"test","assumptions":[]}','fixture','${user}',${recordedAfterEveryTestProfile})`);
   }
   inserts.push('COMMIT');
   db.exec(inserts.join(';'));
@@ -4091,8 +4096,11 @@ test('summary links reach a step field, a select, an override and yeast and othe
 for (const scheme of ['light', 'dark'] as const) {
   test(`an out-of-date issues list keeps at least 4.5:1 text contrast in ${scheme}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
+    // The app applies the account's saved appearance after load and removes any
+    // class a test adds by hand, so set the appearance the real way and wait for it.
+    setAccountTheme(scheme);
     await page.goto('/design-system');
-    if (scheme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
     const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
     await expect(list).toBeVisible();
     const ratios = await list.evaluate(el => {

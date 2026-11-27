@@ -72,7 +72,9 @@ test('library navigation uses the shared dirty-editor guard', async ({ page }) =
   await recipes.click();
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
-  await expect(page).toHaveURL(/\/recipes$/);
+  // A plain return to Recipes resumes the search being left (IA-007), and the
+  // address moves to that search after the page mounts: wait for the settled URL.
+  await expect(page).toHaveURL(new RegExp(`/recipes\\?q=${encodeURIComponent(title)}$`));
   await page.getByLabel('Search recipes').fill(title);
   await page.getByRole('link', { name: `Open ${title}` }).click();
   await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue(title);
