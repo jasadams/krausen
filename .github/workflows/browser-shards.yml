@@ -14,10 +14,6 @@ on:
         required: true
         type: string
 
-env:
-  TRUNK_VERSION: 0.21.14
-  TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
-
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -59,10 +55,14 @@ jobs:
           node-version: "22"
       - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
       - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
-      # Prebuilt release binary, checked against a pinned hash (the same pin as
-      # the Dockerfile); compiling trunk from source took about 4 minutes.
+      # Prebuilt release binary, checked against the version and hash pinned in
+      # the Dockerfile (one pin for CI and the release image); compiling trunk
+      # from source took about 4 minutes.
       - name: Install trunk
         run: |
+          TRUNK_VERSION=$(grep -o 'trunk/releases/download/v[0-9.]*' Dockerfile | head -1 | sed 's|.*/v||')
+          TRUNK_SHA256=$(grep -o "echo '[0-9a-f]\{64\}  /tmp/trunk.tar.gz'" Dockerfile | head -1 | grep -o '[0-9a-f]\{64\}')
+          test -n "$TRUNK_VERSION" && test -n "$TRUNK_SHA256"
           curl -fsSL -o /tmp/trunk.tar.gz "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
           echo "${TRUNK_SHA256}  /tmp/trunk.tar.gz" | sha256sum -c -
           mkdir -p "$HOME/.local/bin"

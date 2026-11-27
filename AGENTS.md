@@ -114,7 +114,8 @@ as the mapping file, helpers or the Playwright config). Retries are off: an
 intermittent failure is a defect to fix, not to rerun.
 
 When a PR adds or moves a browser test, or a source path with its own tests, update
-`e2e/browser-groups.json` in the same PR. `node e2e/scripts/browser-groups.mjs verify`
+`e2e/browser-groups.json` in the same PR, and record new tests with
+`node e2e/scripts/browser-groups.mjs manifest > e2e/browser-selection.manifest.txt`. `node e2e/scripts/browser-groups.mjs verify`
 fails if a test recorded in `e2e/browser-selection.manifest.txt` stops running in the
 full suite.
 

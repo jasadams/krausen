@@ -160,7 +160,7 @@ if (command === 'select') {
   for (const file of files) {
     const listFile = path.join(dir, `${files.indexOf(file)}.txt`);
     writeFileSync(listFile, mine.filter(test => test.file === file).map(test => `[${test.project}] › ${testId(test)}`).join('\n') + '\n');
-    const run = spawnSync(playwright, ['test', '--test-list', listFile, '--workers=1', '--retries=0', '--reporter=line'], {
+    const run = spawnSync(playwright, ['test', '--test-list', listFile, '--workers=1', '--reporter=line'], {
       cwd: e2eDir,
       stdio: 'inherit',
     });
