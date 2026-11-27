@@ -2,28 +2,28 @@ helpers/focus-boundary.spec.ts › a contained task passes: Tab and Shift+Tab le
 helpers/focus-boundary.spec.ts › focus dropping to the body from a mid-task control fails
 helpers/focus-boundary.spec.ts › focus reaching an element outside the task fails
 helpers/focus-boundary.spec.ts › focus that stays out of the task for more than two presses fails
-library/shell.spec.ts › Escape closes the popup first and the drawer on a later Escape
-library/shell.spec.ts › Recipes and Equipment close the drawer when already the current route (Settings is covered separately)
 library/shell.spec.ts › Settings and Appearance on the Profile route close the popup, and the mobile drawer too
-library/shell.spec.ts › Settings from the drawer account closes the drawer after the route commits
-library/shell.spec.ts › a dirty draft turns the drawer into the single guard, and Stay never navigates behind it
-library/shell.spec.ts › a failed switch keeps the original context and the dirty draft
 library/shell.spec.ts › a loading or failed membership check is truthful, keeps account actions and retries
-library/shell.spec.ts › a recipe link from the drawer closes it on arrival and the same route closes it too
-library/shell.spec.ts › a slow switch is pending, locks competing actions and cannot be doubled
 library/shell.spec.ts › account Settings closes the popup only after navigation commits and a dirty draft stays protected
 library/shell.spec.ts › account popup is ordinary nonmodal navigation with natural keyboard, Escape and outside dismissal
-library/shell.spec.ts › an open account popup does not survive its drawer or leave two interactive copies
 library/shell.spec.ts › an open desktop popup does not linger when the window shrinks to mobile
 library/shell.spec.ts › approved shell uses real navigation, shared theme and a compact account popup
-library/shell.spec.ts › choices appear inside the popup and a successful switch lands on destination Recipes
-library/shell.spec.ts › crossing the desktop breakpoint closes the drawer and leaves focus on a visible control
 library/shell.spec.ts › customer navigation excludes showcase but authenticated direct access remains in dark
 library/shell.spec.ts › customer navigation excludes showcase but authenticated direct access remains in light
-library/shell.spec.ts › mobile drawer account lists the same choices inside the drawer and switching closes it
+library/shell.spec.ts › mobile navigation drawer › Escape closes the popup first and the drawer on a later Escape
+library/shell.spec.ts › mobile navigation drawer › Recipes and Equipment close the drawer when already the current route (Settings is covered separately)
+library/shell.spec.ts › mobile navigation drawer › Settings from the drawer account closes the drawer after the route commits
+library/shell.spec.ts › mobile navigation drawer › a dirty draft turns the drawer into the single guard, and Stay never navigates behind it
+library/shell.spec.ts › mobile navigation drawer › a recipe link from the drawer closes it on arrival and the same route closes it too
+library/shell.spec.ts › mobile navigation drawer › an open account popup does not survive its drawer or leave two interactive copies
+library/shell.spec.ts › mobile navigation drawer › crossing the desktop breakpoint closes the drawer and leaves focus on a visible control
 library/shell.spec.ts › mobile navigation is a focus-restoring modal and library does not overflow
 library/shell.spec.ts › navigation remains available across the desktop/mobile breakpoint seam
 library/shell.spec.ts › one membership offers no workspace switching
+library/shell.spec.ts › with a second membership › a failed switch keeps the original context and the dirty draft
+library/shell.spec.ts › with a second membership › a slow switch is pending, locks competing actions and cannot be doubled
+library/shell.spec.ts › with a second membership › choices appear inside the popup and a successful switch lands on destination Recipes
+library/shell.spec.ts › with a second membership › mobile drawer account lists the same choices inside the drawer and switching closes it
 library/shell.spec.ts › zero memberships offers no workspace switching
 recipes/beerxml.spec.ts › a expired check keeps the retained request until it is acknowledged by name
 recipes/beerxml.spec.ts › a focus revalidation while the export task shows its acknowledgement prepares it again
@@ -147,20 +147,20 @@ recipes/catalogue.spec.ts › shared dialogs use a safe successor when the actua
 recipes/catalogue.spec.ts › shared dialogs use a safe successor when the actual opener is removed
 recipes/catalogue.spec.ts › short Navigation keeps naturally tabbed Account wholly visible
 recipes/catalogue.spec.ts › the starter catalogue search copies a resolved specification into the recipe
-recipes/design-fidelity.spec.ts › Recipe actions is an ordinary popover that returns focus and keeps editing reachable
-recipes/design-fidelity.spec.ts › dark 1440px
-recipes/design-fidelity.spec.ts › dark 390px
-recipes/design-fidelity.spec.ts › estimates name their source and header commands work from every tab
-recipes/design-fidelity.spec.ts › history refreshes after saving while its tab is selected
-recipes/design-fidelity.spec.ts › light 1440px
-recipes/design-fidelity.spec.ts › light 390px
-recipes/design-fidelity.spec.ts › long recipe name stays directly editable and in bounds at 320px
-recipes/design-fidelity.spec.ts › long recipe name stays directly editable and in bounds at 390px
-recipes/design-fidelity.spec.ts › populated Munich Helles dark 1440px
-recipes/design-fidelity.spec.ts › populated Munich Helles dark 390px
-recipes/design-fidelity.spec.ts › populated Munich Helles light 1440px
-recipes/design-fidelity.spec.ts › populated Munich Helles light 390px
-recipes/design-fidelity.spec.ts › recipe header keeps one editable identity, state-aware primary and no duplicate history entrance
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › Recipe actions is an ordinary popover that returns focus and keeps editing reachable
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › dark 1440px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › dark 390px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › estimates name their source and header commands work from every tab
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › history refreshes after saving while its tab is selected
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › light 1440px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › light 390px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › long recipe name stays directly editable and in bounds at 320px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › long recipe name stays directly editable and in bounds at 390px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › populated Munich Helles dark 1440px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › populated Munich Helles dark 390px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › populated Munich Helles light 1440px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › populated Munich Helles light 390px
+recipes/design-fidelity.spec.ts › approved recipe and shared kit composition › recipe header keeps one editable identity, state-aware primary and no duplicate history entrance
 recipes/editor.spec.ts › Review highlighted fields does not appear on a first character and reaches a settled invalid field
 recipes/editor.spec.ts › Review highlighted fields keeps the button's natural width, left-aligned with the header fields at 1440px
 recipes/editor.spec.ts › Review highlighted fields keeps the button's natural width, left-aligned with the header fields at 390px

@@ -92,13 +92,15 @@ function listGroup(name) {
   const report = JSON.parse(result.stdout);
   if (report.errors?.length) fail(`listing group ${name} reported errors:\n${JSON.stringify(report.errors)}`);
   const tests = [];
-  const walk = suite => {
+  // A file's top suite carries the file path; nested suites are test.describe
+  // blocks, whose titles are part of a test's identity for --test-list.
+  const walk = (suite, describes) => {
     for (const spec of suite.specs ?? []) {
-      tests.push({ group: name, file: spec.file, title: spec.title, project: spec.tests[0].projectName });
+      tests.push({ group: name, file: spec.file, title: [...describes, spec.title].join(' › '), project: spec.tests[0].projectName });
     }
-    for (const child of suite.suites ?? []) walk(child);
+    for (const child of suite.suites ?? []) walk(child, [...describes, child.title]);
   };
-  report.suites.forEach(walk);
+  for (const fileSuite of report.suites) walk(fileSuite, []);
   return tests;
 }
 
@@ -115,6 +117,23 @@ function listGroups(names) {
     seen.set(id, test.group);
   }
   return tests;
+}
+
+const listLine = test => `[${test.project}] › ${testId(test)}`;
+
+// How many tests Playwright resolves from a --test-list built from these tests.
+function resolvedCount(tests, dir) {
+  let total = 0;
+  for (const file of new Set(tests.map(test => test.file))) {
+    const listFile = path.join(dir, `count-${total}-${path.basename(file)}.txt`);
+    writeFileSync(listFile, tests.filter(test => test.file === file).map(listLine).join('\n') + '\n');
+    const result = spawnSync(playwright, ['test', '--test-list', listFile, '--list', '--reporter=json'], { cwd: e2eDir, encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (result.status !== 0) fail(`resolving test list for ${file} failed:\n${result.stderr}`);
+    const report = JSON.parse(result.stdout);
+    const count = suite => (suite.specs ?? []).length + (suite.suites ?? []).reduce((sum, child) => sum + count(child), 0);
+    total += report.suites.reduce((sum, suite) => sum + count(suite), 0);
+  }
+  return total;
 }
 
 const shardOf = (tests, index, count) => tests.filter((_, i) => i % count === index - 1);
@@ -154,13 +173,14 @@ if (command === 'select') {
   // One Playwright process per spec file, as profile-browser.sh always ran
   // them: the first signs the test user up and the later ones reuse that
   // session. A failing file does not stop the others, so one run reports every
-  // failure.
+  // failure. Each file keeps its own output directory so a later file does not
+  // delete the traces of an earlier failure.
   const files = [...new Set(mine.map(test => test.file))];
   let failed = 0;
   for (const file of files) {
     const listFile = path.join(dir, `${files.indexOf(file)}.txt`);
-    writeFileSync(listFile, mine.filter(test => test.file === file).map(test => `[${test.project}] › ${testId(test)}`).join('\n') + '\n');
-    const run = spawnSync(playwright, ['test', '--test-list', listFile, '--workers=1', '--reporter=line'], {
+    writeFileSync(listFile, mine.filter(test => test.file === file).map(listLine).join('\n') + '\n');
+    const run = spawnSync(playwright, ['test', '--test-list', listFile, `--output=test-results/${files.indexOf(file)}`, '--workers=1', '--reporter=line'], {
       cwd: e2eDir,
       stdio: 'inherit',
     });
@@ -187,14 +207,25 @@ if (command === 'select') {
   for (let index = 1; index <= count; index += 1) {
     for (const test of shardOf(tests, index, count)) ran.set(testId(test), (ran.get(testId(test)) ?? 0) + 1);
   }
+  // The identities must also resolve to real tests when handed back to
+  // Playwright, which is how a shard selects what to run: every shard's
+  // resolved count must equal its planned count, so no test is silently skipped.
+  const scratch = mkdtempSync(path.join(tmpdir(), 'browser-verify-'));
+  const unresolved = [];
+  for (let index = 1; index <= count; index += 1) {
+    const mine = shardOf(tests, index, count);
+    const resolved = resolvedCount(mine, scratch);
+    if (resolved !== mine.length) unresolved.push(`shard ${index}/${count}: ${mine.length} planned, ${resolved} resolved by Playwright`);
+  }
   const missingFromShards = [...ids].filter(id => ran.get(id) !== 1);
   if (unrecorded.length) console.log(`note: ${unrecorded.length} selected test(s) are not in the manifest yet (run "manifest" to record them):\n  ${unrecorded.join('\n  ')}`);
-  if (lost.length || missingFromShards.length) {
+  if (lost.length || missingFromShards.length || unresolved.length) {
+    if (unresolved.length) console.error(`TEST LIST DOES NOT RESOLVE:\n  ${unresolved.join('\n  ')}`);
     if (lost.length) console.error(`LOST: ${lost.length} recorded test(s) no longer run in the full selection:\n  ${lost.join('\n  ')}`);
     if (missingFromShards.length) console.error(`NOT IN EXACTLY ONE SHARD:\n  ${missingFromShards.join('\n  ')}`);
     process.exit(1);
   }
-  console.log(`ok: ${recorded.length} recorded tests all run; ${ids.size} selected tests each run in exactly one of ${count} shards`);
+  console.log(`ok: ${recorded.length} recorded tests all run; ${ids.size} selected tests each run in exactly one of ${count} shards, and every shard's test list resolves in Playwright`);
 } else {
   fail('usage: browser-groups.mjs select|plan|run|verify|manifest');
 }
