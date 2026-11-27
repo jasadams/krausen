@@ -370,6 +370,52 @@ test('revalidation never steals a newer deliberate account focus', async ({ page
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
+// KRA-67 (ACC-002): a re-check entered through the legacy `context_visible.set(false)` path (here the
+// style list's own context check) records no focus of its own, so it must not restore the focus
+// bookmarked by an earlier, resolved check.
+test('a later access re-check never restores the focus recorded by an earlier one', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  const volume = page.getByLabel('Batch volume (L)');
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await volume.focus();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen!: () => void;
+  const started = new Promise<void>(resolve => { seen = resolve; });
+  let completed!: () => void;
+  const finished = new Promise<void>(resolve => { completed = resolve; });
+  // Request 1 is the window-focus check, which records the focus. Request 2 is the style list's
+  // context check once that check has passed; it is held, then answered with another workspace so
+  // the editor re-checks through `context_visible.set(false)`. Later requests pass untouched.
+  let count = 0;
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    const index = ++count;
+    if (index !== 2) { await route.continue(); return; }
+    const response = await route.fetch();
+    const context = await response.json();
+    seen();
+    await held;
+    await route.fulfill({ response, json: { ...context, workspace_id: 'stale-focus-fault' } });
+    completed();
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await started;
+    await expect(volume).toBeVisible();
+    await expect(volume).toBeFocused();
+    // The user deliberately moves on to another control before the second check begins.
+    await name.focus();
+    release();
+    await finished;
+    await expect(page.getByText('Recipe held in its original workspace', { exact: true })).toHaveCount(0);
+    await expect(name).toBeVisible();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(count).toBeGreaterThanOrEqual(3);
+    await expect(volume).not.toBeFocused();
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+});
+
 // KRA-61 (UX-007, ACC-002): returning to the window starts an access re-check. While it runs the
 // editor content stays laid out (invisible, unfocusable, out of the accessibility tree) so the scroll
 // position and the focused control survive a check that passes; a denial hides it at once.

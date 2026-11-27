@@ -175,6 +175,7 @@ recipes/editor.spec.ts › a focus refetch to a newer saved revision shows no wa
 recipes/editor.spec.ts › a focused recipe heading is visible and not clipped
 recipes/editor.spec.ts › a late committed save cannot leave or rewrite the address after confirmed context loss
 recipes/editor.spec.ts › a late preview response cannot replace a settled invalid estimate
+recipes/editor.spec.ts › a later access re-check never restores the focus recorded by an earlier one
 recipes/editor.spec.ts › a link to a conditional control goes to the control that governs it, never to an absent input
 recipes/editor.spec.ts › a link to an inherited chilling value goes to the Chilling override, never to an absent input
 recipes/editor.spec.ts › a passing access re-check keeps the editor scroll position, layout and focused control
