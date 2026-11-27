@@ -1214,6 +1214,7 @@ for (const width of [1440, 390, 320]) {
       await advance(PREVIEW_DELAY_MS);
       await expect(page.getByTestId('estimate-stale')).toHaveText('');
       await expect(page.getByTestId('estimate-announce')).toHaveText('Estimate updated');
+      await sample();
       await advance(UPDATED_ANNOUNCE_MS + 500);
       await expect(page.getByTestId('estimate-announce')).toHaveText('');
       await expect(mash.locator('.k-stale--active')).toHaveCount(0);
