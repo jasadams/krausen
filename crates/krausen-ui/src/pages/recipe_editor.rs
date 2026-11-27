@@ -84,12 +84,19 @@ impl HistoryAuthority {
 }
 
 impl HistoryAuthorityRequest {
-    pub(crate) fn lost(self) {
+    /// Reports the loss. Returns `false` when the report was ignored as older than the current
+    /// re-check; the panel then reloads against the access it has now instead of showing the answer.
+    pub(crate) fn lost(self) -> bool {
         match self.hold {
             Some(hold) => {
-                if let Some(epoch) = self.epoch { let _ = hold.on_failure.try_run((epoch, EditorAccess::Forbidden)); }
+                let Some(epoch) = self.epoch else { return true; };
+                match hold.generation.try_get_untracked() {
+                    Some(current) if current != epoch => false,
+                    Some(_) => { let _ = hold.on_failure.try_run((epoch, EditorAccess::Forbidden)); true }
+                    None => true,
+                }
             }
-            None => { if let Some(callback) = self.fallback { let _ = callback.try_run(()); } }
+            None => { if let Some(callback) = self.fallback { let _ = callback.try_run(()); } true }
         }
     }
 }

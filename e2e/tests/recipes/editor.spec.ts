@@ -601,62 +601,88 @@ test('a denied access re-check hides the editor content at once', async ({ page 
   } finally { check.release(); await page.unrouteAll({ behavior: 'wait' }); }
 });
 
-// KRA-68 (ACC-002, UX-007): a saved-version load started before an access re-check is answered
-// "forbidden" either while the check runs or after it has passed. Either answer is older than the
-// check, so a passing check must leave the editor visible with no access-lost notice.
-for (const order of ['while the check runs', 'after the check has passed'] as const) {
+// KRA-68 (ACC-002, UX-007): a Saved versions or Brews load started before an access re-check is
+// answered "forbidden" either while the check runs or after it has passed. Either answer is older
+// than the check, so a passing check must leave the editor visible with no access-lost notice, and
+// the panel must reload against the access it has now rather than keep a loading or denial state.
+const HISTORY_ORDERS = ['while the check runs', 'after the check has passed'] as const;
+async function answerHistoryForbiddenAround(
+  page: import('@playwright/test').Page,
+  order: typeof HISTORY_ORDERS[number],
+  endpoint: string,
+  startLoad: () => Promise<void>,
+) {
+  let releaseHistory!: () => void;
+  const historyHeld = new Promise<void>(resolve => { releaseHistory = resolve; });
+  let historySeen!: () => void;
+  const historyStarted = new Promise<void>(resolve => { historySeen = resolve; });
+  let historyDone!: () => void;
+  const historyFinished = new Promise<void>(resolve => { historyDone = resolve; });
+  // Armed by the caller's arm point: the first request to this endpoint after it is the load under test.
+  let historyFirst = true;
+  await page.route(endpoint, async route => {
+    if (!historyFirst) { await route.continue(); return; }
+    historyFirst = false;
+    const response = await route.fetch();
+    historySeen();
+    await historyHeld;
+    await route.fulfill({ response, json: 'Forbidden' });
+    historyDone();
+  });
+  let check: Awaited<ReturnType<typeof holdContextCheck>> | undefined;
+  const frames = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const name = page.getByLabel('Recipe name', { exact: true });
+  try {
+    await startLoad();
+    await historyStarted;
+    check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await check.started;
+    await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
+    if (order === 'while the check runs') {
+      releaseHistory();
+      await historyFinished;
+      await frames();
+      check.release();
+      await check.finished;
+    } else {
+      check.release();
+      await check.finished;
+      await expect(name).toBeVisible();
+      releaseHistory();
+      await historyFinished;
+      await frames();
+    }
+    await expect(name).toBeVisible();
+    await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Checking access…', { exact: true })).toHaveCount(0);
+  } finally { releaseHistory(); check?.release(); await page.unrouteAll({ behavior: 'wait' }); }
+}
+const saveNewRecipe = async (page: import('@playwright/test').Page, label: string) => {
+  await page.goto('/recipe-editor/new');
+  await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
+  await page.getByLabel('Recipe name', { exact: true }).fill(`${label} ${Date.now()}`);
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+};
+for (const order of HISTORY_ORDERS) {
   test(`a forbidden history answer from before a passing access re-check is ignored ${order}`, async ({ page }) => {
-    await page.goto('/recipe-editor/new');
-    await expect(page.getByRole('status').filter({ hasText: 'Incomplete' })).toBeVisible();
-    await page.getByLabel('Recipe name', { exact: true }).fill(`History fence ${Date.now()}`);
-    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await saveNewRecipe(page, 'History fence');
     await page.getByRole('tab', { name: 'Saved versions', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Inspect revision 1', exact: true })).toBeVisible();
-    let releaseHistory!: () => void;
-    const historyHeld = new Promise<void>(resolve => { releaseHistory = resolve; });
-    let historySeen!: () => void;
-    const historyStarted = new Promise<void>(resolve => { historySeen = resolve; });
-    let historyDone!: () => void;
-    const historyFinished = new Promise<void>(resolve => { historyDone = resolve; });
-    // Armed only now: the first library command after this point is the detail load started below.
-    let historyFirst = true;
-    await page.route('**/leptos-api/execute_library_command*', async route => {
-      if (!historyFirst) { await route.continue(); return; }
-      historyFirst = false;
-      const response = await route.fetch();
-      historySeen();
-      await historyHeld;
-      await route.fulfill({ response, json: 'Forbidden' });
-      historyDone();
-    });
-    const check = await holdContextCheck(page, (route, response) => route.fulfill({ response }));
-    const frames = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    const name = page.getByLabel('Recipe name', { exact: true });
-    try {
-      await page.getByRole('button', { name: 'Inspect revision 1', exact: true }).click();
-      await historyStarted;
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-      await check.started;
-      await expect(page.getByText('Checking access…', { exact: true })).toBeVisible();
-      if (order === 'while the check runs') {
-        releaseHistory();
-        await historyFinished;
-        await frames();
-        check.release();
-        await check.finished;
-      } else {
-        check.release();
-        await check.finished;
-        await expect(name).toBeVisible();
-        releaseHistory();
-        await historyFinished;
-        await frames();
-      }
-      await expect(name).toBeVisible();
-      await expect(page.getByText('Access denied', { exact: true })).toHaveCount(0);
-      await expect(page.getByText('Checking access…', { exact: true })).toHaveCount(0);
-    } finally { releaseHistory(); check.release(); await page.unrouteAll({ behavior: 'wait' }); }
+    await answerHistoryForbiddenAround(page, order, '**/leptos-api/execute_library_command*',
+      () => page.getByRole('button', { name: 'Inspect revision 1', exact: true }).click());
+    // The inspected version loads again for the current access; nothing is left loading.
+    await expect(page.getByRole('heading', { name: /^Historical revision 1 · / })).toBeVisible();
+    await expect(page.getByText('Loading saved content', { exact: true })).toHaveCount(0);
+  });
+  test(`a forbidden history answer from before a passing access re-check leaves the Brews panel usable ${order}`, async ({ page }) => {
+    await saveNewRecipe(page, 'Brews fence');
+    // The Brews panel mounts, and loads, when its tab is opened.
+    await answerHistoryForbiddenAround(page, order, '**/leptos-api/execute_brew_history*',
+      () => page.getByRole('tab', { name: 'Brews', exact: true }).click());
+    await expect(page.getByText('No brews have been started for this recipe.', { exact: true })).toBeVisible();
+    await expect(page.getByText('You no longer have access to this workspace.', { exact: true })).toHaveCount(0);
   });
 }
 

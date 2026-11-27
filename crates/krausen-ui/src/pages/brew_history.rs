@@ -43,10 +43,6 @@ pub fn BrewHistoryView(
     #[prop(optional)] embedded: bool,
     #[prop(optional, into)] recipe_id: Option<String>,
     #[prop(optional)] intent: Option<OperationIntent>,
-    /// Embedded callers use this to redact their still-mounted parent draft on
-    /// authority/context loss. `try_run` makes a disposed parent a no-op.
-    #[prop(optional)]
-    on_authority_failure: Option<Callback<()>>,
 ) -> impl IntoView {
     let params = use_params_map();
     let route_recipe = Signal::derive(move || params.read().get("id").unwrap_or_default());
@@ -58,13 +54,16 @@ pub fn BrewHistoryView(
             .unwrap_or_else(|| route_recipe.get())
     });
     let captured_intent = intent;
-    let authority = HistoryAuthority::new(on_authority_failure);
+    let authority = HistoryAuthority::new(None);
     let records = RwSignal::new(Vec::<RecipeBrewSummary>::new());
     let identity = RwSignal::new(None::<OperationIntent>);
     let next_cursor = RwSignal::new(None::<String>);
     let message = RwSignal::new("Loading brew history…".to_owned());
     let busy = RwSignal::new(false);
     let generation = RwSignal::new(0_u64);
+    // Bumped when a failure report was ignored as older than the current access re-check, so the
+    // page reloads against the access it has now instead of showing that answer.
+    let reload = RwSignal::new(0_u64);
 
     let clear_page = move || {
         records.set(Vec::new());
@@ -101,8 +100,9 @@ pub fn BrewHistoryView(
                     Ok(RecipeBrewHistoryOutcome::Forbidden)
                         | Ok(RecipeBrewHistoryOutcome::ContextChanged)
                 );
-            if denied {
-                authority.lost();
+            if denied && !authority.lost() {
+                reload.update(|v| *v += 1);
+                return;
             }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
@@ -159,6 +159,7 @@ pub fn BrewHistoryView(
 
     Effect::new(move |_| {
         let recipe = recipe_id.get();
+        let _ = reload.get();
         clear_page();
         if recipe.is_empty() {
             busy.set(false);
@@ -187,8 +188,9 @@ pub fn BrewHistoryView(
             identity.set(Some(expected.clone()));
             leptos::task::spawn_local(async move {
                 let context_ok = current_context_matches(&expected).await;
-                if !context_ok {
-                    authority.lost();
+                if !context_ok && !authority.lost() {
+                    reload.update(|v| *v += 1);
+                    return;
                 }
                 if generation.try_get_untracked() != Some(mine)
                     || recipe_id.try_get_untracked() != Some(recipe)
@@ -206,8 +208,9 @@ pub fn BrewHistoryView(
         }
         leptos::task::spawn_local(async move {
             let context = crate::server_fns::context::get_user_context().await;
-            if context.is_err() {
-                authority.lost();
+            if context.is_err() && !authority.lost() {
+                reload.update(|v| *v += 1);
+                return;
             }
             if generation.try_get_untracked() != Some(mine)
                 || recipe_id.try_get_untracked() != Some(recipe)
