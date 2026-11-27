@@ -13,6 +13,11 @@
 ## Release
 
 - pipelines: Build and release Krausen
+- pre_release_check: the `Full browser suite` workflow (`browser-full.yml`) must have
+  passed on the release commit. Dispatch it on that commit
+  (`gh workflow run browser-full.yml --ref main`) and wait for it before tagging. The
+  release workflow's `browser-gate` job fails the tag build if no passing run exists
+  for the tagged commit.
 - production_url: https://krausen.xyz
 - Images are published to GHCR by the release workflow, then dispatched to the
   private `jasadams/krausen-cloud` deployment workflow. Production rollout is

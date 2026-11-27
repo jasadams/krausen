@@ -1,0 +1,359 @@
+helpers/focus-boundary.spec.ts › a contained task passes: Tab and Shift+Tab leave through the boundary and come back inside
+helpers/focus-boundary.spec.ts › focus dropping to the body from a mid-task control fails
+helpers/focus-boundary.spec.ts › focus reaching an element outside the task fails
+helpers/focus-boundary.spec.ts › focus that stays out of the task for more than two presses fails
+library/shell.spec.ts › Escape closes the popup first and the drawer on a later Escape
+library/shell.spec.ts › Recipes and Equipment close the drawer when already the current route (Settings is covered separately)
+library/shell.spec.ts › Settings and Appearance on the Profile route close the popup, and the mobile drawer too
+library/shell.spec.ts › Settings from the drawer account closes the drawer after the route commits
+library/shell.spec.ts › a dirty draft turns the drawer into the single guard, and Stay never navigates behind it
+library/shell.spec.ts › a failed switch keeps the original context and the dirty draft
+library/shell.spec.ts › a loading or failed membership check is truthful, keeps account actions and retries
+library/shell.spec.ts › a recipe link from the drawer closes it on arrival and the same route closes it too
+library/shell.spec.ts › a slow switch is pending, locks competing actions and cannot be doubled
+library/shell.spec.ts › account Settings closes the popup only after navigation commits and a dirty draft stays protected
+library/shell.spec.ts › account popup is ordinary nonmodal navigation with natural keyboard, Escape and outside dismissal
+library/shell.spec.ts › an open account popup does not survive its drawer or leave two interactive copies
+library/shell.spec.ts › an open desktop popup does not linger when the window shrinks to mobile
+library/shell.spec.ts › approved shell uses real navigation, shared theme and a compact account popup
+library/shell.spec.ts › choices appear inside the popup and a successful switch lands on destination Recipes
+library/shell.spec.ts › crossing the desktop breakpoint closes the drawer and leaves focus on a visible control
+library/shell.spec.ts › customer navigation excludes showcase but authenticated direct access remains in dark
+library/shell.spec.ts › customer navigation excludes showcase but authenticated direct access remains in light
+library/shell.spec.ts › mobile drawer account lists the same choices inside the drawer and switching closes it
+library/shell.spec.ts › mobile navigation is a focus-restoring modal and library does not overflow
+library/shell.spec.ts › navigation remains available across the desktop/mobile breakpoint seam
+library/shell.spec.ts › one membership offers no workspace switching
+library/shell.spec.ts › zero memberships offers no workspace switching
+recipes/beerxml.spec.ts › a expired check keeps the retained request until it is acknowledged by name
+recipes/beerxml.spec.ts › a focus revalidation while the export task shows its acknowledgement prepares it again
+recipes/beerxml.spec.ts › a identity conflict check keeps the retained request until it is acknowledged by name
+recipes/beerxml.spec.ts › a lost import response is retained before sending and survives reload with the same request
+recipes/beerxml.spec.ts › a retained import is neither shown nor sent under a different account
+recipes/beerxml.spec.ts › an account switch hides a retained import and sends no source under the new account
+recipes/beerxml.spec.ts › an older preview cannot replace a changed source
+recipes/beerxml.spec.ts › an uncertain import retries the same request without creating another recipe
+recipes/beerxml.spec.ts › an unsaved export is invalidated when the draft changes
+recipes/beerxml.spec.ts › an untouched import page leaves without a guard
+recipes/beerxml.spec.ts › cancelling after preview creates no recipe
+recipes/beerxml.spec.ts › closing the export task while its request is in flight does not block opening it again
+recipes/beerxml.spec.ts › file preview, explicit import and saved/original downloads share native values
+recipes/beerxml.spec.ts › import action geometry preserves all states dark 1440
+recipes/beerxml.spec.ts › import action geometry preserves all states dark 320
+recipes/beerxml.spec.ts › import action geometry preserves all states dark 390 enlarged text
+recipes/beerxml.spec.ts › import action geometry preserves all states light 1440
+recipes/beerxml.spec.ts › import action geometry preserves all states light 320
+recipes/beerxml.spec.ts › import action geometry preserves all states light 390 enlarged text
+recipes/beerxml.spec.ts › import remains usable on a narrow dark display by keyboard
+recipes/beerxml.spec.ts › leaving after a lost response keeps the retained request and reopening checks the same one
+recipes/beerxml.spec.ts › leaving edited uncommitted source asks Discard or Stay and never imports
+recipes/beerxml.spec.ts › source and interpretation errors are associated with their own controls
+recipes/beerxml.spec.ts › the preview leads with parsed content and keeps hashes in a disclosure
+recipes/brew-start.spec.ts › Escape while Starting keeps the task; the late result is shown, never a fresh review
+recipes/brew-start.spec.ts › a changed equipment context is reported with refreshed targets and renewed acceptance
+recipes/brew-start.spec.ts › a dirty draft offers explicit choices; Use saved revision keeps the draft and never saves it
+recipes/brew-start.spec.ts › a failed Save and continue returns to the choices and sends no start
+recipes/brew-start.spec.ts › a failed access confirmation before sending retains nothing and sends nothing
+recipes/brew-start.spec.ts › a head that moved after the review is reported, creates no brew, and needs a fresh explicit start
+recipes/brew-start.spec.ts › a lost start response keeps the original request through dismissal and reload and creates one brew
+recipes/brew-start.spec.ts › a never-granted lock times out, Start degrades, and the stale grant does not block later starts
+recipes/brew-start.spec.ts › a new recipe is saved by Save recipe and continue before its review
+recipes/brew-start.spec.ts › a new recipe must be saved before a brew can start
+recipes/brew-start.spec.ts › a recipe override is listed in the review with a trimmed value
+recipes/brew-start.spec.ts › a rejected locks.request degrades to retain-then-verify and still starts once
+recipes/brew-start.spec.ts › a request identity conflict pins the start as unresolved and offers no fresh start
+recipes/brew-start.spec.ts › a second tab holding the start lock delays the start until it is released
+recipes/brew-start.spec.ts › after a moved head, a start from an older revision is refused until resolved and Review again follows it
+recipes/brew-start.spec.ts › an Incomplete saved recipe shows why and offers no Start brew
+recipes/brew-start.spec.ts › an expired response without a brew id pins the start as unresolved and offers no fresh start
+recipes/brew-start.spec.ts › an invalid number is reported by Save and continue, then fixed and continued
+recipes/brew-start.spec.ts › an unreadable retained record blocks starting until it is explicitly discarded
+recipes/brew-start.spec.ts › an unreadable start record store blocks starting with the unable-to-read copy
+recipes/brew-start.spec.ts › brew pages carry the authorized Recipes → recipe → Brews → brew trail and sibling links
+recipes/brew-start.spec.ts › browser Back across a document with an unconfirmed Start shows the native leave warning and Stay keeps the page
+recipes/brew-start.spec.ts › confirmed evidence cleanup failure survives reload and retries removal without resending
+recipes/brew-start.spec.ts › conflict refreshes current evidence and keeps the draft for reapply
+recipes/brew-start.spec.ts › controlled expired retains the original evidence envelope across reload and explicit review
+recipes/brew-start.spec.ts › controlled identity conflict retains the original evidence envelope across reload and explicit review
+recipes/brew-start.spec.ts › delayed lifecycle continuation ignores a second click
+recipes/brew-start.spec.ts › dirty evidence Back is guarded and retains the draft
+recipes/brew-start.spec.ts › discarding unsent evidence preserves a committed uncertain request through navigation and reload
+recipes/brew-start.spec.ts › editing a shared profile leaves a started brew frozen and changes only later previews
+recipes/brew-start.spec.ts › evidence Return respects newer successor before its owned focus frame
+recipes/brew-start.spec.ts › evidence Return respects no-op target before its owned focus frame
+recipes/brew-start.spec.ts › evidence Return restores the authorized explicit measurement field without writing
+recipes/brew-start.spec.ts › evidence Return restores the authorized explicit reason field without writing
+recipes/brew-start.spec.ts › evidence leave returns to explicit actions instead of offering an impossible batch save
+recipes/brew-start.spec.ts › evidence recovery storage failure refuses dispatch and preserves unsent inputs
+recipes/brew-start.spec.ts › failed recovery discovery blocks fresh evidence until the exact original request is found
+recipes/brew-start.spec.ts › failed retry context preflight retains the same uncertain request
+recipes/brew-start.spec.ts › feedback apply keeps one request through a lost response and ignores selection changes
+recipes/brew-start.spec.ts › header Start defaults to the inspected saved version and the visible review names equipment
+recipes/brew-start.spec.ts › header promotes Start only for a clean saved Ready recipe and swaps back after an edit
+recipes/brew-start.spec.ts › held Record stays locked while a real focus overview completes
+recipes/brew-start.spec.ts › held context check after navigation cannot install the previous brew
+recipes/brew-start.spec.ts › held overview response after same-document unmount is ignored
+recipes/brew-start.spec.ts › hidden uncertain request can be discarded after another tab changes context
+recipes/brew-start.spec.ts › historical presentation uses human labels and hides machine identifiers
+recipes/brew-start.spec.ts › keyless held evidence preflight cannot replace or clear another discovered original
+recipes/brew-start.spec.ts › leaving while a start is unconfirmed keeps the retained request and says so
+recipes/brew-start.spec.ts › lost Record response is proven committed and retries the same identity
+recipes/brew-start.spec.ts › mixed confirmed cleanup and unknown evidence retain the original retry lock
+recipes/brew-start.spec.ts › out-of-order context success cannot restore hidden evidence
+recipes/brew-start.spec.ts › populated historical comparison is human-readable at desktop/mobile light/dark
+recipes/brew-start.spec.ts › recipe brew history and frozen historical print are reachable
+recipes/brew-start.spec.ts › retained evidence fragment arrival cannot exempt a later independent native reload
+recipes/brew-start.spec.ts › retained uncertain request recovers after a real workspace round trip
+recipes/brew-start.spec.ts › same-owner rescan cannot downgrade a known evidence receipt when marker persistence failed
+recipes/brew-start.spec.ts › starts an explicitly selected historical revision without restoring it
+recipes/brew-start.spec.ts › starts the prepared saved revision with frozen targets
+recipes/brew-start.spec.ts › without navigator.locks Start degrades to retain-then-verify and still starts once
+recipes/catalogue.spec.ts › CAT-L1 Archive publishes current denial before a failed legacy postflight
+recipes/catalogue.spec.ts › CAT-L1 Save publishes current denial before a failed legacy postflight
+recipes/catalogue.spec.ts › CAT-L2 an old Archive stays the only library command: reopening cannot mint a successor
+recipes/catalogue.spec.ts › CAT-L2 an old Save stays the only library command: reopening cannot mint a successor
+recipes/catalogue.spec.ts › CAT-L2 an old Search stays the only library command: reopening cannot mint a successor
+recipes/catalogue.spec.ts › CAT-L3 newer epoch preserves locked exact Archive replay after old denial
+recipes/catalogue.spec.ts › CAT-L3 newer epoch preserves locked exact Save replay after old denial
+recipes/catalogue.spec.ts › CAT-v2-L1 initial Archive retains its selection and exact request across nonmatching Search
+recipes/catalogue.spec.ts › KRA42-A1 Add hop cancels without a row and commits exactly one focused row
+recipes/catalogue.spec.ts › KRA42-A1 Add other ingredient cancels without a row and commits exactly one focused row
+recipes/catalogue.spec.ts › KRA42-A1 Add yeast cancels without a row and commits exactly one focused row
+recipes/catalogue.spec.ts › KRA42-A2 a committed hop shows use, contact time and human-percent alpha without opening details
+recipes/catalogue.spec.ts › KRA42-A3 removing first, middle, last and only rows keeps focus and Undo restores order and raw text
+recipes/catalogue.spec.ts › KRA42-L1 closing the picker during a sent library Save pins one original command and blocks a fresh create
+recipes/catalogue.spec.ts › KRA42-L2 Escape on an edited library form means Stay and keeps every value
+recipes/catalogue.spec.ts › KRA42-L3 an unknown library Save survives reload and is replayed verbatim before any new command
+recipes/catalogue.spec.ts › KRA42-L4 a late denial of the dismissed Archive is published once and no successor is sent
+recipes/catalogue.spec.ts › KRA42-L4 a late denial of the dismissed Save is published once and no successor is sent
+recipes/catalogue.spec.ts › KRA42-L5 a known Save result arriving after in-app navigation releases the retained record
+recipes/catalogue.spec.ts › a delayed catalogue save response cannot copy data into a disposed editor
+recipes/catalogue.spec.ts › a delayed catalogue search denial cannot touch a disposed picker
+recipes/catalogue.spec.ts › a stale catalogue search denial still redacts the mounted editor
+recipes/catalogue.spec.ts › an unavailable create keeps the pending command locked and retries identically
+recipes/catalogue.spec.ts › custom fermentables save to the workspace library with duplicate feedback
+recipes/catalogue.spec.ts › library entries support edit, archive, restore and lost-response retry
+recipes/catalogue.spec.ts › shared dialogs center the real fermentable picker after open scroll and resize
+recipes/catalogue.spec.ts › shared dialogs expose the complete enlarged Create label through the real body scrollport
+recipes/catalogue.spec.ts › shared dialogs keep real catalogue and library footer controls reachable in a short viewport
+recipes/catalogue.spec.ts › shared dialogs keep real edit form labels and short footer actions readable
+recipes/catalogue.spec.ts › shared dialogs never restore a protected opener after current context denial
+recipes/catalogue.spec.ts › shared dialogs preserve a rapid successor task across the previous close
+recipes/catalogue.spec.ts › shared dialogs preserve raw recipe input and native modal focus on cancel
+recipes/catalogue.spec.ts › shared dialogs respect deliberate newer focus and a successor native layer
+recipes/catalogue.spec.ts › shared dialogs retain omitted-prop shell returns and mobile nested layers
+recipes/catalogue.spec.ts › shared dialogs scroll the real long form and dispatch wrapped footer actions
+recipes/catalogue.spec.ts › shared dialogs use a safe successor when the actual opener is disabled
+recipes/catalogue.spec.ts › shared dialogs use a safe successor when the actual opener is removed
+recipes/catalogue.spec.ts › short Navigation keeps naturally tabbed Account wholly visible
+recipes/catalogue.spec.ts › the starter catalogue search copies a resolved specification into the recipe
+recipes/design-fidelity.spec.ts › Recipe actions is an ordinary popover that returns focus and keeps editing reachable
+recipes/design-fidelity.spec.ts › dark 1440px
+recipes/design-fidelity.spec.ts › dark 390px
+recipes/design-fidelity.spec.ts › estimates name their source and header commands work from every tab
+recipes/design-fidelity.spec.ts › history refreshes after saving while its tab is selected
+recipes/design-fidelity.spec.ts › light 1440px
+recipes/design-fidelity.spec.ts › light 390px
+recipes/design-fidelity.spec.ts › long recipe name stays directly editable and in bounds at 320px
+recipes/design-fidelity.spec.ts › long recipe name stays directly editable and in bounds at 390px
+recipes/design-fidelity.spec.ts › populated Munich Helles dark 1440px
+recipes/design-fidelity.spec.ts › populated Munich Helles dark 390px
+recipes/design-fidelity.spec.ts › populated Munich Helles light 1440px
+recipes/design-fidelity.spec.ts › populated Munich Helles light 390px
+recipes/design-fidelity.spec.ts › recipe header keeps one editable identity, state-aware primary and no duplicate history entrance
+recipes/editor.spec.ts › Review highlighted fields does not appear on a first character and reaches a settled invalid field
+recipes/editor.spec.ts › Review highlighted fields keeps the button's natural width, left-aligned with the header fields at 1440px
+recipes/editor.spec.ts › Review highlighted fields keeps the button's natural width, left-aligned with the header fields at 390px
+recipes/editor.spec.ts › Review highlighted fields never blinks and nothing moves while another field is edited with an Invalid outstanding
+recipes/editor.spec.ts › Review highlighted fields started from Saved versions selects the Recipe tab and focuses the exact control
+recipes/editor.spec.ts › a delayed save freezes its payload and preserves newer edits without duplicate dispatch
+recipes/editor.spec.ts › a denied access re-check hides the editor content at once
+recipes/editor.spec.ts › a dirty new recipe remains private to its original account and workspace
+recipes/editor.spec.ts › a disposed editor ignores a delayed focus read without reactive panic
+recipes/editor.spec.ts › a failure after the announcement is announced once instead of leaving the status stale
+recipes/editor.spec.ts › a focus refetch to a newer saved revision shows no water plan or chilling note from the old revision
+recipes/editor.spec.ts › a focused recipe heading is visible and not clipped
+recipes/editor.spec.ts › a late committed save cannot leave or rewrite the address after confirmed context loss
+recipes/editor.spec.ts › a late preview response cannot replace a settled invalid estimate
+recipes/editor.spec.ts › a link to a conditional control goes to the control that governs it, never to an absent input
+recipes/editor.spec.ts › a link to an inherited chilling value goes to the Chilling override, never to an absent input
+recipes/editor.spec.ts › a passing access re-check keeps the editor scroll position, layout and focused control
+recipes/editor.spec.ts › a passing access re-check keeps the position of a brewer scrolled to the very bottom
+recipes/editor.spec.ts › a pending save cannot be discarded while its result is uncertain
+recipes/editor.spec.ts › a quick recalculation is not announced but a slow one is
+recipes/editor.spec.ts › a restored draft that is recalculating shows no water plan or chilling note from the saved recipe
+recipes/editor.spec.ts › a restored draft with no estimate shows no water plan or chilling note from the saved recipe
+recipes/editor.spec.ts › a revoked session cannot read the retained draft until reauthentication
+recipes/editor.spec.ts › adding and removing steps keeps focus, unique context and Undo restores order and raw text
+recipes/editor.spec.ts › all numeric caller families settle format feedback on real blur without rewriting raw text
+recipes/editor.spec.ts › an editor that has never had an estimate reserves the summary before the first one at 320px
+recipes/editor.spec.ts › an empty draft links Add at least one fermentable to the add control
+recipes/editor.spec.ts › an explicit save keeps a numeric draft and reopens its native revision
+recipes/editor.spec.ts › an invalid batch volume shows a dash for Into fermenter in every summary state at 320px
+recipes/editor.spec.ts › an invalid batch volume shows a dash for Into fermenter in every summary state at 390px
+recipes/editor.spec.ts › an invalid or unavailable estimate shows dashes and its own outcome at 1440px
+recipes/editor.spec.ts › an invalid or unavailable estimate shows dashes and its own outcome at 320px
+recipes/editor.spec.ts › an invalid or unavailable estimate shows dashes and its own outcome at 390px
+recipes/editor.spec.ts › an invalid or unavailable estimate shows dashes and its own outcome at 601px
+recipes/editor.spec.ts › an out-of-date issues list keeps at least 4.5:1 text contrast in dark
+recipes/editor.spec.ts › an out-of-date issues list keeps at least 4.5:1 text contrast in light
+recipes/editor.spec.ts › an uncertain equipment save retries the identical request
+recipes/editor.spec.ts › authorized focus revalidation preserves an open print task and cleans up on return
+recipes/editor.spec.ts › authorized recheck uses a visible safe successor for an disabled ordinary bookmark
+recipes/editor.spec.ts › authorized recheck uses a visible safe successor for an idless ordinary bookmark
+recipes/editor.spec.ts › authorized recheck uses a visible safe successor for an missing ordinary bookmark
+recipes/editor.spec.ts › browser back keeps a dirty draft until an explicit navigation choice
+recipes/editor.spec.ts › calculation retry uses the same draft and a fresh preview generation
+recipes/editor.spec.ts › clean focus refetch invalidates preview before showing a newer saved recipe
+recipes/editor.spec.ts › cleared print task returns to a visible editor successor after authorized retry
+recipes/editor.spec.ts › context network failure has explicit retry and retains scoped raw work and focus
+recipes/editor.spec.ts › diagnostic jump reaches a select and a field inside a collapsed section
+recipes/editor.spec.ts › diagnostic summary names each repeated hop and jumps to its hidden alpha field by row id
+recipes/editor.spec.ts › diagnostic summary stays in bounds with long names and whole touch targets at 1440px light
+recipes/editor.spec.ts › diagnostic summary stays in bounds with long names and whole touch targets at 320px light
+recipes/editor.spec.ts › diagnostic summary stays in bounds with long names and whole touch targets at 390px dark
+recipes/editor.spec.ts › diagnostics from an earlier draft are marked out of date and never counted while previews are paused
+recipes/editor.spec.ts › diagnostics from an earlier draft stay marked out of date when access is regained at the same draft generation
+recipes/editor.spec.ts › disposed initial recovery authorization cannot write into the retired editor
+recipes/editor.spec.ts › editor controls remain usable on mobile and in dark mode
+recipes/editor.spec.ts › editor state controls keep raw labels and focus across representative presentation settings
+recipes/editor.spec.ts › equipment profiles can be saved, selected, edited and recovered
+recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a denied-after-edit task
+recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a disposed task
+recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a superseded task
+recipes/editor.spec.ts › first step removal focuses the next step and a stale step Undo returns to Add step
+recipes/editor.spec.ts › initial recipe load failure retries without leaving the requested recipe
+recipes/editor.spec.ts › inline messages are associated with every field family
+recipes/editor.spec.ts › invalid save blockers are separate from start requirements and Review highlighted fields reaches the first one
+recipes/editor.spec.ts › keyboard order follows visual order at 1440px
+recipes/editor.spec.ts › keyboard order follows visual order at 390px
+recipes/editor.spec.ts › late editor load never steals a deliberate focus move
+recipes/editor.spec.ts › local retention failure keeps exact work open without claiming durable recovery
+recipes/editor.spec.ts › losing access while an out-of-date announcement is pending announces nothing
+recipes/editor.spec.ts › losing and regaining access announces nothing for an episode that started while hidden
+recipes/editor.spec.ts › native input undo stays local while application undo restores removed raw rows
+recipes/editor.spec.ts › navigation offers stay, blocks failed save, and discards only on request
+recipes/editor.spec.ts › obsolete initial recovery authorization cannot replace newer verified access
+recipes/editor.spec.ts › obsolete preview context preflight cannot destroy a newer print task
+recipes/editor.spec.ts › preserved data this editor cannot edit is explained and never linked
+recipes/editor.spec.ts › preview details and calculating text are not a per-keystroke live list
+recipes/editor.spec.ts › preview results never move focus or collapse sections and the live status carries only the count
+recipes/editor.spec.ts › process composes by brewing stage and keeps raw controls through save, reload and Undo
+recipes/editor.spec.ts › process sections stay reachable and aligned at 1100px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 1280px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 1440px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 320px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 390px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 601px
+recipes/editor.spec.ts › process sections stay reachable and aligned at 900px
+recipes/editor.spec.ts › profile pagination exposes later active and archived profiles
+recipes/editor.spec.ts › raw formatting settles on blur and correction preserves precision and caret
+recipes/editor.spec.ts › recipe header stays usable under browser page zoom and enlarged text
+recipes/editor.spec.ts › recipe overrides show inherited and effective values and reset deletes the override
+recipes/editor.spec.ts › recovered older-base conflict does not invent an original document from the newer head
+recipes/editor.spec.ts › recovered uncertain create retries its original request without a duplicate
+recipes/editor.spec.ts › repeated diagnostics clear one at a time while the summary keeps its place during typing
+recipes/editor.spec.ts › retained draft stays isolated across sign-out and a different account
+recipes/editor.spec.ts › revalidation never steals a newer deliberate account focus
+recipes/editor.spec.ts › save and leave waits for a successful revision before navigating
+recipes/editor.spec.ts › separate local drafts remain individually recoverable
+recipes/editor.spec.ts › shared kit native popovers expose the actual schedule variant and pending action
+recipes/editor.spec.ts › shared kit native popovers fit the real changed visual viewport
+recipes/editor.spec.ts › shared kit native popovers preserve ordinary focus and raw field states
+recipes/editor.spec.ts › shared kit native popovers preserve the existing workspace error announcement
+recipes/editor.spec.ts › shared kit native popovers refresh geometry after content grows while open
+recipes/editor.spec.ts › shared kit native popovers remain usable inside a native modal and viewport
+recipes/editor.spec.ts › shared kit native popovers return to a safe successor when the opener is unavailable
+recipes/editor.spec.ts › shared preview exposes style ranges and rejects an older response
+recipes/editor.spec.ts › showcase kit supports themes, screen sizes and keyboard dialogs
+recipes/editor.spec.ts › stale saves retain edits and require deliberate reapply against current head
+recipes/editor.spec.ts › step focus succession never steals a field the user already moved to
+recipes/editor.spec.ts › successful revalidation preserves textarea selection and backward direction
+recipes/editor.spec.ts › summary links reach a step field, a select, an override and yeast and other amounts by their exact ids
+recipes/editor.spec.ts › switching recipes never shows the previous recipe's estimate
+recipes/editor.spec.ts › the chilling note states the effective chilling and the model limitation
+recipes/editor.spec.ts › the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at 320px
+recipes/editor.spec.ts › the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at 390px
+recipes/editor.spec.ts › the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at 601px
+recipes/editor.spec.ts › the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at 700px
+recipes/editor.spec.ts › the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at 850px
+recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 320px
+recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 390px
+recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 601px
+recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 700px
+recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 850px
+recipes/editor.spec.ts › the held editor height ends once the estimate after a passing re-check has settled
+recipes/editor.spec.ts › the process kit example shows the step row, stale outcomes and out-of-flow live line
+recipes/editor.spec.ts › the water plan emphasises its total and the process panels keep the Equipment titles unchanged
+recipes/editor.spec.ts › typed print denial never labels a hidden editor as access verified
+recipes/editor.spec.ts › typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at 1440px
+recipes/editor.spec.ts › typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at 320px
+recipes/editor.spec.ts › typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at 390px
+recipes/editor.spec.ts › undo and retained raw draft survive reload without becoming saved history
+recipes/editor.spec.ts › unsupported imported process details are named and kept, never silently dropped
+recipes/editor.spec.ts › wort attenuation is independent of the informational yeast attenuation
+recipes/editor.spec.ts › wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link
+recipes/library.spec.ts › a delayed denial after leaving the library does not access disposed UI state
+recipes/library.spec.ts › a stale denied revision response still redacts the current selection
+recipes/library.spec.ts › delayed historical revision responses cannot replace a new selection or survive context recheck
+recipes/library.spec.ts › delayed legacy source responses respect selection and context recheck
+recipes/library.spec.ts › denied archive hides displayed history and rejects a late revision response
+recipes/library.spec.ts › library controls remain usable at narrow width and by keyboard
+recipes/library.spec.ts › library navigation uses the shared dirty-editor guard
+recipes/library.spec.ts › recipe library searches, shows retained history, archives and restores
+recipes/print.spec.ts › a clean saved recipe prints its saved revision without asking for a source
+recipes/print.spec.ts › a delayed summary cannot touch a disposed editor
+recipes/print.spec.ts › a delayed summary denial cannot touch a disposed editor
+recipes/print.spec.ts › a delayed summary denial redacts a mounted editor even after a draft edit
+recipes/print.spec.ts › a dirty saved recipe asks once: saved revision or labelled unsaved draft
+recipes/print.spec.ts › a long recipe prints every row with page-break controls and no width overflow
+recipes/print.spec.ts › a revalidation during the print request prepares it again instead of sticking on Preparing
+recipes/print.spec.ts › a saved revision prints the shared sheet and identifies its source
+recipes/print.spec.ts › a selected saved version supplies its own source and the draft is untouched
+recipes/print.spec.ts › an unavailable access check with a print preview open leaves the notice and Retry check usable
+recipes/print.spec.ts › an unsaved draft is labelled and closing the preview preserves it
+recipes/print.spec.ts › closing and reopening the print task while a request is in flight runs only the new request
+recipes/print.spec.ts › dismissing the print task before its summary arrives opens no preview
+recipes/print.spec.ts › leaving the editor unmounts the preview and clears the print class
+recipes/print.spec.ts › print uses the light paper palette in dark mode and the print class never leaks
+recipes/print.spec.ts › raw numeric draft text survives opening and closing the print preview
+recipes/print.spec.ts › the design system showcase demonstrates the print preview boundary
+recipes/print.spec.ts › the page behind the preview stays inert for the whole revalidation gap while the preview is unmounted
+recipes/print.spec.ts › the page behind the preview stays inert when the editor remounts the preview during revalidation
+recipes/print.spec.ts › the permanent export and print disclosure is gone from the recipe
+recipes/print.spec.ts › the print preview fits 320x568 in dark mode with reachable Back and paper palette
+recipes/print.spec.ts › the print preview fits 390x844 in dark mode with reachable Back and paper palette
+recipes/print.spec.ts › the print preview is a real boundary: heading focus, inert page, Escape returns to the opener with draft and scroll intact
+recipes/scaling.spec.ts › Scale and Duplicate explain the clean-saved prerequisite at invocation and never save
+recipes/scaling.spec.ts › Scale is a real modal: focus is contained and the page behind is inert
+recipes/scaling.spec.ts › a Scale preview that finishes after Escape is not shown when reopened
+recipes/scaling.spec.ts › a block caused by the other command is lifted once that command is resolved
+recipes/scaling.spec.ts › a changed-context apply keeps its fresh preview and message for review
+recipes/scaling.spec.ts › a lost Duplicate response survives reload and replays to exactly one new recipe
+recipes/scaling.spec.ts › a lost Scale response survives Escape and reload and replays the same request once
+recipes/scaling.spec.ts › a new unsaved recipe is told to save first when Scale is chosen
+recipes/scaling.spec.ts › a retained Duplicate replay over a newer saved revision reports the copy instead of leaving the page
+recipes/scaling.spec.ts › a retained Scale replay never rolls the editor back past a newer saved revision
+recipes/scaling.spec.ts › an open Scale preview survives the editor revalidating on window focus
+recipes/scaling.spec.ts › an unreadable retained record blocks Scale and Duplicate until it is explicitly discarded
+recipes/scaling.spec.ts › recipe task dialogs stay reachable without document overflow at 320x568
+recipes/scaling.spec.ts › recipe task dialogs stay reachable without document overflow at 390x844
+recipes/scaling.spec.ts › recipe task dialogs stay reachable without document overflow at 844x390
+recipes/scaling.spec.ts › retrying a pending Duplicate never navigates away from an unsaved draft
+recipes/scaling.spec.ts › retrying a pending Scale never silently replaces an unsaved draft
+recipes/scaling.spec.ts › same-context focus during apply settles without losing the request
+recipes/scaling.spec.ts › scaling cancel writes nothing and duplicate opens an independent recipe
+recipes/scaling.spec.ts › scaling previews fixed-loss target changes and applies one revision
+recipes/scaling.spec.ts › uncertain apply keeps its identity through dismissal and blocks navigation
+recipes/scaling.spec.ts › uncertain duplicate keeps its identity through dismissal
+recipes/wayfinding.spec.ts › a hash-only Back does not suppress the next arrival focus
+recipes/wayfinding.spec.ts › a missing brew offers a neutral trail and never discloses a recipe or switches workspace
+recipes/wayfinding.spec.ts › a saved version is addressable, survives reload and Back, and never replaces a dirty draft
+recipes/wayfinding.spec.ts › an unknown saved version is a neutral recovery that keeps the editable recipe
+recipes/wayfinding.spec.ts › changing the library filter closes an open saved-versions panel
+recipes/wayfinding.spec.ts › library search, filter and saved-version selection live in the URL and return on a plain visit
+recipes/wayfinding.spec.ts › location, landmarks, titles and exact current page
+recipes/wayfinding.spec.ts › returning to a paged, scrolled library restores its pages and scroll position once
+recipes/wayfinding.spec.ts › skip link moves focus into main and arrival moves it to the new heading
+recipes/wayfinding.spec.ts › the library URL carries the archive filter
+recipes/wayfinding.spec.ts › typing quickly in library search keeps every character and the URL agrees
