@@ -212,7 +212,8 @@ test('starts the prepared saved revision with frozen targets', async ({ page }) 
 });
 
 test('editing a shared profile leaves a started brew frozen and changes only later previews', async ({ page }) => {
-  await importRecipe(page, `Brew frozen ${Date.now()}`);
+  const title = `Brew frozen ${Date.now()}`;
+  await importRecipe(page, title);
   const profileId = await makeSavedRevisionReady(page, `Frozen kettle ${Date.now()}`);
   const recipeUrl = page.url();
   await startCurrent(page);
@@ -220,6 +221,8 @@ test('editing a shared profile leaves a started brew frozen and changes only lat
   await expect(page.getByRole('heading', { name: 'Brew evidence' })).toBeVisible();
   const brewUrl = page.url();
   await expect(page.getByRole('heading', { name: 'Lifecycle evidence' })).toBeVisible();
+  // The breadcrumb shows a placeholder until the recipe title has loaded; read the settled page.
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText(title);
   const before = await page.getByRole('main').innerText();
   await page.goto(`/equipment?profile=${profileId}`);
   await expect(page.locator('#profile-boil-off')).toHaveValue('3');
@@ -228,6 +231,7 @@ test('editing a shared profile leaves a started brew frozen and changes only lat
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await page.goto(brewUrl);
   await expect(page.getByRole('heading', { name: 'Lifecycle evidence' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText(title);
   expect(await page.getByRole('main').innerText()).toBe(before);
   // A later start review resolves the edited current profile instead.
   await page.goto(recipeUrl);

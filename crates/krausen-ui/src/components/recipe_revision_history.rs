@@ -2,7 +2,7 @@
 //! Shared, read-only revision history for the library and editor.
 use crate::{
     components::{BreweryNotice, BreweryPanel, Button, ButtonVariant},
-    pages::recipe_editor::current_context_matches,
+    pages::recipe_editor::{current_context_matches, HistoryAuthority},
     server_fns::recipe_library::library_command_shared,
 };
 use krausen_types::{
@@ -81,7 +81,8 @@ pub fn RecipeRevisionHistory(
     recipe_id: String,
     recipe_title: String,
     refresh_key: Signal<i64>,
-    on_authority_failure: Callback<()>,
+    /// How a lost authority is reported: through the editor's access check, or a host callback.
+    authority: HistoryAuthority,
     /// Exact saved version addressed by the page URL (`None`: none inspected).
     #[prop(into)]
     selected_revision: Signal<Option<i64>>,
@@ -103,6 +104,9 @@ pub fn RecipeRevisionHistory(
             loaded.set(page.with(|p| p.as_ref().map(|h| h.items.clone()).unwrap_or_default()));
         }
     });
+    // Bumped when a failure report was ignored as older than the current access re-check, so the
+    // list and the inspected version reload instead of staying in their loading state.
+    let reload = RwSignal::new(0_u64);
     let generation = RwSignal::new(0_u64);
     let detail_generation = RwSignal::new(0_u64);
     let loading = RwSignal::new(false);
@@ -114,19 +118,23 @@ pub fn RecipeRevisionHistory(
         let append = cursor.is_some();
         let sequence = generation.get_untracked();
         let expected_refresh = refresh_key.get_untracked();
+        let authority = authority.begin();
         let captured = intent.get_value();
         let query = HistoryQuery { intent: captured.clone(), recipe_id: recipe_id.get_value(), cursor, limit: 50 };
         loading.set(true);
         error.set(String::new());
         leptos::task::spawn_local(async move {
+            let superseded = move || generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh);
             let result = library_command_shared(LibraryCommand::History(query)).await;
-            if authority_failed(&result) { let _ = on_authority_failure.try_run(()); return; }
+            // A denial is reported even when a newer load has superseded this one; only a current
+            // load is reloaded for a report that was ignored as stale.
+            if authority_failed(&result) { authority.lost_or_reload(reload, !superseded()); return; }
             if generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if generation.try_get_untracked().is_some() { let _ = on_authority_failure.try_run(()); }
+                if generation.try_get_untracked().is_some() { authority.lost_or_reload(reload, !superseded()); }
                 return;
             }
-            if generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
+            if superseded() { return; }
             loading.set(false);
             match result {
                 Ok(LibraryOutcome::History(next)) => {
@@ -139,7 +147,7 @@ pub fn RecipeRevisionHistory(
         });
     });
     Effect::new(move |_| {
-        let _ = refresh_key.get();
+        let _ = (refresh_key.get(), reload.get());
         generation.update(|v| *v += 1);
         page.set(None);
         loading.set(false);
@@ -152,20 +160,24 @@ pub fn RecipeRevisionHistory(
         detail_generation.update(|v| *v += 1);
         let sequence = detail_generation.get_untracked();
         let expected_refresh = refresh_key.get_untracked();
+        let authority = authority.begin();
         let captured = intent.get_value();
         let query = RevisionQuery { intent: captured.clone(), recipe_id: recipe_id.get_value(), revision };
         selected.set(None);
         detail_loading.set(true);
         detail_error.set(String::new());
         leptos::task::spawn_local(async move {
+            let superseded = move || detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh);
             let result = library_command_shared(LibraryCommand::Revision(query)).await;
-            if authority_failed(&result) { let _ = on_authority_failure.try_run(()); return; }
+            // A denial is reported even when a newer load has superseded this one; only a current
+            // load is reloaded for a report that was ignored as stale.
+            if authority_failed(&result) { authority.lost_or_reload(reload, !superseded()); return; }
             if detail_generation.try_get_untracked().is_none() { return; }
             if !current_context_matches(&captured).await {
-                if detail_generation.try_get_untracked().is_some() { let _ = on_authority_failure.try_run(()); }
+                if detail_generation.try_get_untracked().is_some() { authority.lost_or_reload(reload, !superseded()); }
                 return;
             }
-            if detail_generation.try_get_untracked() != Some(sequence) || refresh_key.try_get_untracked() != Some(expected_refresh) { return; }
+            if superseded() { return; }
             detail_loading.set(false);
             match result {
                 Ok(LibraryOutcome::Revision(document)) => selected.set(Some((revision, document))),
@@ -175,7 +187,7 @@ pub fn RecipeRevisionHistory(
         });
     });
     Effect::new(move |_| {
-        let _ = refresh_key.get();
+        let _ = (refresh_key.get(), reload.get());
         match selected_revision.get() {
             Some(revision) => inspect.run(revision),
             None => {

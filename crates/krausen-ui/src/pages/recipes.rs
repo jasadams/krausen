@@ -5,6 +5,7 @@ use crate::{
         BreweryDraftField, BreweryDraftSelect, BreweryNotice, BreweryPanel, Button, ButtonLink,
         ButtonVariant, RecipeRevisionHistory,
     },
+    pages::recipe_editor::HistoryAuthority,
     server_fns::recipe_library::library_command_shared,
     utils::{
         list_position::{self, ListPosition},
@@ -465,7 +466,7 @@ fn RecipeLibrary(intent: OperationIntent) -> impl IntoView {
             <Show when=move || pending.get().is_some() && !blocked.get()><Button variant=ButtonVariant::Secondary disabled=saving on:click=move |_| { if let Some(command) = pending.get_untracked() { execute_archive.run(command); } }>"Retry previous request"</Button></Show>
         </BreweryPanel>
         {move || recovery.get().map(|(source, diagnostic)| { let href = format!("data:application/json;base64,{}", STANDARD.encode(source.as_bytes())); view! { <BreweryPanel title="Stored recipe source"><p>{diagnostic}</p><a href=href download="legacy-recipe.json">"Download stored source"</a><pre class="overflow-x-auto">{source}</pre></BreweryPanel> } })}
-        {move || history.get().map(|(id, title)| view! { <RecipeRevisionHistory intent=intent.get_value() recipe_id=id recipe_title=title refresh_key=Signal::derive(|| 0_i64) on_authority_failure=invalidate_context selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next))/> })}
+        {move || history.get().map(|(id, title)| view! { <RecipeRevisionHistory intent=intent.get_value() recipe_id=id recipe_title=title refresh_key=Signal::derive(|| 0_i64) authority=HistoryAuthority::callback(invalidate_context) selected_revision=selected_revision on_select=Callback::new(move |next| selected_revision.set(next))/> })}
         <Show when=move || detail_loading.get()><BreweryNotice title="Loading saved content" body="Please wait."/></Show>
         </div>
     </div> }
@@ -491,7 +492,7 @@ mod tests {
             "nav_state::brews_href(&item.recipe_id)",
             "\"Retry previous request\"",
             "<RecipeRevisionHistory",
-            "on_authority_failure=invalidate_context",
+            "authority=HistoryAuthority::callback(invalidate_context)",
         ] {
             assert!(src.contains(required), "missing {required:?}");
         }

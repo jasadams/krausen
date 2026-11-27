@@ -250,8 +250,7 @@ pub fn CataloguePicker(
             || identity.try_with_untracked(|current| current.account_id == expected.account_id && current.workspace_id == expected.workspace_id) != Some(true) { return false; }
         if let Some(authority) = authority {
             let Some(epoch) = epoch else { return false; };
-            if authority.generation.try_get_untracked() != Some(epoch) { return false; }
-            authority.on_failure.run((epoch, outcome));
+            if !authority.report(epoch, outcome) { return false; }
         } else {
             context_visible.set(false);
         }

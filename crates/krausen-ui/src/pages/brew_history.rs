@@ -11,7 +11,7 @@ use crate::{
         Checkbox, PrintableRecipe,
         brew_evidence_rows::{BrewMeasurementRow, BrewProvenanceFact},
     },
-    pages::recipe_editor::current_context_matches,
+    pages::recipe_editor::{current_context_matches, HistoryAuthority},
     server_fns::brew_history::{
         brew_comparison_shared, brew_feedback_apply_shared, brew_feedback_preview_shared,
         brew_history_shared, brew_print_shared,
@@ -43,10 +43,9 @@ pub fn BrewHistoryView(
     #[prop(optional)] embedded: bool,
     #[prop(optional, into)] recipe_id: Option<String>,
     #[prop(optional)] intent: Option<OperationIntent>,
-    /// Embedded callers use this to redact their still-mounted parent draft on
-    /// authority/context loss. `try_run` makes a disposed parent a no-op.
+    /// How a lost authority is reported; a page that has nothing to redact leaves it out.
     #[prop(optional)]
-    on_authority_failure: Option<Callback<()>>,
+    authority: Option<HistoryAuthority>,
 ) -> impl IntoView {
     let params = use_params_map();
     let route_recipe = Signal::derive(move || params.read().get("id").unwrap_or_default());
@@ -58,12 +57,16 @@ pub fn BrewHistoryView(
             .unwrap_or_else(|| route_recipe.get())
     });
     let captured_intent = intent;
+    let authority = authority.unwrap_or_else(HistoryAuthority::standalone);
     let records = RwSignal::new(Vec::<RecipeBrewSummary>::new());
     let identity = RwSignal::new(None::<OperationIntent>);
     let next_cursor = RwSignal::new(None::<String>);
     let message = RwSignal::new("Loading brew history…".to_owned());
     let busy = RwSignal::new(false);
     let generation = RwSignal::new(0_u64);
+    // Bumped when a failure report was ignored as older than the current access re-check, so the
+    // page reloads against the access it has now instead of showing that answer.
+    let reload = RwSignal::new(0_u64);
 
     let clear_page = move || {
         records.set(Vec::new());
@@ -83,6 +86,7 @@ pub fn BrewHistoryView(
         generation.set(mine);
         busy.set(true);
         message.set("Loading brew history…".into());
+        let authority = authority.begin();
         leptos::task::spawn_local(async move {
             let outcome = brew_history_shared(RecipeBrewHistoryQuery {
                 intent: intent.clone(),
@@ -99,14 +103,12 @@ pub fn BrewHistoryView(
                     Ok(RecipeBrewHistoryOutcome::Forbidden)
                         | Ok(RecipeBrewHistoryOutcome::ContextChanged)
                 );
-            if denied {
-                if let Some(callback) = on_authority_failure.clone() {
-                    let _ = callback.try_run(());
-                }
+            let current = generation.try_get_untracked() == Some(mine)
+                && recipe_id.try_get_untracked() == Some(recipe);
+            if denied && !authority.lost_or_reload(reload, current) {
+                return;
             }
-            if generation.try_get_untracked() != Some(mine)
-                || recipe_id.try_get_untracked() != Some(recipe)
-            {
+            if !current {
                 return;
             }
             busy.set(false);
@@ -159,6 +161,7 @@ pub fn BrewHistoryView(
 
     Effect::new(move |_| {
         let recipe = recipe_id.get();
+        let _ = reload.get();
         clear_page();
         if recipe.is_empty() {
             busy.set(false);
@@ -179,6 +182,7 @@ pub fn BrewHistoryView(
         message.set("Loading brew history…".into());
         let mine = generation.get_untracked().wrapping_add(1);
         generation.set(mine);
+        let authority = authority.begin();
         if let Some(expected) = captured_intent.clone() {
             // Embedded callers supply the editor's captured account/workspace.
             // Verify it against the current authenticated context instead of
@@ -186,14 +190,12 @@ pub fn BrewHistoryView(
             identity.set(Some(expected.clone()));
             leptos::task::spawn_local(async move {
                 let context_ok = current_context_matches(&expected).await;
-                if !context_ok {
-                    if let Some(callback) = on_authority_failure.clone() {
-                        let _ = callback.try_run(());
-                    }
+                let current = generation.try_get_untracked() == Some(mine)
+                    && recipe_id.try_get_untracked() == Some(recipe);
+                if !context_ok && !authority.lost_or_reload(reload, current) {
+                    return;
                 }
-                if generation.try_get_untracked() != Some(mine)
-                    || recipe_id.try_get_untracked() != Some(recipe)
-                {
+                if !current {
                     return;
                 }
                 if !context_ok {
@@ -207,14 +209,12 @@ pub fn BrewHistoryView(
         }
         leptos::task::spawn_local(async move {
             let context = crate::server_fns::context::get_user_context().await;
-            if context.is_err() {
-                if let Some(callback) = on_authority_failure.clone() {
-                    let _ = callback.try_run(());
-                }
+            let current = generation.try_get_untracked() == Some(mine)
+                && recipe_id.try_get_untracked() == Some(recipe);
+            if context.is_err() && !authority.lost_or_reload(reload, current) {
+                return;
             }
-            if generation.try_get_untracked() != Some(mine)
-                || recipe_id.try_get_untracked() != Some(recipe)
-            {
+            if !current {
                 return;
             }
             let Ok(ctx) = context else {
