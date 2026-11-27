@@ -1033,7 +1033,11 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Invalid(validation)) => {
                     retry.set(None);
                     if draft.with_untracked(|d| d.generation) == attempt.generation {
-                        draft.update(|d| { d.apply_validation(attempt.generation, validation); });
+                        // Checked against the context this save started in. If access was lost and
+                        // regained since, that check is no longer trusted: keep the list out of date.
+                        if check_generation.try_get_untracked() == Some(save_epoch) {
+                            draft.update(|d| { d.apply_validation(attempt.generation, validation); });
+                        }
                         status.fail("Correct the invalid fields before saving.".into());
                     } else {
                         status.fail(

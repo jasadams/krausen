@@ -184,6 +184,7 @@ recipes/editor.spec.ts › a quick recalculation is not announced but a slow one
 recipes/editor.spec.ts › a restored draft that is recalculating shows no water plan or chilling note from the saved recipe
 recipes/editor.spec.ts › a restored draft with no estimate shows no water plan or chilling note from the saved recipe
 recipes/editor.spec.ts › a revoked session cannot read the retained draft until reauthentication
+recipes/editor.spec.ts › a save rejected as invalid after access was lost and regained leaves the diagnostics out of date
 recipes/editor.spec.ts › adding and removing steps keeps focus, unique context and Undo restores order and raw text
 recipes/editor.spec.ts › all numeric caller families settle format feedback on real blur without rewriting raw text
 recipes/editor.spec.ts › an editor that has never had an estimate reserves the summary before the first one at 320px
