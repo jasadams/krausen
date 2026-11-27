@@ -12,10 +12,10 @@ use krausen_types::{
 fn settings() -> EquipmentSettingsV1 {
     EquipmentSettingsV1 {
         mash_efficiency_fraction: Some(0.75),
-        boil_off_l_per_hour: Some(3.0),
-        transfer_loss_l: Some(2.0),
-        pre_boil_deadspace_l: Some(0.0),
-        grain_absorption_l_per_kg: Some(0.8),
+        boil_loss_l_per_hour: Some(3.0),
+        trub_and_chiller_loss_l: Some(2.0),
+        mash_tun_deadspace_l: Some(0.0),
+        mash_grain_absorption_l_per_kg: Some(0.8),
         ..Default::default()
     }
 }
@@ -89,6 +89,8 @@ async fn exercise(db: DbPool) {
         profile_id: id.clone(),
         name: "Test system".into(),
         settings: settings(),
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::equipment::EquipmentProvenance {
             source: "manual".into(),
             assumptions: vec!["measured boil-off".into()],
@@ -149,9 +151,9 @@ async fn exercise(db: DbPool) {
             .contains(&"profile:measured boil-off".to_string())
     );
     assert_eq!(context.equipment_profile.as_ref().unwrap().revision, 1);
-    assert_eq!(context.effective_equipment.boil_off_l_per_hour, Some(3.0));
+    assert_eq!(context.effective_equipment.boil_loss_l_per_hour, Some(3.0));
     let mut forged = draft(intent.clone(), &id);
-    forged.equipment_draft.boil_off_l_per_hour = Some(999.0);
+    forged.equipment_draft.boil_loss_l_per_hour = Some(999.0);
     let PreviewOutcome::Preview(forged_result) =
         formulation::preview(&db, &actor, forged).await.unwrap()
     else {
@@ -163,14 +165,14 @@ async fn exercise(db: DbPool) {
             .context
             .unwrap()
             .effective_equipment
-            .boil_off_l_per_hour,
+            .boil_loss_l_per_hour,
         Some(3.0)
     );
     let mut next = req.clone();
     next.expected_revision = 1;
     next.expected_metadata_revision = created.metadata_revision;
     next.request_id = uuid::Uuid::new_v4().to_string();
-    next.settings.boil_off_l_per_hour = Some(4.0);
+    next.settings.boil_loss_l_per_hour = Some(4.0);
     let updated = equipment::save(&db, &actor, next).await.unwrap();
     assert_eq!(updated.revision, 2);
     let PreviewOutcome::Preview(second) =
@@ -186,7 +188,7 @@ async fn exercise(db: DbPool) {
             .context
             .unwrap()
             .effective_equipment
-            .boil_off_l_per_hour,
+            .boil_loss_l_per_hour,
         Some(3.0)
     );
     assert_eq!(
@@ -194,7 +196,7 @@ async fn exercise(db: DbPool) {
             .context
             .unwrap()
             .effective_equipment
-            .boil_off_l_per_hour,
+            .boil_loss_l_per_hour,
         Some(4.0)
     );
     let foreign_actor = ActorContext {
@@ -269,7 +271,7 @@ async fn exercise(db: DbPool) {
         .unwrap()
         .unwrap();
     assert_eq!(original.name, "Test system");
-    assert_eq!(original.settings.boil_off_l_per_hour, Some(3.0));
+    assert_eq!(original.settings.boil_loss_l_per_hour, Some(3.0));
     assert_eq!(
         equipment::set_archived(&db, &actor, archive).await.unwrap(),
         archived

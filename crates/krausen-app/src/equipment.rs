@@ -6,7 +6,7 @@ use crate::{
 };
 use krausen_core::{DbPool, DbTx, canonical_json};
 use krausen_types::{
-    brewery::{EquipmentSettingsV1, RecipeDocumentV1},
+    brewery::{EquipmentAboutV1, EquipmentSettingsV1, RecipeDocumentV1},
     equipment::{
         ArchiveEquipment, EquipmentOutcome, EquipmentPage, EquipmentProfile, SaveEquipment,
     },
@@ -14,9 +14,41 @@ use krausen_types::{
     validation::Readiness,
 };
 
+const ABOUT_TEXT_LIMIT: usize = 4000;
+const ABOUT_EQUIPMENT_TYPES: &[&str] = &["all_grain", "extract", "biab"];
+
+fn validate_about(about: &EquipmentAboutV1) -> Result<(), Error> {
+    let text = [
+        &about.brand,
+        &about.description,
+        &about.controller_type,
+        &about.recirculation_system,
+        &about.notes,
+    ];
+    if text
+        .iter()
+        .any(|t| t.as_ref().is_some_and(|t| t.chars().count() > ABOUT_TEXT_LIMIT))
+        || about.measurement.as_deref().is_some_and(|m| m != "metric")
+        || about
+            .equipment_type
+            .as_deref()
+            .is_some_and(|t| !ABOUT_EQUIPMENT_TYPES.contains(&t))
+        || about.vessel_count == Some(0)
+        || about
+            .batch_size_l
+            .is_some_and(|b| !b.is_finite() || b <= 0.0)
+    {
+        return Err(Error::Invalid("equipment about"));
+    }
+    Ok(())
+}
 fn validate(settings: &EquipmentSettingsV1) -> Result<(), Error> {
     if settings.schema_version != 1 {
         return Err(Error::Invalid("equipment schema"));
+    }
+    // Brewhouse efficiency is a recipe-level override, not a profile field.
+    if settings.efficiency_override_fraction.is_some() {
+        return Err(Error::Invalid("equipment settings"));
     }
     let result =
         krausen_brewery::validation::validate_draft(&RecipeDocumentV1::default(), settings);
@@ -158,10 +190,14 @@ pub async fn list(
     } else {
         None
     };
+    let default_profile = krausen_brewery::equipment_store::load_default(&mut tx, &actor.workspace_id)
+        .await
+        .map_err(crate::boundary_error)?;
     tx.commit().await.map_err(crate::boundary_error)?;
     Ok(EquipmentPage {
         items: profiles,
         next_cursor,
+        default_profile,
     })
 }
 /// Create at revision zero or append a guarded complete settings revision.
@@ -177,6 +213,8 @@ pub async fn save(
         &request.profile_id,
         name,
         &request.settings,
+        &request.about,
+        &request.is_default,
         &request.provenance,
         request.expected_revision,
         request.expected_metadata_revision,
@@ -198,6 +236,7 @@ pub async fn save(
         return Ok(p);
     }
     validate(&request.settings)?;
+    validate_about(&request.about)?;
     if request.provenance.source.trim().is_empty()
         || request.provenance.source.chars().count() > 255
         || request.provenance.assumptions.len() > 64
@@ -227,6 +266,7 @@ pub async fn save(
     authorize_workspace(&mut tx, actor).await?;
     let now = chrono::Utc::now().timestamp();
     let mut changed = true;
+    let was_default = current.as_ref().is_some_and(|p| p.is_default);
     match current {
         None if request.expected_revision == 0 && request.expected_metadata_revision == 0 => {
             krausen_brewery::equipment_store::create(
@@ -235,6 +275,7 @@ pub async fn save(
                 &request.profile_id,
                 name,
                 &request.settings,
+                &request.about,
                 &request.provenance,
                 &actor.actor_id,
                 now,
@@ -264,6 +305,7 @@ pub async fn save(
         Some(p)
             if p.name == name
                 && p.settings == request.settings
+                && p.about == request.about
                 && p.provenance == request.provenance =>
         {
             changed = false;
@@ -275,6 +317,7 @@ pub async fn save(
                 &request.profile_id,
                 name,
                 &request.settings,
+                &request.about,
                 &request.provenance,
                 &actor.actor_id,
                 now,
@@ -287,6 +330,28 @@ pub async fn save(
             }
         }
     }
+    match request.is_default {
+        Some(true) => {
+            krausen_brewery::equipment_store::set_default(
+                &mut tx,
+                &actor.workspace_id,
+                &request.profile_id,
+            )
+            .await
+            .map_err(crate::boundary_error)?;
+        }
+        Some(false) => {
+            krausen_brewery::equipment_store::clear_default(
+                &mut tx,
+                &actor.workspace_id,
+                &request.profile_id,
+            )
+            .await
+            .map_err(crate::boundary_error)?;
+        }
+        None => (),
+    }
+    let default_changed = request.is_default.is_some_and(|d| d != was_default);
     let profile = krausen_brewery::equipment_store::load(
         &mut tx,
         &actor.workspace_id,
@@ -303,7 +368,7 @@ pub async fn save(
         Some(&profile.profile_id),
     )
     .await?;
-    if changed {
+    if changed || default_changed {
         record_change(
             &mut tx,
             actor,

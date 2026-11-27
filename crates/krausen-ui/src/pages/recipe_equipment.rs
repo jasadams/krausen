@@ -143,12 +143,12 @@ impl std::ops::Deref for ChillingSpec {
 static SPECS: [Spec; 11] = [
     Spec { id: "recipe-efficiency-override", label: "Brewhouse efficiency override", unit: "%", scale: 100.0, path: "equipment_overrides.efficiency_override_fraction", read: |s| s.efficiency_override_fraction, write: |s, v| s.efficiency_override_fraction = v },
     Spec { id: "recipe-efficiency", label: "Mash efficiency", unit: "%", scale: 100.0, path: "equipment_overrides.mash_efficiency_fraction", read: |s| s.mash_efficiency_fraction, write: |s, v| s.mash_efficiency_fraction = v },
-    Spec { id: "recipe-boil-off", label: "Boil-off", unit: "L/h", scale: 1.0, path: "equipment_overrides.boil_off_l_per_hour", read: |s| s.boil_off_l_per_hour, write: |s, v| s.boil_off_l_per_hour = v },
-    Spec { id: "recipe-loss", label: "Transfer loss", unit: "L", scale: 1.0, path: "equipment_overrides.transfer_loss_l", read: |s| s.transfer_loss_l, write: |s, v| s.transfer_loss_l = v },
-    Spec { id: "recipe-deadspace", label: "Pre-boil deadspace", unit: "L", scale: 1.0, path: "equipment_overrides.pre_boil_deadspace_l", read: |s| s.pre_boil_deadspace_l, write: |s, v| s.pre_boil_deadspace_l = v },
-    Spec { id: "recipe-absorption", label: "Grain absorption", unit: "L/kg", scale: 1.0, path: "equipment_overrides.grain_absorption_l_per_kg", read: |s| s.grain_absorption_l_per_kg, write: |s, v| s.grain_absorption_l_per_kg = v },
+    Spec { id: "recipe-boil-off", label: "Boil-off", unit: "L/h", scale: 1.0, path: "equipment_overrides.boil_loss_l_per_hour", read: |s| s.boil_loss_l_per_hour, write: |s, v| s.boil_loss_l_per_hour = v },
+    Spec { id: "recipe-loss", label: "Transfer loss", unit: "L", scale: 1.0, path: "equipment_overrides.trub_and_chiller_loss_l", read: |s| s.trub_and_chiller_loss_l, write: |s, v| s.trub_and_chiller_loss_l = v },
+    Spec { id: "recipe-deadspace", label: "Pre-boil deadspace", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_deadspace_l", read: |s| s.mash_tun_deadspace_l, write: |s, v| s.mash_tun_deadspace_l = v },
+    Spec { id: "recipe-absorption", label: "Grain absorption", unit: "L/kg", scale: 1.0, path: "equipment_overrides.mash_grain_absorption_l_per_kg", read: |s| s.mash_grain_absorption_l_per_kg, write: |s, v| s.mash_grain_absorption_l_per_kg = v },
     Spec { id: "recipe-thickness", label: "Mash thickness", unit: "L/kg", scale: 1.0, path: "equipment_overrides.mash_thickness_l_per_kg", read: |s| s.mash_thickness_l_per_kg, write: |s, v| s.mash_thickness_l_per_kg = v },
-    Spec { id: "recipe-capacity", label: "Kettle capacity", unit: "L", scale: 1.0, path: "equipment_overrides.kettle_capacity_l", read: |s| s.kettle_capacity_l, write: |s, v| s.kettle_capacity_l = v },
+    Spec { id: "recipe-capacity", label: "Kettle capacity", unit: "L", scale: 1.0, path: "equipment_overrides.boil_volume_l", read: |s| s.boil_volume_l, write: |s, v| s.boil_volume_l = v },
     Spec { id: "recipe-diameter", label: "Kettle diameter", unit: "cm", scale: 1.0, path: "equipment_overrides.kettle_diameter_cm", read: |s| s.kettle_diameter_cm, write: |s, v| s.kettle_diameter_cm = v },
     Spec { id: "recipe-opening", label: "Kettle opening", unit: "cm", scale: 1.0, path: "equipment_overrides.kettle_opening_cm", read: |s| s.kettle_opening_cm, write: |s, v| s.kettle_opening_cm = v },
     Spec { id: "recipe-boil-temp", label: "Boil temperature", unit: "°C", scale: 1.0, path: "equipment_overrides.boil_temperature_c", read: |s| s.boil_temperature_c, write: |s, v| s.boil_temperature_c = v },
@@ -544,7 +544,7 @@ mod tests {
         let archived = profile(Default::default(), true);
         assert!(matches!(EquipmentSummary::from_document(&document, Some(&archived)).source, EquipmentSource::Unavailable { .. }));
         assert!(matches!(EquipmentSummary::from_document(&document, None).source, EquipmentSource::Unavailable { .. }));
-        document.equipment_overrides.boil_off_l_per_hour = Some(3.0);
+        document.equipment_overrides.boil_loss_l_per_hour = Some(3.0);
         assert_eq!(EquipmentSummary::from_document(&document, None).overrides(), "1 recipe override");
     }
 

@@ -5,10 +5,101 @@ use krausen_calc::{
     formulation::{self, FermentableInput, FermentableStage, HopInput, Inputs},
 };
 use krausen_types::{
-    brewery::{ChillingV1, EquipmentSettingsV1, RecipeDocumentV1},
-    formulation::{AppliedDefault, Targets},
+    brewery::{CoolingMethodV1, EquipmentSettingsV1, RecipeDocumentV1},
+    formulation::{AppliedDefault, Targets, Vessel, VesselWarning},
     validation::{Diagnostic, Readiness, Target, Validation},
 };
+
+/// Water displaced by one kilogram of mashed grain, for the mash tun overfill
+/// warning only. A fixed, visible assumption of the equipment spec.
+pub const GRAIN_DISPLACEMENT_L_PER_KG: f64 = 0.67;
+/// Fixed boiling point: the spec has no boil temperature field.
+const FIXED_BOIL_TEMPERATURE_C: f64 = 100.0;
+
+/// The spec's water-chain terms with absent optional losses resolved to zero,
+/// each recorded as an applied default.
+struct WaterTerms {
+    wort_shrinkage_fraction: f64,
+    /// Boil loss converted to the 20 °C reference basis: `E × (1 - s)`.
+    boil_loss_l_per_hour: f64,
+    trub_and_chiller_loss_l: f64,
+    /// Mash grain absorption plus sparge grain absorption.
+    absorption_l_per_kg: f64,
+    /// Mash tun deadspace plus mash tun loss plus sparge deadspace.
+    deadspace_l: f64,
+}
+
+/// `stage_losses` includes absorption and deadspaces; without it only the boil
+/// chain is resolved, which gravity needs even when water targets are unavailable.
+fn water_terms(
+    e: &EquipmentSettingsV1,
+    grain: f64,
+    stage_losses: bool,
+    defaults: &mut Vec<AppliedDefault>,
+) -> Option<WaterTerms> {
+    let mut optional = |value: Option<f64>, path: &str, unit: &str| match value {
+        Some(value) => value,
+        None => {
+            record_default(defaults, format!("equipment.{path}"), 0.0, unit);
+            0.0
+        }
+    };
+    let shrinkage = optional(e.wort_shrinkage_fraction, "wort_shrinkage_fraction", "fraction");
+    let tun_loss = optional(e.mash_tun_loss_l, "mash_tun_loss_l", "L");
+    let sparge_dead = optional(e.sparge_deadspace_l, "sparge_deadspace_l", "L");
+    let sparge_abs = optional(
+        e.sparge_grain_absorption_l_per_kg,
+        "sparge_grain_absorption_l_per_kg",
+        "L/kg",
+    );
+    Some(WaterTerms {
+        wort_shrinkage_fraction: shrinkage,
+        boil_loss_l_per_hour: e.boil_loss_l_per_hour? * (1.0 - shrinkage),
+        trub_and_chiller_loss_l: e.trub_and_chiller_loss_l?,
+        absorption_l_per_kg: if grain == 0.0 || !stage_losses {
+            0.0
+        } else {
+            e.mash_grain_absorption_l_per_kg? + sparge_abs
+        },
+        deadspace_l: if stage_losses {
+            e.mash_tun_deadspace_l? + tun_loss + sparge_dead
+        } else {
+            0.0
+        },
+    })
+}
+
+/// Overfilled vessels. Absent vessel volumes are not checked.
+fn vessel_warnings(
+    e: &EquipmentSettingsV1,
+    grain: f64,
+    mash_water_l: Option<f64>,
+    sparge_water_l: Option<f64>,
+    kettle_peak_l: f64,
+) -> Vec<VesselWarning> {
+    let mut out = Vec::new();
+    let mut check = |vessel, required: Option<f64>, capacity: Option<f64>| {
+        if let (Some(required_l), Some(capacity_l)) = (required, capacity) {
+            if required_l.is_finite() && required_l > capacity_l {
+                out.push(VesselWarning {
+                    vessel,
+                    required_l,
+                    capacity_l,
+                });
+            }
+        }
+    };
+    if grain > 0.0 {
+        check(
+            Vessel::MashTun,
+            mash_water_l.map(|water| water + grain * GRAIN_DISPLACEMENT_L_PER_KG),
+            e.mash_tun_volume_l,
+        );
+        check(Vessel::SpargeVessel, sparge_water_l.filter(|l| *l > 0.0), e.sparge_vessel_volume_l);
+    }
+    check(Vessel::Kettle, Some(kettle_peak_l), e.boil_volume_l);
+    out
+}
 
 /// Compute available targets only. Validation and effective-settings resolution
 /// precede this projection; unavailable values never escape as current targets.
@@ -63,23 +154,12 @@ pub fn targets_with_defaults(
         .map(|f| f.amount_kg)
         .sum();
     if v.target_available(Target::Water) {
-        if let (Some(batch), Some(boil), Some(loss), Some(rate), Some(dead), Some(grain)) = (
-            d.batch_size_l,
-            d.boil_minutes,
-            e.transfer_loss_l,
-            e.boil_off_l_per_hour,
-            e.pre_boil_deadspace_l,
-            grain,
-        ) {
-            let absorption = if grain == 0.0 {
-                Some(0.0)
-            } else {
-                e.grain_absorption_l_per_kg.map(|a| a * grain)
-            };
-            if let Some(absorption) = absorption {
-                let post = batch + loss;
-                let pre = post + rate * boil / 60.0;
-                let total = pre + absorption + dead;
+        if let (Some(batch), Some(boil), Some(grain)) = (d.batch_size_l, d.boil_minutes, grain) {
+            if let Some(terms) = water_terms(e, grain, true, &mut water_defaults) {
+                let post = batch + terms.trub_and_chiller_loss_l;
+                let pre = post + terms.boil_loss_l_per_hour * boil / 60.0;
+                let absorption = terms.absorption_l_per_kg * grain;
+                let total = pre + absorption + terms.deadspace_l;
                 let mash = if grain == 0.0 {
                     Some(0.0)
                 } else {
@@ -128,6 +208,13 @@ pub fn targets_with_defaults(
                     out.mash_water_l = mash;
                     out.sparge_water_l = sparge;
                     out.kettle_water_l = Some(kettle);
+                    out.vessel_warnings = vessel_warnings(
+                        e,
+                        grain,
+                        mash,
+                        sparge,
+                        pre / (1.0 - terms.wort_shrinkage_fraction),
+                    );
                     merge_defaults(applied_defaults, water_defaults);
                 } else {
                     v.state = Readiness::Invalid;
@@ -156,7 +243,7 @@ pub fn targets_with_defaults(
             .map(|f| Some((f.amount_kg?, f.specification.colour_ebc?)))
             .collect();
         if let (Some(batch), Some(loss), Some(ingredients)) =
-            (d.batch_size_l, e.transfer_loss_l, ingredients)
+            (d.batch_size_l, e.trub_and_chiller_loss_l, ingredients)
         {
             match formulation::colour_ebc(batch + loss, &ingredients) {
                 Ok(colour) => out.colour_ebc = Some(colour),
@@ -254,21 +341,26 @@ pub fn targets_with_defaults(
         } else {
             vec![]
         };
-        let chilling = match &e.chilling {
-            _ if !v.target_available(Target::Bitterness) => Chilling::None,
-            Some(ChillingV1::Natural) => Chilling::None,
-            Some(ChillingV1::Forced {
-                rate_per_minute,
-                plateau_c,
-            }) => Chilling::Forced {
-                rate_per_min: (*rate_per_minute)?,
-                plateau_c: (*plateau_c)?,
-            },
-            Some(ChillingV1::Counterflow { litres_per_minute }) => Chilling::Counterflow {
-                litres_per_minute: (*litres_per_minute)?,
-            },
-            None if hops.is_empty() => Chilling::None,
-            None => return None,
+        let terms = water_terms(
+            e,
+            grain,
+            v.target_available(Target::Water),
+            &mut projection_defaults,
+        )?;
+        let chilling = if !v.target_available(Target::Bitterness) {
+            Chilling::None
+        } else {
+            let post_boil_l = d.batch_size_l? + terms.trub_and_chiller_loss_l;
+            match e.cooling_method {
+                Some(CoolingMethodV1::Natural) => Chilling::None,
+                Some(CoolingMethodV1::ImmersionChiller) => Chilling::immersion(post_boil_l),
+                Some(CoolingMethodV1::IceBath) => Chilling::ice_bath(post_boil_l),
+                Some(CoolingMethodV1::CounterflowChiller) => Chilling::Counterflow {
+                    litres_per_minute: e.cooling_flow_rate_l_per_minute?,
+                },
+                None if hops.is_empty() => Chilling::None,
+                None => return None,
+            }
         };
         let mash = if grain == 0.0 || !v.target_available(Target::Water) {
             0.0
@@ -327,26 +419,8 @@ pub fn targets_with_defaults(
             } else {
                 None
             },
-            equipment: Equipment {
-                boil_off_rate_l_per_hour: e.boil_off_l_per_hour?,
-                grain_absorption_l_per_kg: if grain == 0.0 || !v.target_available(Target::Water) {
-                    0.0
-                } else {
-                    e.grain_absorption_l_per_kg?
-                },
-                kettle_deadspace_l: if v.target_available(Target::Water) {
-                    e.pre_boil_deadspace_l?
-                } else {
-                    0.0
-                },
-                losses_l: e.transfer_loss_l?,
-                mash_efficiency: if grain == 0.0 {
-                    1.0
-                } else {
-                    e.efficiency_override_fraction
-                        .or(e.mash_efficiency_fraction)?
-                },
-                kettle_diameter_cm: if v.target_available(Target::Bitterness) {
+            equipment: {
+                let kettle_diameter_cm = if v.target_available(Target::Bitterness) {
                     match e.kettle_diameter_cm {
                         Some(value) => value,
                         None => {
@@ -361,40 +435,25 @@ pub fn targets_with_defaults(
                     }
                 } else {
                     1.0
-                },
-                kettle_opening_cm: if v.target_available(Target::Bitterness) {
-                    match e.kettle_opening_cm {
-                        Some(value) => value,
-                        None => {
-                            record_default(
-                                &mut projection_defaults,
-                                "equipment.kettle_opening_cm".into(),
-                                1.0,
-                                "cm",
-                            );
-                            1.0
-                        }
-                    }
-                } else {
-                    1.0
-                },
-                boil_temp_c: if v.target_available(Target::Bitterness) {
-                    match e.boil_temperature_c {
-                        Some(value) => value,
-                        None => {
-                            record_default(
-                                &mut projection_defaults,
-                                "equipment.boil_temperature_c".into(),
-                                100.0,
-                                "C",
-                            );
-                            100.0
-                        }
-                    }
-                } else {
-                    100.0
-                },
-                chilling,
+                };
+                Equipment {
+                    boil_off_rate_l_per_hour: terms.boil_loss_l_per_hour,
+                    grain_absorption_l_per_kg: terms.absorption_l_per_kg,
+                    kettle_deadspace_l: terms.deadspace_l,
+                    losses_l: terms.trub_and_chiller_loss_l,
+                    mash_efficiency: if grain == 0.0 {
+                        1.0
+                    } else {
+                        e.efficiency_override_fraction
+                            .or(e.mash_efficiency_fraction)?
+                    },
+                    kettle_diameter_cm,
+                    // Fixed assumptions of the equipment spec: an uncovered
+                    // kettle and a 100 °C boil.
+                    kettle_opening_cm: kettle_diameter_cm,
+                    boil_temp_c: FIXED_BOIL_TEMPERATURE_C,
+                    chilling,
+                }
             },
         })
     })();

@@ -421,10 +421,10 @@ async fn exercise(db: DbPool) {
     draft.process.mash_water_method = Some("manual".into());
     draft.process.mash_water_l = Some(12.0);
     let mut equipment = krausen_types::brewery::EquipmentSettingsV1::default();
-    equipment.boil_off_l_per_hour = Some(3.0);
-    equipment.transfer_loss_l = Some(2.0);
-    equipment.pre_boil_deadspace_l = Some(0.0);
-    equipment.grain_absorption_l_per_kg = Some(0.8);
+    equipment.boil_loss_l_per_hour = Some(3.0);
+    equipment.trub_and_chiller_loss_l = Some(2.0);
+    equipment.mash_tun_deadspace_l = Some(0.0);
+    equipment.mash_grain_absorption_l_per_kg = Some(0.8);
     equipment.mash_efficiency_fraction = Some(0.75);
     let request = krausen_types::formulation::PreviewRequest {
         draft_generation: "test-generation".into(),
@@ -554,6 +554,8 @@ async fn exercise(db: DbPool) {
         profile_id: uuid::Uuid::new_v4().to_string(),
         name: "Shared equipment".into(),
         settings: krausen_types::brewery::EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::equipment::EquipmentProvenance {
             source: "manual".into(),
             assumptions: vec![],
@@ -1816,10 +1818,10 @@ async fn exercise(db: DbPool) {
     scale_doc.process.apparent_attenuation_fraction = Some(0.8);
     scale_doc.process.kettle_top_up_l = Some(2.0);
     scale_doc.equipment_overrides.mash_efficiency_fraction = Some(0.75);
-    scale_doc.equipment_overrides.boil_off_l_per_hour = Some(3.0);
-    scale_doc.equipment_overrides.transfer_loss_l = Some(2.0);
-    scale_doc.equipment_overrides.grain_absorption_l_per_kg = Some(0.8);
-    scale_doc.equipment_overrides.kettle_capacity_l = Some(30.0);
+    scale_doc.equipment_overrides.boil_loss_l_per_hour = Some(3.0);
+    scale_doc.equipment_overrides.trub_and_chiller_loss_l = Some(2.0);
+    scale_doc.equipment_overrides.mash_grain_absorption_l_per_kg = Some(0.8);
+    scale_doc.equipment_overrides.boil_volume_l = Some(30.0);
     scale_doc
         .fermentables
         .push(krausen_types::brewery::FermentableAddition {
@@ -2535,18 +2537,18 @@ fn brew_test_profile(
         name: "MCP 20 L kettle".into(),
         settings: krausen_types::brewery::EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.75),
-            boil_off_l_per_hour: Some(3.0),
-            transfer_loss_l: Some(2.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
             mash_thickness_l_per_kg: Some(2.5),
-            kettle_capacity_l: Some(30.0),
+            boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            kettle_opening_cm: Some(30.0),
-            boil_temperature_c: Some(100.0),
-            chilling: Some(krausen_types::brewery::ChillingV1::Natural),
+            chilling: Some(krausen_types::brewery::CoolingMethodV1::Natural),
             ..Default::default()
         },
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::brewery::EquipmentProvenance {
             source: "test fixture".into(),
             assumptions: vec!["brewhouse_loss_calibrated".into()],

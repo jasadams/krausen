@@ -91,9 +91,9 @@ pub(crate) fn printable_example() -> krausen_types::process_summary::ProcessSumm
             provenance: "saved_profile".into(),
             settings: EquipmentSettingsV1 {
                 mash_efficiency_fraction: Some(0.75),
-                boil_off_l_per_hour: Some(3.0),
-                transfer_loss_l: Some(2.0),
-                grain_absorption_l_per_kg: Some(0.8),
+                boil_loss_l_per_hour: Some(3.0),
+                trub_and_chiller_loss_l: Some(2.0),
+                mash_grain_absorption_l_per_kg: Some(0.8),
                 chilling: Some(ChillingV1::Natural),
                 ..Default::default()
             },
@@ -102,7 +102,7 @@ pub(crate) fn printable_example() -> krausen_types::process_summary::ProcessSumm
             digest: Some("7d3c0f4ee4example".into()),
             engine_version: "krausen-calc-v1".into(),
             engine_build: "showcase".into(),
-            policy_version: "krausen-formulation-v2".into(),
+            policy_version: "krausen-formulation-v3".into(),
             native_schema_version: 1,
             result_schema_version: 1,
         },

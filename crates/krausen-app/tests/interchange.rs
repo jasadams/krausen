@@ -313,6 +313,8 @@ async fn exercise(db: DbPool) {
         profile_id: profile_id.clone(),
         name: "Import equipment".into(),
         settings: EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::equipment::EquipmentProvenance {
             source: "manual".into(),
             assumptions: vec![],
@@ -359,7 +361,7 @@ async fn exercise(db: DbPool) {
     profile.expected_revision = created.revision;
     profile.expected_metadata_revision = created.metadata_revision;
     profile.request_id = Uuid::new_v4().to_string();
-    profile.settings.boil_off_l_per_hour = Some(2.0);
+    profile.settings.boil_loss_l_per_hour = Some(2.0);
     let changed_profile = krausen_app::equipment::save(&db, &actor, profile)
         .await
         .unwrap();

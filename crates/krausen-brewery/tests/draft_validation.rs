@@ -39,10 +39,10 @@ fn complete() -> (RecipeDocumentV1, EquipmentSettingsV1) {
     r.process.apparent_attenuation_fraction = Some(0.8);
     let mut e = EquipmentSettingsV1::default();
     e.mash_efficiency_fraction = Some(0.75);
-    e.boil_off_l_per_hour = Some(3.0);
-    e.transfer_loss_l = Some(2.0);
-    e.pre_boil_deadspace_l = Some(0.0);
-    e.grain_absorption_l_per_kg = Some(0.8);
+    e.boil_loss_l_per_hour = Some(3.0);
+    e.trub_and_chiller_loss_l = Some(2.0);
+    e.mash_tun_deadspace_l = Some(0.0);
+    e.mash_grain_absorption_l_per_kg = Some(0.8);
     (r, e)
 }
 
@@ -98,10 +98,8 @@ fn missing_hop_input_does_not_hide_water_and_no_hops_is_valid() {
         },
         source: None,
     });
-    e.chilling = Some(ChillingV1::Natural);
+    e.cooling_method = Some(CoolingMethodV1::Natural);
     e.kettle_diameter_cm = Some(30.0);
-    e.kettle_opening_cm = Some(30.0);
-    e.boil_temperature_c = Some(100.0);
     let result = validate_draft(&r, &e);
     assert_eq!(result.state, Readiness::Incomplete);
     assert!(result.target_available(Target::Water));
@@ -124,7 +122,7 @@ fn unsupported_process_and_missing_equipment_never_become_ready() {
         .insert("vendor".into(), serde_json::json!({"step": "unknown"}));
     assert_eq!(validate_draft(&r, &e).state, Readiness::Incomplete);
     r.process.unsupported.clear();
-    e.boil_off_l_per_hour = None;
+    e.boil_loss_l_per_hour = None;
     assert_eq!(validate_draft(&r, &e).state, Readiness::Incomplete);
 }
 
@@ -146,14 +144,14 @@ fn attenuation_is_explicit_and_never_inferred_from_yeast() {
 fn rejects_invalid_overrides_and_preserves_invalid_over_incomplete() {
     let (mut r, e) = complete();
     r.process.apparent_attenuation_fraction = None;
-    r.equipment_overrides.boil_off_l_per_hour = Some(-1.0);
+    r.equipment_overrides.boil_loss_l_per_hour = Some(-1.0);
     let result = validate_draft(&r, &e);
     assert_eq!(result.state, Readiness::Invalid);
     assert!(
         result
             .diagnostics
             .iter()
-            .any(|d| d.path == "equipment_overrides.boil_off_l_per_hour" && d.code == "negative")
+            .any(|d| d.path == "equipment_overrides.boil_loss_l_per_hour" && d.code == "negative")
     );
 }
 
@@ -203,7 +201,7 @@ fn extract_only_needs_no_mash_inputs() {
     r.process.mash_water_method = None;
     r.process.mash_water_l = None;
     e.mash_efficiency_fraction = None;
-    e.grain_absorption_l_per_kg = None;
+    e.mash_grain_absorption_l_per_kg = None;
     e.mash_thickness_l_per_kg = None;
     assert_eq!(validate_draft(&r, &e).state, Readiness::Ready);
 }

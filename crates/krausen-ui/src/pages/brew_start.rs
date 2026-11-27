@@ -1792,7 +1792,7 @@ mod regression_tests {
     fn effective_equipment_values_are_trimmed_and_attributed() {
         let effective = EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.57999999999999996),
-            boil_off_l_per_hour: Some(3.0),
+            boil_loss_l_per_hour: Some(3.0),
             ..Default::default()
         };
         let overrides = EquipmentSettingsV1 {

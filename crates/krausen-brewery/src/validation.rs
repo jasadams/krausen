@@ -2,7 +2,7 @@
 
 //! Validation of canonical drafts and resolved equipment, independent of adapters.
 
-use krausen_types::brewery::{ChillingV1, EquipmentSettingsV1, RecipeDocumentV1};
+use krausen_types::brewery::{CoolingMethodV1, EquipmentSettingsV1, RecipeDocumentV1};
 pub use krausen_types::validation::{Diagnostic, Readiness, Target, Validation};
 
 trait ValidationOps {
@@ -75,6 +75,8 @@ enum Rule {
     Addition,
     Fraction,
     PositiveFraction,
+    /// `[0, 1)`: a fraction that cannot reach one.
+    FractionBelowOne,
 }
 impl Rule {
     fn accepts(self, v: f64) -> bool {
@@ -84,6 +86,7 @@ impl Rule {
             Self::Positive | Self::Addition => v > 0.0,
             Self::Fraction => (0.0..=1.0).contains(&v),
             Self::PositiveFraction => v > 0.0 && v <= 1.0,
+            Self::FractionBelowOne => (0.0..1.0).contains(&v),
         }
     }
 }
@@ -165,28 +168,18 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             Rule::PositiveFraction,
         ),
         (
+            "mash_tun_volume_l",
+            overrides.mash_tun_volume_l,
+            Rule::Positive,
+        ),
+        (
             "mash_efficiency_fraction",
             overrides.mash_efficiency_fraction,
             Rule::PositiveFraction,
         ),
         (
-            "boil_off_l_per_hour",
-            overrides.boil_off_l_per_hour,
-            Rule::Nonnegative,
-        ),
-        (
-            "transfer_loss_l",
-            overrides.transfer_loss_l,
-            Rule::Nonnegative,
-        ),
-        (
-            "pre_boil_deadspace_l",
-            overrides.pre_boil_deadspace_l,
-            Rule::Nonnegative,
-        ),
-        (
-            "grain_absorption_l_per_kg",
-            overrides.grain_absorption_l_per_kg,
+            "mash_tun_deadspace_l",
+            overrides.mash_tun_deadspace_l,
             Rule::Nonnegative,
         ),
         (
@@ -195,9 +188,45 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             Rule::Positive,
         ),
         (
-            "kettle_capacity_l",
-            overrides.kettle_capacity_l,
+            "mash_tun_loss_l",
+            overrides.mash_tun_loss_l,
+            Rule::Nonnegative,
+        ),
+        (
+            "mash_grain_absorption_l_per_kg",
+            overrides.mash_grain_absorption_l_per_kg,
+            Rule::Nonnegative,
+        ),
+        (
+            "sparge_vessel_volume_l",
+            overrides.sparge_vessel_volume_l,
             Rule::Positive,
+        ),
+        (
+            "sparge_grain_absorption_l_per_kg",
+            overrides.sparge_grain_absorption_l_per_kg,
+            Rule::Nonnegative,
+        ),
+        (
+            "sparge_deadspace_l",
+            overrides.sparge_deadspace_l,
+            Rule::Nonnegative,
+        ),
+        ("boil_volume_l", overrides.boil_volume_l, Rule::Positive),
+        (
+            "wort_shrinkage_fraction",
+            overrides.wort_shrinkage_fraction,
+            Rule::FractionBelowOne,
+        ),
+        (
+            "boil_loss_l_per_hour",
+            overrides.boil_loss_l_per_hour,
+            Rule::Nonnegative,
+        ),
+        (
+            "trub_and_chiller_loss_l",
+            overrides.trub_and_chiller_loss_l,
+            Rule::Nonnegative,
         ),
         (
             "kettle_diameter_cm",
@@ -205,14 +234,9 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             Rule::Positive,
         ),
         (
-            "kettle_opening_cm",
-            overrides.kettle_opening_cm,
+            "cooling_flow_rate_l_per_minute",
+            overrides.cooling_flow_rate_l_per_minute,
             Rule::Positive,
-        ),
-        (
-            "boil_temperature_c",
-            overrides.boil_temperature_c,
-            Rule::Finite,
         ),
     ] {
         v.number(
@@ -222,35 +246,6 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             rule,
             ALL,
         );
-    }
-    match &overrides.chilling {
-        Some(ChillingV1::Forced {
-            rate_per_minute,
-            plateau_c,
-        }) => {
-            v.number(
-                "equipment_overrides.chilling.rate_per_minute",
-                *rate_per_minute,
-                true,
-                Rule::Positive,
-                IBU,
-            );
-            v.number(
-                "equipment_overrides.chilling.plateau_c",
-                *plateau_c,
-                true,
-                Rule::Finite,
-                IBU,
-            );
-        }
-        Some(ChillingV1::Counterflow { litres_per_minute }) => v.number(
-            "equipment_overrides.chilling.litres_per_minute",
-            *litres_per_minute,
-            true,
-            Rule::Positive,
-            IBU,
-        ),
-        _ => (),
     }
     v.number(
         "batch_size_l",
@@ -523,28 +518,52 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             EXTRACT,
         ),
         (
-            "equipment.boil_off_l_per_hour",
-            equipment.boil_off_l_per_hour,
+            "equipment.boil_loss_l_per_hour",
+            equipment.boil_loss_l_per_hour,
             Rule::Nonnegative,
             ALL,
         ),
         (
-            "equipment.transfer_loss_l",
-            equipment.transfer_loss_l,
+            "equipment.trub_and_chiller_loss_l",
+            equipment.trub_and_chiller_loss_l,
             Rule::Nonnegative,
             ALL,
         ),
         (
-            "equipment.pre_boil_deadspace_l",
-            equipment.pre_boil_deadspace_l,
+            "equipment.mash_tun_deadspace_l",
+            equipment.mash_tun_deadspace_l,
             Rule::Nonnegative,
             &[Target::Water][..],
         ),
         (
-            "equipment.grain_absorption_l_per_kg",
-            equipment.grain_absorption_l_per_kg,
+            "equipment.mash_tun_loss_l",
+            equipment.mash_tun_loss_l,
             Rule::Nonnegative,
             &[Target::Water][..],
+        ),
+        (
+            "equipment.mash_grain_absorption_l_per_kg",
+            equipment.mash_grain_absorption_l_per_kg,
+            Rule::Nonnegative,
+            &[Target::Water][..],
+        ),
+        (
+            "equipment.sparge_grain_absorption_l_per_kg",
+            equipment.sparge_grain_absorption_l_per_kg,
+            Rule::Nonnegative,
+            &[Target::Water][..],
+        ),
+        (
+            "equipment.sparge_deadspace_l",
+            equipment.sparge_deadspace_l,
+            Rule::Nonnegative,
+            &[Target::Water][..],
+        ),
+        (
+            "equipment.wort_shrinkage_fraction",
+            equipment.wort_shrinkage_fraction,
+            Rule::FractionBelowOne,
+            ALL,
         ),
         (
             "equipment.mash_thickness_l_per_kg",
@@ -553,10 +572,22 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             &[Target::Water][..],
         ),
         (
-            "equipment.kettle_capacity_l",
-            equipment.kettle_capacity_l,
+            "equipment.mash_tun_volume_l",
+            equipment.mash_tun_volume_l,
             Rule::Positive,
-            &[Target::Water][..],
+            &[][..],
+        ),
+        (
+            "equipment.sparge_vessel_volume_l",
+            equipment.sparge_vessel_volume_l,
+            Rule::Positive,
+            &[][..],
+        ),
+        (
+            "equipment.boil_volume_l",
+            equipment.boil_volume_l,
+            Rule::Positive,
+            &[][..],
         ),
         (
             "equipment.kettle_diameter_cm",
@@ -565,15 +596,9 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             IBU,
         ),
         (
-            "equipment.kettle_opening_cm",
-            equipment.kettle_opening_cm,
+            "equipment.cooling_flow_rate_l_per_minute",
+            equipment.cooling_flow_rate_l_per_minute,
             Rule::Positive,
-            IBU,
-        ),
-        (
-            "equipment.boil_temperature_c",
-            equipment.boil_temperature_c,
-            Rule::Finite,
             IBU,
         ),
     ] {
@@ -581,14 +606,18 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
     }
     for (path, value, targets) in [
         (
-            "equipment.boil_off_l_per_hour",
-            equipment.boil_off_l_per_hour,
+            "equipment.boil_loss_l_per_hour",
+            equipment.boil_loss_l_per_hour,
             ALL,
         ),
-        ("equipment.transfer_loss_l", equipment.transfer_loss_l, ALL),
         (
-            "equipment.pre_boil_deadspace_l",
-            equipment.pre_boil_deadspace_l,
+            "equipment.trub_and_chiller_loss_l",
+            equipment.trub_and_chiller_loss_l,
+            ALL,
+        ),
+        (
+            "equipment.mash_tun_deadspace_l",
+            equipment.mash_tun_deadspace_l,
             &[Target::Water][..],
         ),
     ] {
@@ -596,10 +625,10 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             v.add("missing", path, Readiness::Incomplete, targets);
         }
     }
-    if has_mashed_grain && equipment.grain_absorption_l_per_kg.is_none() {
+    if has_mashed_grain && equipment.mash_grain_absorption_l_per_kg.is_none() {
         v.add(
             "missing",
-            "equipment.grain_absorption_l_per_kg",
+            "equipment.mash_grain_absorption_l_per_kg",
             Readiness::Incomplete,
             &[Target::Water],
         );
@@ -636,14 +665,16 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
         .sum();
     if let (Some(batch), Some(loss), Some(rate), Some(minutes), Some(deadspace), Some(grain)) = (
         recipe.batch_size_l,
-        equipment.transfer_loss_l,
-        equipment.boil_off_l_per_hour,
+        equipment.trub_and_chiller_loss_l,
+        equipment.boil_loss_l_per_hour,
         recipe.boil_minutes,
-        equipment.pre_boil_deadspace_l,
+        equipment.mash_tun_deadspace_l,
         grain,
     ) {
         let absorption = if has_mashed_grain {
-            equipment.grain_absorption_l_per_kg
+            equipment.mash_grain_absorption_l_per_kg.map(|mash| {
+                mash + equipment.sparge_grain_absorption_l_per_kg.unwrap_or(0.0)
+            })
         } else {
             Some(0.0)
         };
@@ -659,7 +690,14 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             }
         };
         if let (Some(absorption), Some(mash)) = (absorption, mash) {
-            let total = batch + loss + rate * minutes / 60.0 + deadspace + absorption * grain;
+            let shrinkage = equipment.wort_shrinkage_fraction.unwrap_or(0.0);
+            let total = batch
+                + loss
+                + rate * minutes / 60.0 * (1.0 - shrinkage)
+                + deadspace
+                + equipment.mash_tun_loss_l.unwrap_or(0.0)
+                + equipment.sparge_deadspace_l.unwrap_or(0.0)
+                + absorption * grain;
             let top_up = recipe.process.kettle_top_up_l.unwrap_or(0.0);
             if total.is_finite() && mash.is_finite() && top_up.is_finite() && mash + top_up > total
             {
@@ -673,67 +711,31 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
         }
     }
     let has_hot_hops = recipe.hops.iter().any(|row| row.stage != "dry_hop");
-    if has_hot_hops {
-        for (path, value) in [
-            ("equipment.kettle_diameter_cm", equipment.kettle_diameter_cm),
-            ("equipment.kettle_opening_cm", equipment.kettle_opening_cm),
-            ("equipment.boil_temperature_c", equipment.boil_temperature_c),
-        ] {
-            if value.is_none() {
-                v.add("missing", path, Readiness::Incomplete, IBU);
-            }
-        }
+    if has_hot_hops && equipment.kettle_diameter_cm.is_none() {
+        v.add(
+            "missing",
+            "equipment.kettle_diameter_cm",
+            Readiness::Incomplete,
+            IBU,
+        );
     }
-    if let (Some(open), Some(diameter)) =
-        (equipment.kettle_opening_cm, equipment.kettle_diameter_cm)
-    {
-        if open.is_finite() && diameter.is_finite() && open > diameter {
-            v.add(
-                "opening_exceeds_diameter",
-                "equipment.kettle_opening_cm",
-                Readiness::Invalid,
-                IBU,
-            );
-        }
-    }
-    match &equipment.chilling {
-        None if has_hot_hops => v.add("missing", "equipment.chilling", Readiness::Incomplete, IBU),
-        Some(ChillingV1::Forced {
-            rate_per_minute,
-            plateau_c,
-        }) => {
-            v.number(
-                "equipment.chilling.rate_per_minute",
-                *rate_per_minute,
-                true,
-                Rule::Positive,
-                IBU,
-            );
-            v.number(
-                "equipment.chilling.plateau_c",
-                *plateau_c,
-                true,
-                Rule::Finite,
-                IBU,
-            );
-            if let (Some(p), Some(b)) = (*plateau_c, equipment.boil_temperature_c) {
-                if p.is_finite() && b.is_finite() && p >= b {
-                    v.add(
-                        "plateau_not_below_boil",
-                        "equipment.chilling.plateau_c",
-                        Readiness::Invalid,
-                        IBU,
-                    );
-                }
-            }
-        }
-        Some(ChillingV1::Counterflow { litres_per_minute }) => v.number(
-            "equipment.chilling.litres_per_minute",
-            *litres_per_minute,
-            true,
-            Rule::Positive,
+    match equipment.cooling_method {
+        None if has_hot_hops => v.add(
+            "missing",
+            "equipment.cooling_method",
+            Readiness::Incomplete,
             IBU,
         ),
+        Some(CoolingMethodV1::CounterflowChiller)
+            if equipment.cooling_flow_rate_l_per_minute.is_none() =>
+        {
+            v.add(
+                "missing",
+                "equipment.cooling_flow_rate_l_per_minute",
+                Readiness::Incomplete,
+                IBU,
+            )
+        }
         _ => (),
     }
     v

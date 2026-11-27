@@ -138,10 +138,9 @@ mod tests {
     #[test]
     fn recipe_identity_rejects_non_finite_values_and_tracks_content() {
         let mut document = RecipeDocumentV1::default();
-        document.equipment_overrides.chilling = Some(krausen_types::brewery::ChillingV1::Forced {
-            rate_per_minute: Some(0.25),
-            plateau_c: Some(20.0),
-        });
+        document.equipment_overrides.cooling_method =
+            Some(krausen_types::brewery::CoolingMethodV1::CounterflowChiller);
+        document.equipment_overrides.cooling_flow_rate_l_per_minute = Some(1.0);
         let (json, _) = encode_document(&document).unwrap();
         assert_eq!(read_document(&json).unwrap(), document);
         let (_, first) = encode_document(&document).unwrap();

@@ -637,6 +637,8 @@ pub fn EquipmentManager(
             profile_id,
             name: current_form.name,
             settings,
+            about: Default::default(),
+            is_default: None,
             provenance: current.as_ref().map(|p| p.provenance.clone()).unwrap_or(
                 EquipmentProvenance {
                     source: "manual".into(),
@@ -884,12 +886,12 @@ fn values(s: &EquipmentSettingsV1) -> [Option<f64>; 14] {
     [
         s.efficiency_override_fraction,
         s.mash_efficiency_fraction,
-        s.boil_off_l_per_hour,
-        s.transfer_loss_l,
-        s.pre_boil_deadspace_l,
-        s.grain_absorption_l_per_kg,
+        s.boil_loss_l_per_hour,
+        s.trub_and_chiller_loss_l,
+        s.mash_tun_deadspace_l,
+        s.mash_grain_absorption_l_per_kg,
         s.mash_thickness_l_per_kg,
-        s.kettle_capacity_l,
+        s.boil_volume_l,
         s.kettle_diameter_cm,
         s.kettle_opening_cm,
         s.boil_temperature_c,
@@ -912,12 +914,12 @@ fn values(s: &EquipmentSettingsV1) -> [Option<f64>; 14] {
 fn assign_values(s: &mut EquipmentSettingsV1, v: &[Option<f64>]) {
     s.efficiency_override_fraction = v[0];
     s.mash_efficiency_fraction = v[1];
-    s.boil_off_l_per_hour = v[2];
-    s.transfer_loss_l = v[3];
-    s.pre_boil_deadspace_l = v[4];
-    s.grain_absorption_l_per_kg = v[5];
+    s.boil_loss_l_per_hour = v[2];
+    s.trub_and_chiller_loss_l = v[3];
+    s.mash_tun_deadspace_l = v[4];
+    s.mash_grain_absorption_l_per_kg = v[5];
     s.mash_thickness_l_per_kg = v[6];
-    s.kettle_capacity_l = v[7];
+    s.boil_volume_l = v[7];
     s.kettle_diameter_cm = v[8];
     s.kettle_opening_cm = v[9];
     s.boil_temperature_c = v[10];

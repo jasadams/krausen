@@ -1676,7 +1676,6 @@ fn summary_from_plan(view: &krausen_types::brew::BrewEvidenceView) -> ProcessSum
             mash_water_l: recipe.process.mash_water_l,
             mash_water_method: recipe.process.mash_water_method.clone(),
             kettle_top_up_l: recipe.process.kettle_top_up_l,
-            chilling: plan.equipment.chilling.clone(),
             unsupported: recipe.process.unsupported.clone(),
         },
     }

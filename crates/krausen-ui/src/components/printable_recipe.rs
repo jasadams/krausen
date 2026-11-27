@@ -414,10 +414,10 @@ pub fn PrintableRecipe(summary: ProcessSummary) -> impl IntoView {
                     <div><dt>"Provenance"</dt><dd>{summary.equipment.provenance.replace('_', " ")}</dd></div>
                     <div><dt>"Brewhouse efficiency"</dt><dd>{percent(equipment_settings.efficiency_override_fraction)}</dd></div>
                     <div><dt>"Mash efficiency"</dt><dd>{percent(equipment_settings.mash_efficiency_fraction)}</dd></div>
-                    <div><dt>"Boil-off"</dt><dd>{equipment_settings.boil_off_l_per_hour.map(|value| format!("{} L/h", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Transfer loss"</dt><dd>{equipment_settings.transfer_loss_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Pre-boil deadspace"</dt><dd>{equipment_settings.pre_boil_deadspace_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Grain absorption"</dt><dd>{equipment_settings.grain_absorption_l_per_kg.map(|value| format!("{} L/kg", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Boil-off"</dt><dd>{equipment_settings.boil_loss_l_per_hour.map(|value| format!("{} L/h", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Transfer loss"</dt><dd>{equipment_settings.trub_and_chiller_loss_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Pre-boil deadspace"</dt><dd>{equipment_settings.mash_tun_deadspace_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Grain absorption"</dt><dd>{equipment_settings.mash_grain_absorption_l_per_kg.map(|value| format!("{} L/kg", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Mash water"</dt><dd>{process.mash_water_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Mash water method"</dt><dd>{process.mash_water_method.clone().unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Sparge water"</dt><dd>{targets.sparge_water_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Unavailable".into())}</dd></div>

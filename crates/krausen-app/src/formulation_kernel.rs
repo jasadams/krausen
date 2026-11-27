@@ -7,29 +7,34 @@
 use crate::{ActorContext, Error, authorize_workspace};
 use krausen_core::{DbTx, canonical_json};
 use krausen_types::{
-    brewery::EquipmentSettingsV1,
+    brewery::{EquipmentProfile, EquipmentSettingsV1},
     formulation::{Preview, PreviewOutcome, PreviewRequest},
 };
 use sha2::{Digest, Sha256};
 
-pub(crate) const POLICY_VERSION: &str = "krausen-formulation-v2";
+pub(crate) const POLICY_VERSION: &str = "krausen-formulation-v3";
 
 fn effective(base: &EquipmentSettingsV1, overrides: &EquipmentSettingsV1) -> EquipmentSettingsV1 {
     let mut e = base.clone();
     macro_rules! apply { ($($field:ident),*) => { $(if overrides.$field.is_some() { e.$field=overrides.$field.clone(); })* }; }
     apply!(
         efficiency_override_fraction,
+        mash_tun_volume_l,
         mash_efficiency_fraction,
-        boil_off_l_per_hour,
-        transfer_loss_l,
-        pre_boil_deadspace_l,
-        grain_absorption_l_per_kg,
+        mash_tun_deadspace_l,
         mash_thickness_l_per_kg,
-        kettle_capacity_l,
+        mash_tun_loss_l,
+        mash_grain_absorption_l_per_kg,
+        sparge_vessel_volume_l,
+        sparge_grain_absorption_l_per_kg,
+        sparge_deadspace_l,
+        boil_volume_l,
+        wort_shrinkage_fraction,
+        boil_loss_l_per_hour,
+        trub_and_chiller_loss_l,
         kettle_diameter_cm,
-        kettle_opening_cm,
-        boil_temperature_c,
-        chilling
+        cooling_method,
+        cooling_flow_rate_l_per_minute
     );
     e.extensions.extend(overrides.extensions.clone());
     e
@@ -113,7 +118,12 @@ pub(crate) async fn resolve_in_tx(
     let mut assumptions = vec![
         "volume_reference_20c".into(),
         "solid_addition_volume_negligible".into(),
+        "kettle_uncovered".into(),
+        "boil_temperature_100c".into(),
     ];
+    if e.mash_tun_volume_l.is_some() {
+        assumptions.push("grain_displacement_0_67_l_per_kg".into());
+    }
     if let Some(profile) = &profile {
         assumptions.extend(
             profile
@@ -140,7 +150,11 @@ pub(crate) async fn resolve_in_tx(
             "caller_supplied_equipment_draft"
         }
         .into(),
-        equipment_profile: profile,
+        // Default status is workspace routing, not a calculation input.
+        equipment_profile: profile.map(|p| EquipmentProfile {
+            is_default: false,
+            ..p
+        }),
         assumptions,
         applied_defaults,
         engine_version: krausen_calc::formulation::ENGINE_VERSION.into(),

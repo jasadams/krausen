@@ -151,16 +151,18 @@ fn warnings(
     effective_equipment: &EquipmentSettingsV1,
 ) -> Vec<ScaleWarning> {
     let mut warnings = vec![ScaleWarning::FixedLossesRetained {
-        transfer_loss_l: effective_equipment.transfer_loss_l,
-        boil_off_l_per_hour: effective_equipment.boil_off_l_per_hour,
-        pre_boil_deadspace_l: effective_equipment.pre_boil_deadspace_l,
-        grain_absorption_l_per_kg: effective_equipment.grain_absorption_l_per_kg,
+        trub_and_chiller_loss_l: effective_equipment.trub_and_chiller_loss_l,
+        boil_loss_l_per_hour: effective_equipment.boil_loss_l_per_hour,
+        mash_tun_deadspace_l: effective_equipment.mash_tun_deadspace_l,
+        mash_grain_absorption_l_per_kg: effective_equipment.mash_grain_absorption_l_per_kg,
     }];
     if let Some(post_boil_l) = targets.post_boil_l {
-        match effective_equipment.kettle_capacity_l {
+        match effective_equipment.boil_volume_l {
             Some(capacity_l)
-                if post_boil_l > capacity_l
-                    || targets.pre_boil_l.is_some_and(|pre| pre > capacity_l) =>
+                if targets
+                    .vessel_warnings
+                    .iter()
+                    .any(|w| w.vessel == krausen_types::formulation::Vessel::Kettle) =>
             {
                 warnings.push(ScaleWarning::KettleCapacityExceeded {
                     capacity_l,
@@ -837,8 +839,8 @@ mod tests {
             equipment_profile_id: Some("profile-1".into()),
             equipment_overrides: EquipmentSettingsV1 {
                 efficiency_override_fraction: Some(0.72),
-                transfer_loss_l: Some(2.0),
-                kettle_capacity_l: Some(30.0),
+                trub_and_chiller_loss_l: Some(2.0),
+                boil_volume_l: Some(30.0),
                 ..Default::default()
             },
             fermentables: vec![FermentableAddition {
@@ -1034,11 +1036,16 @@ mod tests {
         let targets = Targets {
             post_boil_l: Some(42.0),
             pre_boil_l: Some(45.0),
+            vessel_warnings: vec![krausen_types::formulation::VesselWarning {
+                vessel: krausen_types::formulation::Vessel::Kettle,
+                required_l: 45.0,
+                capacity_l: 30.0,
+            }],
             ..Default::default()
         };
         let equipment = EquipmentSettingsV1 {
-            kettle_capacity_l: Some(30.0),
-            transfer_loss_l: Some(2.0),
+            boil_volume_l: Some(30.0),
+            trub_and_chiller_loss_l: Some(2.0),
             ..Default::default()
         };
         let warnings = warnings(&document(), &targets, &equipment);
@@ -1053,7 +1060,7 @@ mod tests {
         assert!(warnings.iter().any(|warning| matches!(
             warning,
             ScaleWarning::FixedLossesRetained {
-                transfer_loss_l: Some(2.0),
+                trub_and_chiller_loss_l: Some(2.0),
                 ..
             }
         )));
@@ -1125,14 +1132,16 @@ mod tests {
                 name: "Mirror profile".into(),
                 settings: EquipmentSettingsV1 {
                     mash_efficiency_fraction: Some(0.75),
-                    boil_off_l_per_hour: Some(3.0),
-                    transfer_loss_l: Some(2.0),
-                    pre_boil_deadspace_l: Some(0.0),
-                    grain_absorption_l_per_kg: Some(0.8),
-                    kettle_capacity_l: Some(30.0),
+                    boil_loss_l_per_hour: Some(3.0),
+                    trub_and_chiller_loss_l: Some(2.0),
+                    mash_tun_deadspace_l: Some(0.0),
+                    mash_grain_absorption_l_per_kg: Some(0.8),
+                    boil_volume_l: Some(30.0),
                     mash_thickness_l_per_kg: Some(3.0),
                     ..Default::default()
                 },
+                about: Default::default(),
+                is_default: None,
                 provenance: krausen_types::brewery::EquipmentProvenance {
                     source: "test".into(),
                     assumptions: vec!["mirror assumption".into()],
@@ -1148,7 +1157,7 @@ mod tests {
         let mut draft = document();
         draft.equipment_profile_id = Some(profile.profile_id.clone());
         draft.equipment_overrides.efficiency_override_fraction = Some(0.7);
-        draft.equipment_overrides.kettle_capacity_l = Some(31.0);
+        draft.equipment_overrides.boil_volume_l = Some(31.0);
         draft.process.mash_water_method = Some("profile_thickness".into());
         draft.process.mash_water_l = None;
         draft.style = Some(StyleReference {
@@ -1181,7 +1190,7 @@ mod tests {
         assert_eq!(preview.targets, held.targets);
         assert_eq!(
             held.context.unwrap().policy_version,
-            "krausen-formulation-v2"
+            "krausen-formulation-v3"
         );
     }
 
@@ -1217,10 +1226,15 @@ mod tests {
         let targets = Targets {
             post_boil_l: Some(42.0),
             pre_boil_l: Some(45.0),
+            vessel_warnings: vec![krausen_types::formulation::VesselWarning {
+                vessel: krausen_types::formulation::Vessel::Kettle,
+                required_l: 45.0,
+                capacity_l: 44.0,
+            }],
             ..Default::default()
         };
         let equipment = EquipmentSettingsV1 {
-            kettle_capacity_l: Some(44.0),
+            boil_volume_l: Some(44.0),
             ..Default::default()
         };
         let warnings = warnings(&document(), &targets, &equipment);

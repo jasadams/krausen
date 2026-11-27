@@ -634,8 +634,8 @@ mod tests {
     fn one_problem_reported_under_override_and_effective_paths_is_listed_once() {
         let doc = doc();
         let list = present_all(&RecipeDraft::new(doc), &[
-            diag("equipment_overrides.boil_off_l_per_hour", "negative", Readiness::Invalid),
-            diag("equipment.boil_off_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment_overrides.boil_loss_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment.boil_loss_l_per_hour", "negative", Readiness::Invalid),
             diag("hops[h1].amount_g", "negative", Readiness::Invalid),
             diag("hops[h2].amount_g", "negative", Readiness::Invalid),
         ]);
@@ -650,8 +650,8 @@ mod tests {
         let diagnostics = vec![
             diag("equipment.chilling.rate_per_minute", "missing", Readiness::Incomplete),
             diag("equipment.chilling.plateau_c", "missing", Readiness::Incomplete),
-            diag("equipment_overrides.boil_off_l_per_hour", "negative", Readiness::Invalid),
-            diag("equipment.boil_off_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment_overrides.boil_loss_l_per_hour", "negative", Readiness::Invalid),
+            diag("equipment.boil_loss_l_per_hour", "negative", Readiness::Invalid),
         ];
         let list = present_all(&draft, &diagnostics);
         assert_eq!(list.iter().filter(|p| p.severity == Readiness::Incomplete).count(), 2, "rate and plateau both govern via Chilling but are two problems");

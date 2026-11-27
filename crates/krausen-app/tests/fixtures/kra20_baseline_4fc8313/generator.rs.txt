@@ -14,7 +14,7 @@ use krausen_app::{ActorContext, equipment, formulation, recipe_editor};
 use krausen_core::{DbPool, canonical_json};
 use krausen_types::{
     brewery::{
-        AdditionStage, ChillingV1, EquipmentProvenance, EquipmentSettingsV1, FermentableAddition,
+        AdditionStage, CoolingMethodV1, EquipmentProvenance, EquipmentSettingsV1, FermentableAddition,
         FermentableSpecification, ProcessV1, RecipeDocumentV1, StyleReference,
     },
     equipment::SaveEquipment,
@@ -47,9 +47,7 @@ fn equipment_settings() -> EquipmentSettingsV1 {
         mash_thickness_l_per_kg: Some(2.5),
         kettle_capacity_l: Some(30.0),
         kettle_diameter_cm: Some(35.0),
-        kettle_opening_cm: Some(30.0),
-        boil_temperature_c: Some(100.0),
-        chilling: Some(ChillingV1::Natural),
+        cooling_method: Some(CoolingMethodV1::Natural),
         ..Default::default()
     }
 }

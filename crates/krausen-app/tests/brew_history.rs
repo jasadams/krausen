@@ -119,14 +119,16 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1, RecipeDocume
             name: "20 L kettle".into(),
             settings: EquipmentSettingsV1 {
                 mash_efficiency_fraction: Some(0.75),
-                boil_off_l_per_hour: Some(3.0),
-                transfer_loss_l: Some(2.0),
-                pre_boil_deadspace_l: Some(0.0),
-                grain_absorption_l_per_kg: Some(0.8),
+                boil_loss_l_per_hour: Some(3.0),
+                trub_and_chiller_loss_l: Some(2.0),
+                mash_tun_deadspace_l: Some(0.0),
+                mash_grain_absorption_l_per_kg: Some(0.8),
                 mash_thickness_l_per_kg: Some(2.5),
-                kettle_capacity_l: Some(30.0),
+                boil_volume_l: Some(30.0),
                 ..Default::default()
             },
+            about: Default::default(),
+            is_default: None,
             provenance: EquipmentProvenance {
                 source: "test".into(),
                 assumptions: vec!["fixture".into()],

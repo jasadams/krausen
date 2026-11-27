@@ -7,7 +7,7 @@
 //! reuse the printable component rather than this request.
 use crate::{
     brewery::{
-        ChillingV1, EquipmentSettingsV1, IngredientSource, RecipeDocumentV1, StyleReference,
+        EquipmentSettingsV1, IngredientSource, RecipeDocumentV1, StyleReference,
     },
     formulation::{StyleComparison, StyleRanges, Targets},
     request_context::OperationIntent,
@@ -128,7 +128,6 @@ pub struct SummaryProcess {
     pub mash_water_l: Option<f64>,
     pub mash_water_method: Option<String>,
     pub kettle_top_up_l: Option<f64>,
-    pub chilling: Option<ChillingV1>,
     pub unsupported: BTreeMap<String, Value>,
 }
 
