@@ -9,7 +9,7 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   workers: 1,
   reporter: [['html', { open: 'never' }], ['list']],
   timeout: 30_000,
@@ -18,9 +18,9 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'on-first-retry',
+    video: 'off',
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     ...(hasAuthState ? { storageState: AUTH_STATE } : {}),

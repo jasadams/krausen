@@ -1,0 +1,18 @@
+name: Full browser suite
+permissions:
+  contents: read
+on:
+  workflow_dispatch:
+
+# The whole browser selection (every group in e2e/browser-groups.json) in
+# parallel shards. Dispatch it on the release commit: the release workflow
+# refuses to build a version tag unless this workflow passed on that commit.
+concurrency:
+  group: browser-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    uses: ./.github/workflows/browser-shards.yml
+    with:
+      groups: all

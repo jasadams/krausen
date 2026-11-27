@@ -94,15 +94,39 @@ not mark KRA tickets complete merely because a prototype or screenshot exists.
 
 ### Test cadence
 
-- Keep the acceptance tests, but do not run the full suite on every commit or
-  again after merge. When a test fails, fix the cause and rerun only the failed
-  test until it passes. Then run the full suite once, either locally or in CI,
-  not both. Repeat that focused-fix cycle if the full run finds another failure.
-- The foundation workflow is explicitly dispatched on the ready PR's branch
-  when CI is the chosen environment. Pushes, readiness changes and merges do not
-  trigger it. If the full suite passed locally, record that evidence instead.
-- Preserve passing evidence for unchanged code. Do not use a full-suite run as
-  the diagnostic loop or duplicate an accepted full local run in CI.
+There are two tiers of CI, both dispatched by hand, never by push:
+
+1. **PR checks** (`foundation.yml`): the Rust tests and checks, plus only the browser
+   groups that [e2e/browser-groups.json](e2e/browser-groups.json) maps to the paths the
+   PR changes. A change outside every mapped path, or an empty diff, runs the smoke group. Dispatch
+   it once on the ready PR's branch (`gh workflow run foundation.yml --ref <branch>`; add
+   `-f base=<branch>` when the PR does not target `main`). To run the same browser groups
+   locally: `node e2e/scripts/browser-groups.mjs select --base origin/main`, then
+   `e2e/scripts/profile-browser.sh <groups, comma-separated>`.
+2. **Full browser suite** (`browser-full.yml`): every browser test the project selects,
+   in parallel shards that each have their own server and database. Run it on the
+   release commit. The release workflow refuses to build a version tag unless this
+   workflow passed on that exact commit, on its first attempt: a re-run of failed jobs does
+   not count.
+
+Keep the acceptance tests, but do not run the full suite on every commit or again
+after merge. When a test fails, fix the cause and rerun only the failed test until it
+passes. Then run the PR checks once, either locally or in CI, not both. Repeat that
+focused-fix cycle if the run finds another failure. Run the full browser suite locally
+or in CI only before a release. Retries are off: an
+intermittent failure is a defect to fix, not to rerun.
+
+When a PR adds or moves a browser test, or a source path with its own tests, update
+`e2e/browser-groups.json` in the same PR, and record new tests with
+`node e2e/scripts/browser-groups.mjs manifest > e2e/browser-selection.manifest.txt`. `node e2e/scripts/browser-groups.mjs verify`
+fails if a test recorded in `e2e/browser-selection.manifest.txt` stops running in the
+full suite.
+
+- The foundation workflow is explicitly dispatched on the ready PR's branch when CI is
+  the chosen environment. Pushes, readiness changes and merges do not trigger it. If
+  the PR checks passed locally, record that evidence instead.
+- Preserve passing evidence for unchanged code. Do not use a CI run as the diagnostic
+  loop or duplicate an accepted local run in CI.
 - Record the tested commit and actual scope honestly. Older passing evidence
   is not proof that changed code passed; known failures still need resolution.
 

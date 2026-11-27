@@ -171,21 +171,34 @@ The server starts at `http://localhost:8003`. In development with Trunk, the fro
 
 ### Test cadence
 
-Run targeted checks while developing, then the full acceptance suite once when
-the PR is ready, either locally or in CI, not both. On failure, fix the cause and
-rerun only the failed test until it passes; then run the full suite once in the
-chosen environment. The **Foundation database tests** workflow is manual so
-pushes, readiness changes and merges cannot duplicate a local run.
-When choosing CI, explicitly run it on the ready PR's branch:
+Run targeted checks while developing, then the PR checks once when the PR is ready,
+either locally or in CI, not both. On failure, fix the cause and rerun only the
+failed test until it passes. CI has two tiers, both manual so pushes, readiness
+changes and merges cannot duplicate a local run:
 
-```sh
-gh workflow run foundation.yml --ref <pr-branch>
-```
+- **PR checks** (`foundation.yml`): the Rust tests and checks plus only the browser
+  groups that `e2e/browser-groups.json` maps to the paths the PR changes (the smoke
+  group when nothing maps). Dispatch it on the ready PR's branch:
 
-Wait for the requested run before merging. A necessary retry is explicit; a new
-request cancels an in-progress run for the same branch. If the full suite already
-passed locally, record that evidence instead of dispatching CI. Retain the tested
-commit and scope with the PR; do not claim old results cover changed code.
+  ```sh
+  gh workflow run foundation.yml --ref <pr-branch>   # add -f base=<branch> if not main
+  ```
+
+- **Full browser suite** (`browser-full.yml`): every selected browser test, split
+  into parallel shards with one server and database each. Run it on the release
+  commit; the release workflow will not build a version tag without a passing run
+  on that commit, on its first attempt (a re-run of failed jobs does not count):
+
+  ```sh
+  gh workflow run browser-full.yml --ref main
+  ```
+
+Locally, `e2e/scripts/profile-browser.sh` runs the whole selection against a
+disposable server (`profile-browser.sh GROUPS I/N` runs named groups or one shard).
+Wait for a requested run before merging. A new request cancels an in-progress run
+for the same branch. If the PR checks already passed locally, record that evidence
+instead of dispatching CI. Retain the tested commit and scope with the PR; do not
+claim old results cover changed code. Retries are off: fix an intermittent failure.
 
 ## Repository
 

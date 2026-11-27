@@ -12,14 +12,38 @@ on:
         default: image
 
 permissions:
+  actions: read
   contents: read
   packages: write
   attestations: write
   id-token: write
 
 jobs:
+  # A version tag is built and published only if the full browser suite
+  # (browser-full.yml) passed on this exact commit.
+  browser-gate:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a passing full browser run on the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          # Only a first attempt counts: a "re-run failed jobs" turns a red run
+          # green on the same commit, which is a retry around the no-retries rule.
+          passed=$(gh api "repos/$REPO/actions/workflows/browser-full.yml/runs?head_sha=$SOURCE_SHA&status=success&per_page=100" --jq '[.workflow_runs[] | select(.run_attempt == 1)] | length')
+          if [ "$passed" -lt 1 ]; then
+            echo "No successful 'Full browser suite' run on $SOURCE_SHA. Dispatch browser-full.yml on this commit (a re-run of a failed run does not count), wait for it to pass, then re-run this release workflow." >&2
+            exit 1
+          fi
+          echo "Full browser suite passed on $SOURCE_SHA"
+
   image:
-    if: github.event_name == 'push' || inputs.mode != 'connectivity'
+    needs: browser-gate
+    if: ${{ !cancelled() && (needs.browser-gate.result == 'success' || needs.browser-gate.result == 'skipped') && (github.event_name == 'push' || inputs.mode != 'connectivity') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:

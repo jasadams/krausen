@@ -1,0 +1,232 @@
+{
+ "_comment": "Single source of truth for which browser tests run. Read by e2e/scripts/browser-groups.mjs, e2e/scripts/profile-browser.sh and the CI workflows. A group is one Playwright spec file plus an optional title regex (-g). The full selection is the union of every group.",
+ "groups": {
+  "editor-profiles": {
+   "spec": "tests/recipes/editor.spec.ts",
+   "grep": "equipment profiles can be saved|an uncertain equipment save|showcase kit supports|shared kit native popovers"
+  },
+  "editor-state": {
+   "spec": "tests/recipes/editor.spec.ts",
+   "grep": "ordinary bookmark|cleared print task|initial recovery authorization|obsolete preview context|explicit save conflict follow-up|a late committed save|typed print denial|successful revalidation preserves|revalidation never steals|a disposed editor|recovered older-base conflict|raw formatting settles|all numeric caller families|local retention failure|preview details and calculating|native input undo|context network failure|calculation retry uses|initial recipe load failure|authorized focus revalidation|a delayed save freezes|an explicit save keeps|shared preview exposes|editor controls remain usable|editor state controls|a dirty new recipe|undo and retained raw draft|navigation offers stay|stale saves retain edits|browser back keeps|retained draft stays isolated|save and leave waits|a revoked session|recovered uncertain create|separate local drafts|a pending save|clean focus refetch|browser page zoom|a focused recipe heading is visible|late editor load never steals|process composes by brewing|adding and removing steps|first step removal focuses|step focus succession|typing in a process field|a quick recalculation is not announced|a failure after the announcement|recipe overrides show inherited|an invalid or unavailable estimate|switching recipes never shows|the water plan emphasises|the chilling note states|keyboard order follows visual|unsupported imported process|the process kit example|wort attenuation is independent|process sections stay reachable|diagnostic summary names|diagnostic jump reaches|repeated diagnostics clear|invalid save blockers|preview results never move focus|preserved data this editor|diagnostic summary stays in bounds|Review highlighted fields|a link to a conditional control|a link to an inherited chilling|inline messages are associated|diagnostics from an earlier draft|an empty draft links|summary links reach|out-of-date issues list|wrapping belongs to the Wrap size|the estimates summary keeps one height with issues listed|an invalid batch volume shows a dash|the estimates summary keeps one height from current through recalculating|a late preview response cannot replace|an editor that has never had an estimate reserves|a restored draft|a focus refetch to a newer|losing and regaining access|losing access while|a passing access re-check|the held editor height ends|a denied access re-check"
+  },
+  "editor-profile-pagination": {
+   "spec": "tests/recipes/editor.spec.ts",
+   "grep": "profile pagination exposes"
+  },
+  "wayfinding": {
+   "spec": "tests/recipes/wayfinding.spec.ts"
+  },
+  "beerxml": {
+   "spec": "tests/recipes/beerxml.spec.ts"
+  },
+  "library": {
+   "spec": "tests/recipes/library.spec.ts"
+  },
+  "print": {
+   "spec": "tests/recipes/print.spec.ts"
+  },
+  "catalogue": {
+   "spec": "tests/recipes/catalogue.spec.ts"
+  },
+  "scaling": {
+   "spec": "tests/recipes/scaling.spec.ts"
+  },
+  "focus-boundary": {
+   "spec": "tests/helpers/focus-boundary.spec.ts"
+  },
+  "brew-start": {
+   "spec": "tests/recipes/brew-start.spec.ts"
+  },
+  "design-fidelity": {
+   "spec": "tests/recipes/design-fidelity.spec.ts"
+  },
+  "library-shell": {
+   "spec": "tests/library/shell.spec.ts"
+  }
+ },
+ "smoke": [
+  "wayfinding",
+  "library"
+ ],
+ "full_shards": 8,
+ "tests_per_pr_shard": 40,
+ "max_pr_shards": 8,
+ "paths": [
+  {
+   "match": [
+    "docs/**",
+    "*.md",
+    "graphify-out/**",
+    ".claude/**",
+    "KRAUSEN.md"
+   ],
+   "groups": []
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/recipe_*.rs",
+    "crates/krausen-ui/src/pages/ingredient_addition.rs",
+    "crates/krausen-ui/src/pages/equipment*.rs",
+    "crates/krausen-ui/src/pages/design_system.rs",
+    "crates/krausen-ui/src/recipe_composition.rs",
+    "crates/krausen-ui/src/recipe_diagnostics.rs",
+    "crates/krausen-ui/src/server_fns/recipe_editor.rs",
+    "crates/krausen-ui/src/server_fns/equipment.rs",
+    "crates/krausen-ui/src/server_fns/formulation.rs",
+    "crates/krausen-ui/src/server_fns/process_summary.rs",
+    "crates/krausen-app/src/recipe_editor.rs",
+    "crates/krausen-app/src/equipment.rs",
+    "crates/krausen-app/src/formulation*.rs",
+    "crates/krausen-app/src/process_summary.rs",
+    "crates/krausen-app/src/style_reference.rs",
+    "e2e/tests/recipes/editor.spec.ts"
+   ],
+   "groups": [
+    "editor-profiles",
+    "editor-state",
+    "editor-profile-pagination",
+    "design-fidelity"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/recipe_scaling.rs",
+    "crates/krausen-ui/src/server_fns/scaling.rs",
+    "crates/krausen-app/src/scaling.rs",
+    "e2e/tests/recipes/scaling.spec.ts"
+   ],
+   "groups": [
+    "scaling"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/beerxml*.rs",
+    "crates/krausen-ui/src/server_fns/interchange.rs",
+    "crates/krausen-app/src/interchange.rs",
+    "crates/krausen-beerxml/**",
+    "e2e/tests/recipes/beerxml.spec.ts"
+   ],
+   "groups": [
+    "beerxml"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/catalogue_picker.rs",
+    "crates/krausen-ui/src/server_fns/catalogue.rs",
+    "crates/krausen-app/src/catalogue.rs",
+    "e2e/tests/recipes/catalogue.spec.ts"
+   ],
+   "groups": [
+    "catalogue"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/brew_*.rs",
+    "crates/krausen-ui/src/pages/evidence_recovery.rs",
+    "crates/krausen-ui/src/pages/start_recovery.rs",
+    "crates/krausen-ui/src/server_fns/brew*.rs",
+    "crates/krausen-app/src/brew_*.rs",
+    "crates/krausen-brewery/**",
+    "e2e/tests/recipes/brew-start.spec.ts"
+   ],
+   "groups": [
+    "brew-start"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/recipes.rs",
+    "crates/krausen-ui/src/pages/library_recovery.rs",
+    "crates/krausen-ui/src/server_fns/recipe_library.rs",
+    "crates/krausen-ui/src/server_fns/recipes.rs",
+    "crates/krausen-ui/src/utils/list_position.rs",
+    "crates/krausen-app/src/recipe_library.rs",
+    "e2e/tests/recipes/library.spec.ts",
+    "e2e/tests/recipes/wayfinding.spec.ts",
+    "e2e/tests/library/shell.spec.ts"
+   ],
+   "groups": [
+    "library",
+    "wayfinding",
+    "library-shell"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/components/print_preview.rs",
+    "crates/krausen-ui/src/components/printable_recipe.rs",
+    "e2e/tests/recipes/print.spec.ts"
+   ],
+   "groups": [
+    "print"
+   ]
+  },
+  {
+   "match": [
+    "e2e/tests/recipes/design-fidelity.spec.ts"
+   ],
+   "groups": [
+    "design-fidelity"
+   ]
+  },
+  {
+   "match": [
+    "e2e/tests/helpers/focus-boundary.spec.ts",
+    "crates/krausen-ui/src/utils/focus.rs"
+   ],
+   "groups": [
+    "focus-boundary"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/pages/settings/**",
+    "crates/krausen-ui/src/server_fns/sidebar.rs",
+    "crates/krausen-ui/src/server_fns/profile.rs",
+    "crates/krausen-ui/src/server_fns/workspace.rs"
+   ],
+   "groups": [
+    "library-shell"
+   ]
+  },
+  {
+   "match": [
+    "crates/krausen-ui/src/components/**",
+    "crates/krausen-ui/style/**",
+    "crates/krausen-ui/src/utils/**",
+    "crates/krausen-ui/src/app.rs",
+    "crates/krausen-ui/index.html",
+    "crates/krausen-ui/Trunk.toml",
+    "crates/krausen-ui/public/**",
+    "apps/**",
+    "crates/krausen-core/**",
+    "crates/krausen-auth/**",
+    "crates/krausen-types/**",
+    "crates/krausen-calc/**",
+    "crates/krausen-test-tracing/**",
+    "e2e/helpers/**",
+    "e2e/global-setup.ts",
+    "e2e/playwright.config.ts",
+    "e2e/package*.json",
+    "e2e/browser-groups.json",
+    "e2e/scripts/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "Dockerfile",
+    ".github/**",
+    "scripts/**",
+    "crates/krausen-ui/src/server_fns/context.rs",
+    "crates/krausen-ui/src/server_fns/mod.rs",
+    "crates/krausen-ui/src/lib.rs",
+    "crates/krausen-ui/src/main.rs",
+    "crates/krausen-ui/src/pages/mod.rs",
+    "crates/krausen-ui/src/types.rs",
+    "crates/krausen-app/src/lib.rs"
+   ],
+   "groups": "all"
+  }
+ ]
+}

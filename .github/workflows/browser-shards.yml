@@ -1,0 +1,133 @@
+name: Browser test shards
+permissions:
+  contents: read
+
+# Reusable: builds the server and web app once, then runs the browser tests of
+# the given groups in parallel shards. Every shard is its own job with its own
+# server process and SQLite database, so no test shares state with another.
+# Which tests belong to which group is defined only in e2e/browser-groups.json.
+on:
+  workflow_call:
+    inputs:
+      groups:
+        description: Comma-separated group names from e2e/browser-groups.json, or "all"
+        required: true
+        type: string
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: npm ci --prefix e2e
+      - run: sh e2e/scripts/browser-groups-test.sh
+      # Fails the run if a test that the full selection covered stops running,
+      # or if sharding would not run every selected test exactly once.
+      - run: node e2e/scripts/browser-groups.mjs verify
+      - id: plan
+        env:
+          GROUPS_INPUT: ${{ inputs.groups }}
+        run: |
+          plan=$(node e2e/scripts/browser-groups.mjs plan "$GROUPS_INPUT")
+          echo "$plan"
+          echo "shards=$(echo "$plan" | jq -c .shards)" >> "$GITHUB_OUTPUT"
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: browser-build
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
+      - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
+      # Prebuilt release binary, checked against the version and hash pinned in
+      # the Dockerfile (one pin for CI and the release image); compiling trunk
+      # from source took about 4 minutes.
+      - name: Install trunk
+        run: |
+          TRUNK_VERSION=$(grep -o 'trunk/releases/download/v[0-9.]*' Dockerfile | head -1 | sed 's|.*/v||')
+          TRUNK_SHA256=$(grep -o "echo '[0-9a-f]\{64\}  /tmp/trunk.tar.gz'" Dockerfile | head -1 | grep -o '[0-9a-f]\{64\}')
+          test -n "$TRUNK_VERSION" && test -n "$TRUNK_SHA256"
+          curl -fsSL -o /tmp/trunk.tar.gz "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${TRUNK_SHA256}  /tmp/trunk.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf /tmp/trunk.tar.gz -C "$HOME/.local/bin" trunk
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo build -p krausen-server
+      - run: cd crates/krausen-ui && trunk build
+      - run: sh scripts/check-dist-nonce.sh
+      - run: tar czf server.tgz target/debug/krausen crates/krausen-ui/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: server.tgz
+          retention-days: 7
+          compression-level: 0
+
+  shard:
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: server
+      - run: tar xzf server.tgz
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: npm ci --prefix e2e
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+      - run: npx --prefix e2e playwright install --with-deps chromium
+        timeout-minutes: 5
+      - name: Run shard ${{ matrix.shard }}
+        env:
+          GROUPS_INPUT: ${{ inputs.groups }}
+          SHARD: ${{ matrix.shard }}
+        run: sh e2e/scripts/profile-browser.sh "$GROUPS_INPUT" "$SHARD"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: shard-failure-${{ strategy.job-index }}
+          path: e2e/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # One required result for the whole run: green only if every shard ran and
+  # passed. A skipped or failed plan/build/shard fails it.
+  result:
+    needs: [plan, build, shard]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ needs.plan.result }} ${{ needs.build.result }} ${{ needs.shard.result }}
+        run: |
+          echo "plan build shard: $RESULTS"
+          [ "$RESULTS" = "success success success" ]

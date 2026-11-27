@@ -3013,13 +3013,18 @@ test('profile pagination exposes later active and archived profiles', async ({ p
     async () => (await fetch('/api/v1/auth/refresh', { method: 'POST' })).status,
   );
   expect(refreshed).toBe(200);
+  // Profiles page in (recorded_at, profile_id) order and revisions are immutable,
+  // so these fixtures cannot be removed afterwards. Recording them after any
+  // profile a later test creates keeps those profiles on the first page of
+  // every picker instead of pushing them behind "Load more profiles".
+  const recordedAfterEveryTestProfile = 2000000000;
   const inserts: string[] = ['BEGIN'];
   for (let i = 0; i < 102; i++) {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
     const name = `Paged profile ${i}`;
     const archived = i === 101 ? 1 : 0;
     inserts.push(`INSERT INTO equipment_profiles(workspace_id,profile_id,name,current_revision,metadata_revision,archived) VALUES ('${workspace}','${id}','${name}',1,1,${archived})`);
-    inserts.push(`INSERT INTO equipment_revisions(workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ('${workspace}','${id}',1,'${name}',1,'{"schema_version":1}','{"source":"test","assumptions":[]}','fixture','${user}',1700000000)`);
+    inserts.push(`INSERT INTO equipment_revisions(workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ('${workspace}','${id}',1,'${name}',1,'{"schema_version":1}','{"source":"test","assumptions":[]}','fixture','${user}',${recordedAfterEveryTestProfile})`);
   }
   inserts.push('COMMIT');
   db.exec(inserts.join(';'));
@@ -4091,29 +4096,38 @@ test('summary links reach a step field, a select, an override and yeast and othe
 for (const scheme of ['light', 'dark'] as const) {
   test(`an out-of-date issues list keeps at least 4.5:1 text contrast in ${scheme}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await page.goto('/design-system');
-    if (scheme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'));
-    const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
-    await expect(list).toBeVisible();
-    const ratios = await list.evaluate(el => {
-      const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
-      const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
-      // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
-      let opacity = 1;
-      for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
-      let bg = [255, 255, 255];
-      for (let node: Element | null = el; node; node = node.parentElement) {
-        const c = rgb(getComputedStyle(node).backgroundColor);
-        if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
-      }
-      return [...el.querySelectorAll('li, button')].map(entry => {
-        const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
-        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
-        return (hi + 0.05) / (lo + 0.05);
+    // The app applies the account's saved appearance after load and removes any
+    // class a test adds by hand, so set the appearance the real way and wait for it.
+    setAccountTheme(scheme);
+    try {
+      await page.goto('/design-system');
+      await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b).*$/);
+      const list = page.locator('.k-diagnostics.k-stale--active .k-diagnostics__list').first();
+      await expect(list).toBeVisible();
+      const ratios = await list.evaluate(el => {
+        const rgb = (css: string) => (css.match(/[\d.]+/g) ?? []).map(Number);
+        const lum = ([r, g, b]: number[]) => { const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+        // Effective colour: the text colour blended with the list's own opacity over the first opaque background.
+        let opacity = 1;
+        for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+        let bg = [255, 255, 255];
+        for (let node: Element | null = el; node; node = node.parentElement) {
+          const c = rgb(getComputedStyle(node).backgroundColor);
+          if (c.length === 3 || (c.length === 4 && c[3] > 0.99)) { bg = c.slice(0, 3); break; }
+        }
+        return [...el.querySelectorAll('li, button')].map(entry => {
+          const fg = rgb(getComputedStyle(entry).color).slice(0, 3).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+          const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+          return (hi + 0.05) / (lo + 0.05);
+        });
       });
-    });
-    expect(ratios.length).toBeGreaterThan(0);
-    for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratios.length).toBeGreaterThan(0);
+      for (const ratio of ratios) expect(ratio, `contrast ${ratio}`).toBeGreaterThanOrEqual(4.5);
+    } finally {
+      // The appearance is saved account state shared with later tests, including
+      // files that do not reset it: hand it back even when an assertion fails.
+      setAccountTheme('light');
+    }
   });
 }
 

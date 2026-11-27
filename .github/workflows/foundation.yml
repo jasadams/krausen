@@ -3,17 +3,50 @@ permissions:
   contents: read
 on:
   workflow_dispatch:
+    inputs:
+      base:
+        description: Branch the PR targets; its diff picks the browser test groups
+        default: main
 
-# Explicit CI acceptance for a ready PR; use local evidence instead if the
-# full suite already ran locally. Edits and merges never duplicate the run.
+# PR checks, dispatched by hand on a ready PR's branch: the Rust tests and checks
+# plus only the browser groups mapped (e2e/browser-groups.json) to the paths the
+# PR changes. The full browser suite runs in browser-full.yml before release.
+# Edits and merges never duplicate the run.
 concurrency:
   group: foundation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  foundation:
+  select:
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.select.outputs.groups }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - id: select
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          groups=$(node e2e/scripts/browser-groups.mjs select --base "origin/$BASE" | paste -sd, -)
+          echo "browser groups: ${groups:-none}"
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+
+  browser:
+    needs: select
+    if: needs.select.outputs.groups != ''
+    uses: ./.github/workflows/browser-shards.yml
+    with:
+      groups: ${{ needs.select.outputs.groups }}
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -58,18 +91,5 @@ jobs:
       - run: cargo check -p krausen-server
       - run: cargo check -p krausen-ui --features hydrate --target wasm32-unknown-unknown
       - run: bash scripts/lint/check-client-eval-test.sh
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: npm ci --prefix e2e
-      - run: npx --prefix e2e playwright install --with-deps chromium
-        timeout-minutes: 5
-      - run: npm install --prefix crates/krausen-ui --no-save --no-package-lock @tailwindcss/cli@4.2.2 tailwindcss@4.2.2 @tailwindcss/typography@0.5.16
-      - run: echo "$GITHUB_WORKSPACE/crates/krausen-ui/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: cargo install trunk --version 0.21.14 --locked
-      - run: cargo build -p krausen-server
-      - run: cd crates/krausen-ui && trunk build
-      - run: sh scripts/check-dist-nonce.sh
       - run: sh scripts/check-dist-nonce-test.sh
       - run: sh scripts/refresh-changed-mtimes-test.sh
-      - run: e2e/scripts/profile-browser.sh
