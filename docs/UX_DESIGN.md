@@ -199,6 +199,17 @@ inherited/effective/overridden states and per-value reset. Reset MUST remove the
 override, not copy a profile/default value into an override. Do not merge distinct
 efficiency fields or attenuation semantics.
 
+**Profile form (Jason's spec, 2026-11-28):** the profile page presents exactly
+the sections About, Mash, Sparge, Boil, Cooling and Notes with the fields listed
+in [EQUIPMENT_PROFILE.md](EQUIPMENT_PROFILE.md), in that order, using the shared
+kit with no page restyling, on desktop and mobile. There is no "Brewhouse
+efficiency" in a profile; the recipe-level override stays under "Adjust for this
+recipe". Default equipment is a toggle in About. Capacity warnings appear beside
+the volumes they affect. Earlier grouping into efficiency/water/vessel/chilling
+sections and the "preserve every physical/chilling field" wording are superseded
+by that spec; fields that feed calculations without a spec equivalent await
+Jason's decision (see the spec) and keep working unchanged meanwhile.
+
 Equipment manager is a separate reusable task/new UI destination under IA-001,
 also reachable contextually without losing the recipe. Preserve list/pagination,
 create/edit/Save profile/archive/unarchive and every physical/chilling field.

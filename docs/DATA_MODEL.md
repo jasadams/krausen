@@ -70,7 +70,7 @@ SQL names, but cannot weaken uniqueness, ownership or atomicity on either backen
 | --- | --- |
 | Recipe | Workspace/stable ID, current revision, archive metadata. Unique `(workspace_id, recipe_id)`; mutable metadata has an expected revision. |
 | RecipeRevision | Complete versioned native document, monotonically increasing recipe-local revision, author/time, optional summary and canonical content digest. Unique `(workspace_id, recipe_id, revision)`; append-only. |
-| EquipmentProfile / EquipmentRevision | Profile identity/current revision/archive metadata plus append-only complete settings revisions and provenance. Referenced revisions cannot be pruned. |
+| EquipmentProfile / EquipmentRevision | Profile identity/current revision/archive metadata plus append-only complete settings and about-block revisions and provenance; one optional workspace default pointer ([record](#equipment-profile-record)). Referenced revisions cannot be pruned. |
 | IngredientEntry / IngredientRevision | Workspace library identity, complete versioned specifications and provenance. Starter entries carry catalogue/edition identity instead of workspace ownership. |
 | Brew | Workspace/recipe identity, pinned saved revision, immutable `BrewPlanV1`, lifecycle and mutable aggregate revision. Unique brew identity; recipe/revision links cannot cascade-delete its plan. |
 | ActualFormulationRevision | Append-only complete actual formulation/process document, predecessor revision, actor/time and optional reason. Initial effective actual is the planned formulation until an explicit deviation exists. |
@@ -121,6 +121,46 @@ state unless a later feature explicitly introduces shared persisted drafts.
 Recipe and equipment revisions have independent histories: current profile
 updates affect future previews/new brews without creating recipe-content history.
 Saved ingredient specifications remain copies; catalogue edits never replace them.
+
+### Equipment profile record
+
+The profile follows the [equipment profile spec](EQUIPMENT_PROFILE.md), a
+presentation and field contract owned by Jason's 2026-11-28 spec.
+
+- **Settings** stay `EquipmentSettingsV1` (the same sparse type recipes use for
+  overrides and brews freeze), extended additively with optional
+  `mash_tun_volume_l`, `mash_tun_loss_l`, `sparge_vessel_volume_l`,
+  `sparge_grain_absorption_l_per_kg`, `sparge_deadspace_l` and
+  `wort_shrinkage_fraction`. `schema_version` stays 1: old documents and frozen
+  brew snapshots deserialize unchanged with the new fields absent. Legacy names
+  keep their meaning, documented in the spec's mapping table.
+- **About block** (`EquipmentAboutV1`): brand, description, measurement, equipment
+  type, controller type, recirculation system, vessel count, batch size, the three
+  toggles and notes. It belongs to the profile only, never to recipe overrides or
+  brew snapshots, so it is a separate `about_json` column on `equipment_revisions`
+  (added with a default of `{}` on both backends; the immutable-history triggers
+  fire on update/delete, not on `ADD COLUMN`) and a field of the profile and save
+  contract. Equipment name remains the profile name.
+- **Workspace default**: at most one default per workspace, stored as a
+  `workspace_default_equipment (workspace_id PRIMARY KEY, profile_id, ...)` row,
+  not in revisioned settings, so changing it appends no settings revision and an
+  old revision never claims to be the default. It is set by a guarded command
+  with the expected profile metadata revision. Archiving the default profile
+  clears the default in the same transaction; an archived profile cannot be set.
+  New recipes select the default profile and seed `batch_size_l` from its batch
+  size when set; existing recipes are untouched.
+- **Brewhouse efficiency** is not a profile field. `efficiency_override_fraction`
+  remains on the recipe override type and in BeerXML import choice. Profile save
+  rejects it. Reading a stored profile revision that has it applies the one
+  upgrade rule: the value becomes `mash_efficiency_fraction`, the override is
+  cleared. The effective efficiency (`override.or(mash)`) is therefore identical.
+  Stored rows and brew snapshots are never rewritten.
+- **Unchanged estimates.** Policy `krausen-formulation-v3` equals V2 when the new
+  fields are absent ([calculations](CALCULATIONS.md#equipment-profile-v2-water-chain-and-capacity-checks)).
+  Tests on SQLite and PostgreSQL load a profile saved with all of today's fields
+  filled (including Brewhouse efficiency), compare its V3 targets with the V2
+  fixture values, and read an existing brew's frozen plan unchanged.
+- UI and MCP use the same save/get/list/set-default operations and permissions.
 
 ## Brew start and calculation context
 
