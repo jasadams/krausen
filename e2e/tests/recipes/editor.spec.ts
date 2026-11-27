@@ -1404,9 +1404,11 @@ test('short equipment names keep a one-line badge at 320px and the showcase show
   expect(shortBox.height, 'a short badge stays one line').toBeLessThan(30);
 });
 
-// KRA-49: the estimates summary is the fixed rail/stack above the sections. Its
-// height must not change while an estimate is replaced or settles without one,
-// or every control under it moves while a person is typing.
+// KRA-49 with KRA-55: the estimates summary is the fixed rail/stack above the
+// sections. Its height must not change while an estimate is replaced or settles
+// without one, or every control under it moves while a person is typing. The
+// recipe layout is one column at 850px and below, so the summary is the stack
+// there and has to hold from 601px as well, not only on phones.
 async function readyEstimateRecipe(page: import('@playwright/test').Page) {
   // A deliberately long profile name: the phone source line must stay one height
   // regardless of how long the effective equipment identity is.
@@ -1440,7 +1442,7 @@ const expectSame = (label: string, actual: SummaryBox, expected: SummaryBox) => 
   expect(Math.abs(actual.below - expected.below), `${label}: first control below moved to ${actual.below} vs ${expected.below}`).toBeLessThanOrEqual(0.5);
 };
 
-for (const width of [320, 390]) {
+for (const width of [320, 390, 601, 700, 850]) {
   test(`the estimates summary keeps one height from current through recalculating and a settled invalid or unavailable estimate at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const profileId = await readyEstimateRecipe(page);
@@ -1459,10 +1461,6 @@ for (const width of [320, 390]) {
     const staleRegion = summary.locator('.k-stale[aria-hidden="true"]');
     const disclosure = summary.locator('.k-disclosure--compact');
     const disclosureSummary = disclosure.locator('summary');
-    // A long equipment name is hidden on phones; the header badge and equipment
-    // panel still identify it, and the source line keeps its fixed two-line height.
-    await expect(summary.locator('.recipe-editor__provenance-equipment')).toHaveCount(1);
-    await expect(summary.locator('.recipe-editor__provenance-equipment')).toBeHidden();
     await expect(summary.locator('.k-metric')).toHaveCount(6);
     const currentValues = await values.allTextContents();
     expect(currentValues.some(text => /\d\.\d/.test(text)), 'a current estimate shows values').toBe(true);
@@ -1488,8 +1486,14 @@ for (const width of [320, 390]) {
     await batch.fill('21');
     await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
     // The first observable failure on the old behaviour: the summary loses the
-    // whole estimate block the moment a replacement starts.
+    // whole estimate block the moment a replacement starts. This runs before the
+    // one-column source-line check below so the reported collapse is the failure.
     expectSame('recalculating', await measure(), current);
+    // A long equipment name is hidden wherever the summary is the stack above the
+    // sections; the header badge and equipment panel still identify it, and the
+    // source line keeps one height (KRA-49, KRA-55).
+    await expect(summary.locator('.recipe-editor__provenance-equipment')).toHaveCount(1);
+    await expect(summary.locator('.recipe-editor__provenance-equipment')).toBeHidden();
     await expect(staleRegion, 'one stale region owns the metrics, source and reference').toHaveCount(1);
     expect(await staleRegion.evaluate(element => (element as HTMLElement).inert), 'stale region is inert').toBe(true);
     expect(await staleRegion.locator('.k-style-range').count(), 'the old style bands stay in the stale region').toBeGreaterThan(0);
@@ -1540,8 +1544,12 @@ for (const width of [320, 390]) {
     await expect(retry).toBeVisible();
     expect(await retry.getAttribute('title'), 'the retry has no extra hover tooltip').toBeNull();
     const retryBox = (await retry.boundingBox())!;
+    // The shared Button (components/button.rs) is a 44px target at 760px and below
+    // and keeps the shared control height above it, so this asserts the 44px target
+    // exactly where the component sets it.
     expect(retryBox.width, 'retry touch target width').toBeGreaterThanOrEqual(44);
-    expect(retryBox.height, 'retry touch target height').toBeGreaterThanOrEqual(44);
+    if (width <= 760) expect(retryBox.height, 'retry touch target height').toBeGreaterThanOrEqual(44);
+    else expect(retryBox.height, 'retry control height').toBeGreaterThanOrEqual(32);
     const disclosureHandle = await disclosureSummary.elementHandle();
     await retry.focus();
     await expect(retry).toBeFocused();
@@ -1573,11 +1581,11 @@ for (const width of [320, 390]) {
   });
 }
 
-// KRA-34 with KRA-49: the issues list lives inside the same summary. The
+// KRA-34 with KRA-49/KRA-55: the issues list lives inside the same summary. The
 // estimate states change under a list of issues that is present throughout, and
 // neither the list nor its "Out of date" cue may add or remove a row, or the
 // controls below the summary move while a person is typing.
-for (const width of [320, 390]) {
+for (const width of [320, 390, 601, 700, 850]) {
   test(`the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await readyEstimateRecipe(page);
@@ -1613,6 +1621,55 @@ for (const width of [320, 390]) {
     await expect(list.getByRole('button', { name: /Alpha acid is missing/ }), 'the issue stays listed when the preview is unavailable').toHaveCount(1);
     expectSame('settled unavailable with issues', await measure(), current);
     await expect(summary.locator('.k-metric')).toHaveCount(6);
+  });
+}
+
+// KRA-55 with KRA-49: at 601-850px the page is one column and the summary is the
+// stack above the sections. Typing in a recipe field must not move what is below
+// it while the estimate recalculates. Two frame samples cover it: the summary's own footprint (its height plus the gap to the
+// sections), and the focused input relative to its own panel, which catches a
+// move inside the process stack without depending on scroll position.
+for (const width of [601, 700, 850]) {
+  test(`typing in a recipe field never moves the controls below the summary at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await readyEstimateRecipe(page);
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    const whirlpool = page.locator('#recipe-whirlpool');
+    await whirlpool.focus();
+    await expect(whirlpool).toBeFocused();
+    await page.evaluate(() => {
+      const footprint: number[] = [];
+      const control: number[] = [];
+      (window as any).__summaryFootprint = footprint;
+      (window as any).__controlOffset = control;
+      const round = (value: number) => Math.round(value * 100) / 100;
+      const tick = () => {
+        const summary = document.querySelector('.recipe-editor__preview-summary')!;
+        const below = document.querySelector('.recipe-editor__sections')!;
+        const panel = document.getElementById('recipe-section-boil')!;
+        const input = document.getElementById('recipe-whirlpool')!;
+        footprint.push(round(below.getBoundingClientRect().top - summary.getBoundingClientRect().top));
+        control.push(round(input.getBoundingClientRect().top - panel.getBoundingClientRect().top));
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/leptos-api/preview_formulation*', async route => { await held; await route.continue(); });
+    await page.keyboard.type('5');
+    await expect(page.getByTestId('estimate-stale')).toHaveText('Out of date, recalculating');
+    await expect(whirlpool).toBeFocused();
+    await page.waitForTimeout(400);
+    release();
+    await expect(page.getByTestId('estimate-stale')).toHaveText('');
+    await page.unroute('**/leptos-api/preview_formulation*');
+    const footprint: number[] = await page.evaluate(() => (window as any).__summaryFootprint ?? []);
+    const control: number[] = await page.evaluate(() => (window as any).__controlOffset ?? []);
+    expect(footprint.length, 'frames sampled across the window').toBeGreaterThan(10);
+    expect(control.length, 'frames sampled across the window').toBeGreaterThan(10);
+    expect(Math.max(...footprint) - Math.min(...footprint), `controls below moved: ${[...new Set(footprint)]}`).toBeLessThan(0.5);
+    expect(Math.max(...control) - Math.min(...control), `focused input moved: ${[...new Set(control)]}`).toBeLessThan(0.5);
   });
 }
 
