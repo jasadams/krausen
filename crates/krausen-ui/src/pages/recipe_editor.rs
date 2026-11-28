@@ -1293,18 +1293,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
             }
             draft.update(|d| d.replace_saved(baseline.get_untracked()));
             retry.set(None);
-            // Publish the reset generation before discard_active captures its
-            // departure lease; the reactive mirror runs after this callback.
-            guard_task.update(GuardTaskState {
-                dirty: draft.with_untracked(|d| d.dirty),
-                generation: draft.with_untracked(|d| d.generation),
-                in_flight: pending.get_untracked(),
-                uncertain: retry.get_untracked().is_some()
-                    || scale_uncertain.get_untracked()
-                    || duplicate_uncertain.get_untracked(),
-                recovery_retained: false,
-                context_visible: context_visible.get_untracked(),
-            });
             true
         })));
     on_cleanup(move || {

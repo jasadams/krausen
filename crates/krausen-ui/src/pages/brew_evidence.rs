@@ -828,19 +828,6 @@ fn BrewEvidencePanel(intent: OperationIntent, brew_id: String) -> impl IntoView 
                 note_text.set(String::new());
                 reason.set(String::new());
                 input_generation.update(|generation| *generation += 1);
-                if let Some(owner) = return_owner.get_value() {
-                    owner.update(GuardTaskState {
-                        dirty: !cleanup_debt.get_untracked().is_empty(),
-                        generation: input_generation.get_untracked(),
-                        in_flight: write_busy.get_untracked(),
-                        uncertain: pending.get_untracked().is_some()
-                            || !recovery_records.get_untracked().is_empty()
-                            || matches!(recovery_inventory.get_untracked(), RecoveryInventory::Failed(_)),
-                        recovery_retained: recovery_key.get_untracked().is_some()
-                            || !recovery_records.get_untracked().is_empty(),
-                        context_visible: context_valid.get_untracked(),
-                    });
-                }
                 true
             }),
         },

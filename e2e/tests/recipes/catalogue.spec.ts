@@ -1585,6 +1585,19 @@ test('KRA42-L2 Escape on an edited library form means Stay and keeps every value
   await expect(page.getByRole('dialog', { name: 'Build your grain bill' })).toBeVisible();
 });
 
+test('an edited library form leaves in one click with Discard and leave', async ({ page }) => {
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
+  await catalogueCreateForm(page, 'Unsaved library malt to discard');
+  await page.evaluate(() => history.back());
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
+});
+
 test('KRA42-L3 an unknown library Save survives reload and is replayed verbatim before any new command', async ({ page }) => {
   const entryName = `E2E reload malt ${Date.now()}`;
   await page.goto('/recipe-editor/new');

@@ -3058,6 +3058,22 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toHaveCount(0);
 });
 
+test('equipment profiles can be saved: Discard and leave discards the edit and arrives in one click', async ({ page }) => {
+  const name = `Discard profile ${Date.now()}`;
+  await page.goto('/equipment');
+  await page.getByLabel('Equipment name').fill(name);
+  await page.getByLabel('Mash efficiency (%)').fill('75');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.getByLabel('Mash efficiency (%)').fill('61');
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
+});
+
 test('equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel', async ({ page }) => {
   const name = `Grainfather ${Date.now()}`;
   let profileId = '';
@@ -3759,6 +3775,61 @@ test('a failed workspace switch is reported after choosing to discard', async ({
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not switch workspaces.');
   await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('equipment profiles can be saved: a discarded edit is reset on the page before a failed departure', async ({ page }) => {
+  await page.goto('/equipment');
+  await page.getByLabel('Equipment name').fill(`Discard reset ${Date.now()}`);
+  await page.getByLabel('Mash efficiency (%)').fill('75');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.getByLabel('Mash efficiency (%)').fill('61');
+  await page.route('**/leptos-api/logout*', route => route.abort('failed'));
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await popup.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await page.locator('#workspace-draft-warning').getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not sign out.');
+  // The page stayed, and the discard put the form back to the saved value.
+  await expect(page).toHaveURL(/\/equipment/);
+  await expect(page.getByLabel('Mash efficiency (%)')).toHaveValue('75');
+});
+
+test('a change made after choosing Discard and leave still stops the sign-out', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Draft before sign-out');
+  const logouts: string[] = [];
+  await page.route('**/leptos-api/logout*', route => { logouts.push(route.request().url()); return route.continue(); });
+  // Only context checks that arrive after the explicit arm point are held.
+  let armed = false;
+  let arrived!: () => void;
+  const checkArrived = new Promise<void>(resolve => { arrived = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    if (armed) { arrived(); await held; }
+    await route.continue();
+  });
+  const signOutPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await signOutPopup.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  armed = true;
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await checkArrived;
+  // The discard was accepted and the leave is waiting on its context check. The modal
+  // dialog keeps the page inert for real input, so deliver the newer edit as the input
+  // event the field would raise (as an assistive or injected change would).
+  await name.evaluate((input: HTMLInputElement) => {
+    input.value = 'Typed after the choice';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  armed = false;
+  release();
+  await expect(page.getByRole('alert')).toContainText('Newer task state prevents the original navigation');
+  await expect(page).toHaveURL(/recipe-editor/);
+  await expect(name).toHaveValue('Typed after the choice');
+  expect(logouts).toHaveLength(0);
 });
 
 test('a failed sign-out is reported after choosing to discard', async ({ page }) => {
