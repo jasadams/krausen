@@ -218,15 +218,17 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
 // Recipe Defaults Card
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// What a field's text means as a default batch size: nothing (unset) or litres.
+/// What a field's text means as a default batch size: nothing (unset) or a number to send.
+/// Whether the number is a valid batch size is the application's rule, answered by `Invalid`;
+/// only text that is not a finite number cannot be sent at all.
 fn parse_default_batch(text: &str) -> Result<Option<f64>, &'static str> {
     let text = text.trim();
     if text.is_empty() {
         return Ok(None);
     }
     match text.parse::<f64>() {
-        Ok(litres) if litres.is_finite() && litres > 0.0 => Ok(Some(litres)),
-        _ => Err("Enter a batch size greater than zero, in litres."),
+        Ok(litres) if litres.is_finite() => Ok(Some(litres)),
+        _ => Err("Enter a number of litres."),
     }
 }
 
@@ -684,7 +686,7 @@ mod tests {
         assert_eq!(parse_default_batch("  "), Ok(None));
         assert_eq!(parse_default_batch(" 23 "), Ok(Some(23.0)));
         assert_eq!(parse_default_batch("22.5"), Ok(Some(22.5)));
-        for bad in ["0", "-1", "abc", "1e", "NaN", "inf"] {
+        for bad in ["abc", "1e", "NaN", "inf"] {
             assert!(parse_default_batch(bad).is_err(), "{bad}");
         }
     }
