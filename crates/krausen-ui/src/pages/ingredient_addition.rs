@@ -101,7 +101,9 @@ impl Field {
     fn display_decimals(self, category: AdditionCategory) -> usize {
         match (self, category) {
             (Self::Amount, AdditionCategory::Fermentable) => 3,
+            (Self::Amount, AdditionCategory::Hop) => 1,
             (Self::Amount, AdditionCategory::Yeast | AdditionCategory::Other) => 2,
+            (Self::Alpha, _) => 2,
             _ => 1,
         }
     }
@@ -1124,6 +1126,7 @@ mod tests {
         assert_eq!(round_for_display(4.5, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "4.5");
         assert_eq!(round_for_display(0.1234567, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "0.123");
         assert_eq!(round_for_display(20.04, Field::Amount.display_decimals(AdditionCategory::Hop)).to_string(), "20");
+        assert_eq!(round_for_display(fraction_to_percent(0.1275), Field::Alpha.display_decimals(AdditionCategory::Hop)).to_string(), "12.75");
     }
 
     fn hop(id: &str, name: &str, stage: &str, minutes: Option<f64>) -> HopAddition {

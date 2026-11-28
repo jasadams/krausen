@@ -6,8 +6,11 @@ import { DEFAULT_TEST_USER, db, loginUser, sqlText } from '../../helpers/test-he
 // at a readable precision. The row is the shared kit's BreweryCompactIngredientRow,
 // reached through the recipe editor and the design-system showcase.
 
+// A row lays itself out by the width it is given: at 1440 the editor gives it one line, at 1024
+// (two-column editor) and 390 it stacks. Every width keeps its fields aligned and usable.
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 1000 },
+  { name: 'two-column editor', width: 1024, height: 900 },
   { name: 'mobile', width: 390, height: 900 },
 ] as const;
 
@@ -87,12 +90,28 @@ async function assertRowAligned(row: Locator, desktop: boolean, what: string) {
   const fields = await geometry(row);
   expect(fields.length, `${what}: fields found`).toBeGreaterThanOrEqual(2);
   const grouped = lines(fields);
+  if (desktop) await assertActionsOnControlLine(row, what);
   if (desktop) expect(grouped.length, `${what}: one line of fields on desktop: ${JSON.stringify(grouped.map((l) => l.map((f) => f.id)))}`).toBe(1);
+  const name = fields[0];
+  expect(name.control.width, `${what}: the name control is not crushed`).toBeGreaterThanOrEqual(120);
   for (const line of grouped) {
     const labelTops = line.map((f) => f.label.y);
     const controlTops = line.map((f) => f.control.y);
     expect(Math.max(...labelTops) - Math.min(...labelTops), `${what}: label tops ${labelTops}`).toBeLessThanOrEqual(1);
     expect(Math.max(...controlTops) - Math.min(...controlTops), `${what}: control tops ${controlTops}`).toBeLessThanOrEqual(1);
+  }
+}
+
+/** On one line the remove action and the toggle sit on the controls' line, whatever else the row shows. */
+async function assertActionsOnControlLine(row: Locator, what: string) {
+  const fields = await geometry(row);
+  const centre = (b: Box) => b.y + b.height / 2;
+  const controlCentre = centre(fields[0].control);
+  for (const [label, target] of [
+    ['remove action', row.getByRole('button', { name: /^Remove/ })],
+    ['details toggle', row.locator('summary', { hasText: 'Addition details' })],
+  ] as const) {
+    expect(Math.abs(centre(await box(target)) - controlCentre), `${what}: ${label} sits on the controls' line`).toBeLessThanOrEqual(1.5);
   }
 }
 
@@ -190,28 +209,34 @@ for (const viewport of WIDTHS) {
   });
 }
 
-test('KRA75 a fermentable shows yield and colour rounded while the saved recipe keeps full precision', async ({ page }) => {
+for (const viewport of [WIDTHS[0], WIDTHS[2]]) {
+  test(`KRA75 a fermentable shows yield and colour rounded while the saved recipe keeps full precision at ${viewport.name} width`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto('/recipe-editor/new');
+    const title = `Rounded rows ${viewport.name} ${Date.now()}`;
+    await page.getByLabel('Recipe name', { exact: true }).fill(title);
+    await page.getByLabel('Batch volume (L)').fill('20');
+    await addFermentable(page);
+    const row = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
+    await row.locator('summary', { hasText: 'Addition details' }).click();
+    await expect(row.getByLabel('Yield (%)', { exact: true })).toHaveValue('80.1');
+    await expect(row.getByLabel('Colour (EBC)', { exact: true })).toHaveValue('3.6');
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    expect(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE document LIKE ${sqlText(`%${title}%`)} AND document LIKE ${sqlText(`%${SIGNATURE_YIELD_FRACTION}%`)}`)).toBe('1');
+    await page.reload();
+    const reloaded = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
+    await reloaded.locator('summary', { hasText: 'Addition details' }).click();
+    await expect(reloaded.getByLabel('Yield (%)', { exact: true })).toHaveValue('80.1');
+    await expect(reloaded.getByText('80.06231877785952')).toHaveCount(0);
+  });
+}
+
+test('KRA75 a typed value keeps its exact text on screen and is stored unrounded', async ({ page }) => {
   await page.goto('/recipe-editor/new');
-  const title = `Rounded rows ${Date.now()}`;
+  const title = `Typed rows ${Date.now()}`;
   await page.getByLabel('Recipe name', { exact: true }).fill(title);
   await page.getByLabel('Batch volume (L)').fill('20');
-  await addFermentable(page);
-  const row = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
-  await row.locator('summary', { hasText: 'Addition details' }).click();
-  await expect(row.getByLabel('Yield (%)', { exact: true })).toHaveValue('80.1');
-  await expect(row.getByLabel('Colour (EBC)', { exact: true })).toHaveValue('3.6');
-  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
-  expect(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE document LIKE ${sqlText(`%${title}%`)} AND document LIKE ${sqlText(`%${SIGNATURE_YIELD_FRACTION}%`)}`)).toBe('1');
-  await page.reload();
-  const reloaded = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
-  await reloaded.locator('summary', { hasText: 'Addition details' }).click();
-  await expect(reloaded.getByLabel('Yield (%)', { exact: true })).toHaveValue('80.1');
-  await expect(reloaded.getByText('80.06231877785952')).toHaveCount(0);
-});
-
-test('KRA75 a value the brewer types keeps their exact text and is stored unrounded', async ({ page }) => {
-  await page.goto('/recipe-editor/new');
   await addFermentable(page);
   const row = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
   await row.locator('summary', { hasText: 'Addition details' }).click();
@@ -219,4 +244,28 @@ test('KRA75 a value the brewer types keeps their exact text and is stored unroun
   await yieldField.fill('81.234');
   await yieldField.blur();
   await expect(yieldField).toHaveValue('81.234');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  expect(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE document LIKE ${sqlText(`%${title}%`)} AND document LIKE ${sqlText('%0.81234%')}`)).toBe('1');
+  await page.reload();
+  const reloaded = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
+  await reloaded.locator('summary', { hasText: 'Addition details' }).click();
+  await expect(reloaded.getByLabel('Yield (%)', { exact: true })).toHaveValue('81.2');
+});
+
+test('KRA75 the details toggle opens from the keyboard without moving', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/recipe-editor/new');
+  await addFermentable(page);
+  const row = page.getByRole('group', { name: /^Joe White Signature Lager, fermentable/ });
+  const summary = row.locator('summary', { hasText: 'Addition details' });
+  const before = await box(summary);
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  await expect(row.locator('.k-disclosure__body')).toBeVisible();
+  await expect(summary).toBeFocused();
+  expect(await box(summary)).toEqual(before);
+  await page.keyboard.press('Space');
+  await expect(row.locator('.k-disclosure__body')).toBeHidden();
+  expect(await box(summary)).toEqual(before);
 });
