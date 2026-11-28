@@ -1125,6 +1125,7 @@ mod tests {
         assert_eq!(round_for_display(yield_percent, Field::Yield.display_decimals(AdditionCategory::Fermentable)).to_string(), "80.1");
         assert_eq!(round_for_display(13.986999999999998, Field::Colour.display_decimals(AdditionCategory::Fermentable)).to_string(), "14");
         assert_eq!(round_for_display(3.6, 1).to_string(), "3.6");
+        assert_eq!(round_for_display(100.0, 0).to_string(), "100");
         assert_eq!(round_for_display(-0.0, 1).to_string(), "0");
         assert_eq!(round_for_display(-0.04, 1).to_string(), "-0.04");
         assert_eq!(round_for_display(0.0004, 3).to_string(), "0.0004");
@@ -1188,6 +1189,21 @@ mod tests {
         let text = row_description(draft.document(), AdditionCategory::Hop, "h1", &draft);
         assert_eq!(text, "Alpha 7%");
         assert!(!text.contains("fraction"));
+    }
+
+    #[test]
+    fn alpha_and_attenuation_descriptions_are_rounded_like_their_fields() {
+        let mut draft = draft_with_hops();
+        draft.edit(|doc| doc.hops[0].specification.alpha_fraction = Some(0.123456789));
+        assert_eq!(row_description(draft.document(), AdditionCategory::Hop, "h1", &draft), "Alpha 12.35%");
+        draft.edit(|doc| doc.yeast.push(IngredientAddition {
+            row_id: "y1".into(),
+            amount: Some(1.0),
+            unit: None,
+            specification: IngredientSpecification { name: Some("US-05".into()), producer: None, attenuation_fraction: Some(0.7812345678), extensions: Default::default() },
+            source: None,
+        }));
+        assert_eq!(row_description(draft.document(), AdditionCategory::Yeast, "y1", &draft), "Yeast attenuation 78.1% (informational)");
     }
 
     #[test]
