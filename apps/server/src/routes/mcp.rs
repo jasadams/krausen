@@ -1053,30 +1053,13 @@ impl ServerHandler for McpHandler {
                     workspace_id: input.workspace_id,
                 };
                 // A new recipe without a profile takes the workspace default, like the editor.
-                let document = if input.recipe_id.is_none() {
-                    match krausen_app::recipe_editor::with_workspace_default(
-                        &self.db,
-                        &actor,
-                        &input.intent,
-                        input.document.clone(),
-                    )
-                    .await
-                    {
-                        Ok(document) => document,
-                        Err(_) => {
-                            return Ok(CallToolResult::structured_error(json!({"outcome": krausen_types::recipe_editor::RecipeSaveOutcome::Unavailable})).into());
-                        }
-                    }
-                } else {
-                    input.document.clone()
-                };
-                let outcome = krausen_app::recipe_editor::save(
+                let outcome = krausen_app::recipe_editor::save_with_default(
                     &self.db,
                     &actor,
                     &input.intent,
                     input.recipe_id.as_deref(),
                     input.expected_revision,
-                    &document,
+                    &input.document,
                     request_id,
                 )
                 .await;

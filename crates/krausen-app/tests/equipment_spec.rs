@@ -175,13 +175,13 @@ async fn exercise(db: DbPool) {
 
     // Every creation path takes the default: a document naming no profile gets it (the MCP
     // create path uses this), one that names a profile keeps its own.
-    let blank = krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, RecipeDocumentV1::default())
+    let blank = krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, None, &RecipeDocumentV1::default())
         .await
         .unwrap();
     assert_eq!(blank.equipment_profile_id.as_deref(), Some(first_id.as_str()));
     let named = RecipeDocumentV1 { equipment_profile_id: Some("other".into()), ..Default::default() };
     assert_eq!(
-        krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, named)
+        krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, None, &named)
             .await
             .unwrap()
             .equipment_profile_id

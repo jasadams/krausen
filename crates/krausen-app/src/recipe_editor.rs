@@ -67,14 +67,30 @@ async fn read_inner(
 /// otherwise the observed head is required. Reusing a request id recovers its result.
 /// A new recipe that names no equipment profile takes the workspace default, as the
 /// editor's new-recipe flow does; every creation path shares this rule. A document that
-/// already names a profile, or a workspace with no default, is returned unchanged.
+/// already names a profile, an edit, or a workspace with no default is saved unchanged.
+pub async fn save_with_default(
+    pool: &DbPool,
+    actor: &ActorContext,
+    intent: &OperationIntent,
+    recipe_id: Option<&str>,
+    expected_revision: Option<i64>,
+    document: &RecipeDocumentV1,
+    request_id: uuid::Uuid,
+) -> RecipeSaveOutcome {
+    match with_workspace_default(pool, actor, intent, recipe_id, document).await {
+        Ok(document) => save(pool, actor, intent, recipe_id, expected_revision, &document, request_id).await,
+        Err(error) => save_error_outcome(error),
+    }
+}
 pub async fn with_workspace_default(
     pool: &DbPool,
     actor: &ActorContext,
     intent: &OperationIntent,
-    mut document: RecipeDocumentV1,
+    recipe_id: Option<&str>,
+    document: &RecipeDocumentV1,
 ) -> Result<RecipeDocumentV1, Error> {
-    if document.equipment_profile_id.is_none() {
+    let mut document = document.clone();
+    if recipe_id.is_none() && document.equipment_profile_id.is_none() {
         let page = crate::equipment::list(pool, actor, intent, None, 1, false).await?;
         if let Some(default) = page.default_profile {
             document.equipment_profile_id = Some(default.profile_id);
@@ -104,15 +120,18 @@ pub async fn save(
     .await
     {
         Ok(result) => result,
-        Err(Error::Forbidden) => RecipeSaveOutcome::Forbidden,
-        Err(Error::ContextChanged) => RecipeSaveOutcome::ContextChanged,
-        Err(Error::Invalid(_)) => RecipeSaveOutcome::InvalidRequest,
-        Err(Error::RequestIdentityConflict) => RecipeSaveOutcome::RequestIdentityConflict,
-        Err(Error::ResultExpired { resource_id }) => {
-            RecipeSaveOutcome::ResultExpired { resource_id }
-        }
-        Err(Error::Retryable) => RecipeSaveOutcome::Retryable,
-        Err(e) => {
+        Err(error) => save_error_outcome(error),
+    }
+}
+fn save_error_outcome(error: Error) -> RecipeSaveOutcome {
+    match error {
+        Error::Forbidden => RecipeSaveOutcome::Forbidden,
+        Error::ContextChanged => RecipeSaveOutcome::ContextChanged,
+        Error::Invalid(_) => RecipeSaveOutcome::InvalidRequest,
+        Error::RequestIdentityConflict => RecipeSaveOutcome::RequestIdentityConflict,
+        Error::ResultExpired { resource_id } => RecipeSaveOutcome::ResultExpired { resource_id },
+        Error::Retryable => RecipeSaveOutcome::Retryable,
+        e => {
             tracing::error!(error = %e, "recipe save failed");
             RecipeSaveOutcome::Unavailable
         }
