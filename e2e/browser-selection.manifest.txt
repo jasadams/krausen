@@ -296,6 +296,8 @@ recipes/editor.spec.ts › the estimates summary keeps one height with issues li
 recipes/editor.spec.ts › the estimates summary keeps one height with issues listed through current, recalculating, settled invalid and unavailable at 850px
 recipes/editor.spec.ts › the held editor height ends once the estimate after a passing re-check has settled
 recipes/editor.spec.ts › the process kit example shows the step row, stale outcomes and out-of-flow live line
+recipes/editor.spec.ts › the unsaved-changes dialog lays its actions out in the dialog action row on desktop
+recipes/editor.spec.ts › the unsaved-changes dialog lays its actions out in the dialog action row on mobile
 recipes/editor.spec.ts › the water plan emphasises its total and the process panels keep the Equipment titles unchanged
 recipes/editor.spec.ts › typed print denial never labels a hidden editor as access verified
 recipes/editor.spec.ts › typing in a process field never moves it (measured against the Mash panel) while the estimate recalculates at 1440px
