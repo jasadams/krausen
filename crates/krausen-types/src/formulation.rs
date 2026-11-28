@@ -106,7 +106,9 @@ pub struct StyleRanges {
 impl StyleRanges {
     /// Whether the guideline publishes numeric ranges for this style.
     pub fn has_numeric_ranges(&self) -> bool {
-        self.original_sg.is_some()
+        [&self.original_sg, &self.final_sg, &self.ibu, &self.abv_percent, &self.colour_ebc]
+            .iter()
+            .all(|range| range.is_some())
     }
 }
 
