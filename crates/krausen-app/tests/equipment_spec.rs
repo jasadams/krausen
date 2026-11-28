@@ -10,7 +10,7 @@ use krausen_types::{
 };
 
 /// The Grainfather-style example from the spec, with the worked-case losses of
-/// `docs/CALCULATIONS.md` ("Equipment profile V2").
+/// `docs/CALCULATIONS.md` ("Equipment profile: water chain").
 fn spec_settings() -> EquipmentSettingsV1 {
     EquipmentSettingsV1 {
         mash_tun_volume_l: Some(30.0),
@@ -163,7 +163,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(revision.about, spec_about());
     assert_eq!(revision.settings, spec_settings());
 
-    // New recipes pick the default up, with its batch size.
+    // New recipes pick the default up.
     let page = equipment::list(&db, &actor, &intent, None, 20, false)
         .await
         .unwrap();
@@ -398,4 +398,73 @@ async fn postgres_equipment_spec() {
         .await
         .unwrap();
     exercise(DbPool::Postgres(pool)).await;
+}
+
+/// Equipment saved before the spec migration keeps its stored revision untouched,
+/// gains an empty about block and reads back through the current code.
+async fn upgrade(db: DbPool, migrator: sqlx::migrate::Migrator) {
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            migrator
+                .iter()
+                .filter(|m| m.version != 20261128000000)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    macro_rules! run {($sql:expr $(,$arg:expr)*)=>{match &db {DbPool::Sqlite(p)=>sqlx::query($sql)$(.bind($arg))*.execute(p).await.unwrap().rows_affected(),DbPool::Postgres(p)=>sqlx::query($sql)$(.bind($arg))*.execute(p).await.unwrap().rows_affected()}};}
+    match &db {
+        DbPool::Sqlite(p) => before.run(p).await.unwrap(),
+        DbPool::Postgres(p) => before.run(p).await.unwrap(),
+    }
+    let suffix = uuid::Uuid::new_v4();
+    let (user, ws, id) = (format!("u-{suffix}"), format!("w-{suffix}"), uuid::Uuid::new_v4().to_string());
+    run!("INSERT INTO users (user_id,email) VALUES ($1,$2)", &user, format!("{suffix}@example.test"));
+    run!("INSERT INTO workspaces (workspace_id,owner_user_id) VALUES ($1,$2)", &ws, &user);
+    run!("INSERT INTO workspace_users (workspace_id,user_id,role) VALUES ($1,$2,'workspace_user')", &ws, &user);
+    let old = r#"{"schema_version":1,"mash_efficiency_fraction":0.7,"boil_off_l_per_hour":3.5,"kettle_opening_cm":30.0,"extensions":{}}"#;
+    run!("INSERT INTO equipment_profiles (workspace_id,profile_id,name,current_revision,metadata_revision,archived) VALUES ($1,$2,'Old',1,1,FALSE)", &ws, &id);
+    run!("INSERT INTO equipment_revisions (workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ($1,$2,1,'Old',1,$3,'{\"source\":\"manual\",\"assumptions\":[]}','digest',$4,1)", &ws, &id, old, &user);
+    match &db {
+        DbPool::Sqlite(p) => migrator.run(p).await.unwrap(),
+        DbPool::Postgres(p) => migrator.run(p).await.unwrap(),
+    }
+    let actor = ActorContext {
+        actor_id: user.clone(),
+        workspace_id: ws.clone(),
+        session_iat_us: Some(chrono::Utc::now().timestamp_micros()),
+        access_expires_at: 4102444800,
+    };
+    let intent = OperationIntent { account_id: user.clone(), workspace_id: ws.clone() };
+    let profile = equipment::get(&db, &actor, &intent, &id).await.unwrap().unwrap();
+    assert_eq!(profile.about, EquipmentAboutV1::default());
+    assert!(!profile.is_default);
+    assert_eq!(profile.settings.boil_loss_l_per_hour, Some(3.5));
+    let revision = equipment::get_revision(&db, &actor, &intent, &id, 1).await.unwrap().unwrap();
+    assert_eq!(revision.settings.mash_efficiency_fraction, Some(0.7));
+    // A new save on top of the old revision appends revision 2 with its about block.
+    let saved = equipment::save(&db, &actor, SaveEquipment { about: spec_about(), settings: spec_settings(), ..save_request(&intent, &id, "Old", Some(true), (1, 1)) }).await.unwrap();
+    assert_eq!((saved.revision, saved.is_default), (2, true));
+}
+#[tokio::test]
+async fn sqlite_upgrade_keeps_old_equipment_readable() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    upgrade(DbPool::Sqlite(pool), sqlx::migrate!("../../apps/server/migrations-sqlite")).await;
+}
+#[tokio::test]
+async fn postgres_upgrade_keeps_old_equipment_readable() {
+    let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("disposable PostgreSQL required");
+    // The upgrade needs a database that has not had the spec migration applied yet.
+    let admin = sqlx::PgPool::connect(&url).await.unwrap();
+    let name = format!("upgrade_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE DATABASE {name}")).execute(&admin).await.unwrap();
+    let options = url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .unwrap()
+        .database(&name);
+    let pool = sqlx::PgPool::connect_with(options).await.unwrap();
+    upgrade(DbPool::Postgres(pool.clone()), sqlx::migrate!("../../apps/server/migrations")).await;
+    pool.close().await;
+    sqlx::query(&format!("DROP DATABASE {name}")).execute(&admin).await.unwrap();
 }

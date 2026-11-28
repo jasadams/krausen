@@ -1,5 +1,0 @@
-# Debug-build test futures and serde visitors for the large native documents
-# (a brew plan holds several copies of the equipment settings) are deep. The
-# 2 MiB default test-thread stack was within a few percent of overflowing.
-[env]
-RUST_MIN_STACK = "8388608"

@@ -512,12 +512,12 @@ mod tests {
 
     #[test]
     fn editing_an_equipment_override_retires_the_effective_equipment_path() {
-        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm", "equipment.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm", "equipment.boil_loss_l_per_h");
     }
 
     #[test]
     fn editing_an_equipment_override_retires_the_override_path_too() {
-        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment_overrides.kettle_diameter_cm", "equipment_overrides.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment_overrides.kettle_diameter_cm", "equipment_overrides.boil_loss_l_per_h");
     }
 
     #[test]

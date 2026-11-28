@@ -122,10 +122,11 @@ impl ProfileLibrary {
     }
 }
 
-/// The workspace default profile, if one is set and readable. A new recipe
-/// starts from it. An unreadable list yields no default: the recipe form then
-/// shows its own profile-library error.
-pub async fn load_default_profile(identity: &OperationIntent) -> Option<EquipmentProfile> {
+/// The workspace default profile: `Ok(None)` only when none is set. A failed
+/// lookup is an error, never an unseeded recipe.
+pub async fn load_default_profile(
+    identity: &OperationIntent,
+) -> Result<Option<EquipmentProfile>, ServerFnError> {
     match equipment_command_shared(EquipmentCommand::List(EquipmentListQuery {
         intent: identity.clone(),
         cursor: None,
@@ -134,8 +135,9 @@ pub async fn load_default_profile(identity: &OperationIntent) -> Option<Equipmen
     }))
     .await
     {
-        Ok(EquipmentOutcome::Profiles(page)) => page.default_profile,
-        _ => None,
+        Ok(EquipmentOutcome::Profiles(page)) => Ok(page.default_profile),
+        Ok(_) => Err(ServerFnError::new("Unable to load the default equipment profile.")),
+        Err(error) => Err(error),
     }
 }
 
@@ -225,32 +227,11 @@ const COOLING_FLOW: usize = 16;
 /// Entered as percent, stored as a fraction.
 const PERCENT: [usize; 2] = [MASH_EFFICIENCY, SHRINKAGE];
 
-const EQUIPMENT_TYPES: [(&str, &str); 3] =
-    [("all_grain", "All grain"), ("extract", "Extract"), ("biab", "Brew in a bag")];
-const COOLING_METHODS: [(&str, &str); 4] = [
-    ("natural", "Natural"),
-    ("immersion_chiller", "Immersion chiller"),
-    ("ice_bath", "Ice bath"),
-    ("counterflow_chiller", "Counterflow chiller"),
-];
-
-fn cooling_key(method: Option<CoolingMethodV1>) -> &'static str {
-    match method {
-        None => "",
-        Some(CoolingMethodV1::Natural) => "natural",
-        Some(CoolingMethodV1::ImmersionChiller) => "immersion_chiller",
-        Some(CoolingMethodV1::IceBath) => "ice_bath",
-        Some(CoolingMethodV1::CounterflowChiller) => "counterflow_chiller",
-    }
-}
-fn cooling_method(key: &str) -> Option<CoolingMethodV1> {
-    match key {
-        "natural" => Some(CoolingMethodV1::Natural),
-        "immersion_chiller" => Some(CoolingMethodV1::ImmersionChiller),
-        "ice_bath" => Some(CoolingMethodV1::IceBath),
-        "counterflow_chiller" => Some(CoolingMethodV1::CounterflowChiller),
-        _ => None,
-    }
+const EQUIPMENT_TYPES: [(&str, &str); 1] = [("all_grain", "All grain")];
+/// Only a toggle the user changed is sent. The default is workspace state outside the
+/// revision checks, so an untouched stale value must not overwrite another session's choice.
+fn default_change(baseline: &ProfileForm, current: &ProfileForm) -> Option<bool> {
+    (current.is_default != baseline.is_default).then_some(current.is_default)
 }
 fn optional_text(text: &str) -> Option<String> {
     let trimmed = text.trim();
@@ -328,7 +309,7 @@ impl ProfileForm {
             sparge_water_alert: about.sparge_water_alert,
             sparge_progress_counter: about.sparge_progress_counter,
             boil_power_control: about.boil_power_control,
-            cooling_method: cooling_key(s.cooling_method).into(),
+            cooling_method: s.cooling_method.map_or("", CoolingMethodV1::key).into(),
             notes: about.notes.clone().unwrap_or_default(),
             raw,
         }
@@ -389,7 +370,7 @@ impl ProfileForm {
         settings.boil_loss_l_per_hour = parsed[BOIL_LOSS];
         settings.trub_and_chiller_loss_l = parsed[TRUB_LOSS];
         settings.kettle_diameter_cm = parsed[KETTLE_DIAMETER];
-        settings.cooling_method = cooling_method(&self.cooling_method);
+        settings.cooling_method = CoolingMethodV1::from_key(&self.cooling_method);
         settings.cooling_flow_rate_l_per_minute = parsed[COOLING_FLOW];
         let about = EquipmentAboutV1 {
             brand: optional_text(&self.brand),
@@ -792,13 +773,14 @@ pub fn EquipmentManager(
                 }
             },
         };
+        let is_default = default_change(&baseline.get_untracked(), &current_form);
         execute.run(EquipmentCommand::Save(SaveEquipment {
             intent: identity.get_untracked(),
             profile_id,
             name: current_form.name,
             settings,
             about,
-            is_default: Some(current_form.is_default),
+            is_default,
             provenance: current.as_ref().map(|p| p.provenance.clone()).unwrap_or(
                 EquipmentProvenance {
                     source: "manual".into(),
@@ -945,7 +927,7 @@ pub fn EquipmentManager(
         .map(|(key, label)| ((*key).to_owned(), (*label).to_owned()))
         .collect();
     let cooling_options: Vec<(String, String)> = std::iter::once((String::new(), "Not specified".to_owned()))
-        .chain(COOLING_METHODS.iter().map(|(key, label)| ((*key).to_owned(), (*label).to_owned())))
+        .chain(CoolingMethodV1::ALL.iter().map(|method| (method.key().to_owned(), method.label().to_owned())))
         .collect();
     let text = move |id: &'static str, label: &'static str, get: fn(&ProfileForm) -> &String, set: fn(&mut ProfileForm, String)| {
         let value = Signal::derive(move || form.with(|f| get(f).clone()));
@@ -1146,6 +1128,18 @@ mod tests {
         let mut toggled = loaded.clone();
         toggled.sparge_water_alert = true;
         assert_ne!(toggled, loaded);
+    }
+
+    #[test]
+    fn an_untouched_default_toggle_is_not_sent_so_a_stale_form_cannot_overwrite_it() {
+        let loaded = ProfileForm::from_profile(Some(&profile(Default::default(), Default::default())));
+        assert!(loaded.is_default);
+        let mut edited = loaded.clone();
+        edited.notes = "changed".into();
+        assert_eq!(default_change(&loaded, &edited), None);
+        edited.is_default = false;
+        assert_eq!(default_change(&loaded, &edited), Some(false));
+        assert_eq!(default_change(&ProfileForm::blank(), &loaded), Some(true));
     }
 
     #[test]

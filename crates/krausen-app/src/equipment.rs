@@ -14,21 +14,10 @@ use krausen_types::{
     validation::Readiness,
 };
 
-const ABOUT_TEXT_LIMIT: usize = 4000;
-const ABOUT_EQUIPMENT_TYPES: &[&str] = &["all_grain", "extract", "biab"];
+const ABOUT_EQUIPMENT_TYPES: &[&str] = &["all_grain"];
 
 fn validate_about(about: &EquipmentAboutV1) -> Result<(), Error> {
-    let text = [
-        &about.brand,
-        &about.description,
-        &about.controller_type,
-        &about.recirculation_system,
-        &about.notes,
-    ];
-    if text
-        .iter()
-        .any(|t| t.as_ref().is_some_and(|t| t.chars().count() > ABOUT_TEXT_LIMIT))
-        || about.measurement.as_deref().is_some_and(|m| m != "metric")
+    if about.measurement.as_deref().is_some_and(|m| m != "metric")
         || about
             .equipment_type
             .as_deref()

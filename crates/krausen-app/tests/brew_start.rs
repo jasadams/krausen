@@ -706,8 +706,11 @@ async fn exercise(db: DbPool) {
     assert!(still_readable.is_some());
 }
 
-#[tokio::test]
-async fn sqlite_brew_start() {
+#[test]
+fn sqlite_brew_start() {
+    big_stack(sqlite_brew_start_body());
+}
+async fn sqlite_brew_start_body() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -720,8 +723,11 @@ async fn sqlite_brew_start() {
     Box::pin(exercise(DbPool::Sqlite(pool))).await;
 }
 
-#[tokio::test]
-async fn postgres_brew_start() {
+#[test]
+fn postgres_brew_start() {
+    big_stack(postgres_brew_start_body());
+}
+async fn postgres_brew_start_body() {
     let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
         .expect("KRAUSEN_TEST_POSTGRES_URL is required for PostgreSQL tests");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
@@ -732,8 +738,11 @@ async fn postgres_brew_start() {
     Box::pin(exercise(DbPool::Postgres(pool))).await;
 }
 
-#[tokio::test]
-async fn postgres_start_rechecks_authority_after_profile_lock_wait() {
+#[test]
+fn postgres_start_rechecks_authority_after_profile_lock_wait() {
+    big_stack(postgres_start_rechecks_authority_after_profile_lock_wait_body());
+}
+async fn postgres_start_rechecks_authority_after_profile_lock_wait_body() {
     use std::time::Duration;
 
     let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
@@ -810,4 +819,21 @@ async fn postgres_start_rechecks_authority_after_profile_lock_wait() {
         .await
         .unwrap();
     assert_eq!(brews, 0);
+}
+
+/// Brew start holds several copies of the native plan and equipment documents in one debug-build
+/// future, which no longer fits libtest's default 2 MiB test-thread stack.
+fn big_stack(test: impl std::future::Future<Output = ()> + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

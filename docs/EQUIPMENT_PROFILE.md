@@ -3,7 +3,7 @@
 Status: Jason's equipment spec, recorded 2026-11-28 under KRA-70. It is the
 approved target for the Equipment manager (UX-005, IA-009, VIS-002/003). It was
 given when the design started but never written down, so the earlier design was
-built without it. Formulas are in [CALCULATIONS.md](CALCULATIONS.md#equipment-profile-v2-water-chain-and-capacity-checks);
+built without it. Formulas are in [CALCULATIONS.md](CALCULATIONS.md#equipment-profile-water-chain-and-capacity-checks-policy-v3);
 storage is in [DATA_MODEL.md](DATA_MODEL.md#equipment-profile-record).
 
 **Why.** A brewer setting up their system (for example a Grainfather G30) expects

@@ -735,7 +735,7 @@ export const SIGNED_OUT = { cookies: [], origins: [] };
 
 /**
  * Create a shared equipment profile through the real Equipment manager.
- * `values` maps manager field ids (for example `profile-boil-off`) to raw text.
+ * `values` maps manager field ids (for example `profile-boil-loss`) to raw text.
  * Returns the saved profile's id from the manager's selection.
  */
 export async function createEquipmentProfile(

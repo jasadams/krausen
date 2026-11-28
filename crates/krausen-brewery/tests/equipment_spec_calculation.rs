@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! KRA-70: the spec's water chain, capacity warnings and cooling methods
-//! (docs/CALCULATIONS.md, "Equipment profile V2").
+//! (docs/CALCULATIONS.md, "Equipment profile: water chain").
 use krausen_brewery::{mapping::calculation::targets_with_defaults, validation::validate_draft};
 use krausen_types::{
     brewery::*,

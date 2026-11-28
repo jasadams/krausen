@@ -134,7 +134,7 @@ total_water_l = pre_boil_l + grain_absorption_l + D
 
 `trub_and_chiller_loss_l` is wort lost after boiling; `mash_tun_deadspace_l` is
 additional unrecoverable water before boiling. Neither includes the other. The
-[equipment profile V2 section](#equipment-profile-v2-water-chain-and-capacity-checks)
+[equipment profile V2 section](#equipment-profile-water-chain-and-capacity-checks-policy-v3)
 adds the sparge-stage and shrinkage terms.
 
 Choose `manual` mash water or `profile_thickness`. The latter derives
@@ -145,7 +145,7 @@ Invalid, never clamped; zero is no sparge. Without mashed grain, mash/sparge are
 zero and all water is kettle water. Allocations must balance to total water.
 Post-boil dilution is unsupported V1, not another meaning of kettle top-up.
 
-### Equipment profile V2: water chain and capacity checks
+### Equipment profile: water chain and capacity checks (policy V3)
 
 Policy `krausen-formulation-v3` applies the [equipment profile
 spec](EQUIPMENT_PROFILE.md). It extends the water chain above with the spec's
@@ -187,8 +187,9 @@ above; the sparge water is the total loaded into the sparge vessel and so
 includes `D_s`. Pre-boil SG uses `pre_boil_l`; OG, colour and bitterness inputs
 are unchanged because they use the reference post-boil volume and batch.
 
-Capacity checks produce warning diagnostics (`vessel_capacity_exceeded`, with the
-vessel, required litres and capacity), never clamping and never blocking Save.
+Capacity checks produce vessel warnings in the targets (`vessel_warnings`: the
+vessel, required litres and capacity), never clamping and never blocking Save or
+start; they do not change readiness.
 A vessel with no volume entered is not checked. Mash volume uses the visible
 assumption `grain_displacement_l_per_kg = 0.67` (decision D4):
 

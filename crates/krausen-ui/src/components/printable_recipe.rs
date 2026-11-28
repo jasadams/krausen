@@ -124,15 +124,22 @@ fn cooling_label(settings: &krausen_types::brewery::EquipmentSettingsV1) -> Stri
     }
 }
 
-fn assumption_text(key: &str) -> String {
-    let known = match key {
+/// Plain text of a recorded calculation assumption; shared by the editor and the print sheet.
+pub(crate) fn known_assumption_text(key: &str) -> Option<&'static str> {
+    match key {
         "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
         "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
         "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
         "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
+        "kettle_uncovered" => Some("The kettle is assumed uncovered."),
+        "boil_temperature_100c" => Some("The boil is assumed to be at 100 °C."),
+        "grain_displacement_0_67_l_per_kg" => Some("Mashed grain is assumed to displace 0.67 L per kg (mash tun overfill warning only)."),
         _ => None,
-    };
-    if let Some(text) = known {
+    }
+}
+
+fn assumption_text(key: &str) -> String {
+    if let Some(text) = known_assumption_text(key) {
         return text.to_owned();
     }
     if let Some(profile) = key.strip_prefix("profile:") {

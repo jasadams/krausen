@@ -287,7 +287,7 @@ pub fn RecipeEditorPage() -> impl IntoView {
             };
             let seed = if id == "new" {
                 crate::pages::equipment_profiles::load_default_profile(&identity)
-                    .await
+                    .await?
                     .map(|profile| profile.new_recipe_seed())
             } else {
                 None
@@ -2179,13 +2179,7 @@ fn PreviewSource(
     revision: RwSignal<Option<i64>>,
 ) -> impl IntoView {
     let equipment = preview.context.as_ref().map(effective_equipment);
-    let assumptions = preview.context.as_ref().map(|context| context.assumptions.iter().filter_map(|value| match value.as_str() {
-        "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
-        "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
-        "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
-        "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
-        _ => None,
-    }).collect::<Vec<_>>()).unwrap_or_default();
+    let assumptions = preview.context.as_ref().map(|context| context.assumptions.iter().filter_map(|value| crate::components::printable_recipe::known_assumption_text(value)).collect::<Vec<_>>()).unwrap_or_default();
     let style = preview.style.as_ref().map(|style| format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition));
     view! {
         // Always visible and quiet: which draft these numbers describe. The

@@ -198,7 +198,7 @@ pub fn effective_lines(
         .collect();
     if let Some(method) = effective.cooling_method {
         lines.push((
-            format!("Cooling method: {} · {}", cooling_label(method), origin(overrides.cooling_method.is_some())),
+            format!("Cooling method: {} · {}", method.label(), origin(overrides.cooling_method.is_some())),
             overrides.cooling_method.is_some(),
         ));
     }
@@ -207,24 +207,6 @@ pub fn effective_lines(
 
 fn shown(value: f64, scale: f64) -> String {
     (((value * scale) * 1e6).round() / 1e6).to_string()
-}
-
-fn cooling_key(method: Option<CoolingMethodV1>) -> &'static str {
-    match method {
-        None => "",
-        Some(CoolingMethodV1::Natural) => "natural",
-        Some(CoolingMethodV1::ImmersionChiller) => "immersion_chiller",
-        Some(CoolingMethodV1::IceBath) => "ice_bath",
-        Some(CoolingMethodV1::CounterflowChiller) => "counterflow_chiller",
-    }
-}
-fn cooling_label(method: CoolingMethodV1) -> &'static str {
-    match method {
-        CoolingMethodV1::Natural => "Natural",
-        CoolingMethodV1::ImmersionChiller => "Immersion chiller",
-        CoolingMethodV1::IceBath => "Ice bath",
-        CoolingMethodV1::CounterflowChiller => "Counterflow chiller",
-    }
 }
 
 /// Plain-language inherited/effective/overridden state for one value.
@@ -359,24 +341,18 @@ pub fn RecipeEquipment(
         let query = [profile, back].into_iter().flatten().collect::<Vec<_>>().join("&");
         if query.is_empty() { "/equipment".to_owned() } else { format!("/equipment?{query}") }
     });
-    let cooling = Signal::derive(move || draft.with(|d| cooling_key(d.document().equipment_overrides.cooling_method).to_owned()));
+    let cooling = Signal::derive(move || draft.with(|d| d.document().equipment_overrides.cooling_method.map_or("", CoolingMethodV1::key).to_owned()));
     let cooling_change = Callback::new(move |value: String| {
         draft.update(|d| {
             d.edit(|doc| {
-                doc.equipment_overrides.cooling_method = match value.as_str() {
-                    "natural" => Some(CoolingMethodV1::Natural),
-                    "immersion_chiller" => Some(CoolingMethodV1::ImmersionChiller),
-                    "ice_bath" => Some(CoolingMethodV1::IceBath),
-                    "counterflow_chiller" => Some(CoolingMethodV1::CounterflowChiller),
-                    _ => None,
-                };
+                doc.equipment_overrides.cooling_method = CoolingMethodV1::from_key(&value);
             })
         })
     });
     let cooling_error = Signal::derive(move || draft.with(|d| d.validation_error("equipment.cooling_method").map(str::to_owned)));
     let cooling_need = Signal::derive(move || draft.with(|d| d.validation_hint("equipment.cooling_method").map(str::to_owned)));
     let cooling_hint = Signal::derive(move || {
-        let inherited = usable_profile.get().map(|p| (p.name.clone(), cooling_key(p.settings.cooling_method)));
+        let inherited = usable_profile.get().map(|p| (p.name.clone(), p.settings.cooling_method.map_or("", CoolingMethodV1::key)));
         match (cooling.get().as_str(), inherited) {
             ("", Some((name, ""))) => format!("Not overridden. {name} has no cooling method."),
             ("", Some((name, method))) => format!("Inherited: effective {method} cooling from {name}."),
@@ -385,13 +361,9 @@ pub fn RecipeEquipment(
         }
     });
     let cooling_hint = Signal::derive(move || with_need(cooling_need.get(), cooling_hint.get()));
-    let cooling_options: Vec<(String, String)> = vec![
-        (String::new(), "Inherit / not specified".to_owned()),
-        ("natural".into(), "Natural".into()),
-        ("immersion_chiller".into(), "Immersion chiller".into()),
-        ("ice_bath".into(), "Ice bath".into()),
-        ("counterflow_chiller".into(), "Counterflow chiller".into()),
-    ];
+    let cooling_options: Vec<(String, String)> = std::iter::once((String::new(), "Inherit / not specified".to_owned()))
+        .chain(CoolingMethodV1::ALL.iter().map(|method| (method.key().to_owned(), method.label().to_owned())))
+        .collect();
     view! {
         <BrewerySection title="Equipment for this recipe">
             <div class="recipe-editor__fields">

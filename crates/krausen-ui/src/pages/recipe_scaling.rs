@@ -50,9 +50,9 @@ fn warning_text(warning: &ScaleWarning) -> String {
             mash_tun_deadspace_l,
             mash_grain_absorption_l_per_kg,
         } => format!(
-            "Fixed losses stay unchanged (transfer {}, boil-off {}, deadspace {}, absorption {}), so targets can change. This is ingredient scaling, not target matching.",
+            "Fixed losses stay unchanged (trub and chiller loss {}, boil loss {}, mash tun deadspace {}, mash grain absorption {}), so targets can change. This is ingredient scaling, not target matching.",
             option_value(*trub_and_chiller_loss_l, "L"),
-            option_value(*boil_loss_l_per_hour, "L/h"),
+            option_value(*boil_loss_l_per_hour, "L/hr"),
             option_value(*mash_tun_deadspace_l, "L"),
             option_value(*mash_grain_absorption_l_per_kg, "L/kg"),
         ),

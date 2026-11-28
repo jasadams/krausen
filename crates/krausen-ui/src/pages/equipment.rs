@@ -52,7 +52,7 @@ fn EquipmentContent(identity: OperationIntent) -> impl IntoView {
                 <div>
                     <p class="kit-showcase__eyebrow">"Your brewery"</p>
                     <h1 id="equipment-heading" tabindex="-1">"Equipment"</h1>
-                    <p>"Profiles describe your vessels, losses and chilling. Recipes choose a profile and may adjust it for that recipe."</p>
+                    <p>"Profiles describe your mash, sparge, boil and cooling stages, with their volumes and losses. Recipes choose a profile and may adjust it for that recipe."</p>
                 </div>
                 {back.map(|href| view! { <ButtonLink href=href variant=ButtonVariant::Secondary>"Back to recipe"</ButtonLink> })}
             </header>

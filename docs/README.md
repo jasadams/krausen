@@ -21,7 +21,7 @@ navigation/composition examples, while backend contracts retain their ownership.
 | [Installation authentication](AUTHENTICATION.md) | Session and token model, local owner setup and supported MCP authorization |
 | [Architecture](ARCHITECTURE.md) | Shared UI/MCP operations, transaction/auth/tenant and crate boundaries |
 | [Data model](DATA_MODEL.md) | Versioned native records, immutable plans, readings/corrections and lifecycle |
-| [Equipment profile spec](EQUIPMENT_PROFILE.md) | Jason's equipment spec verbatim, field mapping from the earlier profile and open keep/drop decisions |
+| [Equipment profile spec](EQUIPMENT_PROFILE.md) | Jason's equipment spec verbatim, the field mapping from the earlier profile, renames and fixed assumptions |
 | [Calculations](CALCULATIONS.md) | Versioned formula/input/context, equipment, scaling and preservation contracts |
 | [Design system](../DESIGN.md) | Approved visual/component/token reference; read with authoritative UX/IA target, not as proof of current implementation |
 | [Prototype guidance](design/prototype/AGENTS.md) | Scoped ownership rules for the reusable kit, tokens, page composition and real calculation bridge |

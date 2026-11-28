@@ -92,7 +92,7 @@ pub struct StyleReference {
 #[serde(default)]
 pub struct EquipmentSettingsV1 {
     pub schema_version: u32,
-    /// Recipe-level "Brewhouse efficiency override". Never a profile field.
+    /// Recipe-level "Brewhouse efficiency override" only. A profile save that sets it is rejected.
     pub efficiency_override_fraction: Option<f64>,
     /// Mash tun volume in litres; a capacity check only.
     pub mash_tun_volume_l: Option<f64>,
@@ -163,6 +163,35 @@ impl EquipmentSettingsV1 {
     pub fn into_profile_settings(mut self) -> Self {
         self.efficiency_override_fraction = None;
         self
+    }
+}
+
+impl CoolingMethodV1 {
+    pub const ALL: [CoolingMethodV1; 4] = [
+        Self::Natural,
+        Self::ImmersionChiller,
+        Self::IceBath,
+        Self::CounterflowChiller,
+    ];
+    /// The serialized name, also used as a form control value.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::ImmersionChiller => "immersion_chiller",
+            Self::IceBath => "ice_bath",
+            Self::CounterflowChiller => "counterflow_chiller",
+        }
+    }
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|method| method.key() == key)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Natural => "Natural",
+            Self::ImmersionChiller => "Immersion chiller",
+            Self::IceBath => "Ice bath",
+            Self::CounterflowChiller => "Counterflow chiller",
+        }
     }
 }
 
