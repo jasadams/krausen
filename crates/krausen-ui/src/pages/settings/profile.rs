@@ -242,8 +242,6 @@ fn RecipeDefaultsCard() -> impl IntoView {
     // unread setting; `Some(None)` is a setting the user has not made.
     let (stored, set_stored) = signal(None::<Option<f64>>);
     let (message, set_message) = signal(None::<(bool, String)>);
-    // The text of the save in flight, so its answer never replaces what was typed since.
-    let submitted = StoredValue::new(String::new());
     let save_action = Action::new(|settings: &UserSettings| {
         let settings = settings.clone();
         async move { save_user_settings(settings).await }
@@ -265,9 +263,8 @@ fn RecipeDefaultsCard() -> impl IntoView {
             set_message.set(Some(match result {
                 Ok(UserSettingsOutcome::Settings(saved)) => {
                     set_stored.set(Some(saved.default_batch_size_l));
-                    if text.get_untracked() == submitted.get_value() {
-                        set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
-                    }
+                    // The field is disabled while a save runs, so the text is still what was sent.
+                    set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
                     (true, "Saved".to_string())
                 }
                 Ok(UserSettingsOutcome::Invalid) => (false, "Enter a batch size greater than zero, in litres.".to_string()),
@@ -286,7 +283,6 @@ fn RecipeDefaultsCard() -> impl IntoView {
         match parse_default_batch(&text.get_untracked()) {
             Ok(value) if value == stored_value => {}
             Ok(default_batch_size_l) => {
-                submitted.set_value(text.get_untracked());
                 save_action.dispatch(UserSettings { default_batch_size_l });
             }
             Err(problem) => set_message.set(Some((false, problem.to_string()))),
