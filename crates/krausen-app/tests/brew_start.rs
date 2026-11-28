@@ -8,7 +8,7 @@ use krausen_core::DbPool;
 use krausen_types::{
     brew::{StartBrewOutcome, StartBrewRequest},
     brewery::{
-        AdditionStage, BrewStatusV1, ChillingV1, EquipmentProvenance, EquipmentSettingsV1,
+        AdditionStage, BrewStatusV1, CoolingMethodV1, EquipmentProvenance, EquipmentSettingsV1,
         FermentableAddition, FermentableSpecification, ProcessV1, RecipeDocumentV1, StyleReference,
     },
     equipment::{ArchiveEquipment, SaveEquipment},
@@ -81,18 +81,18 @@ fn equipment_request(profile_id: &str) -> SaveEquipment {
         name: "20 L kettle".into(),
         settings: EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.75),
-            boil_off_l_per_hour: Some(3.0),
-            transfer_loss_l: Some(2.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
             mash_thickness_l_per_kg: Some(2.5),
-            kettle_capacity_l: Some(30.0),
+            boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            kettle_opening_cm: Some(30.0),
-            boil_temperature_c: Some(100.0),
-            chilling: Some(ChillingV1::Natural),
+            cooling_method: Some(CoolingMethodV1::Natural),
             ..Default::default()
         },
+        about: Default::default(),
+        is_default: None,
         provenance: EquipmentProvenance {
             source: "test fixture".into(),
             assumptions: vec!["brewhouse_loss_calibrated".into()],
@@ -215,7 +215,7 @@ async fn exercise(db: DbPool) {
     let doc1 = complete_document(&profile_id, "Revision one");
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = save_recipe(&db, &actor, None, None, &doc1).await
     else {
         panic!("recipe fixture");
@@ -248,7 +248,7 @@ async fn exercise(db: DbPool) {
     );
     assert_eq!(plan.original_targets, preview1.targets);
     assert_eq!(plan.context_id, digest1);
-    assert_eq!(plan.policy_version, "krausen-formulation-v2");
+    assert_eq!(plan.policy_version, "krausen-formulation-v3");
     assert_eq!(
         plan.calculation_context,
         preview1.context.clone().expect("context")
@@ -279,7 +279,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&recipe_id), Some(1), &doc2).await,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     let historical = start_request(&actor, &recipe_id, 1, None, &digest1);
@@ -350,7 +351,7 @@ async fn exercise(db: DbPool) {
     updated.intent = intent(&actor);
     updated.expected_revision = 1;
     updated.expected_metadata_revision = 1;
-    updated.settings.boil_off_l_per_hour = Some(4.0);
+    updated.settings.boil_loss_l_per_hour = Some(4.0);
     updated.request_id = Uuid::new_v4().to_string();
     equipment::save(&db, &actor, updated)
         .await
@@ -412,7 +413,7 @@ async fn exercise(db: DbPool) {
             if refreshed
                 .context
                 .as_ref()
-                .is_some_and(|context| context.policy_version == "krausen-formulation-v2")
+                .is_some_and(|context| context.policy_version == "krausen-formulation-v3")
     ));
 
     // Engine fallbacks actually used are frozen explicitly, not left as nulls.
@@ -706,8 +707,11 @@ async fn exercise(db: DbPool) {
     assert!(still_readable.is_some());
 }
 
-#[tokio::test]
-async fn sqlite_brew_start() {
+#[test]
+fn sqlite_brew_start() {
+    big_stack(sqlite_brew_start_body());
+}
+async fn sqlite_brew_start_body() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -720,8 +724,11 @@ async fn sqlite_brew_start() {
     Box::pin(exercise(DbPool::Sqlite(pool))).await;
 }
 
-#[tokio::test]
-async fn postgres_brew_start() {
+#[test]
+fn postgres_brew_start() {
+    big_stack(postgres_brew_start_body());
+}
+async fn postgres_brew_start_body() {
     let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
         .expect("KRAUSEN_TEST_POSTGRES_URL is required for PostgreSQL tests");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
@@ -732,8 +739,11 @@ async fn postgres_brew_start() {
     Box::pin(exercise(DbPool::Postgres(pool))).await;
 }
 
-#[tokio::test]
-async fn postgres_start_rechecks_authority_after_profile_lock_wait() {
+#[test]
+fn postgres_start_rechecks_authority_after_profile_lock_wait() {
+    big_stack(postgres_start_rechecks_authority_after_profile_lock_wait_body());
+}
+async fn postgres_start_rechecks_authority_after_profile_lock_wait_body() {
     use std::time::Duration;
 
     let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL")
@@ -810,4 +820,21 @@ async fn postgres_start_rechecks_authority_after_profile_lock_wait() {
         .await
         .unwrap();
     assert_eq!(brews, 0);
+}
+
+/// Brew start holds several copies of the native plan and equipment documents in one debug-build
+/// future, which no longer fits libtest's default 2 MiB test-thread stack.
+fn big_stack(test: impl std::future::Future<Output = ()> + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

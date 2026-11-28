@@ -1792,7 +1792,7 @@ mod regression_tests {
     fn effective_equipment_values_are_trimmed_and_attributed() {
         let effective = EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.57999999999999996),
-            boil_off_l_per_hour: Some(3.0),
+            boil_loss_l_per_hour: Some(3.0),
             ..Default::default()
         };
         let overrides = EquipmentSettingsV1 {
@@ -1810,8 +1810,8 @@ mod regression_tests {
         );
         let boil = lines
             .iter()
-            .find(|(l, _)| l.starts_with("Boil-off"))
+            .find(|(l, _)| l.starts_with("Boil loss"))
             .unwrap();
-        assert_eq!(boil, &("Boil-off: 3 L/h · from profile".to_owned(), false));
+        assert_eq!(boil, &("Boil loss: 3 L/hr · from profile".to_owned(), false));
     }
 }

@@ -4,7 +4,7 @@ use krausen_app::{ActorContext, equipment, process_summary, recipe_editor};
 use krausen_core::DbPool;
 use krausen_types::{
     brewery::{
-        AdditionStage, ChillingV1, EquipmentProvenance, EquipmentSettingsV1, FermentableAddition,
+        AdditionStage, CoolingMethodV1, EquipmentProvenance, EquipmentSettingsV1, FermentableAddition,
         FermentableSpecification, HopAddition, HopSpecification, IngredientAddition,
         IngredientSpecification, ProcessStep, ProcessV1, RecipeDocumentV1, StyleReference,
     },
@@ -171,18 +171,18 @@ fn equipment_request(name: &str) -> SaveEquipment {
         name: name.into(),
         settings: EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.75),
-            boil_off_l_per_hour: Some(3.0),
-            transfer_loss_l: Some(2.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
             mash_thickness_l_per_kg: Some(2.5),
-            kettle_capacity_l: Some(30.0),
+            boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            kettle_opening_cm: Some(30.0),
-            boil_temperature_c: Some(100.0),
-            chilling: Some(ChillingV1::Natural),
+            cooling_method: Some(CoolingMethodV1::Natural),
             ..Default::default()
         },
+        about: Default::default(),
+        is_default: None,
         provenance: EquipmentProvenance {
             source: "test fixture".into(),
             assumptions: vec!["brewhouse_loss_calibrated".into()],
@@ -247,7 +247,7 @@ async fn exercise(db: DbPool) {
     let mut draft = complete_draft(&profile_id);
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = save_recipe(&db, &actor, None, None, &draft).await
     else {
         panic!("initial recipe save failed");
@@ -257,7 +257,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&recipe_id), Some(1), &draft).await,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
 
@@ -449,7 +450,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&other_recipe), Some(1), &other).await,
         RecipeSaveOutcome::Saved {
             recipe_id: other_recipe.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     other.title = "Other recipe three".into();
@@ -457,7 +459,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&other_recipe), Some(2), &other).await,
         RecipeSaveOutcome::Saved {
             recipe_id: other_recipe.clone(),
-            revision: 3
+            revision: 3,
+            default_equipment: None,
         }
     );
     assert_eq!(

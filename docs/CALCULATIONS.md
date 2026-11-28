@@ -54,10 +54,10 @@ Yield affects gravity and bitterness; missing colour affects colour alone.
 Present batch volume and Ready addition quantities must be positive. Yield and
 mash efficiency are in `(0, 1]`; attenuation and alpha are in `[0, 1]`; colour,
 losses, absorption and durations are nonnegative. Hop exposure cannot exceed the
-boil. Kettle diameter/opening are positive and opening cannot exceed diameter.
-Forced chilling requires positive rate and plateau below boil temperature;
-counterflow requires positive flow. Zero-rate fallback defaults in the current
-engine must not silently replace invalid inputs. Explicitly selected defaults
+boil. Kettle diameter is positive; the kettle is assumed uncovered (opening equals
+diameter) and the boil 100 °C. Counterflow chilling requires a positive flow rate;
+other cooling methods resolve to the published curves. Zero-rate fallback defaults
+in the current engine must not silently replace invalid inputs. Explicitly selected defaults
 carry assumption provenance and resolve to concrete values before calculation.
 
 Retain finite binary64 values without display rounding. Defaults: SG 3 decimals,
@@ -119,8 +119,10 @@ show the assumption. Hot observed volumes retain their physical/temperature
 context and are not silently compared as reference volumes. Thermal correction
 is a versioned later expansion.
 
-For batch `B`, post-boil transfer loss `L`, boil-off `E` L/h, boil duration `T`
-minutes, mashed-grain mass `G`, absorption `A` L/kg and pre-boil deadspace `D`:
+This is the water chain with the equipment-spec stage terms absent (the V2 chain,
+which V3 reduces to). For batch `B`, post-boil trub and chiller loss `L`, boil loss
+`E` L/h, boil duration `T` minutes, mashed-grain mass `G`, mash grain absorption `A`
+L/kg and mash tun deadspace `D`:
 
 ```text
 post_boil_kettle_l = B + L
@@ -130,10 +132,10 @@ grain_absorption_l = G × A
 total_water_l = pre_boil_l + grain_absorption_l + D
 ```
 
-`transfer_loss_l` is wort lost after boiling; `pre_boil_deadspace_l` is additional
-unrecoverable water before boiling. Neither includes the other. Mapping legacy
-`kettle_deadspace_l` requires an explicit assumption and retained source value,
-not double-counting that loss as transfer loss.
+`trub_and_chiller_loss_l` is wort lost after boiling; `mash_tun_deadspace_l` is
+additional unrecoverable water before boiling. Neither includes the other. The
+[equipment profile V2 section](#equipment-profile-water-chain-and-capacity-checks-policy-v3)
+adds the sparge-stage and shrinkage terms.
 
 Choose `manual` mash water or `profile_thickness`. The latter derives
 `mash_water_l = mashed_grain_kg × profile_mash_thickness_l_per_kg`, with positive
@@ -142,6 +144,85 @@ kettle_top_up_l`; explicit kettle top-up defaults to zero. Negative sparge is
 Invalid, never clamped; zero is no sparge. Without mashed grain, mash/sparge are
 zero and all water is kettle water. Allocations must balance to total water.
 Post-boil dilution is unsupported V1, not another meaning of kettle top-up.
+
+### Equipment profile: water chain and capacity checks (policy V3)
+
+Policy `krausen-formulation-v3` applies the [equipment profile
+spec](EQUIPMENT_PROFILE.md). It extends the water chain above with the spec's
+stage losses and adds capacity warnings. Pre-V3 accepted digests are rejected with
+a context conflict, as for the V1→V2 step. Existing profile data is not migrated:
+the profile is the spec's shape, and older profiles are reset to it.
+
+Inputs (profile fields, each overridable per recipe like the existing ones): mash
+tun deadspace `D_m`, mash tun loss `M`, sparge deadspace `D_s`, mash grain
+absorption `A_m`, sparge grain absorption `A_s`, wort shrinkage `s` as a fraction
+in `[0, 1)`, trub and chiller loss `L` (the earlier "transfer loss"), boil loss
+`E` L/h (the earlier "boil-off"), and the vessel volumes `V_mash`, `V_sparge`,
+`V_boil`. `M`, `D_s`, `A_s` and `s` default to zero when absent, recorded as
+applied defaults with provenance, never silently. Boil loss `E` is a **hot**
+volume rate. Opening equals kettle diameter and the boil is 100 °C (fixed,
+visible assumptions); the cooling method resolves to a chilling curve before the
+pure engine is called ([spec](EQUIPMENT_PROFILE.md#fixed-assumptions-not-fields)).
+
+Wort shrinkage is the fractional volume lost when hot wort cools to the 20 °C
+reference basis. It replaces the V1 statement that no shrinkage is modelled: with
+`s = 0` the statements agree. Volumes are tracked on the reference basis; the
+hot kettle volume is the reference volume divided by `(1 - s)`.
+
+```text
+post_boil_kettle_l = B + L                                  (reference basis, as V2)
+post_boil_hot_l    = post_boil_kettle_l / (1 - s)
+pre_boil_hot_l     = post_boil_hot_l + E × T / 60
+pre_boil_l         = pre_boil_hot_l × (1 - s)                (= post_boil_kettle_l + E × T / 60 × (1 - s))
+grain_absorption_l = G × (A_m + A_s)
+total_water_l      = pre_boil_l + grain_absorption_l + D_m + M + D_s
+```
+
+Mash tun deadspace, mash tun loss and sparge deadspace are unrecoverable water
+before the boil: they raise total water and take no extract of their own, because
+mash efficiency already counts only the extract that reaches the kettle (no second
+efficiency penalty, as for transfer loss). They differ in what they describe, not
+in how they enter the water chain. Mash water and the sparge remainder are as
+above; the sparge water is the total loaded into the sparge vessel and so
+includes `D_s`. Pre-boil SG uses `pre_boil_l`; OG and colour are unchanged because they use the
+reference post-boil volume and batch. Bitterness uses the boil's volumes for its
+gravity-dependent utilisation, which follow the reference boil loss `E × (1 - s)`, so
+shrinkage can change IBU slightly.
+
+Capacity checks produce vessel warnings in the targets (`vessel_warnings`: the
+vessel, required litres and capacity), never clamping and never blocking Save or
+start; they do not change readiness.
+A vessel with no volume entered is not checked. Mash volume uses the visible
+assumption `grain_displacement_l_per_kg = 0.67` (decision D4):
+
+```text
+mash_volume_l  = mash_water_l + G × 0.67        must be <= V_mash   (only with mashed grain; warning only)
+sparge_volume_l = sparge_water_l                must be <= V_sparge (only when sparge > 0)
+kettle_peak_l  = pre_boil_hot_l                 must be <= V_boil
+```
+
+Worked case: 20 L batch, `L` = 2, `E` = 3 L/h, 60 minutes, `s` = 4%, 4.2 kg
+mashed grain, `A_m` = 0.8, `A_s` = 0.1, `D_m` = 3.5, `M` = 0.5, `D_s` = 1,
+mash thickness 2.8 L/kg, `V_mash` = 30, `V_sparge` = 19, `V_boil` = 30:
+
+| Quantity | Calculation | Expected |
+| --- | --- | --- |
+| Post-boil kettle (reference) | 20 + 2 | 22 L |
+| Post-boil hot | 22 / 0.96 | 22.916666666667 L |
+| Pre-boil hot | 22.916666666667 + 3 | 25.916666666667 L |
+| Pre-boil (reference) | 25.916666666667 × 0.96 | 24.88 L |
+| Absorption | 4.2 × (0.8 + 0.1) | 3.78 L |
+| Total water | 24.88 + 3.78 + 3.5 + 0.5 + 1 | 33.66 L |
+| Mash water | 4.2 × 2.8 | 11.76 L |
+| Sparge | 33.66 - 11.76 | 21.9 L |
+| Pre-boil SG, 945 points·L | 1 + 945 / 24.88 / 1000 | 1.037982315113 |
+| OG | 1 + 945 / 22 / 1000 | 1.042954545455 |
+| Mash volume | 11.76 + 4.2 × 0.67 = 14.574 | within 30 L |
+| Sparge vessel | 21.9 against 19 | exceeded by 2.9 L, flagged |
+| Kettle peak | 25.916666666667 against 30 | within |
+
+Check: with `s`, `A_s`, `M`, `D_s` absent and `D_m` = 0, the 20 L worked case
+above still gives 25 / 28.36 L and 13.36 L sparge.
 
 ### Gravity, attenuation and colour
 

@@ -40,6 +40,9 @@ pub(super) fn changes(
 }
 
 fn native_text(value: &Value, path: &str) -> String {
+    if path == "recipe_only_equipment" {
+        return if value.as_bool() == Some(true) { "Yes".into() } else { "No".into() };
+    }
     if path.ends_with("_fraction") && value.is_number() { format!("{} (fraction)", display(value)) }
     else { display(value) }
 }
@@ -103,6 +106,7 @@ fn field_label(key: &str) -> String {
         "volume_l" => "Volume (L)",
         "equipment_overrides" => "Recipe equipment settings",
         "equipment_profile_id" => "Selected equipment profile",
+        "recipe_only_equipment" => "Recipe-only equipment chosen",
         "other_ingredients" => "Other additions",
         "mash_steps" => "Mash steps",
         "fermentation_steps" => "Fermentation steps",

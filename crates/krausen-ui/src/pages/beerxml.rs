@@ -82,10 +82,17 @@ fn matches_import_context(request: &ImportRequest, result: &ImportPreview) -> bo
                                     && context.equipment_draft == profile.settings
                                     && context.equipment_provenance == "saved_profile"
                             }),
-                            None => {
-                                context.equipment_profile.is_none()
-                                    && context.equipment_draft == request.equipment_draft
-                            }
+                            // No profile named: the server used the workspace default if one is set.
+                            None => match &context.equipment_profile {
+                                Some(profile) => {
+                                    profile.workspace_id == request.intent.workspace_id
+                                        && result.document.equipment_profile_id.as_deref() == Some(profile.profile_id.as_str())
+                                        && !profile.archived
+                                        && context.equipment_draft == profile.settings
+                                        && context.equipment_provenance == "saved_profile"
+                                }
+                                None => context.equipment_draft == request.equipment_draft,
+                            },
                         }
                 })
         }
@@ -425,6 +432,15 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 if append {
                     profiles.update(|items| items.extend(page.items));
                 } else {
+                    // An import with no chosen profile uses the workspace default, so show it chosen.
+                    if let Some(default) = &page.default_profile {
+                        if selected_profile.get_untracked().is_empty()
+                            && preview.get_untracked().is_none()
+                            && pending.get_untracked().is_none()
+                        {
+                            selected_profile.set(default.profile_id.clone());
+                        }
+                    }
                     profiles.set(page.items);
                 }
                 profile_cursor.set(page.next_cursor);
@@ -508,6 +524,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 .then(|| selected_profile.get_untracked()),
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
+            expected_profile_id: None,
+            expected_no_profile: false,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: generation,
         };
@@ -558,6 +576,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     colour_error.set(colour_problem);
                     efficiency_error.set(efficiency_problem);
                     let mut request = request;
+                    request.expected_profile_id = result.selected_profile_id.clone();
+                    request.expected_no_profile = result.selected_profile_id.is_none();
                     request.expected_profile_revision = result.selected_profile_revision;
                     request.expected_profile_metadata_revision =
                         result.selected_profile_metadata_revision;
@@ -918,7 +938,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             <BrewerySection title="Interpretation and equipment">
             <BreweryDraftSelect id="beerxml-colour" label="Source colour" value=Signal::from(colour) error=colour_error on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { colour.set(v); invalidate.run(()); } }) options=vec![("".into(), "Choose when present".into()), ("srm".into(), "SRM".into()), ("lovibond".into(), "Lovibond".into())]/>
             <BreweryDraftSelect id="beerxml-efficiency" label="Source efficiency" value=Signal::from(efficiency) error=efficiency_error on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { efficiency.set(v); invalidate.run(()); } }) options=vec![("".into(), "Choose when present".into()), ("override".into(), "Use as recipe override".into()), ("equipment".into(), "Use selected equipment".into())]/>
-            {move || { let mut options = vec![(String::new(), "No equipment profile".to_string())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id, p.name))); view! {
+            {move || { let mut options = vec![(String::new(), "No profile chosen (the workspace default is used if one is set)".to_string())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id, p.name))); view! {
                 <BreweryDraftSelect id="beerxml-equipment" label="Equipment profile" value=Signal::from(selected_profile) on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { selected_profile.set(v); invalidate.run(()); } }) options=options/>
             } }}
             <Show when=move || profile_cursor.get().is_some()><Button variant=ButtonVariant::Secondary on:click=move |_| { if !profile_loading.get_untracked() { load_profiles.run(profile_cursor.get_untracked()); } }>"Load more equipment profiles"</Button></Show>
@@ -1363,6 +1383,8 @@ mod tests {
             equipment_profile_id: None,
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
+            expected_profile_id: None,
+            expected_no_profile: false,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: "current".into(),
         };
@@ -1382,6 +1404,7 @@ mod tests {
             draft_generation: "current".into(),
             document: Default::default(),
             source_sha256: String::new(),
+            selected_profile_id: None,
             selected_profile_revision: None,
             selected_profile_metadata_revision: None,
             source_estimates: SourceEstimates::default(),

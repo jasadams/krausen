@@ -10,15 +10,45 @@ use krausen_types::interchange::{
     ImportPreviewOutcome, ImportRequest, OriginalOutcome,
 };
 
-fn project(request: &ImportRequest) -> Option<krausen_beerxml::native::NativeMigration> {
+/// The profile an import uses: the one named, else the workspace default. Only an
+/// explicitly named profile is checked against the request's expected revisions.
+async fn effective_profile_id(
+    tx: &mut DbTx<'_>,
+    actor: &ActorContext,
+    request: &ImportRequest,
+) -> Result<Option<String>, Error> {
+    // An import that names a profile, or brings its own recipe-only equipment, keeps that choice.
+    if request.equipment_profile_id.is_some() || request.equipment_draft.brings_recipe_equipment() {
+        return Ok(request.equipment_profile_id.clone());
+    }
+    let default = krausen_brewery::equipment_store::load_default(tx, &actor.workspace_id)
+        .await
+        .map_err(boundary_error)?;
+    authorize_workspace(tx, actor).await?;
+    Ok(default.map(|profile| profile.profile_id))
+}
+
+fn project(
+    request: &ImportRequest,
+    profile_id: Option<&str>,
+) -> Option<krausen_beerxml::native::NativeMigration> {
     if request.xml.len() > krausen_types::interchange::MAX_BEERXML_BYTES {
         return None;
     }
     let mut result =
         krausen_beerxml::native::from_xml_at(&request.xml, &request.choices, request.recipe_index)
             .ok()??;
-    result.document.equipment_profile_id = request.equipment_profile_id.clone();
-    if request.equipment_profile_id.is_none() {
+    result.document.equipment_profile_id = profile_id.map(str::to_owned);
+    if profile_id.is_some() && request.equipment_profile_id.is_none() {
+        // The workspace default was applied: the draft's only content is the recipe-level
+        // efficiency override, which the BeerXML efficiency choice, when made, outranks.
+        let document = &mut result.document.equipment_overrides;
+        if document.efficiency_override_fraction.is_none() {
+            document.efficiency_override_fraction =
+                request.equipment_draft.efficiency_override_fraction;
+        }
+    }
+    if profile_id.is_none() {
         let efficiency = result
             .document
             .equipment_overrides
@@ -38,7 +68,7 @@ fn project(request: &ImportRequest) -> Option<krausen_beerxml::native::NativeMig
             .get("header")
             .and_then(|v| v.get("efficiency"))
             .is_some_and(|v| !v.is_null())
-        && request.equipment_profile_id.is_none()
+        && profile_id.is_none()
         && request.equipment_draft.mash_efficiency_fraction.is_none()
         && request
             .equipment_draft
@@ -82,7 +112,8 @@ async fn preview_inner(
     let mut tx = pool.begin_write().await.map_err(boundary_error)?;
     authorize_workspace(&mut tx, actor).await?;
     check_intent(actor, &request.intent)?;
-    let profile = if let Some(profile_id) = &request.equipment_profile_id {
+    let profile_id = effective_profile_id(&mut tx, actor, request).await?;
+    let profile = if let Some(profile_id) = &profile_id {
         let profile =
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)
                 .await
@@ -93,7 +124,7 @@ async fn preview_inner(
         None
     };
     tx.commit().await.map_err(boundary_error)?;
-    let Some(imported) = project(request) else {
+    let Some(imported) = project(request, profile_id.as_deref()) else {
         return Ok(ImportPreviewOutcome::InvalidSource);
     };
     let calculation = crate::formulation::preview(
@@ -124,6 +155,7 @@ async fn preview_inner(
             .ok_or(Error::Invalid("missing original source"))?
             .sha256
             .clone(),
+        selected_profile_id: preview_profile.map(|profile| profile.profile_id.clone()),
         selected_profile_revision: preview_profile.map(|profile| profile.revision),
         selected_profile_metadata_revision: preview_profile
             .map(|profile| profile.metadata_revision),
@@ -190,9 +222,21 @@ async fn commit_inner(
     if let Some(result) = recover_request(&mut tx, &key).await? {
         return Ok(serde_json::from_value(result)?);
     }
-    let Some(imported) = project(request) else {
+    let profile_id = effective_profile_id(&mut tx, actor, request).await?;
+    let Some(imported) = project(request, profile_id.as_deref()) else {
         return Ok(ImportCommitOutcome::InvalidSource);
     };
+    if imported.document.equipment_profile_id.is_none() && request.expected_profile_id.is_some() {
+        // The default the preview used is gone.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
+    if imported.document.equipment_profile_id.is_some()
+        && request.equipment_profile_id.is_none()
+        && request.expected_no_profile
+    {
+        // The preview resolved no profile; a default has appeared since.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
     let pending: Vec<_> = imported
         .warnings
         .iter()
@@ -218,8 +262,19 @@ async fn commit_inner(
         let Some(profile) = profile.filter(|p| !p.archived) else {
             return Ok(ImportCommitOutcome::UnresolvedProfile);
         };
-        if request.expected_profile_revision != Some(profile.revision)
-            || request.expected_profile_metadata_revision != Some(profile.metadata_revision)
+        // A named profile must match the revisions previewed. An unnamed import that took the
+        // default is checked too when the caller passes the revisions its preview reported.
+        let checked = request.equipment_profile_id.is_some()
+            || request.expected_profile_id.is_some()
+            || request.expected_profile_revision.is_some()
+            || request.expected_profile_metadata_revision.is_some();
+        if checked
+            && (request
+                .expected_profile_id
+                .as_deref()
+                .is_some_and(|id| id != profile.profile_id)
+                || request.expected_profile_revision != Some(profile.revision)
+                || request.expected_profile_metadata_revision != Some(profile.metadata_revision))
         {
             return Ok(ImportCommitOutcome::ProfileChanged);
         }

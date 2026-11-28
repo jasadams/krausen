@@ -30,6 +30,23 @@ pub struct Targets {
     pub abv_percent: Option<f64>,
     pub colour_ebc: Option<f64>,
     pub ibu: Option<f64>,
+    /// Vessels the plan overfills. A warning only: it never blocks Save or start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vessel_warnings: Vec<VesselWarning>,
+}
+/// A planned volume that exceeds a vessel's volume from the equipment profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VesselWarning {
+    pub vessel: Vessel,
+    pub required_l: f64,
+    pub capacity_l: f64,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Vessel {
+    MashTun,
+    SpargeVessel,
+    Kettle,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preview {

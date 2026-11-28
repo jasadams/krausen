@@ -2,7 +2,7 @@
 //! Workspace-scoped helpers. The application owns the transaction.
 use krausen_core::{DbTx, Error, Result};
 use krausen_types::{
-    brewery::EquipmentSettingsV1,
+    brewery::{EquipmentAboutV1, EquipmentSettingsV1},
     equipment::{EquipmentProfile, EquipmentProvenance},
 };
 
@@ -19,7 +19,9 @@ struct Row {
     created_at: i64,
     metadata_revision: i64,
     archived: i64,
+    is_default: i64,
     settings_json: String,
+    about_json: String,
     provenance_json: String,
     actor_id: String,
     recorded_at: i64,
@@ -30,6 +32,7 @@ impl Row {
         if settings.schema_version != 1 {
             return Err(Error::BadRequest("unsupported equipment schema".into()));
         }
+        let settings = settings.into_profile_settings();
         Ok(EquipmentProfile {
             workspace_id: self.workspace_id,
             profile_id: self.profile_id,
@@ -38,14 +41,16 @@ impl Row {
             revision: self.current_revision,
             metadata_revision: self.metadata_revision,
             archived: self.archived != 0,
+            is_default: self.is_default != 0,
             settings,
+            about: serde_json::from_str(&self.about_json)?,
             provenance: serde_json::from_str(&self.provenance_json)?,
             saved_by: self.actor_id,
             saved_at: self.recorded_at,
         })
     }
 }
-const SELECT: &str = "SELECT p.workspace_id,p.profile_id,initial.recorded_at AS created_at,p.name,p.current_revision,p.metadata_revision,CAST(CASE WHEN p.archived THEN 1 ELSE 0 END AS BIGINT) AS archived,r.settings_json,r.provenance_json,r.actor_id,r.recorded_at FROM equipment_profiles p JOIN equipment_revisions r ON r.workspace_id=p.workspace_id AND r.profile_id=p.profile_id AND r.revision=p.current_revision JOIN equipment_revisions initial ON initial.workspace_id=p.workspace_id AND initial.profile_id=p.profile_id AND initial.revision=1";
+const SELECT: &str = "SELECT p.workspace_id,p.profile_id,initial.recorded_at AS created_at,p.name,p.current_revision,p.metadata_revision,CAST(CASE WHEN p.archived THEN 1 ELSE 0 END AS BIGINT) AS archived,CAST(CASE WHEN d.profile_id IS NULL THEN 0 ELSE 1 END AS BIGINT) AS is_default,r.settings_json,r.about_json,r.provenance_json,r.actor_id,r.recorded_at FROM equipment_profiles p LEFT JOIN workspace_default_equipment d ON d.workspace_id=p.workspace_id AND d.profile_id=p.profile_id JOIN equipment_revisions r ON r.workspace_id=p.workspace_id AND r.profile_id=p.profile_id AND r.revision=p.current_revision JOIN equipment_revisions initial ON initial.workspace_id=p.workspace_id AND initial.profile_id=p.profile_id AND initial.revision=1";
 /// Load an aggregate by workspace and ID, optionally locking the source row.
 pub async fn load(
     tx: &mut DbTx<'_>,
@@ -123,11 +128,12 @@ pub async fn list(
 fn encode(
     name: &str,
     settings: &EquipmentSettingsV1,
+    about: &EquipmentAboutV1,
     provenance: &EquipmentProvenance,
-) -> Result<(String, String)> {
+) -> Result<(String, String, String)> {
     let v = krausen_core::canonical_json::from_serializable(settings)
         .map_err(|e| Error::BadRequest(e.to_string()))?;
-    let content = krausen_core::canonical_json::from_serializable(&(name, settings, provenance))
+    let content = krausen_core::canonical_json::from_serializable(&(name, settings, about, provenance))
         .map_err(|e| Error::BadRequest(e.to_string()))?;
     let digest = krausen_core::canonical_json::sha256(&content)
         .map_err(|e| Error::BadRequest(e.to_string()))?;
@@ -137,6 +143,7 @@ fn encode(
                 .map_err(|e| Error::BadRequest(e.to_string()))?,
         )
         .map_err(|e| Error::Internal(e.to_string()))?,
+        serde_json::to_string(about)?,
         digest,
     ))
 }
@@ -146,11 +153,12 @@ pub async fn create(
     id: &str,
     name: &str,
     settings: &EquipmentSettingsV1,
+    about: &EquipmentAboutV1,
     provenance: &EquipmentProvenance,
     actor: &str,
     now: i64,
 ) -> Result<()> {
-    let (json, digest) = encode(name, settings, provenance)?;
+    let (json, about_json, digest) = encode(name, settings, about, provenance)?;
     let provenance_json = serde_json::to_string(provenance)?;
     execute!(
         tx,
@@ -161,11 +169,12 @@ pub async fn create(
     );
     execute!(
         tx,
-        "INSERT INTO equipment_revisions (workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ($1,$2,1,$3,1,$4,$5,$6,$7,$8)",
+        "INSERT INTO equipment_revisions (workspace_id,profile_id,revision,name,schema_version,settings_json,about_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ($1,$2,1,$3,1,$4,$5,$6,$7,$8,$9)",
         workspace,
         id,
         name,
         &json,
+        &about_json,
         &provenance_json,
         &digest,
         actor,
@@ -179,12 +188,13 @@ pub async fn append(
     id: &str,
     name: &str,
     settings: &EquipmentSettingsV1,
+    about: &EquipmentAboutV1,
     provenance: &EquipmentProvenance,
     actor: &str,
     now: i64,
     expected: i64,
 ) -> Result<bool> {
-    let (json, digest) = encode(name, settings, provenance)?;
+    let (json, about_json, digest) = encode(name, settings, about, provenance)?;
     let provenance_json = serde_json::to_string(provenance)?;
     let next = expected + 1;
     let changed = execute!(
@@ -201,18 +211,61 @@ pub async fn append(
     }
     execute!(
         tx,
-        "INSERT INTO equipment_revisions (workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ($1,$2,$3,$4,1,$5,$6,$7,$8,$9)",
+        "INSERT INTO equipment_revisions (workspace_id,profile_id,revision,name,schema_version,settings_json,about_json,provenance_json,content_digest,actor_id,recorded_at) VALUES ($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10)",
         workspace,
         id,
         next,
         name,
         &json,
+        &about_json,
         &provenance_json,
         &digest,
         actor,
         now
     );
     Ok(true)
+}
+/// Make `id` the workspace default, replacing any other. The caller has checked
+/// the profile is active and holds the workspace write lock.
+pub async fn set_default(tx: &mut DbTx<'_>, workspace: &str, id: &str) -> Result<()> {
+    execute!(
+        tx,
+        "INSERT INTO workspace_default_equipment (workspace_id,profile_id) VALUES ($1,$2) ON CONFLICT (workspace_id) DO UPDATE SET profile_id=excluded.profile_id",
+        workspace,
+        id
+    );
+    Ok(())
+}
+/// Clear the default only when it is `id`.
+pub async fn clear_default(tx: &mut DbTx<'_>, workspace: &str, id: &str) -> Result<()> {
+    execute!(
+        tx,
+        "DELETE FROM workspace_default_equipment WHERE workspace_id=$1 AND profile_id=$2",
+        workspace,
+        id
+    );
+    Ok(())
+}
+/// The workspace's active default profile, if one is set.
+pub async fn load_default(tx: &mut DbTx<'_>, workspace: &str) -> Result<Option<EquipmentProfile>> {
+    let id: Option<String> = match &mut *tx {
+        DbTx::Postgres(t) => {
+            sqlx::query_scalar("SELECT profile_id FROM workspace_default_equipment WHERE workspace_id=$1")
+                .bind(workspace)
+                .fetch_optional(&mut **t)
+                .await?
+        }
+        DbTx::Sqlite(t) => {
+            sqlx::query_scalar("SELECT profile_id FROM workspace_default_equipment WHERE workspace_id=$1")
+                .bind(workspace)
+                .fetch_optional(&mut **t)
+                .await?
+        }
+    };
+    match id {
+        Some(id) => load(tx, workspace, &id, false).await,
+        None => Ok(None),
+    }
 }
 pub async fn archive(
     tx: &mut DbTx<'_>,
@@ -235,6 +288,15 @@ pub async fn archive(
     );
     if changed == 0 {
         return Ok(false);
+    }
+    if archived {
+        // An archived profile cannot be the workspace default.
+        execute!(
+            tx,
+            "DELETE FROM workspace_default_equipment WHERE workspace_id=$1 AND profile_id=$2",
+            workspace,
+            id
+        );
     }
     execute!(
         tx,
@@ -264,12 +326,13 @@ pub async fn load_revision(
         name: String,
         schema_version: i32,
         settings_json: String,
+        about_json: String,
         provenance_json: String,
         content_digest: String,
         actor_id: String,
         recorded_at: i64,
     }
-    let sql = "SELECT workspace_id,profile_id,revision,name,schema_version,settings_json,provenance_json,content_digest,actor_id,recorded_at FROM equipment_revisions WHERE workspace_id=$1 AND profile_id=$2 AND revision=$3";
+    let sql = "SELECT workspace_id,profile_id,revision,name,schema_version,settings_json,about_json,provenance_json,content_digest,actor_id,recorded_at FROM equipment_revisions WHERE workspace_id=$1 AND profile_id=$2 AND revision=$3";
     let row = match &mut *tx {
         DbTx::Postgres(t) => {
             sqlx::query_as::<_, RevisionRow>(sql)
@@ -292,13 +355,15 @@ pub async fn load_revision(
         if r.schema_version != 1 {
             return Err(Error::BadRequest("unsupported equipment schema".into()));
         }
-        let settings = serde_json::from_str(&r.settings_json)?;
+        let settings = serde_json::from_str::<EquipmentSettingsV1>(&r.settings_json)?
+            .into_profile_settings();
         Ok(krausen_types::equipment::EquipmentRevision {
             workspace_id: r.workspace_id,
             profile_id: r.profile_id,
             revision: r.revision,
             name: r.name,
             settings,
+            about: serde_json::from_str(&r.about_json)?,
             provenance: serde_json::from_str(&r.provenance_json)?,
             content_digest: r.content_digest,
             saved_by: r.actor_id,

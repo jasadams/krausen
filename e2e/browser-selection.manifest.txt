@@ -183,7 +183,7 @@ recipes/editor.spec.ts › a late committed save cannot leave or rewrite the add
 recipes/editor.spec.ts › a late preview response cannot replace a settled invalid estimate
 recipes/editor.spec.ts › a later access re-check never restores the focus recorded by an earlier one
 recipes/editor.spec.ts › a link to a conditional control goes to the control that governs it, never to an absent input
-recipes/editor.spec.ts › a link to an inherited chilling value goes to the Chilling override, never to an absent input
+recipes/editor.spec.ts › a missing cooling method links to the Cooling method override
 recipes/editor.spec.ts › a passing access re-check keeps the editor scroll position, layout and focused control
 recipes/editor.spec.ts › a passing access re-check keeps the position of a brewer scrolled to the very bottom
 recipes/editor.spec.ts › a pending save cannot be discarded while its result is uncertain
@@ -225,7 +225,11 @@ recipes/editor.spec.ts › diagnostics from an earlier draft stay marked out of 
 recipes/editor.spec.ts › disposed initial recovery authorization cannot write into the retired editor
 recipes/editor.spec.ts › editor controls remain usable on mobile and in dark mode
 recipes/editor.spec.ts › editor state controls keep raw labels and focus across representative presentation settings
+recipes/editor.spec.ts › equipment profiles can be saved as the default: an unspecified new recipe adopts it, a recipe-only choice stays
+recipes/editor.spec.ts › equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel
 recipes/editor.spec.ts › equipment profiles can be saved, selected, edited and recovered
+recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in dark mode
+recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in light mode
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a denied-after-edit task
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a disposed task
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a superseded task

@@ -382,7 +382,6 @@ fn project(input: ResolvedSummary<'_>) -> ProcessSummary {
             mash_water_l: document.process.mash_water_l,
             mash_water_method: document.process.mash_water_method.clone(),
             kettle_top_up_l: document.process.kettle_top_up_l,
-            chilling: context.effective_equipment.chilling.clone(),
             unsupported: document.process.unsupported.clone(),
         },
     }

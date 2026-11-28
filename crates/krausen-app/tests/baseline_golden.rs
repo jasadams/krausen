@@ -23,7 +23,7 @@ const STYLE: &str =
     include_str!("fixtures/kra20_baseline_4fc8313/baseline_4fc8313_style_comparison.json");
 
 #[tokio::test]
-async fn baseline_v1_golden_refused_and_v2_matches_targets() {
+async fn baseline_v1_golden_refused_and_v3_matches_targets() {
     // Hash the raw v1 JSON before current-type deserialization adds defaults.
     let raw: Value = serde_json::from_str(CONTEXT).unwrap();
     assert!(raw.get("applied_defaults").is_none());
@@ -73,7 +73,7 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
     };
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision,
+        revision, ..
     } = recipe_editor::save(&db, &actor, &intent, None, None, &document, Uuid::new_v4()).await
     else {
         panic!("save golden recipe")
@@ -112,7 +112,7 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
             .get("applied_defaults")
             .is_some()
     );
-    assert_eq!(context.policy_version, "krausen-formulation-v2");
+    assert_eq!(context.policy_version, "krausen-formulation-v3");
     let request = |digest: String| StartBrewRequest {
         intent: intent.clone(),
         recipe_id: recipe_id.clone(),
@@ -128,7 +128,7 @@ async fn baseline_v1_golden_refused_and_v2_matches_targets() {
     };
     assert_eq!(
         refreshed.context.as_ref().unwrap().policy_version,
-        "krausen-formulation-v2"
+        "krausen-formulation-v3"
     );
     assert_eq!(refreshed.targets, preview.targets);
     assert_eq!(refreshed.context_digest, preview.context_digest);

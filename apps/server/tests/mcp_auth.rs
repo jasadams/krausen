@@ -421,10 +421,10 @@ async fn exercise(db: DbPool) {
     draft.process.mash_water_method = Some("manual".into());
     draft.process.mash_water_l = Some(12.0);
     let mut equipment = krausen_types::brewery::EquipmentSettingsV1::default();
-    equipment.boil_off_l_per_hour = Some(3.0);
-    equipment.transfer_loss_l = Some(2.0);
-    equipment.pre_boil_deadspace_l = Some(0.0);
-    equipment.grain_absorption_l_per_kg = Some(0.8);
+    equipment.boil_loss_l_per_hour = Some(3.0);
+    equipment.trub_and_chiller_loss_l = Some(2.0);
+    equipment.mash_tun_deadspace_l = Some(0.0);
+    equipment.mash_grain_absorption_l_per_kg = Some(0.8);
     equipment.mash_efficiency_fraction = Some(0.75);
     let request = krausen_types::formulation::PreviewRequest {
         draft_generation: "test-generation".into(),
@@ -554,6 +554,8 @@ async fn exercise(db: DbPool) {
         profile_id: uuid::Uuid::new_v4().to_string(),
         name: "Shared equipment".into(),
         settings: krausen_types::brewery::EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::equipment::EquipmentProvenance {
             source: "manual".into(),
             assumptions: vec![],
@@ -1060,6 +1062,37 @@ async fn exercise(db: DbPool) {
             .get("fermentables")
             .is_some()
     );
+    // The equipment contract is the profile spec: MCP offers exactly the UI's
+    // fields, the about block and the default toggle, and none of the removed ones.
+    let equipment_tool = discovered
+        .tools
+        .iter()
+        .find(|tool| tool.name == "equipment_save")
+        .unwrap();
+    let defs = &equipment_tool.input_schema["$defs"];
+    let settings = defs["EquipmentSettingsV1"]["properties"].as_object().unwrap();
+    for field in [
+        "mash_tun_volume_l", "mash_efficiency_fraction", "mash_tun_deadspace_l",
+        "mash_thickness_l_per_kg", "mash_tun_loss_l", "mash_grain_absorption_l_per_kg",
+        "sparge_vessel_volume_l", "sparge_grain_absorption_l_per_kg", "sparge_deadspace_l",
+        "boil_volume_l", "wort_shrinkage_fraction", "boil_loss_l_per_hour",
+        "trub_and_chiller_loss_l", "kettle_diameter_cm", "cooling_method",
+        "cooling_flow_rate_l_per_minute",
+    ] {
+        assert!(settings.contains_key(field), "{field}");
+    }
+    for removed in ["kettle_opening_cm", "boil_temperature_c", "chilling", "pre_boil_deadspace_l", "efficiency_override_fraction"] {
+        assert!(!settings.contains_key(removed), "{removed}");
+    }
+    let about = defs["EquipmentAboutV1"]["properties"].as_object().unwrap();
+    for field in [
+        "brand", "description", "measurement", "equipment_type", "controller_type",
+        "recirculation_system", "vessel_count", "batch_size_l", "sparge_water_alert",
+        "sparge_progress_counter", "boil_power_control", "notes",
+    ] {
+        assert!(about.contains_key(field), "{field}");
+    }
+    assert!(defs["SaveEquipment"]["properties"].get("is_default").is_some());
     // Both protocol versions and the browser-facing app use the same native
     // operation and revision contract, including request replay and authority.
     let mut native = krausen_types::brewery::RecipeDocumentV1::default();
@@ -1275,7 +1308,7 @@ async fn exercise(db: DbPool) {
     let brew_doc = brew_test_document(&brew_profile_id);
     let krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
         recipe_id: brew_recipe,
-        revision: 1,
+        revision: 1, ..
     } = krausen_app::recipe_editor::save(
         &db,
         &browser_actor,
@@ -1744,7 +1777,8 @@ async fn exercise(db: DbPool) {
         .await,
         krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
             recipe_id: brew_recipe.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     let head_conflict_request = krausen_types::brew::StartBrewRequest {
@@ -1816,10 +1850,10 @@ async fn exercise(db: DbPool) {
     scale_doc.process.apparent_attenuation_fraction = Some(0.8);
     scale_doc.process.kettle_top_up_l = Some(2.0);
     scale_doc.equipment_overrides.mash_efficiency_fraction = Some(0.75);
-    scale_doc.equipment_overrides.boil_off_l_per_hour = Some(3.0);
-    scale_doc.equipment_overrides.transfer_loss_l = Some(2.0);
-    scale_doc.equipment_overrides.grain_absorption_l_per_kg = Some(0.8);
-    scale_doc.equipment_overrides.kettle_capacity_l = Some(30.0);
+    scale_doc.equipment_overrides.boil_loss_l_per_hour = Some(3.0);
+    scale_doc.equipment_overrides.trub_and_chiller_loss_l = Some(2.0);
+    scale_doc.equipment_overrides.mash_grain_absorption_l_per_kg = Some(0.8);
+    scale_doc.equipment_overrides.boil_volume_l = Some(30.0);
     scale_doc
         .fermentables
         .push(krausen_types::brewery::FermentableAddition {
@@ -2535,18 +2569,18 @@ fn brew_test_profile(
         name: "MCP 20 L kettle".into(),
         settings: krausen_types::brewery::EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.75),
-            boil_off_l_per_hour: Some(3.0),
-            transfer_loss_l: Some(2.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
             mash_thickness_l_per_kg: Some(2.5),
-            kettle_capacity_l: Some(30.0),
+            boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            kettle_opening_cm: Some(30.0),
-            boil_temperature_c: Some(100.0),
-            chilling: Some(krausen_types::brewery::ChillingV1::Natural),
+            cooling_method: Some(krausen_types::brewery::CoolingMethodV1::Natural),
             ..Default::default()
         },
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::brewery::EquipmentProvenance {
             source: "test fixture".into(),
             assumptions: vec!["brewhouse_loss_calibrated".into()],

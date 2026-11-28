@@ -38,23 +38,23 @@ fn warning_text(warning: &ScaleWarning) -> String {
                 (false, false) => format!("post-boil {post_boil_l:.2} L"),
             };
             format!(
-                "Kettle capacity {capacity_l:.2} L does not fit the scaled {fill}. Choose a larger kettle or change the process; geometry is not changed automatically."
+                "Boil volume {capacity_l:.2} L does not fit the scaled {fill}. Choose a larger kettle or change the process; geometry is not changed automatically."
             )
         }
         ScaleWarning::CapacityUnknown { post_boil_l } => format!(
-            "Kettle capacity is not set; check that the scaled post-boil volume of {post_boil_l:.2} L fits. Geometry is not changed automatically."
+            "Boil volume is not set; check that the scaled post-boil volume of {post_boil_l:.2} L fits. Geometry is not changed automatically."
         ),
         ScaleWarning::FixedLossesRetained {
-            transfer_loss_l,
-            boil_off_l_per_hour,
-            pre_boil_deadspace_l,
-            grain_absorption_l_per_kg,
+            trub_and_chiller_loss_l,
+            boil_loss_l_per_hour,
+            mash_tun_deadspace_l,
+            mash_grain_absorption_l_per_kg,
         } => format!(
-            "Fixed losses stay unchanged (transfer {}, boil-off {}, deadspace {}, absorption {}), so targets can change. This is ingredient scaling, not target matching.",
-            option_value(*transfer_loss_l, "L"),
-            option_value(*boil_off_l_per_hour, "L/h"),
-            option_value(*pre_boil_deadspace_l, "L"),
-            option_value(*grain_absorption_l_per_kg, "L/kg"),
+            "Fixed losses stay unchanged (trub and chiller loss {}, boil loss {}, mash tun deadspace {}, mash grain absorption {}), so targets can change. This is ingredient scaling, not target matching.",
+            option_value(*trub_and_chiller_loss_l, "L"),
+            option_value(*boil_loss_l_per_hour, "L/hr"),
+            option_value(*mash_tun_deadspace_l, "L"),
+            option_value(*mash_grain_absorption_l_per_kg, "L/kg"),
         ),
         ScaleWarning::UnscaledIngredients {
             yeast_rows,
@@ -953,10 +953,10 @@ mod tests {
     #[test]
     fn fixed_loss_warning_discloses_retained_constants() {
         let text = warning_text(&ScaleWarning::FixedLossesRetained {
-            transfer_loss_l: Some(2.0),
-            boil_off_l_per_hour: Some(3.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            trub_and_chiller_loss_l: Some(2.0),
+            boil_loss_l_per_hour: Some(3.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
         });
         assert!(text.contains("2.000 L"));
         assert!(text.contains("3.000 L/h"));

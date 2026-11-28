@@ -14,7 +14,7 @@ use krausen_types::{
         TransitionBrewRequest,
     },
     brewery::{
-        AdditionStage, BrewLifecycleEvent, BrewPlanV1, BrewStatusV1, ChillingV1,
+        AdditionStage, BrewLifecycleEvent, BrewPlanV1, BrewStatusV1, CoolingMethodV1,
         EquipmentProvenance, EquipmentSettingsV1, FermentableAddition, FermentableSpecification,
         HopAddition, HopSpecification, ProcessV1, QUANTITIES, RecipeDocumentV1, StyleReference,
     },
@@ -83,18 +83,18 @@ fn equipment_request(profile_id: &str) -> SaveEquipment {
         name: "20 L kettle".into(),
         settings: EquipmentSettingsV1 {
             mash_efficiency_fraction: Some(0.75),
-            boil_off_l_per_hour: Some(3.0),
-            transfer_loss_l: Some(2.0),
-            pre_boil_deadspace_l: Some(0.0),
-            grain_absorption_l_per_kg: Some(0.8),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            mash_tun_deadspace_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
             mash_thickness_l_per_kg: Some(2.5),
-            kettle_capacity_l: Some(30.0),
+            boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            kettle_opening_cm: Some(30.0),
-            boil_temperature_c: Some(100.0),
-            chilling: Some(ChillingV1::Natural),
+            cooling_method: Some(CoolingMethodV1::Natural),
             ..Default::default()
         },
+        about: Default::default(),
+        is_default: None,
         provenance: EquipmentProvenance {
             source: "test fixture".into(),
             assumptions: vec!["brewhouse_loss_calibrated".into()],
@@ -172,7 +172,7 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
     let document = complete_document(&profile_id, "Evidence brew");
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision,
+        revision, ..
     } = recipe_editor::save(
         db,
         &actor,

@@ -343,6 +343,23 @@ impl RecipeDraft {
             .checked_add(1)
             .expect("draft generation exhausted");
     }
+    /// The server stored the workspace default the recipe named none of: the live document takes
+    /// it too, without counting as an edit, so preview, baseline and storage agree.
+    /// A later deliberate choice (a profile, or recipe-only) made while the save was in flight stays.
+    pub fn adopt_stored_profile(&mut self, profile_id: &str) {
+        // Undo must never bring back a recipe without the profile the server stored, whatever
+        // the live document now holds.
+        for earlier in &mut self.undo {
+            if earlier.document.equipment_profile_id.is_none() && !earlier.document.recipe_only_equipment {
+                earlier.document.equipment_profile_id = Some(profile_id.to_owned());
+            }
+        }
+        if self.document.equipment_profile_id.is_some() || self.document.recipe_only_equipment {
+            return;
+        }
+        self.document.equipment_profile_id = Some(profile_id.to_owned());
+        self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
+    }
     pub fn mark_saved(&mut self) {
         self.baseline = self.contents();
         self.dirty = false;
@@ -512,20 +529,20 @@ mod tests {
 
     #[test]
     fn editing_an_equipment_override_retires_the_effective_equipment_path() {
-        edited_retires("equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm", "equipment.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm", "equipment.boil_loss_l_per_h");
     }
 
     #[test]
     fn editing_an_equipment_override_retires_the_override_path_too() {
-        edited_retires("equipment_overrides.kettle_opening_cm", "equipment_overrides.kettle_opening_cm", "equipment_overrides.boil_off_l_per_h");
+        edited_retires("equipment_overrides.kettle_diameter_cm", "equipment_overrides.kettle_diameter_cm", "equipment_overrides.boil_loss_l_per_h");
     }
 
     #[test]
     fn clearing_an_override_retires_its_retained_entries_so_review_cannot_stay_on_it() {
         use krausen_types::validation::{Readiness::*, Validation};
         for (prefix, reported) in [
-            ("equipment_overrides.kettle_opening_cm", ["equipment_overrides.kettle_opening_cm", "equipment.kettle_opening_cm"]),
-            ("equipment_overrides.chilling.", ["equipment_overrides.chilling.rate_per_minute", "equipment.chilling.rate_per_minute"]),
+            ("equipment_overrides.kettle_diameter_cm", ["equipment_overrides.kettle_diameter_cm", "equipment.kettle_diameter_cm"]),
+            ("equipment_overrides.cooling_flow_rate_l_per_minute", ["equipment_overrides.cooling_flow_rate_l_per_minute", "equipment.cooling_flow_rate_l_per_minute"]),
         ] {
             let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
             draft.apply_validation(draft.generation, Validation {
@@ -660,5 +677,32 @@ mod tests {
         assert_ne!(draft.generation, before);
         assert_eq!(draft.document(), &replacement);
         assert!(!draft.dirty);
+    }
+
+    #[test]
+    fn adopting_the_stored_default_keeps_undo_from_restoring_the_recipe_without_it() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.edit(|doc| doc.title = "New".into());
+        draft.adopt_stored_profile("p1");
+        draft.mark_saved();
+        assert!(!draft.dirty);
+        draft.undo();
+        assert_eq!(draft.document().equipment_profile_id.as_deref(), Some("p1"));
+        assert!(draft.dirty, "the undone title differs from what was saved");
+    }
+
+    #[test]
+    fn adopting_the_stored_default_keeps_a_later_deliberate_choice() {
+        let mut chosen = RecipeDraft::new(RecipeDocumentV1::default());
+        chosen.edit(|doc| doc.recipe_only_equipment = true);
+        chosen.adopt_stored_profile("p1");
+        assert_eq!(chosen.document().equipment_profile_id, None);
+        let mut named = RecipeDraft::new(RecipeDocumentV1::default());
+        named.edit(|doc| doc.equipment_profile_id = Some("p2".into()));
+        named.adopt_stored_profile("p1");
+        assert_eq!(named.document().equipment_profile_id.as_deref(), Some("p2"));
+        // The stored default stays reachable: undoing the later pick returns to it, not to nothing.
+        named.undo();
+        assert_eq!(named.document().equipment_profile_id.as_deref(), Some("p1"));
     }
 }

@@ -27,11 +27,11 @@ async fn run(db: &DbPool, sql: &str) {
 fn settings() -> EquipmentSettingsV1 {
     EquipmentSettingsV1 {
         mash_efficiency_fraction: Some(0.75),
-        boil_off_l_per_hour: Some(3.0),
-        transfer_loss_l: Some(2.0),
-        pre_boil_deadspace_l: Some(0.0),
-        grain_absorption_l_per_kg: Some(0.8),
-        kettle_capacity_l: Some(30.0),
+        boil_loss_l_per_hour: Some(3.0),
+        trub_and_chiller_loss_l: Some(2.0),
+        mash_tun_deadspace_l: Some(0.0),
+        mash_grain_absorption_l_per_kg: Some(0.8),
+        boil_volume_l: Some(30.0),
         ..Default::default()
     }
 }
@@ -173,6 +173,8 @@ async fn exercise(db: DbPool) {
             profile_id: uuid::Uuid::new_v4().to_string(),
             name: "20 L kettle".into(),
             settings: settings(),
+            about: Default::default(),
+            is_default: None,
             provenance: EquipmentProvenance {
                 source: "test".into(),
                 assumptions: vec!["test profile".into()],
@@ -366,7 +368,7 @@ async fn exercise(db: DbPool) {
             request_id: uuid::Uuid::new_v4().to_string(),
         }).await,
         ScaleApplyOutcome::ContextConflict { fresh }
-            if fresh.accepted.context.policy_version == "krausen-formulation-v2"
+            if fresh.accepted.context.policy_version == "krausen-formulation-v3"
     ));
 
     // Same accepted digest, tampered component: head passes, context compare fails.
@@ -405,11 +407,11 @@ async fn exercise(db: DbPool) {
     browser_document.process.mash_water_l = Some(15.0);
     browser_document.equipment_overrides = EquipmentSettingsV1 {
         mash_efficiency_fraction: Some(0.75),
-        boil_off_l_per_hour: Some(3.0),
-        transfer_loss_l: Some(2.0),
-        pre_boil_deadspace_l: Some(0.0),
-        grain_absorption_l_per_kg: Some(0.8),
-        kettle_capacity_l: Some(30.0),
+        boil_loss_l_per_hour: Some(3.0),
+        trub_and_chiller_loss_l: Some(2.0),
+        mash_tun_deadspace_l: Some(0.0),
+        mash_grain_absorption_l_per_kg: Some(0.8),
+        boil_volume_l: Some(30.0),
         ..Default::default()
     };
     let browser_id = create_recipe(&db, &actor, &intent, &browser_document).await;

@@ -231,7 +231,9 @@ families, exact incoming proof/callback parameters and associated operations:
 | `/auth/google/callback`, `/auth/recover-passkey`, `/auth/recover-passkey/complete`, `/oauth-complete` | Existing proof/callback/ceremony flows |
 | `/design-system` | Deliberately retained direct engineering route; no customer entry |
 
-`/equipment` is the approved additive UI destination, **not present at the review
+`/equipment` is the approved additive UI destination (its profile form follows
+[EQUIPMENT_PROFILE.md](EQUIPMENT_PROFILE.md): About, Mash, Sparge, Boil, Cooling,
+Notes, with one workspace default), **not present at the review
 baseline**. `/brews` list and `/ingredients` are not approved implemented routes.
 Unknown/missing/denied pages MUST provide neutral typed outcomes and safe
 recovery, never auto-select a workspace from an inaccessible entity link.

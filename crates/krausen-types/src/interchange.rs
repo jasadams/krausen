@@ -56,6 +56,12 @@ pub struct ImportRequest {
     /// Revision observed in the shared preview; required when importing with a profile.
     pub expected_profile_revision: Option<i64>,
     pub expected_profile_metadata_revision: Option<i64>,
+    /// The profile the preview resolved (named or the workspace default); compared at commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_profile_id: Option<String>,
+    /// The preview resolved no profile; a default that has appeared since is a change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expected_no_profile: bool,
     pub equipment_draft: crate::brewery::EquipmentSettingsV1,
     pub draft_generation: String,
 }
@@ -65,6 +71,8 @@ pub struct ImportPreview {
     pub draft_generation: String,
     pub document: crate::brewery::RecipeDocumentV1,
     pub source_sha256: String,
+    #[serde(default)]
+    pub selected_profile_id: Option<String>,
     pub selected_profile_revision: Option<i64>,
     pub selected_profile_metadata_revision: Option<i64>,
     pub source_estimates: SourceEstimates,

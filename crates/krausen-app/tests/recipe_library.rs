@@ -59,7 +59,7 @@ async fn exercise(db: DbPool) {
         };
         let RecipeSaveOutcome::Saved {
             recipe_id,
-            revision: 1,
+            revision: 1, ..
         } = recipe_editor::save(&db, &actor, &intent, None, None, &doc, uuid::Uuid::new_v4()).await
         else {
             panic!("create")

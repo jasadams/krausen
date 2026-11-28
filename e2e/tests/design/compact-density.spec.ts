@@ -257,8 +257,8 @@ test('recipe editor header and formulation follow the approved hierarchy', async
   await expect(previewDetails.getByText('Grainfather G30 · revision 1')).toBeVisible();
   await expect(previewDetails.getByText('Mash efficiency')).toBeVisible();
   await expect(previewDetails.getByText('78.0%')).toBeVisible();
-  await expect(previewDetails.getByText('Boil-off')).toBeVisible();
-  await expect(previewDetails.getByText('3.0L/h')).toBeVisible();
+  await expect(previewDetails.getByText('Boil loss')).toBeVisible();
+  await expect(previewDetails.getByText('3.0L/hr')).toBeVisible();
   const summaryBox = await previewSummary.boundingBox();
   const detailsBox = await previewDetails.boundingBox();
   expect(summaryBox).not.toBeNull();

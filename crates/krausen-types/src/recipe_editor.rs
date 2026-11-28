@@ -19,9 +19,22 @@ pub enum RecipeReadOutcome {
     Unavailable,
 }
 
+/// The workspace default profile a create took, and its revision when it was applied.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedEquipment {
+    pub profile_id: String,
+    pub revision: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RecipeSaveOutcome {
-    Saved { recipe_id: String, revision: i64 },
+    Saved {
+        recipe_id: String,
+        revision: i64,
+        /// The profile the server applied because the recipe named none: the caller adopts it.
+        #[serde(default)]
+        default_equipment: Option<AppliedEquipment>,
+    },
     Invalid(Validation),
     UnresolvedEquipmentProfile,
     UnresolvedIngredientSource,

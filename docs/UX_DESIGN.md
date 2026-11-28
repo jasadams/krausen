@@ -193,17 +193,28 @@ multi-step/save/reload/Undo and absence versus zero; no formula/default changes.
 ### UX-005: Equipment selection, overrides and management are distinct
 
 **Owner:** recipe equipment context and reusable Equipment manager. Visible
-selection MUST identify profile or “Recipe-only equipment”, with effective source
+selection MUST identify a profile, a deliberate “Recipe-only equipment” choice, or “No equipment chosen” (the state of a new recipe before the workspace default is applied; only this state lets a new recipe take the default), with effective source
 and override indication near estimates. “Adjust for this recipe” exposes
 inherited/effective/overridden states and per-value reset. Reset MUST remove the
 override, not copy a profile/default value into an override. Do not merge distinct
 efficiency fields or attenuation semantics.
 
+**Profile form (Jason's spec, 2026-11-28):** the profile page presents exactly
+the sections About, Mash, Sparge, Boil, Cooling and Notes with the fields listed
+in [EQUIPMENT_PROFILE.md](EQUIPMENT_PROFILE.md), in that order, using the shared
+kit with no page restyling, on desktop and mobile. There is no "Brewhouse
+efficiency" in a profile; the recipe-level override stays under "Adjust for this
+recipe". Default equipment is a toggle in About. Capacity warnings appear beside
+the volumes they affect. Earlier grouping into efficiency/water/vessel/chilling
+sections and the "preserve every physical/chilling field" wording are superseded
+by that spec: fields it does not list (pre-boil deadspace, kettle opening, boil
+temperature, forced-cooling rate/plateau, Brewhouse efficiency) are removed.
+
 Equipment manager is a separate reusable task/new UI destination under IA-001,
 also reachable contextually without losing the recipe. Preserve list/pagination,
-create/edit/Save profile/archive/unarchive and every physical/chilling field.
-Group efficiency, water/losses, vessel and mode-specific chilling controls;
-conditional controls preserve raw drafts. Clearly distinguish “Editing shared
+create/edit/Save profile/archive/unarchive and every field of the equipment spec,
+grouped as About, Mash, Sparge, Boil, Cooling and Notes; raw drafts are preserved.
+Clearly distinguish “Editing shared
 profile X” from “Using profile Y for this recipe”. Profile Save has its own dirty
 baseline, guarded Save/Discard/Stay, pending/conflict/retry and explicit effect on
 future previews/new brews. It MUST NOT pretend to save recipe content or alter
@@ -560,10 +571,10 @@ navigation/reuse points, not a claim their implementation already meets target.
 | Mash water unspecified/manual/profile-thickness, manual mash litres, kettle top-up | Mash & water with conditional inputs and complete supplied water outputs |
 | Whirlpool minutes/temperature; boil duration | Boil & whirlpool, preserving supported flameout/hold semantics and unsupported metadata |
 | Equipment select/recipe settings/load more | Visible selector independent of manager; effective identity near metrics |
-| Managed profile select/new/name, chilling mode, Save, Archive/Unarchive | Dedicated Equipment manager, independent dirty/retry/revision state |
-| Profile efficiency and mash efficiency where separately represented, boil-off, transfer loss, pre-boil deadspace, absorption, thickness, capacity, diameter, opening, boil temperature | Manager efficiency/water-loss/vessel groups; preserve distinct source fields and units |
-| Profile natural/forced/counterflow mode, cooling rate/plateau/counterflow rate | Conditional chilling group; retain nonvisible raw values |
-| Recipe efficiency override AND separately represented mash efficiency; boil-off/loss/deadspace/absorption/thickness/capacity/diameter/opening/boil temperature/chilling mode/rate/plateau/flow | Adjust for this recipe, inherited/effective/override/reset; never accidentally Save profile |
+| Managed profile select/new, the spec's About/Mash/Sparge/Boil/Cooling/Notes fields incl. Default equipment, Save, Archive/Unarchive | Dedicated Equipment manager, independent dirty/retry/revision state; fields per [EQUIPMENT_PROFILE.md](EQUIPMENT_PROFILE.md) |
+| Mash tun volume, mash efficiency, mash tun deadspace, mash thickness, mash tun loss, grain absorption (mash); sparge vessel volume, grain absorption (sparge), sparge deadspace; boil volume, wort shrinkage, boil loss, trub and chiller loss, kettle diameter | Manager Mash/Sparge/Boil groups per the spec; units shown |
+| Cooling method, flow rate | Manager Cooling group per the spec |
+| Recipe efficiency override AND separately represented mash efficiency; every spec calculation field (mash/sparge/boil volumes, deadspaces, losses, absorptions, thickness, shrinkage, diameter), cooling method and flow rate | Adjust for this recipe, inherited/effective/override/reset; never accidentally Save profile |
 | OG/FG/ABV/IBU/EBC, fermenter batch, total water, style bands/edition/status | UX-007 and VIS-004 shared metric variants; no stale/current substitution |
 | Mash/sparge/kettle/pre-/post-boil/absorption/total water, pre-boil SG; equipment summary/assumptions | Water outputs beside water decisions, effective details/assumptions accessible |
 | Every structured diagnostic | UX-006 stable field/row messages and actionable summary, no lost distinct issue |

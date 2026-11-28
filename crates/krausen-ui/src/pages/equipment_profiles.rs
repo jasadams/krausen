@@ -6,8 +6,8 @@
 //! editor consumes only [`ProfileLibrary`] (paged read access) for selection.
 use crate::{
     components::{
-        BreweryActionGroup, BreweryDraftField, BreweryDraftSelect, BreweryNotice, BreweryPanel,
-        BrewerySection, Button, ButtonVariant,
+        BreweryActionGroup, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect,
+        BreweryNotice, BreweryPanel, BrewerySection, Button, ButtonVariant, Switch,
         layout::{
             EditorGuard, GuardLeaveAttempt, GuardSaveResolution, GuardScope, GuardTaskCallbacks,
             GuardTaskKind, GuardTaskState,
@@ -17,7 +17,10 @@ use crate::{
     server_fns::equipment::equipment_command_shared,
 };
 use krausen_types::{
-    brewery::{ChillingV1, EquipmentProfile, EquipmentProvenance, EquipmentSettingsV1},
+    brewery::{
+        CoolingMethodV1, EquipmentAboutV1, EquipmentProfile, EquipmentProvenance,
+        EquipmentSettingsV1,
+    },
     equipment::{
         ArchiveEquipment, EquipmentCommand, EquipmentListQuery, EquipmentOutcome, EquipmentQuery,
         SaveEquipment,
@@ -119,6 +122,25 @@ impl ProfileLibrary {
     }
 }
 
+/// The workspace default profile: `Ok(None)` only when none is set. A failed
+/// lookup is an error, never an unseeded recipe.
+pub async fn load_default_profile(
+    identity: &OperationIntent,
+) -> Result<Option<EquipmentProfile>, ServerFnError> {
+    match equipment_command_shared(EquipmentCommand::List(EquipmentListQuery {
+        intent: identity.clone(),
+        cursor: None,
+        limit: 1,
+        include_archived: false,
+    }))
+    .await
+    {
+        Ok(EquipmentOutcome::Profiles(page)) => Ok(page.default_profile),
+        Ok(_) => Err(ServerFnError::new("Unable to load the default equipment profile.")),
+        Err(error) => Err(error),
+    }
+}
+
 /// Load the workspace profile library and reload whenever its context becomes visible.
 pub fn use_profile_library(
     identity: RwSignal<OperationIntent>,
@@ -145,34 +167,128 @@ pub fn use_profile_library(
     library
 }
 
-/// Raw, user-visible profile fields. Conditional chilling values stay in `raw`
-/// while their mode is hidden, so changing the mode never discards typed text.
+/// Raw, user-visible profile fields, in the order of the equipment spec
+/// (`docs/EQUIPMENT_PROFILE.md`). Numeric values are kept as typed text.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfileForm {
+    pub is_default: bool,
     pub name: String,
+    pub brand: String,
+    pub description: String,
+    pub equipment_type: String,
+    pub controller_type: String,
+    pub recirculation_system: String,
+    pub sparge_water_alert: bool,
+    pub sparge_progress_counter: bool,
+    pub boil_power_control: bool,
+    pub cooling_method: String,
+    pub notes: String,
+    /// One entry per [`FIELDS`] row.
     pub raw: Vec<String>,
-    pub chilling: String,
+}
+
+/// Numeric fields: element id, spec label, unit.
+pub const FIELDS: [(&str, &str, &str); 17] = [
+    ("profile-batch-size", "Batch size", "L"),
+    ("profile-vessel-count", "Number of vessels", ""),
+    ("profile-mash-volume", "Mash tun volume", "L"),
+    ("profile-mash-efficiency", "Mash efficiency", "%"),
+    ("profile-mash-deadspace", "Mash tun deadspace", "L"),
+    ("profile-mash-thickness", "Mash thickness", "L/kg"),
+    ("profile-mash-loss", "Mash tun loss", "L"),
+    ("profile-mash-absorption", "Grain absorption", "L/kg"),
+    ("profile-sparge-volume", "Sparge vessel volume", "L"),
+    ("profile-sparge-absorption", "Grain absorption", "L/kg"),
+    ("profile-sparge-deadspace", "Sparge deadspace volume", "L"),
+    ("profile-boil-volume", "Boil volume", "L"),
+    ("profile-shrinkage", "Wort shrinkage", "%"),
+    ("profile-boil-loss", "Boil loss", "L/hr"),
+    ("profile-trub-loss", "Trub and chiller loss", "L"),
+    ("profile-kettle-diameter", "Kettle diameter", "cm"),
+    ("profile-cooling-flow", "Flow rate", "L/min"),
+];
+const BATCH: usize = 0;
+const VESSELS: usize = 1;
+const MASH_VOLUME: usize = 2;
+const MASH_EFFICIENCY: usize = 3;
+const MASH_DEADSPACE: usize = 4;
+const MASH_THICKNESS: usize = 5;
+const MASH_LOSS: usize = 6;
+const MASH_ABSORPTION: usize = 7;
+const SPARGE_VOLUME: usize = 8;
+const SPARGE_ABSORPTION: usize = 9;
+const SPARGE_DEADSPACE: usize = 10;
+const BOIL_VOLUME: usize = 11;
+const SHRINKAGE: usize = 12;
+const BOIL_LOSS: usize = 13;
+const TRUB_LOSS: usize = 14;
+const KETTLE_DIAMETER: usize = 15;
+const COOLING_FLOW: usize = 16;
+/// Entered as percent, stored as a fraction.
+const PERCENT: [usize; 2] = [MASH_EFFICIENCY, SHRINKAGE];
+
+const EQUIPMENT_TYPES: [(&str, &str); 1] = [("all_grain", "All grain")];
+/// Only a toggle the user changed is sent. The default is workspace state outside the
+/// revision checks, so an untouched stale value must not overwrite another session's choice.
+fn default_change(baseline: &ProfileForm, current: &ProfileForm) -> Option<bool> {
+    (current.is_default != baseline.is_default).then_some(current.is_default)
+}
+fn optional_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 impl ProfileForm {
     pub fn blank() -> Self {
         Self {
+            is_default: false,
             name: String::new(),
+            brand: String::new(),
+            description: String::new(),
+            equipment_type: "all_grain".into(),
+            controller_type: String::new(),
+            recirculation_system: String::new(),
+            sparge_water_alert: false,
+            sparge_progress_counter: false,
+            boil_power_control: false,
+            cooling_method: String::new(),
+            notes: String::new(),
             raw: vec![String::new(); FIELDS.len()],
-            chilling: String::new(),
         }
     }
     pub fn from_profile(profile: Option<&EquipmentProfile>) -> Self {
         let Some(profile) = profile else {
             return Self::blank();
         };
-        let raw = values(&profile.settings)
+        let (s, about) = (&profile.settings, &profile.about);
+        let numbers = {
+            let mut numbers = [None; FIELDS.len()];
+            numbers[BATCH] = about.batch_size_l;
+            numbers[VESSELS] = about.vessel_count.map(f64::from);
+            numbers[MASH_VOLUME] = s.mash_tun_volume_l;
+            numbers[MASH_EFFICIENCY] = s.mash_efficiency_fraction;
+            numbers[MASH_DEADSPACE] = s.mash_tun_deadspace_l;
+            numbers[MASH_THICKNESS] = s.mash_thickness_l_per_kg;
+            numbers[MASH_LOSS] = s.mash_tun_loss_l;
+            numbers[MASH_ABSORPTION] = s.mash_grain_absorption_l_per_kg;
+            numbers[SPARGE_VOLUME] = s.sparge_vessel_volume_l;
+            numbers[SPARGE_ABSORPTION] = s.sparge_grain_absorption_l_per_kg;
+            numbers[SPARGE_DEADSPACE] = s.sparge_deadspace_l;
+            numbers[BOIL_VOLUME] = s.boil_volume_l;
+            numbers[SHRINKAGE] = s.wort_shrinkage_fraction;
+            numbers[BOIL_LOSS] = s.boil_loss_l_per_hour;
+            numbers[TRUB_LOSS] = s.trub_and_chiller_loss_l;
+            numbers[KETTLE_DIAMETER] = s.kettle_diameter_cm;
+            numbers[COOLING_FLOW] = s.cooling_flow_rate_l_per_minute;
+            numbers
+        };
+        let raw = numbers
             .into_iter()
             .enumerate()
             .map(|(index, value)| {
                 value
                     .map(|v| {
-                        if index < 2 {
+                        if PERCENT.contains(&index) {
                             ((v * 100.0) * 1e9).round() / 1e9
                         } else {
                             v
@@ -183,33 +299,32 @@ impl ProfileForm {
             })
             .collect();
         Self {
+            is_default: profile.is_default,
             name: profile.name.clone(),
+            brand: about.brand.clone().unwrap_or_default(),
+            description: about.description.clone().unwrap_or_default(),
+            equipment_type: about.equipment_type.clone().unwrap_or_default(),
+            controller_type: about.controller_type.clone().unwrap_or_default(),
+            recirculation_system: about.recirculation_system.clone().unwrap_or_default(),
+            sparge_water_alert: about.sparge_water_alert,
+            sparge_progress_counter: about.sparge_progress_counter,
+            boil_power_control: about.boil_power_control,
+            cooling_method: s.cooling_method.map_or("", CoolingMethodV1::key).into(),
+            notes: about.notes.clone().unwrap_or_default(),
             raw,
-            chilling: match &profile.settings.chilling {
-                Some(ChillingV1::Natural) => "natural",
-                Some(ChillingV1::Forced { .. }) => "forced",
-                Some(ChillingV1::Counterflow { .. }) => "counterflow",
-                None => "",
-            }
-            .into(),
-        }
-    }
-    /// Chilling-mode values apply only while their mode is selected.
-    fn relevant(&self, index: usize) -> bool {
-        match index {
-            11 | 12 => self.chilling == "forced",
-            13 => self.chilling == "counterflow",
-            _ => true,
         }
     }
     /// Per-field validation message, or `None` when the raw text is empty or numeric.
     pub fn field_error(&self, index: usize) -> Option<&'static str> {
-        if !self.relevant(index) {
-            return None;
-        }
         let text = self.raw.get(index)?.trim();
         if text.is_empty() {
             return None;
+        }
+        if index == VESSELS {
+            return match text.parse::<u32>() {
+                Ok(count) if count > 0 => None,
+                _ => Some("Enter a whole number of vessels."),
+            };
         }
         match text.parse::<f64>() {
             Ok(value) if value.is_finite() => None,
@@ -217,8 +332,12 @@ impl ProfileForm {
             Err(_) => Some("Enter a number."),
         }
     }
-    /// Convert to native settings (efficiencies as fractions), preserving unmanaged extensions.
-    pub fn parse(&self, base: &EquipmentSettingsV1) -> Result<EquipmentSettingsV1, &'static str> {
+    /// Convert to native settings (percentages as fractions) and the about block,
+    /// preserving unmanaged extensions of the saved settings.
+    pub fn parse(
+        &self,
+        base: &EquipmentSettingsV1,
+    ) -> Result<(EquipmentSettingsV1, EquipmentAboutV1), &'static str> {
         let mut parsed = Vec::with_capacity(FIELDS.len());
         for index in 0..FIELDS.len() {
             if let Some(message) = self.field_error(index) {
@@ -231,23 +350,43 @@ impl ProfileForm {
                 text.parse::<f64>().ok()
             });
         }
-        for value in parsed.iter_mut().take(2).flatten() {
-            *value /= 100.0;
+        for index in PERCENT {
+            if let Some(value) = parsed[index].as_mut() {
+                *value /= 100.0;
+            }
         }
         let mut settings = base.clone();
-        assign_values(&mut settings, &parsed);
-        settings.chilling = match self.chilling.as_str() {
-            "natural" => Some(ChillingV1::Natural),
-            "forced" => Some(ChillingV1::Forced {
-                rate_per_minute: parsed[11],
-                plateau_c: parsed[12],
-            }),
-            "counterflow" => Some(ChillingV1::Counterflow {
-                litres_per_minute: parsed[13],
-            }),
-            _ => None,
+        settings.mash_tun_volume_l = parsed[MASH_VOLUME];
+        settings.mash_efficiency_fraction = parsed[MASH_EFFICIENCY];
+        settings.mash_tun_deadspace_l = parsed[MASH_DEADSPACE];
+        settings.mash_thickness_l_per_kg = parsed[MASH_THICKNESS];
+        settings.mash_tun_loss_l = parsed[MASH_LOSS];
+        settings.mash_grain_absorption_l_per_kg = parsed[MASH_ABSORPTION];
+        settings.sparge_vessel_volume_l = parsed[SPARGE_VOLUME];
+        settings.sparge_grain_absorption_l_per_kg = parsed[SPARGE_ABSORPTION];
+        settings.sparge_deadspace_l = parsed[SPARGE_DEADSPACE];
+        settings.boil_volume_l = parsed[BOIL_VOLUME];
+        settings.wort_shrinkage_fraction = parsed[SHRINKAGE];
+        settings.boil_loss_l_per_hour = parsed[BOIL_LOSS];
+        settings.trub_and_chiller_loss_l = parsed[TRUB_LOSS];
+        settings.kettle_diameter_cm = parsed[KETTLE_DIAMETER];
+        settings.cooling_method = CoolingMethodV1::from_key(&self.cooling_method);
+        settings.cooling_flow_rate_l_per_minute = parsed[COOLING_FLOW];
+        let about = EquipmentAboutV1 {
+            brand: optional_text(&self.brand),
+            description: optional_text(&self.description),
+            measurement: Some("metric".into()),
+            equipment_type: optional_text(&self.equipment_type),
+            controller_type: optional_text(&self.controller_type),
+            recirculation_system: optional_text(&self.recirculation_system),
+            vessel_count: parsed[VESSELS].map(|v| v as u32),
+            batch_size_l: parsed[BATCH],
+            sparge_water_alert: self.sparge_water_alert,
+            sparge_progress_counter: self.sparge_progress_counter,
+            boil_power_control: self.boil_power_control,
+            notes: optional_text(&self.notes),
         };
-        Ok(settings)
+        Ok((settings, about))
     }
 }
 
@@ -365,7 +504,9 @@ pub fn EquipmentManager(
                 revision: save.expected_revision,
                 metadata_revision: save.expected_metadata_revision,
                 archived: false,
+                is_default: save.is_default.unwrap_or(false),
                 settings: save.settings.clone(),
+                about: save.about.clone(),
                 provenance: save.provenance.clone(),
                 saved_by: String::new(),
                 saved_at: 0,
@@ -611,8 +752,8 @@ pub fn EquipmentManager(
             .map(|p| p.settings.clone())
             .unwrap_or_default();
         let current_form = form.get_untracked();
-        let settings = match current_form.parse(&base) {
-            Ok(settings) => settings,
+        let (settings, about) = match current_form.parse(&base) {
+            Ok(parsed) => parsed,
             Err(message) => {
                 status.set(message.into());
                 return;
@@ -632,11 +773,14 @@ pub fn EquipmentManager(
                 }
             },
         };
+        let is_default = default_change(&baseline.get_untracked(), &current_form);
         execute.run(EquipmentCommand::Save(SaveEquipment {
             intent: identity.get_untracked(),
             profile_id,
             name: current_form.name,
             settings,
+            about,
+            is_default,
             provenance: current.as_ref().map(|p| p.provenance.clone()).unwrap_or(
                 EquipmentProvenance {
                     source: "manual".into(),
@@ -710,6 +854,12 @@ pub fn EquipmentManager(
                 Ok(EquipmentOutcome::Profile(latest)) => {
                     if had_edits {
                         // Keep the raw edits; they are now measured against the latest revision.
+                        // An untouched default toggle follows the latest value, so it is not
+                        // mistaken for an edit and sent over another session's choice.
+                        let untouched = form.with_untracked(|f| baseline.with_untracked(|b| f.is_default == b.is_default));
+                        if untouched {
+                            form.update(|f| f.is_default = latest.is_default);
+                        }
                         baseline.set(ProfileForm::from_profile(Some(&latest)));
                         editing.set(Some(latest));
                         conflict.set(false);
@@ -778,6 +928,28 @@ pub fn EquipmentManager(
         let change = Callback::new(move |text: String| edit(&|f| f.raw[index] = text.clone()));
         view! { <BreweryDraftField id=id label=label unit=unit value=value error=error on_change=change numeric=true/> }
     };
+    let equipment_type_options: Vec<(String, String)> = EQUIPMENT_TYPES
+        .iter()
+        .map(|(key, label)| ((*key).to_owned(), (*label).to_owned()))
+        .collect();
+    let cooling_options: Vec<(String, String)> = std::iter::once((String::new(), "Not specified".to_owned()))
+        .chain(CoolingMethodV1::ALL.iter().map(|method| (method.key().to_owned(), method.label().to_owned())))
+        .collect();
+    let text = move |id: &'static str, label: &'static str, get: fn(&ProfileForm) -> &String, set: fn(&mut ProfileForm, String)| {
+        let value = Signal::derive(move || form.with(|f| get(f).clone()));
+        let change = Callback::new(move |v: String| edit(&|f| set(f, v.clone())));
+        view! { <BreweryDraftField id=id label=label value=value on_change=change/> }
+    };
+    let area = move |id: &'static str, label: &'static str, get: fn(&ProfileForm) -> &String, set: fn(&mut ProfileForm, String)| {
+        let value = Signal::derive(move || form.with(|f| get(f).clone()));
+        let change = Callback::new(move |v: String| edit(&|f| set(f, v.clone())));
+        view! { <BreweryDraftArea id=id label=label value=value on_change=change/> }
+    };
+    let toggle = move |id: &'static str, label: &'static str, get: fn(&ProfileForm) -> bool, set: fn(&mut ProfileForm, bool)| {
+        let checked = Signal::derive(move || form.with(|f| get(f)));
+        let change = Callback::new(move |v: bool| edit(&|f| set(f, v)));
+        view! { <div id=id class="k-field"><Switch checked=checked on_change=change label=label/></div> }
+    };
     view! {
         <BreweryPanel title="Equipment profiles" footer=std::sync::Arc::new(move || view! {
                 <BreweryActionGroup label="Profile actions">
@@ -830,24 +1002,46 @@ pub fn EquipmentManager(
                 </div>
             </Show>
             <fieldset disabled=move || locked.get()>
-                <BrewerySection title="Name">
-                    <BreweryDraftField id="equipment-profile-name" label="Profile name" value=Signal::derive(move || form.with(|f| f.name.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.name = v.clone()))/>
-                </BrewerySection>
-                <BrewerySection title="Efficiency">
-                    <div class="recipe-editor__fields">{field(0)}{field(1)}</div>
-                </BrewerySection>
-                <BrewerySection title="Water and losses">
-                    <div class="recipe-editor__fields">{field(2)}{field(3)}{field(4)}{field(5)}{field(6)}</div>
-                </BrewerySection>
-                <BrewerySection title="Vessel">
-                    <div class="recipe-editor__fields">{field(7)}{field(8)}{field(9)}{field(10)}</div>
-                </BrewerySection>
-                <BrewerySection title="Chilling">
+                <BrewerySection title="About">
                     <div class="recipe-editor__fields">
-                        <BreweryDraftSelect id="profile-chilling" label="Profile chilling" value=Signal::derive(move || form.with(|f| f.chilling.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.chilling = v.clone())) options=vec![("".into(), "Not specified".into()), ("natural".into(), "Natural".into()), ("forced".into(), "Forced".into()), ("counterflow".into(), "Counterflow".into())]/>
-                        <Show when=move || form.with(|f| f.chilling == "forced")>{field(11)}{field(12)}</Show>
-                        <Show when=move || form.with(|f| f.chilling == "counterflow")>{field(13)}</Show>
+                        {toggle("profile-default", "Default equipment", |f| f.is_default, |f, v| f.is_default = v)}
+                        <BreweryDraftField id="equipment-profile-name" label="Equipment name" value=Signal::derive(move || form.with(|f| f.name.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.name = v.clone()))/>
+                        {text("profile-brand", "Equipment brand", |f| &f.brand, |f, v| f.brand = v)}
+                        {area("profile-description", "Description", |f| &f.description, |f, v| f.description = v)}
+                        <BreweryDraftSelect id="profile-measurement" label="Measurement" value=Signal::derive(|| "metric".to_owned()) on_change=Callback::new(|_: String| ()) options=vec![("metric".into(), "Metric".into())]/>
+                        <BreweryDraftSelect id="profile-equipment-type" label="Equipment type" value=Signal::derive(move || form.with(|f| f.equipment_type.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.equipment_type = v.clone())) options=equipment_type_options.clone()/>
+                        {text("profile-controller-type", "Controller type", |f| &f.controller_type, |f, v| f.controller_type = v)}
+                        {field(BATCH)}
+                        {text("profile-recirculation", "Recirculation system", |f| &f.recirculation_system, |f, v| f.recirculation_system = v)}
+                        {field(VESSELS)}
                     </div>
+                </BrewerySection>
+                <BrewerySection title="Mash">
+                    <div class="recipe-editor__fields">
+                        {field(MASH_VOLUME)}{field(MASH_EFFICIENCY)}{field(MASH_DEADSPACE)}{field(MASH_THICKNESS)}{field(MASH_LOSS)}{field(MASH_ABSORPTION)}
+                    </div>
+                </BrewerySection>
+                <BrewerySection title="Sparge">
+                    <div class="recipe-editor__fields">
+                        {toggle("profile-sparge-alert", "Sparge water alert", |f| f.sparge_water_alert, |f, v| f.sparge_water_alert = v)}
+                        {toggle("profile-sparge-counter", "Sparge progress counter", |f| f.sparge_progress_counter, |f, v| f.sparge_progress_counter = v)}
+                        {field(SPARGE_VOLUME)}{field(SPARGE_ABSORPTION)}{field(SPARGE_DEADSPACE)}
+                    </div>
+                </BrewerySection>
+                <BrewerySection title="Boil">
+                    <div class="recipe-editor__fields">
+                        {toggle("profile-boil-power", "Boil power control", |f| f.boil_power_control, |f, v| f.boil_power_control = v)}
+                        {field(BOIL_VOLUME)}{field(SHRINKAGE)}{field(BOIL_LOSS)}{field(TRUB_LOSS)}{field(KETTLE_DIAMETER)}
+                    </div>
+                </BrewerySection>
+                <BrewerySection title="Cooling">
+                    <div class="recipe-editor__fields">
+                        <BreweryDraftSelect id="profile-cooling-method" label="Cooling method" value=Signal::derive(move || form.with(|f| f.cooling_method.clone())) on_change=Callback::new(move |v: String| edit(&|f| f.cooling_method = v.clone())) options=cooling_options.clone()/>
+                        {field(COOLING_FLOW)}
+                    </div>
+                </BrewerySection>
+                <BrewerySection title="Notes">
+                    {area("profile-notes", "Notes", |f| &f.notes, |f, v| f.notes = v)}
                 </BrewerySection>
             </fieldset>
             <Show when=move || blocked.get()><Button variant=ButtonVariant::Secondary on:click=move |_| {
@@ -864,70 +1058,11 @@ pub fn EquipmentManager(
     }
 }
 
-pub const FIELDS: [(&str, &str, &str); 14] = [
-    ("profile-efficiency-override", "Brewhouse efficiency", "%"),
-    ("profile-mash-efficiency", "Mash efficiency", "%"),
-    ("profile-boil-off", "Boil-off", "L/h"),
-    ("profile-transfer-loss", "Transfer loss", "L"),
-    ("profile-deadspace", "Pre-boil deadspace", "L"),
-    ("profile-absorption", "Grain absorption", "L/kg"),
-    ("profile-thickness", "Mash thickness", "L/kg"),
-    ("profile-capacity", "Kettle capacity", "L"),
-    ("profile-diameter", "Kettle diameter", "cm"),
-    ("profile-opening", "Kettle opening", "cm"),
-    ("profile-boil-temperature", "Boil temperature", "°C"),
-    ("profile-cooling-rate", "Forced cooling rate", "per min"),
-    ("profile-cooling-plateau", "Cooling plateau", "°C"),
-    ("profile-counterflow-rate", "Counterflow rate", "L/min"),
-];
-fn values(s: &EquipmentSettingsV1) -> [Option<f64>; 14] {
-    [
-        s.efficiency_override_fraction,
-        s.mash_efficiency_fraction,
-        s.boil_off_l_per_hour,
-        s.transfer_loss_l,
-        s.pre_boil_deadspace_l,
-        s.grain_absorption_l_per_kg,
-        s.mash_thickness_l_per_kg,
-        s.kettle_capacity_l,
-        s.kettle_diameter_cm,
-        s.kettle_opening_cm,
-        s.boil_temperature_c,
-        match &s.chilling {
-            Some(ChillingV1::Forced {
-                rate_per_minute, ..
-            }) => *rate_per_minute,
-            _ => None,
-        },
-        match &s.chilling {
-            Some(ChillingV1::Forced { plateau_c, .. }) => *plateau_c,
-            _ => None,
-        },
-        match &s.chilling {
-            Some(ChillingV1::Counterflow { litres_per_minute }) => *litres_per_minute,
-            _ => None,
-        },
-    ]
-}
-fn assign_values(s: &mut EquipmentSettingsV1, v: &[Option<f64>]) {
-    s.efficiency_override_fraction = v[0];
-    s.mash_efficiency_fraction = v[1];
-    s.boil_off_l_per_hour = v[2];
-    s.transfer_loss_l = v[3];
-    s.pre_boil_deadspace_l = v[4];
-    s.grain_absorption_l_per_kg = v[5];
-    s.mash_thickness_l_per_kg = v[6];
-    s.kettle_capacity_l = v[7];
-    s.kettle_diameter_cm = v[8];
-    s.kettle_opening_cm = v[9];
-    s.boil_temperature_c = v[10];
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn profile(settings: EquipmentSettingsV1) -> EquipmentProfile {
+    fn profile(settings: EquipmentSettingsV1, about: EquipmentAboutV1) -> EquipmentProfile {
         EquipmentProfile {
             workspace_id: "w".into(),
             profile_id: "p".into(),
@@ -936,7 +1071,9 @@ mod tests {
             revision: 1,
             metadata_revision: 1,
             archived: false,
+            is_default: true,
             settings,
+            about,
             provenance: EquipmentProvenance {
                 source: "manual".into(),
                 assumptions: vec![],
@@ -947,82 +1084,138 @@ mod tests {
     }
 
     #[test]
+    fn the_form_lists_exactly_the_spec_numeric_fields_in_spec_order() {
+        let labels: Vec<_> = FIELDS.iter().map(|(_, label, _)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "Batch size",
+                "Number of vessels",
+                "Mash tun volume",
+                "Mash efficiency",
+                "Mash tun deadspace",
+                "Mash thickness",
+                "Mash tun loss",
+                "Grain absorption",
+                "Sparge vessel volume",
+                "Grain absorption",
+                "Sparge deadspace volume",
+                "Boil volume",
+                "Wort shrinkage",
+                "Boil loss",
+                "Trub and chiller loss",
+                "Kettle diameter",
+                "Flow rate",
+            ]
+        );
+        let ids: std::collections::BTreeSet<_> = FIELDS.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids.len(), FIELDS.len(), "every field has its own id");
+        assert!(
+            FIELDS.iter().all(|(_, label, _)| !label.contains("Brewhouse")),
+            "Brewhouse efficiency is not a profile field"
+        );
+    }
+
+    #[test]
     fn a_loaded_profile_is_clean_and_an_edit_is_dirty_against_its_baseline() {
-        let loaded = ProfileForm::from_profile(Some(&profile(EquipmentSettingsV1 {
-            mash_efficiency_fraction: Some(0.57),
-            ..Default::default()
-        })));
-        assert_eq!(loaded.raw[1], "57");
+        let loaded = ProfileForm::from_profile(Some(&profile(
+            EquipmentSettingsV1 {
+                mash_efficiency_fraction: Some(0.57),
+                ..Default::default()
+            },
+            EquipmentAboutV1::default(),
+        )));
+        assert_eq!(loaded.raw[MASH_EFFICIENCY], "57");
+        assert!(loaded.is_default);
         let mut edited = loaded.clone();
         assert_eq!(edited, loaded);
-        edited.raw[2] = "3".into();
+        edited.raw[BOIL_LOSS] = "3".into();
         assert_ne!(edited, loaded);
+        let mut toggled = loaded.clone();
+        toggled.sparge_water_alert = true;
+        assert_ne!(toggled, loaded);
     }
 
     #[test]
-    fn hidden_chilling_values_survive_mode_changes_but_only_the_active_mode_is_saved() {
-        let mut form = ProfileForm::blank();
-        form.chilling = "forced".into();
-        form.raw[11] = "0.5".into();
-        form.raw[12] = "20".into();
-        form.raw[13] = "4".into();
-        let forced = form.parse(&Default::default()).unwrap();
-        assert_eq!(
-            forced.chilling,
-            Some(ChillingV1::Forced {
-                rate_per_minute: Some(0.5),
-                plateau_c: Some(20.0)
-            })
-        );
-        form.chilling = "counterflow".into();
-        assert_eq!(form.raw[11], "0.5");
-        assert_eq!(
-            form.parse(&Default::default()).unwrap().chilling,
-            Some(ChillingV1::Counterflow {
-                litres_per_minute: Some(4.0)
-            })
-        );
-        form.chilling = "forced".into();
-        assert_eq!(form.parse(&Default::default()).unwrap(), forced);
+    fn an_untouched_default_toggle_is_not_sent_so_a_stale_form_cannot_overwrite_it() {
+        let loaded = ProfileForm::from_profile(Some(&profile(Default::default(), Default::default())));
+        assert!(loaded.is_default);
+        let mut edited = loaded.clone();
+        edited.notes = "changed".into();
+        assert_eq!(default_change(&loaded, &edited), None);
+        edited.is_default = false;
+        assert_eq!(default_change(&loaded, &edited), Some(false));
+        assert_eq!(default_change(&ProfileForm::blank(), &loaded), Some(true));
     }
 
     #[test]
-    fn invalid_text_in_a_hidden_chilling_field_does_not_block_parsing() {
-        let mut form = ProfileForm::blank();
-        form.chilling = "natural".into();
-        form.raw[11] = "abc".into();
-        form.raw[13] = "x".into();
-        assert_eq!(form.field_error(11), None);
-        assert_eq!(
-            form.parse(&Default::default()).unwrap().chilling,
-            Some(ChillingV1::Natural)
-        );
-        form.chilling = "forced".into();
-        assert_eq!(form.field_error(11), Some("Enter a number."));
-        assert_eq!(form.field_error(13), None);
+    fn every_spec_field_round_trips_through_the_form() {
+        let settings = EquipmentSettingsV1 {
+            mash_tun_volume_l: Some(30.0),
+            mash_efficiency_fraction: Some(0.78),
+            mash_tun_deadspace_l: Some(3.5),
+            mash_thickness_l_per_kg: Some(2.8),
+            mash_tun_loss_l: Some(0.0),
+            mash_grain_absorption_l_per_kg: Some(0.8),
+            sparge_vessel_volume_l: Some(19.0),
+            sparge_grain_absorption_l_per_kg: Some(0.0),
+            sparge_deadspace_l: Some(0.0),
+            boil_volume_l: Some(30.0),
+            wort_shrinkage_fraction: Some(0.04),
+            boil_loss_l_per_hour: Some(3.0),
+            trub_and_chiller_loss_l: Some(2.0),
+            kettle_diameter_cm: Some(30.0),
+            cooling_method: Some(CoolingMethodV1::CounterflowChiller),
+            cooling_flow_rate_l_per_minute: Some(1.0),
+            ..Default::default()
+        };
+        let about = EquipmentAboutV1 {
+            brand: Some("Grainfather".into()),
+            description: Some("All in one".into()),
+            measurement: Some("metric".into()),
+            equipment_type: Some("all_grain".into()),
+            controller_type: Some("Grainfather Bluetooth Controller".into()),
+            recirculation_system: Some("RIMS".into()),
+            vessel_count: Some(1),
+            batch_size_l: Some(23.0),
+            sparge_water_alert: true,
+            sparge_progress_counter: true,
+            boil_power_control: true,
+            notes: Some("Calibrated".into()),
+        };
+        let form = ProfileForm::from_profile(Some(&profile(settings.clone(), about.clone())));
+        let (parsed_settings, parsed_about) = form.parse(&EquipmentSettingsV1::default()).unwrap();
+        assert_eq!(parsed_settings, settings);
+        assert_eq!(parsed_about, about);
     }
 
     #[test]
-    fn efficiency_is_entered_as_percent_and_stored_as_fraction_with_extensions_kept() {
+    fn percentages_are_entered_as_percent_and_stored_as_fractions_with_extensions_kept() {
         let mut base = EquipmentSettingsV1::default();
         base.extensions.insert("x".into(), serde_json::json!(1));
         let mut form = ProfileForm::blank();
-        form.raw[0] = "70".into();
-        form.raw[1] = "75".into();
-        let parsed = form.parse(&base).unwrap();
-        assert_eq!(parsed.efficiency_override_fraction, Some(0.7));
-        assert_eq!(parsed.mash_efficiency_fraction, Some(0.75));
+        form.raw[MASH_EFFICIENCY] = "78".into();
+        form.raw[SHRINKAGE] = "4".into();
+        let (parsed, _) = form.parse(&base).unwrap();
+        assert_eq!(parsed.mash_efficiency_fraction, Some(0.78));
+        assert_eq!(parsed.wort_shrinkage_fraction, Some(0.04));
+        assert_eq!(parsed.efficiency_override_fraction, None, "never a profile field");
         assert_eq!(parsed.extensions, base.extensions);
     }
 
     #[test]
     fn malformed_and_non_finite_text_is_reported_per_field_and_blocks_parsing() {
         let mut form = ProfileForm::blank();
-        form.raw[2] = "3,5".into();
-        form.raw[3] = "inf".into();
-        assert_eq!(form.field_error(2), Some("Enter a number."));
-        assert_eq!(form.field_error(3), Some("Enter a finite number."));
-        assert_eq!(form.field_error(4), None);
+        form.raw[BOIL_LOSS] = "3,5".into();
+        form.raw[TRUB_LOSS] = "inf".into();
+        form.raw[VESSELS] = "1.5".into();
+        assert_eq!(form.field_error(BOIL_LOSS), Some("Enter a number."));
+        assert_eq!(form.field_error(TRUB_LOSS), Some("Enter a finite number."));
+        assert_eq!(
+            form.field_error(VESSELS),
+            Some("Enter a whole number of vessels.")
+        );
+        assert_eq!(form.field_error(MASH_LOSS), None);
         assert!(form.parse(&Default::default()).is_err());
     }
 }

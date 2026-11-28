@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared equipment profile operation contracts.
-use crate::{brewery::EquipmentSettingsV1, request_context::OperationIntent};
+use crate::{
+    brewery::{EquipmentAboutV1, EquipmentSettingsV1},
+    request_context::OperationIntent,
+};
 use serde::{Deserialize, Serialize};
 
 pub use crate::brewery::{EquipmentProfile, EquipmentProvenance, EquipmentRevision};
@@ -11,6 +14,12 @@ pub struct SaveEquipment {
     pub profile_id: String,
     pub name: String,
     pub settings: EquipmentSettingsV1,
+    #[serde(default)]
+    pub about: EquipmentAboutV1,
+    /// `Some(true)` makes this the workspace default, `Some(false)` clears it if
+    /// it is the default, `None` leaves the default as it is.
+    #[serde(default)]
+    pub is_default: Option<bool>,
     pub provenance: EquipmentProvenance,
     pub expected_revision: i64,
     pub expected_metadata_revision: i64,
@@ -45,6 +54,10 @@ pub enum EquipmentOutcome {
 pub struct EquipmentPage {
     pub items: Vec<EquipmentProfile>,
     pub next_cursor: Option<String>,
+    /// The workspace default profile, on every page whether or not it is in
+    /// `items`, so a new recipe can pick it up without paging.
+    #[serde(default)]
+    pub default_profile: Option<EquipmentProfile>,
 }
 fn default_limit() -> i64 {
     50

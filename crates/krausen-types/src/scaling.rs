@@ -86,10 +86,10 @@ pub enum ScaleWarning {
         post_boil_l: f64,
     },
     FixedLossesRetained {
-        transfer_loss_l: Option<f64>,
-        boil_off_l_per_hour: Option<f64>,
-        pre_boil_deadspace_l: Option<f64>,
-        grain_absorption_l_per_kg: Option<f64>,
+        trub_and_chiller_loss_l: Option<f64>,
+        boil_loss_l_per_hour: Option<f64>,
+        mash_tun_deadspace_l: Option<f64>,
+        mash_grain_absorption_l_per_kg: Option<f64>,
     },
     UnscaledIngredients {
         yeast_rows: usize,

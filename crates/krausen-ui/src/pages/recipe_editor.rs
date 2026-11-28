@@ -285,6 +285,13 @@ pub fn RecipeEditorPage() -> impl IntoView {
                     .workspace_id
                     .ok_or_else(|| ServerFnError::new("Workspace required"))?,
             };
+            let seed = if id == "new" {
+                crate::pages::equipment_profiles::load_default_profile(&identity)
+                    .await?
+                    .map(|profile| profile.new_recipe_seed())
+            } else {
+                None
+            };
             let result = if id == "new" {
                 None
             } else {
@@ -312,16 +319,16 @@ pub fn RecipeEditorPage() -> impl IntoView {
                 };
                 Some(result?)
             };
-            Ok::<_, ServerFnError>((identity, result))
+            Ok::<_, ServerFnError>((identity, result, seed))
         }
     });
     view! { <Suspense fallback=|| view! { <p>"Loading recipe…"</p> }>
         {move || Suspend::new(async move { match load.await {
-            Ok((identity, None)) => view! { <RecipeForm identity=identity initial=None/> }.into_any(),
-            Ok((identity, Some(RecipeReadOutcome::Found(snapshot)))) => view! { <RecipeForm identity=identity initial=Some(snapshot)/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::NotFound))) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::Forbidden))) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
-            Ok((_, Some(RecipeReadOutcome::ContextChanged))) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
+            Ok((identity, None, seed)) => view! { <RecipeForm identity=identity initial=None seed=seed/> }.into_any(),
+            Ok((identity, Some(RecipeReadOutcome::Found(snapshot)), _)) => view! { <RecipeForm identity=identity initial=Some(snapshot) seed=None/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::NotFound), _)) => view! { <BreweryNotice title="Recipe not found" body="It may have been archived or belongs to another workspace."/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::Forbidden), _)) => view! { <BreweryNotice title="Access denied" body="You no longer have access to this workspace." warning=true/> }.into_any(),
+            Ok((_, Some(RecipeReadOutcome::ContextChanged), _)) => view! { <BreweryNotice title="Account or workspace changed" body="Return to the original context and reopen this recipe." warning=true/> }.into_any(),
             Err(error) if crate::utils::auth_refresh::is_auth_error(&error.to_string()) => view! { <BreweryNotice title="Session expired" body=EditorAccess::Expired.guidance() warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
             _ => view! { <BreweryNotice title="Unable to load recipe" body="Your recipe could not be loaded. Retry when the connection is available." warning=true/><Button variant=ButtonVariant::Secondary on:click=move |_| load.refetch()>"Retry"</Button> }.into_any(),
         } })}
@@ -358,7 +365,7 @@ pub(super) struct PendingRecipeSave {
 }
 
 #[component]
-fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl IntoView {
+fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: Option<RecipeDocumentV1>) -> impl IntoView {
     let identity = RwSignal::new(identity);
     let access = RwSignal::new(EditorAccess::Verified);
     let check_generation = RwSignal::new(0_u64);
@@ -392,14 +399,16 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
     let recipe_id = RwSignal::new(initial.as_ref().map(|s| s.recipe_id.clone()));
     let revision = RwSignal::new(initial.as_ref().map(|s| s.revision));
     let original_baseline_available = RwSignal::new(true);
+    // A new recipe starts from the workspace default equipment; a saved one from its document.
     let baseline = RwSignal::new(
         initial
             .as_ref()
             .map(|s| s.document.clone())
+            .or_else(|| seed.clone())
             .unwrap_or_default(),
     );
     let draft = RwSignal::new(RecipeDraft::new(
-        initial.map(|s| s.document).unwrap_or_default(),
+        initial.map(|s| s.document).or(seed).unwrap_or_default(),
     ));
     #[cfg(target_arch = "wasm32")]
     let focus_before_check = StoredValue::new(None::<EditorFocus>);
@@ -959,7 +968,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
             retry.set(Some(attempt.clone()));
             attempt
         };
-        let submitted_generation = attempt.generation;
         pending.set(true);
         save_sequence.update(|sequence| *sequence = sequence.checked_add(1).expect("save sequence exhausted"));
         let save_task = save_sequence.get_untracked();
@@ -1059,9 +1067,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                 Ok(RecipeSaveOutcome::Saved {
                     recipe_id: id,
                     revision: saved,
+                    default_equipment,
                 }) => {
                     retry.set(None);
-                    baseline.set(attempt.document.clone());
+                    // What was stored: the saved document plus any workspace default the server applied.
+                    let unchanged_since_save = draft.with_untracked(|d| d.generation) == attempt.generation;
+                    let mut stored = attempt.document.clone();
+                    if let Some(applied) = &default_equipment {
+                        stored.equipment_profile_id = Some(applied.profile_id.clone());
+                        stored.recipe_only_equipment = false;
+                        draft.update(|d| d.adopt_stored_profile(&applied.profile_id));
+                    }
+                    baseline.set(stored.clone());
                     original_baseline_available.set(true);
                     #[cfg(target_arch = "wasm32")]
                     if creating && may_apply_scope {
@@ -1082,7 +1099,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                     }
                     recipe_id.set(Some(id));
                     revision.set(Some(saved));
-                    if draft.with_untracked(|d| d.generation) == attempt.generation {
+                    if unchanged_since_save {
                         draft.update(|d| d.mark_saved());
                         status.set(if may_apply_scope { format!("Saved revision {saved}.") } else { format!("Saved revision {saved} in the original context. Recheck access before continuing; no leave action was performed.") });
                         #[cfg(target_arch = "wasm32")]
@@ -1096,7 +1113,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                             if may_leave && saving_to_leave.get_untracked() {
                                 guard_task.update(GuardTaskState { dirty: false, generation: draft.with_untracked(|d| d.generation), in_flight: false, uncertain: false, recovery_retained: false, context_visible: true });
                                 if let Some(leave_token) = leave_attempt.get_value() {
-                                    guard_task.complete_save(leave_token, GuardSaveResolution::Saved { submitted_generation });
+                                    // Adopting an applied default advances the generation; the saved state is the current one.
+                                    guard_task.complete_save(leave_token, GuardSaveResolution::Saved { submitted_generation: draft.with_untracked(|d| d.generation) });
                                 }
                             }
                         } else if may_apply_scope {
@@ -1106,7 +1124,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>) -> impl
                         }
                     } else {
                         saving_to_leave.set(false);
-                        draft.update(|d| d.mark_earlier_document_saved(attempt.document.clone()));
+                        draft.update(|d| d.mark_earlier_document_saved(stored.clone()));
                         status.set(format!(
                             "Saved revision {saved}; newer changes remain unsaved."
                         ));
@@ -2170,13 +2188,7 @@ fn PreviewSource(
     revision: RwSignal<Option<i64>>,
 ) -> impl IntoView {
     let equipment = preview.context.as_ref().map(effective_equipment);
-    let assumptions = preview.context.as_ref().map(|context| context.assumptions.iter().filter_map(|value| match value.as_str() {
-        "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
-        "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
-        "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
-        "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
-        _ => None,
-    }).collect::<Vec<_>>()).unwrap_or_default();
+    let assumptions = preview.context.as_ref().map(|context| context.assumptions.iter().filter_map(|value| crate::components::printable_recipe::known_assumption_text(value)).collect::<Vec<_>>()).unwrap_or_default();
     let style = preview.style.as_ref().map(|style| format!("Style reference: {} · {} · {}", style.name, style.style_id, style.edition));
     view! {
         // Always visible and quiet: which draft these numbers describe. The
@@ -2201,8 +2213,8 @@ fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView
         view! { <BreweryPanel title="Your equipment" description=name>
             <BreweryMetricList>
                 {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1, Quiet)}
-                {preview_metric("Boil-off", equipment.boil_off_l_per_hour, None, None, "L/h", 1, Quiet)}
-                {preview_metric("Transfer loss", equipment.transfer_loss_l, None, None, "L", 1, Quiet)}
+                {preview_metric("Boil loss", equipment.boil_loss_l_per_hour, None, None, "L/hr", 1, Quiet)}
+                {preview_metric("Trub and chiller loss", equipment.trub_and_chiller_loss_l, None, None, "L", 1, Quiet)}
             </BreweryMetricList>
             <p>"New brews use current settings; previous brews retain their original equipment."</p>
         </BreweryPanel> }

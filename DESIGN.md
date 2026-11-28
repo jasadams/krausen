@@ -83,6 +83,9 @@ components; never maintain a visually similar but separate demonstration.
   current data and show conflicts without replacing a dirty draft.
 - Metric inputs use litres, kilograms/grams and degrees Celsius with explicit
   labels. Missing actual measurements remain absent.
+- Equipment profiles follow Jason's 2026-11-28 spec in
+  [docs/EQUIPMENT_PROFILE.md](docs/EQUIPMENT_PROFILE.md): About, Mash, Sparge,
+  Boil, Cooling, Notes, one workspace default, built from the shared kit.
 - Selected equipment is a live reference for recipe previews and new brews.
   Equipment edits change future calculations without creating a recipe-content
   revision solely for that change. A brew freezes its effective equipment,

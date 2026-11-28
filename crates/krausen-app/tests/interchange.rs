@@ -57,6 +57,8 @@ async fn exercise(db: DbPool) {
         equipment_profile_id: None,
         expected_profile_revision: None,
         expected_profile_metadata_revision: None,
+        expected_profile_id: None,
+        expected_no_profile: false,
         equipment_draft: EquipmentSettingsV1::default(),
         draft_generation: "generation-1".into(),
     };
@@ -313,6 +315,8 @@ async fn exercise(db: DbPool) {
         profile_id: profile_id.clone(),
         name: "Import equipment".into(),
         settings: EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: None,
         provenance: krausen_types::equipment::EquipmentProvenance {
             source: "manual".into(),
             assumptions: vec![],
@@ -359,8 +363,8 @@ async fn exercise(db: DbPool) {
     profile.expected_revision = created.revision;
     profile.expected_metadata_revision = created.metadata_revision;
     profile.request_id = Uuid::new_v4().to_string();
-    profile.settings.boil_off_l_per_hour = Some(2.0);
-    let changed_profile = krausen_app::equipment::save(&db, &actor, profile)
+    profile.settings.boil_loss_l_per_hour = Some(2.0);
+    let changed_profile = krausen_app::equipment::save(&db, &actor, profile.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -423,6 +427,157 @@ async fn exercise(db: DbPool) {
         interchange::commit(&db, &actor, &request, failed_key).await,
         ImportCommitOutcome::Imported { revision: 1, .. }
     ));
+    // A default that appears between preview and commit is a change: the preview resolved none.
+    let mut resolved_none = request.clone();
+    resolved_none.expected_no_profile = true;
+    // (Committed below once the default exists.)
+    // An import that names no profile takes the workspace default (recipe-level efficiency
+    // override still applies); one that names a profile keeps its own.
+    profile.expected_revision = changed_profile.revision;
+    profile.expected_metadata_revision = changed_profile.metadata_revision;
+    profile.is_default = Some(true);
+    profile.request_id = Uuid::new_v4().to_string();
+    krausen_app::equipment::save(&db, &actor, profile).await.unwrap();
+    let ImportPreviewOutcome::Preview(defaulted) =
+        interchange::preview(&db, &actor, &request).await
+    else {
+        panic!("default preview");
+    };
+    assert_eq!(
+        defaulted.document.equipment_profile_id.as_deref(),
+        Some(created.profile_id.as_str())
+    );
+    let ImportCommitOutcome::Imported { recipe_id, .. } =
+        interchange::commit(&db, &actor, &request, Uuid::new_v4()).await
+    else {
+        panic!("default import");
+    };
+    let krausen_types::recipe_editor::RecipeReadOutcome::Found(found) =
+        krausen_app::recipe_editor::read(&db, &actor, &intent, &recipe_id).await
+    else {
+        panic!("read imported");
+    };
+    assert_eq!(
+        found.document.equipment_profile_id.as_deref(),
+        Some(created.profile_id.as_str())
+    );
+    // Bringing its own recipe-only equipment is an explicit choice: no default is applied.
+    let mut own_equipment = request.clone();
+    own_equipment.equipment_draft.boil_loss_l_per_hour = Some(3.0);
+    let ImportPreviewOutcome::Preview(own) = interchange::preview(&db, &actor, &own_equipment).await else {
+        panic!("own equipment preview");
+    };
+    assert_eq!(own.document.equipment_profile_id, None);
+    // An import that only carries the recipe's efficiency override still takes the default.
+    let mut efficiency_only = request.clone();
+    efficiency_only.equipment_draft.efficiency_override_fraction = Some(0.7);
+    // The BeerXML efficiency choice, when it kept the source value as a recipe override, wins.
+    let ImportPreviewOutcome::Preview(source_wins) = interchange::preview(&db, &actor, &efficiency_only).await else { panic!("source preview") };
+    assert_eq!(source_wins.document.equipment_overrides.efficiency_override_fraction, Some(0.75));
+    efficiency_only.choices.efficiency = Some(krausen_types::interchange::EfficiencyChoice::SelectedEquipment);
+    let ImportPreviewOutcome::Preview(eff) = interchange::preview(&db, &actor, &efficiency_only).await else { panic!("efficiency preview") };
+    assert_eq!(eff.document.equipment_profile_id.as_deref(), Some(created.profile_id.as_str()));
+    // The default is applied without losing the draft's efficiency override, at preview and commit.
+    assert_eq!(eff.document.equipment_overrides.efficiency_override_fraction, Some(0.7));
+    let ImportCommitOutcome::Imported { recipe_id: eff_recipe, .. } = interchange::commit(&db, &actor, &efficiency_only, Uuid::new_v4()).await else { panic!("efficiency commit") };
+    let krausen_types::recipe_editor::RecipeReadOutcome::Found(eff_found) = krausen_app::recipe_editor::read(&db, &actor, &intent, &eff_recipe).await else { panic!("read eff") };
+    assert_eq!(eff_found.document.equipment_overrides.efficiency_override_fraction, Some(0.7));
+    assert_eq!(eff_found.document.equipment_profile_id.as_deref(), Some(created.profile_id.as_str()));
+    // An unnamed import that passes the revisions its preview reported is guarded like a named
+    // one, and a retry of a committed request recovers its original result.
+    let mut guarded = request.clone();
+    guarded.expected_profile_id = defaulted.selected_profile_id.clone();
+    guarded.expected_profile_revision = defaulted.selected_profile_revision;
+    guarded.expected_profile_metadata_revision = Some(0);
+    assert_eq!(
+        interchange::commit(&db, &actor, &guarded, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
+    );
+    // The default switches to another profile with the same revision numbers: ProfileChanged.
+    let mut previewed = request.clone();
+    previewed.expected_profile_id = defaulted.selected_profile_id.clone();
+    previewed.expected_profile_revision = defaulted.selected_profile_revision;
+    previewed.expected_profile_metadata_revision = defaulted.selected_profile_metadata_revision;
+    let mut mover = profile_for_default_move(&intent, &db, &actor).await;
+    // One more save brings it to the same revision numbers as the previewed profile.
+    mover.expected_revision = 1;
+    mover.expected_metadata_revision = 1;
+    mover.settings.boil_loss_l_per_hour = Some(1.0);
+    mover.request_id = Uuid::new_v4().to_string();
+    krausen_app::equipment::save(&db, &actor, mover).await.unwrap();
+    let moved_default = krausen_app::equipment::list(&db, &actor, &intent, None, 1, false).await.unwrap().default_profile.unwrap();
+    assert_ne!(Some(moved_default.profile_id.as_str()), previewed.expected_profile_id.as_deref());
+    assert_eq!(
+        (moved_default.revision, moved_default.metadata_revision),
+        (defaulted.selected_profile_revision.unwrap(), defaulted.selected_profile_metadata_revision.unwrap()),
+        "same revision numbers on a different profile"
+    );
+    assert_eq!(
+        interchange::commit(&db, &actor, &previewed, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
+    );
+    assert_eq!(
+        interchange::commit(&db, &actor, &resolved_none, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged,
+        "a default appeared after a preview that resolved none"
+    );
+    // The default the preview used is gone: also a change (archive clears it).
+    let gone_default = krausen_app::equipment::list(&db, &actor, &intent, None, 1, false).await.unwrap().default_profile.unwrap();
+    krausen_app::equipment::set_archived(&db, &actor, krausen_types::equipment::ArchiveEquipment {
+        intent: intent.clone(),
+        profile_id: gone_default.profile_id.clone(),
+        archived: true,
+        expected_metadata_revision: gone_default.metadata_revision,
+        request_id: Uuid::new_v4().to_string(),
+    }).await.unwrap();
+    let mut had_default = request.clone();
+    had_default.expected_profile_id = Some(gone_default.profile_id);
+    assert_eq!(
+        interchange::commit(&db, &actor, &had_default, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged,
+        "the default the preview resolved is gone"
+    );
+    // That check comes before outstanding BeerXML choices are reported.
+    let mut needs_choices = had_default.clone();
+    needs_choices.choices = Default::default();
+    assert_eq!(
+        interchange::commit(&db, &actor, &needs_choices, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
+    );
+    let retry_key = Uuid::new_v4();
+    let first = interchange::commit(&db, &actor, &request, retry_key).await;
+    assert!(matches!(first, ImportCommitOutcome::Imported { .. }));
+    let mut moved = profile_for_default_move(&intent, &db, &actor).await;
+    moved.name = "Second default".into();
+    assert_eq!(
+        interchange::commit(&db, &actor, &request, retry_key).await,
+        first,
+        "a retry after the default moved recovers the original result"
+    );
+}
+/// A second profile made the workspace default, so the first is no longer it.
+async fn profile_for_default_move(
+    intent: &krausen_types::request_context::OperationIntent,
+    db: &DbPool,
+    actor: &ActorContext,
+) -> krausen_types::equipment::SaveEquipment {
+    let save = krausen_types::equipment::SaveEquipment {
+        intent: intent.clone(),
+        profile_id: Uuid::new_v4().to_string(),
+        name: "Default mover".into(),
+        settings: EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: Some(true),
+        provenance: krausen_types::equipment::EquipmentProvenance {
+            source: "manual".into(),
+            assumptions: vec![],
+        },
+        expected_revision: 0,
+        expected_metadata_revision: 0,
+        request_id: Uuid::new_v4().to_string(),
+    };
+    krausen_app::equipment::save(db, actor, save.clone()).await.unwrap();
+    save
 }
 
 use sha2::Digest;

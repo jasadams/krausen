@@ -39,6 +39,10 @@ pub struct RecipeDocumentV1 {
     pub batch_size_l: Option<f64>,
     pub boil_minutes: Option<f64>,
     pub equipment_profile_id: Option<String>,
+    /// The brewer deliberately chose recipe-only equipment, so a new recipe is saved with no
+    /// profile instead of taking the workspace default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recipe_only_equipment: bool,
     #[serde(default)]
     pub equipment_overrides: EquipmentSettingsV1,
     pub fermentables: Vec<FermentableAddition>,
@@ -51,6 +55,16 @@ pub struct RecipeDocumentV1 {
     pub extensions: BTreeMap<String, Value>,
 }
 
+impl RecipeDocumentV1 {
+    /// A new recipe that names no profile, did not deliberately choose recipe-only equipment and
+    /// brings no equipment settings of its own takes the workspace default when it is created.
+    pub fn takes_workspace_default(&self) -> bool {
+        self.equipment_profile_id.is_none()
+            && !self.recipe_only_equipment
+            && !self.equipment_overrides.brings_recipe_equipment()
+    }
+}
+
 impl Default for RecipeDocumentV1 {
     fn default() -> Self {
         Self {
@@ -61,6 +75,7 @@ impl Default for RecipeDocumentV1 {
             batch_size_l: None,
             boil_minutes: None,
             equipment_profile_id: None,
+            recipe_only_equipment: false,
             equipment_overrides: EquipmentSettingsV1::default(),
             fermentables: vec![],
             hops: vec![],
@@ -83,23 +98,50 @@ pub struct StyleReference {
 }
 
 /// Sparse settings represent absence, including an explicit recipe override.
+///
+/// The calculation fields of Jason's equipment spec (see
+/// `docs/EQUIPMENT_PROFILE.md`). Earlier names are read aliases so older recipe
+/// and brew snapshots still load; fields the spec dropped are ignored on read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct EquipmentSettingsV1 {
     pub schema_version: u32,
+    /// Recipe-level "Brewhouse efficiency override" only. A profile save that sets it is rejected.
     pub efficiency_override_fraction: Option<f64>,
+    /// Mash tun volume in litres; a capacity check only.
+    pub mash_tun_volume_l: Option<f64>,
     pub mash_efficiency_fraction: Option<f64>,
-    pub boil_off_l_per_hour: Option<f64>,
-    pub transfer_loss_l: Option<f64>,
-    pub pre_boil_deadspace_l: Option<f64>,
-    pub grain_absorption_l_per_kg: Option<f64>,
+    /// Unrecoverable water left in the mash tun, in litres.
+    #[serde(alias = "pre_boil_deadspace_l")]
+    pub mash_tun_deadspace_l: Option<f64>,
     pub mash_thickness_l_per_kg: Option<f64>,
-    pub kettle_capacity_l: Option<f64>,
+    /// Wort lost from the mash tun before the kettle, in litres.
+    pub mash_tun_loss_l: Option<f64>,
+    /// Water absorbed by the mashed grain, in litres per kilogram.
+    #[serde(alias = "grain_absorption_l_per_kg")]
+    pub mash_grain_absorption_l_per_kg: Option<f64>,
+    /// Sparge vessel volume in litres; a capacity check only.
+    pub sparge_vessel_volume_l: Option<f64>,
+    /// Water absorbed from the sparge, in litres per kilogram of mashed grain.
+    pub sparge_grain_absorption_l_per_kg: Option<f64>,
+    /// Water left in the sparge vessel, in litres.
+    pub sparge_deadspace_l: Option<f64>,
+    /// Kettle volume in litres; a capacity check only.
+    #[serde(alias = "kettle_capacity_l")]
+    pub boil_volume_l: Option<f64>,
+    /// Fraction of hot wort volume lost on cooling, in `[0, 1)`.
+    pub wort_shrinkage_fraction: Option<f64>,
+    /// Hot volume lost to the boil, in litres per hour.
+    #[serde(alias = "boil_off_l_per_hour")]
+    pub boil_loss_l_per_hour: Option<f64>,
+    /// Wort lost to trub and the chiller after the boil, in litres.
+    #[serde(alias = "transfer_loss_l")]
+    pub trub_and_chiller_loss_l: Option<f64>,
     pub kettle_diameter_cm: Option<f64>,
-    pub kettle_opening_cm: Option<f64>,
-    pub boil_temperature_c: Option<f64>,
-    pub chilling: Option<ChillingV1>,
+    pub cooling_method: Option<CoolingMethodV1>,
+    /// Counterflow chiller flow rate in litres per minute.
+    pub cooling_flow_rate_l_per_minute: Option<f64>,
     pub extensions: BTreeMap<String, Value>,
 }
 
@@ -108,35 +150,106 @@ impl Default for EquipmentSettingsV1 {
         Self {
             schema_version: 1,
             efficiency_override_fraction: None,
+            mash_tun_volume_l: None,
             mash_efficiency_fraction: None,
-            boil_off_l_per_hour: None,
-            transfer_loss_l: None,
-            pre_boil_deadspace_l: None,
-            grain_absorption_l_per_kg: None,
+            mash_tun_deadspace_l: None,
             mash_thickness_l_per_kg: None,
-            kettle_capacity_l: None,
+            mash_tun_loss_l: None,
+            mash_grain_absorption_l_per_kg: None,
+            sparge_vessel_volume_l: None,
+            sparge_grain_absorption_l_per_kg: None,
+            sparge_deadspace_l: None,
+            boil_volume_l: None,
+            wort_shrinkage_fraction: None,
+            boil_loss_l_per_hour: None,
+            trub_and_chiller_loss_l: None,
             kettle_diameter_cm: None,
-            kettle_opening_cm: None,
-            boil_temperature_c: None,
-            chilling: None,
+            cooling_method: None,
+            cooling_flow_rate_l_per_minute: None,
             extensions: BTreeMap::new(),
         }
     }
 }
 
-/// Absent settings are distinct from an explicit choice of natural cooling.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl EquipmentSettingsV1 {
+    /// True when these settings are recipe-only equipment of their own. The recipe-level
+    /// efficiency override is not equipment: a recipe with only that still takes the default.
+    pub fn brings_recipe_equipment(&self) -> bool {
+        let mut own = self.clone();
+        own.efficiency_override_fraction = None;
+        own != Self::default()
+    }
+    /// A profile never carries a Brewhouse efficiency: that is a per-recipe
+    /// override. Profile data stored before the equipment spec may carry one; it
+    /// is dropped on read, not folded into mash efficiency.
+    pub fn into_profile_settings(mut self) -> Self {
+        self.efficiency_override_fraction = None;
+        self
+    }
+}
+
+impl CoolingMethodV1 {
+    pub const ALL: [CoolingMethodV1; 4] = [
+        Self::Natural,
+        Self::ImmersionChiller,
+        Self::IceBath,
+        Self::CounterflowChiller,
+    ];
+    /// The serialized name, also used as a form control value.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::ImmersionChiller => "immersion_chiller",
+            Self::IceBath => "ice_bath",
+            Self::CounterflowChiller => "counterflow_chiller",
+        }
+    }
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|method| method.key() == key)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Natural => "Natural",
+            Self::ImmersionChiller => "Immersion chiller",
+            Self::IceBath => "Ice bath",
+            Self::CounterflowChiller => "Counterflow chiller",
+        }
+    }
+}
+
+/// How the wort is chilled after flameout. Absent is distinct from an explicit
+/// choice of natural cooling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "method", rename_all = "snake_case")]
-pub enum ChillingV1 {
+#[serde(rename_all = "snake_case")]
+pub enum CoolingMethodV1 {
     Natural,
-    Forced {
-        rate_per_minute: Option<f64>,
-        plateau_c: Option<f64>,
-    },
-    Counterflow {
-        litres_per_minute: Option<f64>,
-    },
+    ImmersionChiller,
+    IceBath,
+    CounterflowChiller,
+}
+
+/// Descriptive profile data that is stored and shown but never calculated.
+/// It belongs to the profile only, not to recipe overrides or brew snapshots.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct EquipmentAboutV1 {
+    pub brand: Option<String>,
+    pub description: Option<String>,
+    /// Only `metric` is supported.
+    pub measurement: Option<String>,
+    /// For example `all_grain`.
+    pub equipment_type: Option<String>,
+    pub controller_type: Option<String>,
+    pub recirculation_system: Option<String>,
+    pub vessel_count: Option<u32>,
+    /// Stored and shown; it does not seed new recipes. In litres.
+    pub batch_size_l: Option<f64>,
+    pub sparge_water_alert: bool,
+    pub sparge_progress_counter: bool,
+    pub boil_power_control: bool,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -250,6 +363,18 @@ pub struct EquipmentProvenance {
     pub source: String,
     pub assumptions: Vec<String>,
 }
+impl EquipmentProfile {
+    /// The starting document of a new recipe that uses this profile. It selects
+    /// the profile only: the profile's batch size is stored and shown but does
+    /// not seed the recipe (a per-user default batch size is KRA-74).
+    pub fn new_recipe_seed(&self) -> RecipeDocumentV1 {
+        RecipeDocumentV1 {
+            equipment_profile_id: Some(self.profile_id.clone()),
+            ..RecipeDocumentV1::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EquipmentProfile {
@@ -260,7 +385,13 @@ pub struct EquipmentProfile {
     pub revision: i64,
     pub metadata_revision: i64,
     pub archived: bool,
+    /// The workspace's default profile. Workspace routing, not a setting: it is
+    /// not part of any revision or calculation context.
+    #[serde(default)]
+    pub is_default: bool,
     pub settings: EquipmentSettingsV1,
+    #[serde(default)]
+    pub about: EquipmentAboutV1,
     pub provenance: EquipmentProvenance,
     pub saved_by: String,
     pub saved_at: i64,
@@ -274,6 +405,8 @@ pub struct EquipmentRevision {
     pub revision: i64,
     pub name: String,
     pub settings: EquipmentSettingsV1,
+    #[serde(default)]
+    pub about: EquipmentAboutV1,
     pub provenance: EquipmentProvenance,
     pub content_digest: String,
     pub saved_by: String,

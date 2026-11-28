@@ -33,10 +33,10 @@ fn request() -> PreviewRequest {
     d.process.mash_water_l = Some(15.0);
     let mut e = EquipmentSettingsV1::default();
     e.mash_efficiency_fraction = Some(0.75);
-    e.boil_off_l_per_hour = Some(3.0);
-    e.transfer_loss_l = Some(2.0);
-    e.pre_boil_deadspace_l = Some(0.0);
-    e.grain_absorption_l_per_kg = Some(0.8);
+    e.boil_loss_l_per_hour = Some(3.0);
+    e.trub_and_chiller_loss_l = Some(2.0);
+    e.mash_tun_deadspace_l = Some(0.0);
+    e.mash_grain_absorption_l_per_kg = Some(0.8);
     PreviewRequest {
         draft_generation: "gen-1".into(),
         intent: krausen_types::request_context::OperationIntent {
@@ -163,7 +163,7 @@ async fn exercise(db: DbPool) {
     extract.draft.process.mash_water_method = None;
     extract.draft.process.mash_water_l = None;
     extract.equipment_draft.mash_efficiency_fraction = None;
-    extract.equipment_draft.grain_absorption_l_per_kg = None;
+    extract.equipment_draft.mash_grain_absorption_l_per_kg = None;
     let PreviewOutcome::Preview(extract_result) = preview(&db, &actor, extract).await.unwrap()
     else {
         panic!("preview")
@@ -206,7 +206,7 @@ async fn exercise(db: DbPool) {
     assert_eq!(first.context_digest, correlated.context_digest);
     assert_eq!(correlated.draft_generation, "new-generation");
     let mut changed = req.clone();
-    changed.equipment_draft.boil_off_l_per_hour = Some(4.0);
+    changed.equipment_draft.boil_loss_l_per_hour = Some(4.0);
     changed.draft_generation = "gen-2".into();
     let PreviewOutcome::Preview(second) = preview(&db, &actor, changed).await.unwrap() else {
         panic!("preview")

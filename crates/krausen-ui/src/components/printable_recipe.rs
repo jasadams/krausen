@@ -2,7 +2,7 @@
 //! Shared printable recipe/process summary. KRA-22 reuses this component for
 //! frozen historical plans; this module never loads or mutates a brew.
 use krausen_types::{
-    brewery::ChillingV1,
+    brewery::CoolingMethodV1,
     formulation::RangeStatus,
     process_summary::{
         IngredientSection, ProcessSummary, SummaryIngredient, SummarySource, SummaryStep,
@@ -111,39 +111,35 @@ fn range_status(status: Option<RangeStatus>) -> &'static str {
     }
 }
 
-fn chilling_label(chilling: Option<&ChillingV1>) -> String {
-    match chilling {
+fn cooling_label(settings: &krausen_types::brewery::EquipmentSettingsV1) -> String {
+    match settings.cooling_method {
         None => "Not specified".into(),
-        Some(ChillingV1::Natural) => "Natural cooling".into(),
-        Some(ChillingV1::Forced {
-            rate_per_minute,
-            plateau_c,
-        }) => {
-            let mut parts = vec!["Forced chilling".to_owned()];
-            if let Some(rate) = rate_per_minute {
-                parts.push(format!("{} / min", trimmed(*rate, 3)));
-            }
-            if let Some(plateau) = plateau_c {
-                parts.push(format!("plateau {} °C", trimmed(*plateau, 2)));
-            }
-            parts.join(" · ")
-        }
-        Some(ChillingV1::Counterflow { litres_per_minute }) => match litres_per_minute {
-            Some(rate) => format!("Counterflow · {} L/min", trimmed(*rate, 3)),
-            None => "Counterflow".into(),
+        Some(CoolingMethodV1::Natural) => "Natural cooling".into(),
+        Some(CoolingMethodV1::ImmersionChiller) => "Immersion chiller".into(),
+        Some(CoolingMethodV1::IceBath) => "Ice bath".into(),
+        Some(CoolingMethodV1::CounterflowChiller) => match settings.cooling_flow_rate_l_per_minute {
+            Some(rate) => format!("Counterflow chiller · {} L/min", trimmed(rate, 3)),
+            None => "Counterflow chiller".into(),
         },
     }
 }
 
-fn assumption_text(key: &str) -> String {
-    let known = match key {
+/// Plain text of a recorded calculation assumption; shared by the editor and the print sheet.
+pub(crate) fn known_assumption_text(key: &str) -> Option<&'static str> {
+    match key {
         "volume_reference_20c" => Some("Volumes are referenced to 20 °C."),
         "solid_addition_volume_negligible" => Some("Solid additions have negligible volume."),
         "kettle_top_up_default_zero" => Some("No kettle top-up is assumed."),
         "whirlpool_duration_default_zero" => Some("No whirlpool duration is assumed."),
+        "kettle_uncovered" => Some("The kettle is assumed uncovered."),
+        "boil_temperature_100c" => Some("The boil is assumed to be at 100 °C."),
+        "grain_displacement_0_67_l_per_kg" => Some("Mashed grain is assumed to displace 0.67 L per kg (mash tun overfill warning only)."),
         _ => None,
-    };
-    if let Some(text) = known {
+    }
+}
+
+fn assumption_text(key: &str) -> String {
+    if let Some(text) = known_assumption_text(key) {
         return text.to_owned();
     }
     if let Some(profile) = key.strip_prefix("profile:") {
@@ -412,12 +408,16 @@ pub fn PrintableRecipe(summary: ProcessSummary) -> impl IntoView {
                 <dl class="print-sheet__facts">
                     <div><dt>"Equipment source"</dt><dd>{equipment}</dd></div>
                     <div><dt>"Provenance"</dt><dd>{summary.equipment.provenance.replace('_', " ")}</dd></div>
-                    <div><dt>"Brewhouse efficiency"</dt><dd>{percent(equipment_settings.efficiency_override_fraction)}</dd></div>
+                    <div><dt>"Brewhouse efficiency override"</dt><dd>{percent(equipment_settings.efficiency_override_fraction)}</dd></div>
                     <div><dt>"Mash efficiency"</dt><dd>{percent(equipment_settings.mash_efficiency_fraction)}</dd></div>
-                    <div><dt>"Boil-off"</dt><dd>{equipment_settings.boil_off_l_per_hour.map(|value| format!("{} L/h", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Transfer loss"</dt><dd>{equipment_settings.transfer_loss_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Pre-boil deadspace"</dt><dd>{equipment_settings.pre_boil_deadspace_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Grain absorption"</dt><dd>{equipment_settings.grain_absorption_l_per_kg.map(|value| format!("{} L/kg", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Mash tun deadspace"</dt><dd>{equipment_settings.mash_tun_deadspace_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Mash tun loss"</dt><dd>{equipment_settings.mash_tun_loss_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Mash grain absorption"</dt><dd>{equipment_settings.mash_grain_absorption_l_per_kg.map(|value| format!("{} L/kg", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Sparge grain absorption"</dt><dd>{equipment_settings.sparge_grain_absorption_l_per_kg.map(|value| format!("{} L/kg", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Sparge deadspace"</dt><dd>{equipment_settings.sparge_deadspace_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Boil loss"</dt><dd>{equipment_settings.boil_loss_l_per_hour.map(|value| format!("{} L/hr", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Trub and chiller loss"</dt><dd>{equipment_settings.trub_and_chiller_loss_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
+                    <div><dt>"Wort shrinkage"</dt><dd>{percent(equipment_settings.wort_shrinkage_fraction)}</dd></div>
                     <div><dt>"Mash water"</dt><dd>{process.mash_water_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Mash water method"</dt><dd>{process.mash_water_method.clone().unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Sparge water"</dt><dd>{targets.sparge_water_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Unavailable".into())}</dd></div>
@@ -425,7 +425,7 @@ pub fn PrintableRecipe(summary: ProcessSummary) -> impl IntoView {
                     <div><dt>"Kettle top-up"</dt><dd>{process.kettle_top_up_l.map(|value| format!("{} L", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Whirlpool"</dt><dd>{process.whirlpool_minutes.map(|value| format!("{} min", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
                     <div><dt>"Whirlpool temperature"</dt><dd>{process.whirlpool_temperature_c.map(|value| format!("{} °C", trimmed(value, 2))).unwrap_or_else(|| "Not specified".into())}</dd></div>
-                    <div><dt>"Chilling"</dt><dd>{chilling_label(process.chilling.as_ref())}</dd></div>
+                    <div><dt>"Cooling method"</dt><dd>{cooling_label(&equipment_settings)}</dd></div>
                     <div><dt>"Apparent attenuation"</dt><dd>{percent(process.apparent_attenuation_fraction)}</dd></div>
                 </dl>
                 {(!process.unsupported.is_empty()).then(|| {

@@ -70,7 +70,7 @@ SQL names, but cannot weaken uniqueness, ownership or atomicity on either backen
 | --- | --- |
 | Recipe | Workspace/stable ID, current revision, archive metadata. Unique `(workspace_id, recipe_id)`; mutable metadata has an expected revision. |
 | RecipeRevision | Complete versioned native document, monotonically increasing recipe-local revision, author/time, optional summary and canonical content digest. Unique `(workspace_id, recipe_id, revision)`; append-only. |
-| EquipmentProfile / EquipmentRevision | Profile identity/current revision/archive metadata plus append-only complete settings revisions and provenance. Referenced revisions cannot be pruned. |
+| EquipmentProfile / EquipmentRevision | Profile identity/current revision/archive metadata plus append-only complete settings and about-block revisions and provenance; one optional workspace default pointer ([record](#equipment-profile-record)). Referenced revisions cannot be pruned. |
 | IngredientEntry / IngredientRevision | Workspace library identity, complete versioned specifications and provenance. Starter entries carry catalogue/edition identity instead of workspace ownership. |
 | Brew | Workspace/recipe identity, pinned saved revision, immutable `BrewPlanV1`, lifecycle and mutable aggregate revision. Unique brew identity; recipe/revision links cannot cascade-delete its plan. |
 | ActualFormulationRevision | Append-only complete actual formulation/process document, predecessor revision, actor/time and optional reason. Initial effective actual is the planned formulation until an explicit deviation exists. |
@@ -98,7 +98,7 @@ with their parent aggregate. Notification delivery is outside that transaction.
 | Hops | Stable row ID, amount in g, use/stage/contact time and optional temperature, resolved specification including `alpha_fraction` and provenance. |
 | Yeast/other ingredients | Stable row IDs, quantity/unit where supplied, resolved specifications including `attenuation_fraction` when known, and provenance. Preserve ingredients the engine does not model. |
 | Process | Ordered mash/fermentation steps with stable IDs, explicit time/temperature/volume units, whirlpool/chilling-related recipe settings and retained unsupported process metadata. |
-| Equipment selection | Selected live profile ID and explicit recipe-level settings allowed by the calculation contract, including a nullable `efficiency_override_fraction` when deliberately adopted. Profile revision is not pinned merely by saving recipe content. |
+| Equipment selection | Selected live profile ID, a `recipe_only_equipment` flag (the brewer deliberately chose recipe-only equipment; absent means false and it is omitted from the stored document when false, so existing documents and digests are unchanged; true together with a profile ID is invalid) and explicit recipe-level settings allowed by the calculation contract, including a nullable `efficiency_override_fraction` when deliberately adopted. Profile revision is not pinned merely by saving recipe content. |
 | Import/extensions | Immutable source provenance reference and preserved structured extensions. Native edits do not alter original bytes or create independently editable XML. |
 
 Finite numeric validity and calculability are separate from document structural
@@ -121,6 +121,37 @@ state unless a later feature explicitly introduces shared persisted drafts.
 Recipe and equipment revisions have independent histories: current profile
 updates affect future previews/new brews without creating recipe-content history.
 Saved ingredient specifications remain copies; catalogue edits never replace them.
+
+### Equipment profile record
+
+The profile is exactly Jason's [equipment profile spec](EQUIPMENT_PROFILE.md);
+fields it does not list are removed, not hidden.
+
+- **Settings** stay `EquipmentSettingsV1` (the sparse type recipes use for
+  overrides and brews freeze). It carries the spec's calculation fields under the
+  spec's names (renames and removals are listed in the spec; old names are read
+  aliases). Removed fields in older documents are ignored on read. `schema_version`
+  stays 1: no field changed meaning, and older recipe and brew documents still
+  deserialize.
+- **About block** (`EquipmentAboutV1`): brand, description, measurement, equipment
+  type, controller type, recirculation system, vessel count, batch size, the three
+  toggles and notes. It belongs to the profile only, never to recipe overrides or
+  brew snapshots, so it is a separate `about_json` column on `equipment_revisions`
+  (added with a default of `{}`; the immutable-history triggers fire on
+  update/delete, not on `ADD COLUMN`) and a field of the profile and save
+  contract. Equipment name remains the profile name.
+- **Workspace default**: at most one default per workspace, stored as a
+  `workspace_default_equipment (workspace_id PRIMARY KEY, profile_id)` row, not in
+  revisioned settings, so an old revision never claims to be the default. Save
+  carries an optional `is_default` (absent leaves it unchanged). Archiving the
+  default profile clears it in the same transaction; an archived profile cannot be
+  made default. Every creation path (editor, MCP `recipe_save`, BeerXML import) applies it in one place, inside the create transaction after request-replay recovery: a new recipe takes the workspace default only when it names no profile, did not deliberately choose recipe-only equipment (`recipe_only_equipment`, which the editor sets when the brewer picks "Recipe-only equipment") and brings no recipe-only equipment settings of its own. The recipe-level efficiency override is not equipment settings. The save result reports the applied profile and revision so the editor adopts it; a retry of the same request returns the original result. A BeerXML import that took the default carries the resolved profile id and revisions into its commit, which is refused (`ProfileChanged`) if the default has since changed: a different profile at the same revision numbers, a default that is gone, or (`expected_no_profile`) a default that appeared after a preview that resolved none. A caller that omits the resolved id gets only the revision check. That check runs before any outstanding BeerXML choices are reported. The profile's batch size is stored and shown but does not seed them (a per-user default batch size is KRA-74). Existing recipes are untouched.
+- **No profile migration.** Profile data from before the spec is not converted. A
+  stored profile's removed fields are ignored on read, and a profile-level
+  `efficiency_override_fraction` is cleared on read; such a profile is Incomplete
+  until saved in the spec's shape. Stored equipment revisions, saved recipe
+  revisions and brew snapshots are never rewritten, and reading them must not fail.
+- UI and MCP use the same save/get/list operations and permissions.
 
 ## Brew start and calculation context
 

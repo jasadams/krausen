@@ -571,7 +571,7 @@ async fn exercise(db: DbPool) {
     let recipe_in_a = recipe_with(Some(source_a.clone()));
     let RecipeSaveOutcome::Saved {
         recipe_id: recipe_a,
-        revision: first_revision,
+        revision: first_revision, ..
     } = recipe_editor::save(
         &db,
         &actor_a,
