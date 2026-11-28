@@ -31,7 +31,7 @@ test('every BJCP 2021 style is searchable by number and name and shows its range
   await expect(page.getByLabel(/Original gravity\. .*Style reference 1\.076 to 1\.120 SG/)).toBeVisible();
 
   await search.fill('zzzz');
-  await expect(page.getByText('No match')).toBeVisible();
+  await expect(page.getByText('No match', { exact: true })).toBeVisible();
   await search.fill('');
   await expect(style.locator('option')).toHaveCount(124);
 });
