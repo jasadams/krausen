@@ -353,6 +353,15 @@ The prototype's limited BJCP 2021 facts are in
 [`styles.js`](design/prototype/styles.js), not a complete catalogue. Shared style
 values/status enter context/history rather than being UI-owned calculations.
 
+Production style data is the complete BJCP 2021 table in
+`crates/krausen-app/reference/bjcp-2021-styles.json` (citation in its `source`
+block; `reference_version` `bjcp-2021-guidelines-v1`), compared in tests with the
+reviewed table `crates/krausen-app/tests/fixtures/bjcp-2021-reviewed.tsv`. Colour is
+stored in SRM as published and converted at 1.97 EBC per SRM. A style the guideline
+gives no numeric ranges for resolves with every range `null`. 25B Saison publishes
+strength and colour variants; the table records the standard-strength OG, FG and ABV
+and the union of the pale and dark colour ranges.
+
 Policy `linear-ingredients-v1` uses `new_batch_l / old_batch_l`. Multiply fermentable
 and hop amounts; retain specifications, timings, temperatures, attenuation,
 profile selection and fixed equipment constants. Manual mash water and explicit

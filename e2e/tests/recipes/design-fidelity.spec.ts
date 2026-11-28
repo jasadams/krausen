@@ -45,6 +45,10 @@ test.describe('approved recipe and shared kit composition', () => {
         // before an estimate exists is rendered in the actual showcase.
         await expect(page.getByTestId('showcase-style-placeholder')).toContainText('Awaiting estimate');
         await expect(page.getByTestId('showcase-style-placeholder').locator('.k-style-range__limits')).toHaveText('——');
+        // KRA-73: the readable no-numeric-ranges state and the searchable long list are the same kit components the recipe uses.
+        await expect(page.getByTestId('showcase-style-no-ranges')).toContainText('No numeric ranges');
+        await page.getByLabel('Find an example', { exact: true }).fill('style b');
+        await expect(page.getByText('1 of 3 match')).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await testInfo.attach(`showcase-${theme}-${viewport.width}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 

@@ -1432,6 +1432,99 @@ async fn integrated_acceptance(db: DbPool) {
     assert!(active.items.is_empty());
 }
 
+/// A brew stored while the style reference was the old three-style table keeps
+/// showing the version and ranges it recorded after the table became complete.
+async fn old_reference_brew_keeps_its_stored_ranges(db: DbPool) {
+    let (actor, brew_id, plan, _recipe) = fixture(&db).await;
+    let current = plan.style_reference.clone().expect("current style ranges");
+    assert_eq!(current.reference_version, "bjcp-2021-guidelines-v1");
+
+    // The snapshot as saved under the old reference: its own version and its own
+    // bounds, deliberately not equal to what the current table would resolve.
+    let mut saved = current.clone();
+    saved.reference_version = "bjcp-2021-initial-v1".into();
+    saved.original_sg.as_mut().unwrap().max = 1.0485;
+    let mut old_plan = plan.clone();
+    old_plan.style_reference = Some(saved.clone());
+    old_plan.calculation_context.style = Some(saved.clone());
+    let (plan_json, digest) = krausen_brewery::brew_store::encode_plan(&old_plan).unwrap();
+    let old_brew_id = Uuid::new_v4().to_string();
+    let sql = "INSERT INTO brews (workspace_id,brew_id,recipe_id,selected_recipe_revision,status,revision,started_at,started_by,plan_schema_version,plan_json,plan_content_digest) SELECT workspace_id,$2,recipe_id,selected_recipe_revision,status,revision,started_at+1,started_by,plan_schema_version,$3,$4 FROM brews WHERE brew_id=$1";
+    match &db {
+        DbPool::Postgres(p) => sqlx::query(sql)
+            .bind(&brew_id)
+            .bind(&old_brew_id)
+            .bind(&plan_json)
+            .bind(&digest)
+            .execute(p)
+            .await
+            .unwrap()
+            .rows_affected(),
+        DbPool::Sqlite(p) => sqlx::query(sql)
+            .bind(&brew_id)
+            .bind(&old_brew_id)
+            .bind(&plan_json)
+            .bind(&digest)
+            .execute(p)
+            .await
+            .unwrap()
+            .rows_affected(),
+    };
+
+    let BrewPrintOutcome::Print(print) = brew_history::historical_print(
+        &db,
+        &actor,
+        BrewPrintRequest {
+            intent: intent(&actor),
+            brew_id: old_brew_id,
+        },
+    )
+    .await
+    else {
+        panic!("print of the old-reference brew")
+    };
+    assert_eq!(print.summary.style_ranges, Some(saved));
+    // The newer brew of the same recipe still carries the current reference.
+    let BrewPrintOutcome::Print(newer) = brew_history::historical_print(
+        &db,
+        &actor,
+        BrewPrintRequest {
+            intent: intent(&actor),
+            brew_id,
+        },
+    )
+    .await
+    else {
+        panic!("print of the current brew")
+    };
+    assert_eq!(newer.summary.style_ranges, Some(current));
+}
+
+#[tokio::test]
+async fn sqlite_old_reference_brew() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../../apps/server/migrations-sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    old_reference_brew_keeps_its_stored_ranges(DbPool::Sqlite(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_old_reference_brew() {
+    let url = std::env::var("KRAUSEN_TEST_POSTGRES_URL").expect("PostgreSQL required");
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("../../apps/server/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    old_reference_brew_keeps_its_stored_ranges(DbPool::Postgres(pool)).await;
+}
+
 #[tokio::test]
 async fn sqlite_brew_history() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()

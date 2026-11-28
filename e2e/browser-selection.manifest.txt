@@ -370,6 +370,9 @@ recipes/scaling.spec.ts › scaling cancel writes nothing and duplicate opens an
 recipes/scaling.spec.ts › scaling previews fixed-loss target changes and applies one revision
 recipes/scaling.spec.ts › uncertain apply keeps its identity through dismissal and blocks navigation
 recipes/scaling.spec.ts › uncertain duplicate keeps its identity through dismissal
+recipes/style-picker.spec.ts › a style without numeric ranges can be chosen and says so
+recipes/style-picker.spec.ts › every BJCP 2021 style is searchable by number and name and shows its ranges
+recipes/style-picker.spec.ts › the style search is usable on a phone
 recipes/wayfinding.spec.ts › a hash-only Back does not suppress the next arrival focus
 recipes/wayfinding.spec.ts › a missing brew offers a neutral trail and never discloses a recipe or switches workspace
 recipes/wayfinding.spec.ts › a saved version is addressable, survives reload and Back, and never replaces a dirty draft

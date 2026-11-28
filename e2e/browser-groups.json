@@ -13,6 +13,9 @@
    "spec": "tests/recipes/editor.spec.ts",
    "grep": "profile pagination exposes"
   },
+  "style-picker": {
+   "spec": "tests/recipes/style-picker.spec.ts"
+  },
   "wayfinding": {
    "spec": "tests/recipes/wayfinding.spec.ts"
   },
@@ -79,13 +82,16 @@
     "crates/krausen-app/src/formulation*.rs",
     "crates/krausen-app/src/process_summary.rs",
     "crates/krausen-app/src/style_reference.rs",
-    "e2e/tests/recipes/editor.spec.ts"
+    "crates/krausen-app/reference/**",
+    "e2e/tests/recipes/editor.spec.ts",
+    "e2e/tests/recipes/style-picker.spec.ts"
    ],
    "groups": [
     "editor-profiles",
     "editor-state",
     "editor-profile-pagination",
-    "design-fidelity"
+    "design-fidelity",
+    "style-picker"
    ]
   },
   {

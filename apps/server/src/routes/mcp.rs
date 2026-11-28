@@ -413,7 +413,7 @@ impl ServerHandler for McpHandler {
             ),
             Tool::new(
                 operations::STYLE_LIST.mcp_tool,
-                "List supported beer style identities",
+                "List every BJCP 2021 beer style and substyle (number and name) that a recipe can reference",
                 schema(
                     serde_json::to_value(schemars::schema_for!(StyleQuery)).expect("style schema"),
                 ),

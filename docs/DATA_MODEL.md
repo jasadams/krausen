@@ -202,7 +202,13 @@ The plan contains the complete selected native recipe, resolved ingredient
 specifications, resolved equipment/process settings (including chilling model
 parameters and every applied default), source identities/revisions, calculated
 original outputs, assumptions/diagnostics, style reference values/edition/source,
-context digest and document/engine/policy versions. The brew owns this bundle;
+context digest and document/engine/policy versions.
+`style_reference` is `StyleRanges`: identity, edition, `reference_version` and five
+optional ranges (OG, FG, IBU, ABV, EBC). A present range serialises as `{min,max}`
+exactly as before ranges became optional, so a stored plan or context re-serialises
+byte-identically; a style without numeric ranges stores `null` for each range. A brew
+keeps the `reference_version` and ranges it recorded; later reference tables never
+rewrite it. The brew owns this bundle;
 links to mutable records are supplementary provenance. An implementation may
 physically deduplicate immutable payloads only while preserving independent
 recovery and referential retention.

@@ -191,6 +191,8 @@
 .k-style-range--compact .k-style-range__track { height: 0.333rem; }
 .k-style-range--compact .k-style-range__limits { margin-top: var(--k-space-2); }
 
+/* Search box above a long native select; both share the field control look. */
+.k-search-select > .k-select { margin-top: var(--k-space-2); }
 .k-field input:focus-visible, .k-field textarea:focus-visible, .k-field select:focus-visible { outline: 2px solid var(--k-color-ring); outline-offset: 2px; }
 /* Keep ordinary dialog focus paint inside the control's clipped keyboard slice.
    Title/quiet fields retain their own focus recipes; normal elevation is retained. */

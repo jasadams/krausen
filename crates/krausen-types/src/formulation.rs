@@ -88,11 +88,28 @@ pub struct StyleRanges {
     pub name: String,
     pub edition: String,
     pub reference_version: String,
-    pub original_sg: Range,
-    pub final_sg: Range,
-    pub ibu: Range,
-    pub abv_percent: Range,
-    pub colour_ebc: Range,
+    /// The five ranges are all present or all absent. `None` means the style
+    /// guideline publishes no numeric range for this style ("no numeric ranges");
+    /// it serialises as `null`. A present range serialises exactly as it did
+    /// before ranges became optional, so stored snapshots round-trip unchanged.
+    #[serde(default)]
+    pub original_sg: Option<Range>,
+    #[serde(default)]
+    pub final_sg: Option<Range>,
+    #[serde(default)]
+    pub ibu: Option<Range>,
+    #[serde(default)]
+    pub abv_percent: Option<Range>,
+    #[serde(default)]
+    pub colour_ebc: Option<Range>,
+}
+impl StyleRanges {
+    /// Whether the guideline publishes numeric ranges for this style.
+    pub fn has_numeric_ranges(&self) -> bool {
+        [&self.original_sg, &self.final_sg, &self.ibu, &self.abv_percent, &self.colour_ebc]
+            .iter()
+            .all(|range| range.is_some())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

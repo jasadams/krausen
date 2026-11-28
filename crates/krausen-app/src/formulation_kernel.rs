@@ -56,6 +56,7 @@ pub(crate) fn policy_source_hash() -> String {
             concat!(
                 include_str!("formulation_kernel.rs"),
                 include_str!("style_reference.rs"),
+                include_str!("../reference/bjcp-2021-styles.json"),
                 include_str!("../../krausen-brewery/src/mapping/calculation.rs"),
                 include_str!("../../krausen-brewery/src/validation.rs"),
                 include_str!("../../krausen-types/src/brewery.rs"),

@@ -230,6 +230,14 @@ pub fn BreweryStyleRangePlaceholder() -> impl IntoView {
     view! { <div class="k-style-range k-style-range--awaiting" aria-hidden="true"><div class="k-style-range__track"></div><div class="k-style-range__limits"><span>"—"</span><span>"—"</span></div><span class="k-style-range__status">"Awaiting estimate"</span></div> }
 }
 
+/// The selected style's guideline publishes no numeric range for this metric
+/// (for example Experimental Beer). Same rows as the awaiting placeholder so the
+/// summary keeps one height, but the status is the content and stays readable.
+#[component]
+pub fn BreweryStyleNoRanges() -> impl IntoView {
+    view! { <div class="k-style-range k-style-range--awaiting"><div class="k-style-range__track" aria-hidden="true"></div><div class="k-style-range__limits" aria-hidden="true"><span>"—"</span><span>"—"</span></div><span class="k-style-range__status">"No numeric ranges"</span></div> }
+}
+
 #[component]
 pub fn BreweryMetric(
     #[prop(into)] label: String,
@@ -774,6 +782,61 @@ mod tests {
     }
 
     #[test]
+    fn the_search_select_keeps_a_labelled_native_select_and_a_named_search_box() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let value = RwSignal::new(String::new());
+            let options = Signal::derive(|| vec![(String::new(), "No style".to_owned()), ("A".into(), "4A · Munich Helles".into()), ("B".into(), "5D · German Pils".into())]);
+            let html = view! {
+                <BreweryDraftSearchSelect id="style" label="Beer style" value=Signal::from(value)
+                    on_change=Callback::new(move |next| value.set(next)) options=options
+                    search_label="Find a style" search_placeholder="Search by number or name"/>
+            }.to_html();
+            assert!(html.contains("for=\"style\""));
+            assert!(html.contains("<select id=\"style\""));
+            assert!(html.contains("aria-label=\"Find a style\""));
+            assert!(html.contains("4A · Munich Helles") && html.contains("5D · German Pils"));
+            assert!(html.contains("role=\"status\""));
+            assert!(html.contains("2 to choose from"));
+        });
+    }
+
+    #[test]
+    fn the_search_select_lists_a_held_value_that_is_not_among_the_options() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let value = RwSignal::new("Unavailable: Old style".to_owned());
+            let options = Signal::derive(|| vec![(String::new(), "No style".to_owned()), ("A".into(), "4A · Munich Helles".into())]);
+            let html = view! {
+                <BreweryDraftSearchSelect id="style" label="Beer style" value=Signal::from(value)
+                    on_change=Callback::new(move |next| value.set(next)) options=options
+                    search_label="Find a style" search_placeholder="Search"/>
+            }.to_html();
+            assert!(html.contains("value=\"Unavailable: Old style\""));
+            assert!(html.contains(">Unavailable: Old style</option>"));
+        });
+    }
+
+    #[test]
+    fn search_words_ignore_accents_and_case() {
+        assert!(search_matches("kolsch", "5B · Kölsch"));
+        assert!(search_matches("marzen", "6A · Märzen"));
+        assert!(search_matches("biere garde", "24C · Bière de Garde"));
+        assert!(search_matches("KÖLSCH", "5B · Kolsch"));
+        assert!(search_matches("5b", "5B · Kölsch"));
+        assert!(search_matches("", "anything"));
+        assert!(!search_matches("kolsch pils", "5B · Kölsch"));
+        assert_eq!(search_fold("MÄRZEN"), "marzen");
+    }
+
+    #[test]
+    fn a_style_without_numeric_ranges_says_so_in_readable_text() {
+        let html = view! { <BreweryStyleNoRanges/> }.to_html();
+        assert!(html.contains("No numeric ranges"));
+        assert!(!html.contains("aria-hidden=\"true\"><span class=\"k-style-range__status"));
+    }
+
+    #[test]
     fn a_stale_cue_keeps_the_visible_reason_quiet_and_announces_politely() {
         let owner = Owner::new();
         owner.with(|| {
@@ -990,6 +1053,61 @@ pub fn BreweryDraftSelect(
         {move || error.get().map(|text| (text, true)).or_else(|| hint.get().map(|text| (text, false))).map(|(text, is_error)| view! { <span id=description_id.clone() class=if is_error { "k-field__error" } else { "k-field__hint" }>{text}</span> })}
     </div> }
 
+}
+
+/// Lower-cased text without diacritics, so "kolsch" finds "Kölsch" and "biere"
+/// finds "Bière". Used only to compare search words with option labels.
+fn search_fold(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.nfd().filter(|c| !('\u{300}'..='\u{36f}').contains(c)).collect::<String>().to_lowercase()
+}
+
+/// Every whitespace-separated word of `query` appears in `label`, ignoring case and accents.
+fn search_matches(query: &str, label: &str) -> bool {
+    let label = search_fold(label);
+    query.split_whitespace().all(|word| label.contains(&search_fold(word)))
+}
+
+/// Controlled choice from a long list (more than a dozen entries): a search box
+/// narrows a native select, so touch devices keep their native picker and
+/// assistive technology keeps a plain labelled select. Every whitespace-separated
+/// word must appear in an option's label; the empty-valued option and the current
+/// value always stay listed (a value that is not among the options is listed as given) so the select never shows a choice that is not held.
+#[component]
+pub fn BreweryDraftSearchSelect(
+    #[prop(into)] id: String,
+    #[prop(into)] label: String,
+    value: Signal<String>,
+    on_change: Callback<String>,
+    options: Signal<Vec<(String, String)>>,
+    #[prop(into)] search_label: String,
+    #[prop(into)] search_placeholder: String,
+) -> impl IntoView {
+    let query = RwSignal::new(String::new());
+    let search_id = format!("{id}-search");
+    let status_id = format!("{id}-matches");
+    let matching = search_matches;
+    let visible = Signal::derive(move || {
+        let selected = value.get();
+        let query = query.get();
+        options.with(|all| all.iter().filter(|(v, l)| v.is_empty() || *v == selected || matching(&query, l)).cloned().collect::<Vec<_>>())
+    });
+    let status = Signal::derive(move || {
+        let query = query.get();
+        let (matches, total) = options.with(|all| (all.iter().filter(|(v, l)| !v.is_empty() && matching(&query, l)).count(), all.iter().filter(|(v, _)| !v.is_empty()).count()));
+        if query.trim().is_empty() { format!("{total} to choose from") } else if matches == 0 { "No match".to_owned() } else { format!("{matches} of {total} match") }
+    });
+    view! { <div class="k-field k-search-select"><label class="k-field__label" for=id.clone()>{label}</label>
+        <div class="k-field__control"><input id=search_id type="search" autocomplete="off" aria-label=search_label placeholder=search_placeholder aria-describedby=status_id.clone()
+            prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev))/></div>
+        <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev))>
+            {move || { let selected = value.get(); (!selected.is_empty() && !options.with(|all| all.iter().any(|(v, _)| *v == selected))).then(|| view! { <option value=selected.clone() selected=true>{selected.clone()}</option> }) }}
+            // Keyed, so filtering keeps the existing option elements (and the browser's own
+            // selection) and only adds or removes the ones that enter or leave the list.
+            <For each=move || visible.get() key=|(v, _)| v.clone() children=move |(v, label)| { let chosen = value.get_untracked() == v; view! { <option value=v selected=chosen>{label}</option> } }/>
+        </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
+        <span id=status_id class="k-field__hint" role="status">{move || status.get()}</span>
+    </div> }
 }
 
 /// Approved local mark and wordmark, shared by desktop and mobile navigation.
