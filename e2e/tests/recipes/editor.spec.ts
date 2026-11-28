@@ -3137,29 +3137,29 @@ test('equipment profiles can be saved with every field of the spec, made the def
 for (const scheme of ['light', 'dark'] as const) {
   test(`equipment profiles can be saved: the spec form keeps its order without overflow at 390px in ${scheme} mode`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    // The theme is chosen the way a person does it, in Settings > Appearance.
-    await page.goto('/settings/profile');
-    await page.locator('button', { hasText: scheme === 'dark' ? 'Dark' : 'Light' }).click();
-    await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /dark/ : /^((?!dark).)*$/);
-    await page.goto('/equipment');
-    await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /dark/ : /^((?!dark).)*$/);
-    await expect(page.locator('.k-section__header h3').filter({ hasText: /^(About|Mash|Sparge|Boil|Cooling|Notes)$/ })).toHaveText(['About', 'Mash', 'Sparge', 'Boil', 'Cooling', 'Notes']);
-    // Field labels in spec order within the form.
-    const labels = await page.locator('fieldset .k-field__label, fieldset [role="switch"] + span').allTextContents();
-    const wanted = ['Default equipment', 'Equipment name', 'Equipment brand', 'Description', 'Measurement', 'Equipment type', 'Controller type', 'Batch size', 'Recirculation system', 'Number of vessels', 'Mash tun volume', 'Mash efficiency', 'Mash tun deadspace', 'Mash thickness', 'Mash tun loss', 'Grain absorption', 'Sparge water alert', 'Sparge progress counter', 'Sparge vessel volume', 'Grain absorption', 'Sparge deadspace volume', 'Boil power control', 'Boil volume', 'Wort shrinkage', 'Boil loss', 'Trub and chiller loss', 'Kettle diameter', 'Cooling method', 'Flow rate', 'Notes'];
-    let at = 0;
-    for (const label of labels.map(text => text.replace(/\s*\(.*\)$/, '').trim())) {
-      if (label === wanted[at]) at += 1;
+    try {
+      // The theme is chosen the way a person does it, in Settings > Appearance.
+      await page.goto('/settings/profile');
+      await page.locator('button', { hasText: scheme === 'dark' ? 'Dark' : 'Light' }).click();
+      await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /dark/ : /^((?!dark).)*$/);
+      await page.goto('/equipment');
+      await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /dark/ : /^((?!dark).)*$/);
+      await expect(page.locator('.k-section__header h3').filter({ hasText: /^(About|Mash|Sparge|Boil|Cooling|Notes)$/ })).toHaveText(['About', 'Mash', 'Sparge', 'Boil', 'Cooling', 'Notes']);
+      // Field labels in spec order within the form.
+      const labels = await page.locator('fieldset .k-field__label, fieldset [role="switch"] + span').allTextContents();
+      const wanted = ['Default equipment', 'Equipment name', 'Equipment brand', 'Description', 'Measurement', 'Equipment type', 'Controller type', 'Batch size', 'Recirculation system', 'Number of vessels', 'Mash tun volume', 'Mash efficiency', 'Mash tun deadspace', 'Mash thickness', 'Mash tun loss', 'Grain absorption', 'Sparge water alert', 'Sparge progress counter', 'Sparge vessel volume', 'Grain absorption', 'Sparge deadspace volume', 'Boil power control', 'Boil volume', 'Wort shrinkage', 'Boil loss', 'Trub and chiller loss', 'Kettle diameter', 'Cooling method', 'Flow rate', 'Notes'];
+      expect(labels.map(text => text.replace(/\s*\(.*\)$/, '').trim()).filter(Boolean)).toEqual(wanted);
+      // No horizontal overflow of the page, and every control stays inside the viewport width.
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+      const outside = await page.evaluate(() => [...document.querySelectorAll('fieldset input, fieldset select, fieldset textarea, fieldset button')].filter(el => { const r = el.getBoundingClientRect(); return r.right > window.innerWidth + 0.5 || r.left < -0.5; }).length);
+      expect(outside).toBe(0);
+      await testInfo.attach(`equipment-390-${scheme}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+    } finally {
+      // A failed check must not leave the shared user's theme changed.
+      await page.goto('/settings/profile');
+      await page.locator('button', { hasText: 'System' }).click();
     }
-    expect(at).toBe(wanted.length);
-    // No horizontal overflow of the page, and every control stays inside the viewport width.
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    expect(overflow).toBeLessThanOrEqual(0);
-    const outside = await page.evaluate(() => [...document.querySelectorAll('fieldset input, fieldset select, fieldset textarea, fieldset button')].filter(el => { const r = el.getBoundingClientRect(); return r.right > window.innerWidth + 0.5 || r.left < -0.5; }).length);
-    expect(outside).toBe(0);
-    await testInfo.attach(`equipment-390-${scheme}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
-    await page.goto('/settings/profile');
-    await page.locator('button', { hasText: 'System' }).click();
   });
 }
 

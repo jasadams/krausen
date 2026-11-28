@@ -200,6 +200,11 @@ async fn exercise(db: DbPool) {
     let named = RecipeDocumentV1 { title: "Named".into(), equipment_profile_id: Some(first_id.clone()), ..Default::default() };
     let RecipeSaveOutcome::Saved { recipe_id: named_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &named, uuid::Uuid::new_v4()).await else { panic!("named") };
     assert_eq!(read(named_id).await.as_deref(), Some(first_id.as_str()));
+    // Its own recipe-only equipment settings are an explicit choice and keep no profile.
+    let mut recipe_only = RecipeDocumentV1 { title: "Recipe only".into(), ..Default::default() };
+    recipe_only.equipment_overrides.boil_loss_l_per_hour = Some(3.0);
+    let RecipeSaveOutcome::Saved { recipe_id: only_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &recipe_only, uuid::Uuid::new_v4()).await else { panic!("recipe only") };
+    assert_eq!(read(only_id).await, None);
     let fresh = RecipeDocumentV1 { title: "Fresh".into(), ..Default::default() };
     let RecipeSaveOutcome::Saved { recipe_id: fresh_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &fresh, uuid::Uuid::new_v4()).await else { panic!("fresh") };
     assert_eq!(read(fresh_id).await.as_deref(), Some(moved_id.as_str()), "a new create takes the current default");

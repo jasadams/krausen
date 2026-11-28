@@ -142,10 +142,14 @@ async fn save_inner(
     if let Some(result) = recover_request(&mut tx, &key).await? {
         return Ok(serde_json::from_value(result)?);
     }
-    // A new recipe that names no profile takes the workspace default. This is the one
-    // place that rule lives, after request recovery so a retry returns the original result.
+    // A new recipe that names no profile takes the workspace default, unless it carries its
+    // own recipe-only equipment settings. This is the one place that rule lives, after request
+    // recovery so a retry returns the original result.
     let defaulted;
-    let document = if recipe_id.is_none() && document.equipment_profile_id.is_none() {
+    let document = if recipe_id.is_none()
+        && document.equipment_profile_id.is_none()
+        && document.equipment_overrides == krausen_types::brewery::EquipmentSettingsV1::default()
+    {
         match krausen_brewery::equipment_store::load_default(&mut tx, &actor.workspace_id)
             .await
             .map_err(boundary_error)?

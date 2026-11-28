@@ -455,6 +455,56 @@ async fn exercise(db: DbPool) {
         found.document.equipment_profile_id.as_deref(),
         Some(created.profile_id.as_str())
     );
+    // Bringing its own recipe-only equipment is an explicit choice: no default is applied.
+    let mut own_equipment = request.clone();
+    own_equipment.equipment_draft.boil_loss_l_per_hour = Some(3.0);
+    let ImportPreviewOutcome::Preview(own) = interchange::preview(&db, &actor, &own_equipment).await else {
+        panic!("own equipment preview");
+    };
+    assert_eq!(own.document.equipment_profile_id, None);
+    // An unnamed import that passes the revisions its preview reported is guarded like a named
+    // one, and a retry of a committed request recovers its original result.
+    let mut guarded = request.clone();
+    guarded.expected_profile_revision = defaulted.selected_profile_revision;
+    guarded.expected_profile_metadata_revision = Some(0);
+    assert_eq!(
+        interchange::commit(&db, &actor, &guarded, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
+    );
+    let retry_key = Uuid::new_v4();
+    let first = interchange::commit(&db, &actor, &request, retry_key).await;
+    assert!(matches!(first, ImportCommitOutcome::Imported { .. }));
+    let mut moved = profile_for_default_move(&intent, &db, &actor).await;
+    moved.name = "Second default".into();
+    assert_eq!(
+        interchange::commit(&db, &actor, &request, retry_key).await,
+        first,
+        "a retry after the default moved recovers the original result"
+    );
+}
+/// A second profile made the workspace default, so the first is no longer it.
+async fn profile_for_default_move(
+    intent: &krausen_types::request_context::OperationIntent,
+    db: &DbPool,
+    actor: &ActorContext,
+) -> krausen_types::equipment::SaveEquipment {
+    let save = krausen_types::equipment::SaveEquipment {
+        intent: intent.clone(),
+        profile_id: Uuid::new_v4().to_string(),
+        name: "Default mover".into(),
+        settings: EquipmentSettingsV1::default(),
+        about: Default::default(),
+        is_default: Some(true),
+        provenance: krausen_types::equipment::EquipmentProvenance {
+            source: "manual".into(),
+            assumptions: vec![],
+        },
+        expected_revision: 0,
+        expected_metadata_revision: 0,
+        request_id: Uuid::new_v4().to_string(),
+    };
+    krausen_app::equipment::save(db, actor, save.clone()).await.unwrap();
+    save
 }
 
 use sha2::Digest;

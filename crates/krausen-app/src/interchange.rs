@@ -17,7 +17,10 @@ async fn effective_profile_id(
     actor: &ActorContext,
     request: &ImportRequest,
 ) -> Result<Option<String>, Error> {
-    if request.equipment_profile_id.is_some() {
+    // An import that names a profile, or brings its own recipe-only equipment, keeps that choice.
+    if request.equipment_profile_id.is_some()
+        || request.equipment_draft != krausen_types::brewery::EquipmentSettingsV1::default()
+    {
         return Ok(request.equipment_profile_id.clone());
     }
     let default = krausen_brewery::equipment_store::load_default(tx, &actor.workspace_id)
@@ -240,7 +243,12 @@ async fn commit_inner(
         let Some(profile) = profile.filter(|p| !p.archived) else {
             return Ok(ImportCommitOutcome::UnresolvedProfile);
         };
-        if request.equipment_profile_id.is_some()
+        // A named profile must match the revisions previewed. An unnamed import that took the
+        // default is checked too when the caller passes the revisions its preview reported.
+        let checked = request.equipment_profile_id.is_some()
+            || request.expected_profile_revision.is_some()
+            || request.expected_profile_metadata_revision.is_some();
+        if checked
             && (request.expected_profile_revision != Some(profile.revision)
                 || request.expected_profile_metadata_revision != Some(profile.metadata_revision))
         {

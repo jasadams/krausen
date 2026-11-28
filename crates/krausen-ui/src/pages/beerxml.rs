@@ -82,10 +82,16 @@ fn matches_import_context(request: &ImportRequest, result: &ImportPreview) -> bo
                                     && context.equipment_draft == profile.settings
                                     && context.equipment_provenance == "saved_profile"
                             }),
-                            None => {
-                                context.equipment_profile.is_none()
-                                    && context.equipment_draft == request.equipment_draft
-                            }
+                            // No profile named: the server used the workspace default if one is set.
+                            None => match &context.equipment_profile {
+                                Some(profile) => {
+                                    profile.workspace_id == request.intent.workspace_id
+                                        && !profile.archived
+                                        && context.equipment_draft == profile.settings
+                                        && context.equipment_provenance == "saved_profile"
+                                }
+                                None => context.equipment_draft == request.equipment_draft,
+                            },
                         }
                 })
         }
@@ -927,7 +933,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             <BrewerySection title="Interpretation and equipment">
             <BreweryDraftSelect id="beerxml-colour" label="Source colour" value=Signal::from(colour) error=colour_error on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { colour.set(v); invalidate.run(()); } }) options=vec![("".into(), "Choose when present".into()), ("srm".into(), "SRM".into()), ("lovibond".into(), "Lovibond".into())]/>
             <BreweryDraftSelect id="beerxml-efficiency" label="Source efficiency" value=Signal::from(efficiency) error=efficiency_error on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { efficiency.set(v); invalidate.run(()); } }) options=vec![("".into(), "Choose when present".into()), ("override".into(), "Use as recipe override".into()), ("equipment".into(), "Use selected equipment".into())]/>
-            {move || { let mut options = vec![(String::new(), "No equipment profile".to_string())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id, p.name))); view! {
+            {move || { let mut options = vec![(String::new(), "No profile chosen (the workspace default is used if one is set)".to_string())]; options.extend(profiles.get().into_iter().map(|p| (p.profile_id, p.name))); view! {
                 <BreweryDraftSelect id="beerxml-equipment" label="Equipment profile" value=Signal::from(selected_profile) on_change=Callback::new(move |v| { if pending.get_untracked().is_none() { selected_profile.set(v); invalidate.run(()); } }) options=options/>
             } }}
             <Show when=move || profile_cursor.get().is_some()><Button variant=ButtonVariant::Secondary on:click=move |_| { if !profile_loading.get_untracked() { load_profiles.run(profile_cursor.get_untracked()); } }>"Load more equipment profiles"</Button></Show>

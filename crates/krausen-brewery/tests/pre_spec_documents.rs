@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! KRA-70: documents saved before the equipment spec still load. The decision is that old profile
-//! data is not migrated, but saved recipe revisions and frozen brew plans must stay readable.
+//! data is not migrated, but saved recipe revisions must stay readable. (Frozen brew plans carry
+//! the same type and are read by the baseline golden test in krausen-app.)
 use krausen_brewery::native_recipe::read_document;
 
 #[test]
