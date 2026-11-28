@@ -187,21 +187,27 @@ impl EditorGuard {
             }
             if task.callbacks.discard_unsent.run(()) {
                 let navigation = self.navigation.get_untracked();
-                self.tasks.update(|tasks| {
-                    if let Some(current) = tasks
-                        .iter_mut()
-                        .find(|current| current.id == task.id && current.scope == task.scope)
-                    {
-                        current.resolved_navigation = Some(navigation);
-                    }
-                });
+                let resolve = move || {
+                    self.tasks.update(|tasks| {
+                        if let Some(current) = tasks
+                            .iter_mut()
+                            .find(|current| current.id == task.id && current.scope == task.scope)
+                        {
+                            current.resolved_navigation = Some(navigation);
+                        }
+                    });
+                };
+                resolve();
                 // Pages reset their form synchronously but publish the reset state
-                // from an effect that runs later. Continue only after those effects
-                // have run, so the departure lease captures the post-discard state
-                // and only a change made after this choice can invalidate it.
+                // from an effect that runs later, and that publish clears the
+                // resolution above. Continue only after those effects have run, so
+                // the departure lease captures the post-discard state, and resolve
+                // again: the choice covers the discard's own state change. Only a
+                // change made after this point can invalidate the leave.
                 leptos::task::spawn_local(async move {
                     leptos::task::tick().await;
                     if self.navigation.try_get_untracked() == Some(navigation) {
+                        resolve();
                         self.continue_leave();
                     }
                 });
