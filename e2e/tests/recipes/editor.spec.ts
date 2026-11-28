@@ -3058,6 +3058,24 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toHaveCount(0);
 });
 
+test('equipment profiles can be saved: Discard and leave discards the edit and arrives in one click', async ({ page }) => {
+  const name = `Discard profile ${Date.now()}`;
+  await page.goto('/equipment');
+  await page.getByLabel('Equipment name').fill(name);
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.getByLabel('Mash efficiency (%)').fill('61');
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
+  await page.goto('/equipment');
+  await page.getByLabel('Manage profile').selectOption({ label: name });
+  await expect(page.getByLabel('Mash efficiency (%)')).not.toHaveValue('61');
+});
+
 test('equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel', async ({ page }) => {
   const name = `Grainfather ${Date.now()}`;
   let profileId = '';

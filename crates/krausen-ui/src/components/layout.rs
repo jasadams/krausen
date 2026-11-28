@@ -195,7 +195,16 @@ impl EditorGuard {
                         current.resolved_navigation = Some(navigation);
                     }
                 });
-                self.continue_leave();
+                // Pages reset their form synchronously but publish the reset state
+                // from an effect that runs later. Continue only after those effects
+                // have run, so the departure lease captures the post-discard state
+                // and only a change made after this choice can invalidate it.
+                leptos::task::spawn_local(async move {
+                    leptos::task::tick().await;
+                    if self.navigation.try_get_untracked() == Some(navigation) {
+                        self.continue_leave();
+                    }
+                });
             }
         }
     }

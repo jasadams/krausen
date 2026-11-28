@@ -839,6 +839,17 @@ test('dirty evidence Back is guarded and retains the draft', async ({ page }) =>
   await expect(page.locator('#brew-note')).toHaveValue('draft note');
 });
 
+test('dirty evidence Discard and leave discards the draft and arrives in one click', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Brew dirty discard ${Date.now()}`);
+  await page.locator('#brew-note').fill('draft note to discard');
+  await page.getByRole('link', { name: 'Recipes', exact: true }).first().click();
+  const guard = page.locator('#workspace-draft-warning');
+  await expect(guard).toBeVisible();
+  await guard.getByRole('button', { name: 'Discard local inputs and leave' }).click();
+  await expect(page).toHaveURL(/\/recipes$/);
+  await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
+});
+
 test('lost Record response is proven committed and retries the same identity', async ({
   page,
 }) => {
