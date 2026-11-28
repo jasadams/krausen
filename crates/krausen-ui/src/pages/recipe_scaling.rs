@@ -38,11 +38,11 @@ fn warning_text(warning: &ScaleWarning) -> String {
                 (false, false) => format!("post-boil {post_boil_l:.2} L"),
             };
             format!(
-                "Kettle capacity {capacity_l:.2} L does not fit the scaled {fill}. Choose a larger kettle or change the process; geometry is not changed automatically."
+                "Boil volume {capacity_l:.2} L does not fit the scaled {fill}. Choose a larger kettle or change the process; geometry is not changed automatically."
             )
         }
         ScaleWarning::CapacityUnknown { post_boil_l } => format!(
-            "Kettle capacity is not set; check that the scaled post-boil volume of {post_boil_l:.2} L fits. Geometry is not changed automatically."
+            "Boil volume is not set; check that the scaled post-boil volume of {post_boil_l:.2} L fits. Geometry is not changed automatically."
         ),
         ScaleWarning::FixedLossesRetained {
             trub_and_chiller_loss_l,

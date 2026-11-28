@@ -2210,8 +2210,8 @@ fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView
         view! { <BreweryPanel title="Your equipment" description=name>
             <BreweryMetricList>
                 {preview_metric("Mash efficiency", equipment.efficiency_override_fraction.or(equipment.mash_efficiency_fraction).map(|value| value * 100.0), None, None, "%", 1, Quiet)}
-                {preview_metric("Boil-off", equipment.boil_loss_l_per_hour, None, None, "L/h", 1, Quiet)}
-                {preview_metric("Transfer loss", equipment.trub_and_chiller_loss_l, None, None, "L", 1, Quiet)}
+                {preview_metric("Boil loss", equipment.boil_loss_l_per_hour, None, None, "L/hr", 1, Quiet)}
+                {preview_metric("Trub and chiller loss", equipment.trub_and_chiller_loss_l, None, None, "L", 1, Quiet)}
             </BreweryMetricList>
             <p>"New brews use current settings; previous brews retain their original equipment."</p>
         </BreweryPanel> }

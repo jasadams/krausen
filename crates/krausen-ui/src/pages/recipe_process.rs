@@ -509,10 +509,31 @@ fn MashAndWater(draft: RwSignal<RecipeDraft>, shown: Shown) -> impl IntoView {
                             {preview_metric("Total water", value(|t| t.total_water_l), None, None, "L", 1, Quiet)}
                         }
                     }}
-                </BreweryMetricList></BreweryStale></BrewerySection>
+                </BreweryMetricList>
+                {move || {
+                    // A plan that overfills a vessel is flagged; it never blocks Save or start.
+                    let warnings = shown.values.get().then(|| shown.preview.get()).flatten().map(|preview| preview.targets.vessel_warnings).unwrap_or_default();
+                    (!warnings.is_empty()).then(|| view! { <ul class="note-caption" data-testid="vessel-warnings">{warnings.iter().map(|warning| view! { <li>{vessel_warning_text(warning)}</li> }).collect_view()}</ul> })
+                }}
+                </BreweryStale></BrewerySection>
             })}
         </BreweryPanel>
     }
+}
+
+/// One line for an overfilled vessel. The mash tun figure is the mash water plus
+/// the grain's displacement (a fixed 0.67 L/kg assumption of the equipment spec).
+fn vessel_warning_text(warning: &krausen_types::formulation::VesselWarning) -> String {
+    use krausen_types::formulation::Vessel;
+    let (name, what) = match warning.vessel {
+        Vessel::MashTun => ("Mash tun", "mash water and grain"),
+        Vessel::SpargeVessel => ("Sparge vessel", "sparge water"),
+        Vessel::Kettle => ("Kettle", "pre-boil wort at boiling volume"),
+    };
+    format!(
+        "{name} overfilled: {what} is {:.2} L against a volume of {:.2} L.",
+        warning.required_l, warning.capacity_l
+    )
 }
 
 #[component]

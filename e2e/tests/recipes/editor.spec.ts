@@ -1348,7 +1348,7 @@ const ANNOUNCE_DEBOUNCE_MS = 800;
 const PREVIEW_DELAY_MS = 300;
 // How long "Estimate updated" stays in the status after an announced episode (UPDATED_ANNOUNCE_MS in recipe_process.rs).
 const UPDATED_ANNOUNCE_MS = 3000;
-const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-off': '3', 'profile-transfer-loss': '2', 'profile-deadspace': '0', 'profile-absorption': '0.8', 'profile-thickness': '2.5', 'profile-capacity': '30', 'profile-diameter': '35', 'profile-opening': '30', 'profile-boil-temperature': '100' };
+const PROFILE_VALUES = { 'profile-mash-efficiency': '75', 'profile-boil-loss': '3', 'profile-trub-loss': '2', 'profile-mash-deadspace': '0', 'profile-mash-absorption': '0.8', 'profile-mash-thickness': '2.5', 'profile-boil-volume': '30', 'profile-kettle-diameter': '35' };
 
 // A recipe whose Water plan shows real numbers: grain, an equipment profile and manual mash water.
 async function recipeWithNumbers(page: import('@playwright/test').Page, profileName = `Numbers ${Date.now()}`) {
@@ -2290,8 +2290,8 @@ test('the chilling note states the effective chilling and the model limitation',
   await page.getByRole('link', { name: 'Open imported recipe' }).click();
   const note = page.getByTestId('chilling-context');
   const limitation = 'a hop first added after the wort has cooled is not modelled';
-  // No equipment chilling choice and a hop addition: bitterness needs a choice.
-  await expect(note).toContainText('Effective chilling: not specified. A bitterness estimate needs a chilling choice in Equipment.');
+  // No equipment cooling method and a hop addition: bitterness needs one.
+  await expect(note).toContainText('Effective chilling: not specified. A bitterness estimate needs a cooling method in Equipment.');
   await expect(note).toContainText(limitation);
   await page.getByText('Equipment settings', { exact: true }).click();
   await page.locator('#equipment-profile-select').selectOption({ label: profile });
@@ -3012,9 +3012,9 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   });
   const name = `Profile ${Date.now()}`;
   await page.goto('/equipment');
-  await page.getByLabel('Profile name').fill(name);
+  await page.getByLabel('Equipment name').fill(name);
   await page.getByLabel('Mash efficiency (%)').fill('75');
-  await page.getByLabel('Boil-off (L/h)', { exact: true }).fill('3');
+  await page.getByLabel('Boil loss (L/hr)', { exact: true }).fill('3');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   const profileId = await page.getByLabel('Manage profile').inputValue();
@@ -3058,6 +3058,68 @@ test('equipment profiles can be saved, selected, edited and recovered', async ({
   await expect(page.getByText('Equipment profile unavailable', { exact: true })).toHaveCount(0);
 });
 
+test('equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel', async ({ page }) => {
+  const name = `Grainfather ${Date.now()}`;
+  await page.goto('/equipment');
+  // Exactly the spec's sections, in order, and no Brewhouse efficiency.
+  await expect(page.locator('.k-section__header h3').filter({ hasText: /^(About|Mash|Sparge|Boil|Cooling|Notes)$/ })).toHaveText(['About', 'Mash', 'Sparge', 'Boil', 'Cooling', 'Notes']);
+  await expect(page.getByLabel(/Brewhouse efficiency/)).toHaveCount(0);
+  await page.getByRole('switch', { name: 'Default equipment' }).click();
+  await page.getByLabel('Equipment name').fill(name);
+  await page.getByLabel('Equipment brand').fill('Grainfather');
+  await page.getByLabel('Description').fill('All in one');
+  await page.getByLabel('Controller type').fill('Grainfather Bluetooth Controller');
+  await page.getByLabel('Recirculation system').fill('RIMS');
+  await page.locator('#profile-batch-size').fill('23');
+  await page.locator('#profile-vessel-count').fill('1');
+  await page.locator('#profile-mash-volume').fill('30');
+  await page.locator('#profile-mash-efficiency').fill('78');
+  await page.locator('#profile-mash-deadspace').fill('3.5');
+  await page.locator('#profile-mash-thickness').fill('2.8');
+  await page.locator('#profile-mash-loss').fill('0');
+  await page.locator('#profile-mash-absorption').fill('0.8');
+  await page.getByRole('switch', { name: 'Sparge water alert' }).click();
+  await page.getByRole('switch', { name: 'Sparge progress counter' }).click();
+  await page.locator('#profile-sparge-volume').fill('2');
+  await page.locator('#profile-sparge-absorption').fill('0');
+  await page.locator('#profile-sparge-deadspace').fill('0');
+  await page.getByRole('switch', { name: 'Boil power control' }).click();
+  await page.locator('#profile-boil-volume').fill('30');
+  await page.locator('#profile-shrinkage').fill('4');
+  await page.locator('#profile-boil-loss').fill('3');
+  await page.locator('#profile-trub-loss').fill('2');
+  await page.locator('#profile-kettle-diameter').fill('30');
+  await page.locator('#profile-cooling-method').selectOption('counterflow_chiller');
+  await page.locator('#profile-cooling-flow').fill('1');
+  await page.getByLabel('Notes', { exact: true }).fill('Calibrated');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  const profileId = await page.getByLabel('Manage profile').inputValue();
+  await page.goto(`/equipment?profile=${profileId}`);
+  await expect(page.getByLabel('Equipment name')).toHaveValue(name);
+  await expect(page.getByRole('switch', { name: 'Default equipment' })).toHaveAttribute('aria-checked', 'true');
+  for (const [id, value] of Object.entries({ 'profile-batch-size': '23', 'profile-vessel-count': '1', 'profile-mash-volume': '30', 'profile-mash-efficiency': '78', 'profile-mash-deadspace': '3.5', 'profile-mash-thickness': '2.8', 'profile-mash-loss': '0', 'profile-mash-absorption': '0.8', 'profile-sparge-volume': '2', 'profile-boil-volume': '30', 'profile-shrinkage': '4', 'profile-boil-loss': '3', 'profile-trub-loss': '2', 'profile-kettle-diameter': '30', 'profile-cooling-flow': '1' })) {
+    await expect(page.locator(`#${id}`)).toHaveValue(value);
+  }
+  await expect(page.locator('#profile-cooling-method')).toHaveValue('counterflow_chiller');
+  await expect(page.getByRole('switch', { name: 'Boil power control' })).toHaveAttribute('aria-checked', 'true');
+  // A new recipe picks the default equipment up; the profile's batch size does not seed it.
+  await page.goto('/recipe-editor/new');
+  await page.getByText('Equipment settings', { exact: true }).click();
+  await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+  await expect(page.getByLabel('Batch volume (L)')).toHaveValue('');
+  // The estimates use the stage volumes: a 2 L sparge vessel is overfilled and flagged.
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await page.locator('#recipe-boil').fill('60');
+  await page.getByRole('button', { name: 'Add fermentable' }).click();
+  await page.getByLabel('Search fermentables').fill('Joe White Signature');
+  await page.getByRole('button', { name: /Joe White Signature Lager/ }).click();
+  await page.getByLabel('Amount in recipe (kg)').fill('4');
+  await page.getByLabel('Build your grain bill').getByRole('button', { name: 'Add to recipe' }).click();
+  await page.locator('#recipe-mash-method').selectOption('profile_thickness');
+  await expect(page.getByTestId('vessel-warnings')).toContainText('Sparge vessel overfilled');
+});
+
 test('Equipment opens from customer navigation without a recipe and keeps the manager independent', async ({ page }) => {
   await page.goto('/recipes');
   await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Equipment' }).click();
@@ -3071,20 +3133,20 @@ test('Equipment opens from customer navigation without a recipe and keeps the ma
 });
 
 test('a dirty profile draft is guarded on profile switch and navigation, then discarded or kept on request', async ({ page }) => {
-  const first = await createEquipmentProfile(page, `Guard first ${Date.now()}`, { 'profile-boil-off': '3' });
-  const second = await createEquipmentProfile(page, `Guard second ${Date.now()}`, { 'profile-boil-off': '5' });
+  const first = await createEquipmentProfile(page, `Guard first ${Date.now()}`, { 'profile-boil-loss': '3' });
+  const second = await createEquipmentProfile(page, `Guard second ${Date.now()}`, { 'profile-boil-loss': '5' });
   await page.goto(`/equipment?profile=${first}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
-  await page.locator('#profile-boil-off').fill('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('3');
+  await page.locator('#profile-boil-loss').fill('4');
   await page.locator('#equipment-profile-edit').selectOption(second);
   const choice = page.getByRole('group', { name: 'Unsaved profile changes' });
   await expect(choice).toBeVisible();
   // The edit is neither lost nor replaced while the choice is open.
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
   await expect(page.locator('#equipment-profile-edit')).toHaveValue(first);
   await choice.getByRole('button', { name: 'Stay on profile' }).click();
   await expect(page.locator('#equipment-profile-edit')).toBeFocused();
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
   await expect(page.getByRole('button', { name: 'Archive' })).toBeDisabled();
   // Leaving through the shell uses the shared guard; Stay keeps the draft.
   await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
@@ -3092,63 +3154,63 @@ test('a dirty profile draft is guarded on profile switch and navigation, then di
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Stay' }).click();
   await expect(page).toHaveURL(/\/equipment/);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
   // Discard and switch drops only the profile draft.
   await page.locator('#equipment-profile-edit').selectOption(second);
   await page.getByRole('group', { name: 'Unsaved profile changes' }).getByRole('button', { name: 'Discard changes and switch' }).click();
   await expect(page.locator('#equipment-profile-edit')).toHaveValue(second);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('5');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('5');
   // Save profile and switch persists the first profile revision before moving.
   await page.locator('#equipment-profile-edit').selectOption(first);
-  await page.locator('#profile-boil-off').fill('6');
+  await page.locator('#profile-boil-loss').fill('6');
   await page.locator('#equipment-profile-edit').selectOption(second);
   await page.getByRole('group', { name: 'Unsaved profile changes' }).getByRole('button', { name: 'Save profile and switch' }).click();
   await expect(page.locator('#equipment-profile-edit')).toHaveValue(second);
   await page.locator('#equipment-profile-edit').selectOption(first);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('6');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('6');
   // Save and leave from the shell guard saves the profile, then navigates once.
-  await page.locator('#profile-boil-off').fill('7');
+  await page.locator('#profile-boil-loss').fill('7');
   await page.getByRole('navigation', { name: 'Your brewery' }).getByRole('link', { name: 'Recipes' }).click();
   await page.getByRole('dialog', { name: 'Unsaved task changes' }).getByRole('button', { name: 'Save and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await page.goto(`/equipment?profile=${first}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('7');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('7');
 });
 
 test('a profile conflict keeps the raw edits and never overwrites the newer revision', async ({ page }) => {
-  const id = await createEquipmentProfile(page, `Conflict ${Date.now()}`, { 'profile-boil-off': '3' });
+  const id = await createEquipmentProfile(page, `Conflict ${Date.now()}`, { 'profile-boil-loss': '3' });
   await page.goto(`/equipment?profile=${id}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
-  await page.locator('#profile-boil-off').fill('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('3');
+  await page.locator('#profile-boil-loss').fill('4');
   const other = await page.context().newPage();
   await other.goto(`/equipment?profile=${id}`);
-  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
-  await other.locator('#profile-boil-off').fill('9');
+  await expect(other.locator('#profile-boil-loss')).toHaveValue('3');
+  await other.locator('#profile-boil-loss').fill('9');
   await other.getByRole('button', { name: 'Save profile' }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await other.close();
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile changed elsewhere' })).toBeVisible();
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
   await page.getByRole('button', { name: 'Load latest and keep my edits' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Loaded the latest profile' })).toBeVisible();
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await page.goto(`/equipment?profile=${id}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('4');
 });
 
 test('a conflict notice does not follow the user to another profile', async ({ page }) => {
-  const first = await createEquipmentProfile(page, `Conflict A ${Date.now()}`, { 'profile-boil-off': '3' });
-  const second = await createEquipmentProfile(page, `Conflict B ${Date.now()}`, { 'profile-boil-off': '5' });
+  const first = await createEquipmentProfile(page, `Conflict A ${Date.now()}`, { 'profile-boil-loss': '3' });
+  const second = await createEquipmentProfile(page, `Conflict B ${Date.now()}`, { 'profile-boil-loss': '5' });
   await page.goto(`/equipment?profile=${first}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
-  await page.locator('#profile-boil-off').fill('4');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('3');
+  await page.locator('#profile-boil-loss').fill('4');
   const other = await page.context().newPage();
   await other.goto(`/equipment?profile=${first}`);
-  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
-  await other.locator('#profile-boil-off').fill('9');
+  await expect(other.locator('#profile-boil-loss')).toHaveValue('3');
+  await other.locator('#profile-boil-loss').fill('9');
   await other.getByRole('button', { name: 'Save profile' }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await other.close();
@@ -3162,7 +3224,7 @@ test('a conflict notice does not follow the user to another profile', async ({ p
 
 test('recipe overrides show inherited and effective values and reset deletes the override', async ({ page }) => {
   const name = `Inherit ${Date.now()}`;
-  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-off': '3', 'profile-mash-efficiency': '75', 'profile-capacity': '30' }, 'natural');
+  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-loss': '3', 'profile-mash-efficiency': '75', 'profile-boil-volume': '30' }, 'natural');
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(`Override recipe ${Date.now()}`);
   await page.getByText('Equipment settings', { exact: true }).click();
@@ -3170,27 +3232,28 @@ test('recipe overrides show inherited and effective values and reset deletes the
   await expect(page.getByText(`Using profile “${name}” for this recipe`)).toBeVisible();
   const boil = page.locator('#recipe-boil-off');
   await expect(boil).toHaveValue('');
-  await expect(page.getByText(`Inherited: effective 3 L/h from ${name}.`)).toBeVisible();
+  await expect(page.getByText(`Inherited: effective 3 L/hr from ${name}.`)).toBeVisible();
   await boil.fill('4');
-  await expect(page.getByText(`Overridden for this recipe: effective 4 L/h. Inherited: 3 L/h from ${name}.`)).toBeVisible();
+  await expect(page.getByText(`Overridden for this recipe: effective 4 L/hr. Inherited: 3 L/hr from ${name}.`)).toBeVisible();
   // The header badge also says "1 recipe override"; the field hint is the intended element.
   await expect(page.getByText(/^1 recipe override\./)).toBeVisible();
   await page.locator('#recipe-efficiency').fill('70');
   await expect(page.locator('#recipe-efficiency-override')).toHaveValue('');
-  await page.locator('#recipe-chilling').selectOption('forced');
-  await page.locator('#recipe-chilling-rate').fill('0.5');
-  await page.getByRole('button', { name: 'Reset Boil-off to inherited' }).click();
+  await page.locator('#recipe-cooling-method').selectOption('counterflow_chiller');
+  await page.locator('#recipe-cooling-flow').fill('1.5');
+  await page.getByRole('button', { name: 'Reset Boil loss to inherited' }).click();
   // Reset removes the override rather than copying the profile value into it.
   await expect(boil).toHaveValue('');
-  await expect(page.getByText(`Inherited: effective 3 L/h from ${name}.`)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reset Boil-off to inherited' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Reset Chilling to inherited' }).click();
-  await expect(page.locator('#recipe-chilling')).toHaveValue('');
-  await expect(page.locator('#recipe-chilling-rate')).toHaveCount(0);
+  await expect(page.getByText(`Inherited: effective 3 L/hr from ${name}.`)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reset Boil loss to inherited' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reset Cooling method to inherited' }).click();
+  await expect(page.locator('#recipe-cooling-method')).toHaveValue('');
+  await page.getByRole('button', { name: 'Reset Flow rate to inherited' }).click();
+  await expect(page.locator('#recipe-cooling-flow')).toHaveValue('');
   // A raw unfinished override is still an override the user can reset.
   await boil.fill('-');
-  await expect(page.getByRole('button', { name: 'Reset Boil-off to inherited' })).toBeVisible();
-  await page.getByRole('button', { name: 'Reset Boil-off to inherited' }).click();
+  await expect(page.getByRole('button', { name: 'Reset Boil loss to inherited' })).toBeVisible();
+  await page.getByRole('button', { name: 'Reset Boil loss to inherited' }).click();
   await expect(boil).toHaveValue('');
   // Switching the selected profile never writes into the recipe overrides.
   await page.getByLabel('Equipment profile', { exact: true }).selectOption('');
@@ -3200,7 +3263,7 @@ test('recipe overrides show inherited and effective values and reset deletes the
 
 test('Manage equipment from a recipe returns to the retained recipe', async ({ page }) => {
   const name = `Manage ${Date.now()}`;
-  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-off': '3' });
+  const profileId = await createEquipmentProfile(page, name, { 'profile-boil-loss': '3' });
   await page.goto('/recipe-editor/new');
   await page.getByLabel('Recipe name', { exact: true }).fill(`Retained ${Date.now()}`);
   await page.getByText('Equipment settings', { exact: true }).click();
@@ -3225,7 +3288,7 @@ test('Manage equipment from a recipe returns to the retained recipe', async ({ p
 test('an uncertain equipment save retries the identical request', async ({ page }) => {
   await page.goto('/equipment');
   const name = `Retry profile ${Date.now()}`;
-  await page.getByLabel('Profile name').fill(name);
+  await page.getByLabel('Equipment name').fill(name);
   const requests: { profile_id: string, request_id: string }[] = [];
   await page.route('**/leptos-api/execute_equipment_command*', async route => {
     const payload = new URLSearchParams(route.request().postData() ?? '').get('command_json');
@@ -3243,11 +3306,11 @@ test('an uncertain equipment save retries the identical request', async ({ page 
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByText('The result is uncertain. Retry the same request.')).toBeVisible();
   // The pinned request locks the form and survives a reload with the same identity.
-  await expect(page.getByLabel('Profile name')).toBeDisabled();
+  await expect(page.getByLabel('Equipment name')).toBeDisabled();
   await page.reload();
   await expect(page.getByText('A previous profile request was not confirmed')).toBeVisible();
-  await expect(page.getByLabel('Profile name')).toHaveValue(name);
-  await expect(page.getByLabel('Profile name')).toBeDisabled();
+  await expect(page.getByLabel('Equipment name')).toHaveValue(name);
+  await expect(page.getByLabel('Equipment name')).toBeDisabled();
   await page.getByRole('button', { name: 'Retry previous request' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   expect(requests).toHaveLength(2);
@@ -3926,11 +3989,11 @@ test('diagnostic jump reaches a select and a field inside a collapsed section', 
   await expect(select).toHaveAttribute('aria-describedby', /-stage-description$/);
   await expect(page.locator(`#${await focusedId(page)}-description`)).toContainText('Choose a supported stage');
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
-  await issues(page).getByRole('button', { name: /Chilling is missing/ }).click();
-  await expect.poll(() => focusedId(page)).toBe('recipe-chilling');
+  await issues(page).getByRole('button', { name: /Cooling method is missing/ }).click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-cooling-method');
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
-  await expect(page.locator('#recipe-chilling')).toHaveAttribute('aria-describedby', 'recipe-chilling-description');
-  await expect(page.locator('#recipe-chilling-description')).toContainText('Needed to start a brew');
+  await expect(page.locator('#recipe-cooling-method')).toHaveAttribute('aria-describedby', 'recipe-cooling-method-description');
+  await expect(page.locator('#recipe-cooling-method-description')).toContainText('Needed to start a brew');
 });
 
 test('repeated diagnostics clear one at a time while the summary keeps its place during typing', async ({ page }) => {
@@ -4172,27 +4235,21 @@ test('a link to a conditional control goes to the control that governs it, never
   await expect(page.locator('#recipe-mash-method')).toBeFocused();
 });
 
-test('a link to an inherited chilling value goes to the Chilling override, never to an absent input', async ({ page }) => {
-  // An inherited forced chilling with no rate: the rate field only exists once Chilling is overridden.
-  const profile = `Forced ${Date.now()}`;
-  await createEquipmentProfile(page, profile, PROFILE_VALUES, 'forced');
+test('a missing cooling method links to the Cooling method override', async ({ page }) => {
+  // A profile with no cooling method: bitterness needs one, and the control that sets it is on the page.
+  const profile = `No cooling ${Date.now()}`;
+  await createEquipmentProfile(page, profile, PROFILE_VALUES);
   await page.goto('/recipe-editor/new');
   await addHop(page, 'Cascade', '60');
   await page.getByText('Equipment settings', { exact: true }).click();
   await chooseEquipmentProfile(page, profile);
   await page.getByText('Equipment settings', { exact: true }).click();
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(false);
-  await expect(page.locator('#recipe-chilling-rate')).toHaveCount(0);
-  const rate = issues(page).getByRole('button', { name: /Cooling rate is missing/ });
-  await expect(rate).toBeVisible();
-  await rate.click();
-  await expect.poll(() => focusedId(page)).toBe('recipe-chilling');
+  const missing = issues(page).getByRole('button', { name: /Cooling method is missing/ });
+  await expect(missing).toBeVisible();
+  await missing.click();
+  await expect.poll(() => focusedId(page)).toBe('recipe-cooling-method');
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
-  await page.locator('#recipe-chilling').selectOption('forced');
-  await expect(page.locator('#recipe-chilling-rate')).toBeVisible();
-  await expect(issues(page).getByRole('button', { name: /Cooling rate is missing/ })).toBeVisible();
-  await issues(page).getByRole('button', { name: /Cooling rate is missing/ }).click();
-  await expect.poll(() => focusedId(page)).toBe('recipe-chilling-rate');
 });
 
 test('inline messages are associated with every field family', async ({ page }) => {
@@ -4380,7 +4437,7 @@ test('summary links reach a step field, a select, an override and yeast and othe
   await expect.poll(() => focusedId(page)).toBe(stageId);
   // An equipment override.
   await page.locator('#recipe-boil-off').fill('-1');
-  await issues(page).getByRole('button', { name: /Boil-off cannot be negative/ }).click();
+  await issues(page).getByRole('button', { name: /Boil loss cannot be negative/ }).click();
   await expect.poll(() => focusedId(page)).toBe('recipe-boil-off');
   expect(await page.locator('#recipe-equipment-disclosure').evaluate(el => (el as HTMLDetailsElement).open)).toBe(true);
   // Yeast and other-ingredient amounts, whose raw and validator paths differ.

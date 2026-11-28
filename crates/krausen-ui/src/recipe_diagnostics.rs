@@ -122,7 +122,6 @@ fn fixed_field(path: &str) -> Option<(&'static str, &'static str)> {
 /// governs it instead, never to an input that is not on the page.
 fn governed(draft: &RecipeDraft, mut located: Located) -> Located {
     let Route::Field { dom_id } = &located.route else { return located };
-    let doc = draft.document();
     let (governing, note) = match dom_id.as_str() {
         id if id == process_fields::MASH_WATER.0 && !show_manual_mash_water(draft) => (process_fields::MASH_METHOD.0, "Change Mash water method to adjust it."),
         id if id == process_fields::TOP_UP.0 && !show_kettle_top_up(draft) => (process_fields::MASH_METHOD.0, "Choose a Mash water method to enter it."),

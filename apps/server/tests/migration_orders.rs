@@ -7,6 +7,7 @@ const NATIVE: i64 = 20261031010000;
 const CREDENTIALS: i64 = 20261031020000;
 const DROP_CREDENTIALS: i64 = 20261102020000;
 const EQUIPMENT: i64 = 20261031040000;
+const EQUIPMENT_SPEC: i64 = 20261128000000;
 const CATALOGUE: i64 = 20261031050000;
 const RECIPE_ARCHIVE: i64 = 20261031060000;
 const BREWS: i64 = 20261101000000;
@@ -21,6 +22,7 @@ fn without(all: &Migrator, skip: Option<i64>) -> Migrator {
                             && matches!(m.version, RECIPE_ARCHIVE | BREWS | BREW_EVIDENCE))
                         && !(skip == Some(BREWS) && m.version == BREW_EVIDENCE)
                         && !(skip == Some(CREDENTIALS) && m.version == DROP_CREDENTIALS)
+                        && !(skip == Some(EQUIPMENT) && m.version == EQUIPMENT_SPEC)
                 })
                 .cloned()
                 .collect(),

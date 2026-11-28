@@ -1062,6 +1062,37 @@ async fn exercise(db: DbPool) {
             .get("fermentables")
             .is_some()
     );
+    // The equipment contract is the profile spec: MCP offers exactly the UI's
+    // fields, the about block and the default toggle, and none of the removed ones.
+    let equipment_tool = discovered
+        .tools
+        .iter()
+        .find(|tool| tool.name == "equipment_save")
+        .unwrap();
+    let defs = &equipment_tool.input_schema["$defs"];
+    let settings = defs["EquipmentSettingsV1"]["properties"].as_object().unwrap();
+    for field in [
+        "mash_tun_volume_l", "mash_efficiency_fraction", "mash_tun_deadspace_l",
+        "mash_thickness_l_per_kg", "mash_tun_loss_l", "mash_grain_absorption_l_per_kg",
+        "sparge_vessel_volume_l", "sparge_grain_absorption_l_per_kg", "sparge_deadspace_l",
+        "boil_volume_l", "wort_shrinkage_fraction", "boil_loss_l_per_hour",
+        "trub_and_chiller_loss_l", "kettle_diameter_cm", "cooling_method",
+        "cooling_flow_rate_l_per_minute",
+    ] {
+        assert!(settings.contains_key(field), "{field}");
+    }
+    for removed in ["kettle_opening_cm", "boil_temperature_c", "chilling", "pre_boil_deadspace_l"] {
+        assert!(!settings.contains_key(removed), "{removed}");
+    }
+    let about = defs["EquipmentAboutV1"]["properties"].as_object().unwrap();
+    for field in [
+        "brand", "description", "measurement", "equipment_type", "controller_type",
+        "recirculation_system", "vessel_count", "batch_size_l", "sparge_water_alert",
+        "sparge_progress_counter", "boil_power_control", "notes",
+    ] {
+        assert!(about.contains_key(field), "{field}");
+    }
+    assert!(defs["SaveEquipment"]["properties"].get("is_default").is_some());
     // Both protocol versions and the browser-facing app use the same native
     // operation and revision contract, including request replay and authority.
     let mut native = krausen_types::brewery::RecipeDocumentV1::default();
@@ -2544,7 +2575,7 @@ fn brew_test_profile(
             mash_thickness_l_per_kg: Some(2.5),
             boil_volume_l: Some(30.0),
             kettle_diameter_cm: Some(35.0),
-            chilling: Some(krausen_types::brewery::CoolingMethodV1::Natural),
+            cooling_method: Some(krausen_types::brewery::CoolingMethodV1::Natural),
             ..Default::default()
         },
         about: Default::default(),

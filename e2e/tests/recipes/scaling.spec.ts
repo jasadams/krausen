@@ -45,7 +45,7 @@ test('scaling previews fixed-loss target changes and applies one revision', asyn
   await page.getByLabel('Target fermenter volume (L)').fill('40');
   await page.getByRole('button', { name: 'Preview scaling' }).click();
   await expect(page.getByText(/20 L to 40 L/)).toBeVisible();
-  await expect(page.getByText(/Kettle capacity 30\.00 L does not fit the scaled/)).toBeVisible();
+  await expect(page.getByText(/Boil volume 30\.00 L does not fit the scaled/)).toBeVisible();
   await expect(page.getByText(/Fixed losses stay unchanged/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Apply scaling' }).click();

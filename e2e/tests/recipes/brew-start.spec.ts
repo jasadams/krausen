@@ -113,15 +113,13 @@ async function makeSavedRevisionReady(
   const recipeUrl = page.url();
   const profileId = await createEquipmentProfile(page, profileName, {
     'profile-mash-efficiency': '75',
-    'profile-boil-off': '3',
-    'profile-transfer-loss': '2',
-    'profile-deadspace': '0',
-    'profile-absorption': '0.8',
-    'profile-thickness': '2.5',
-    'profile-capacity': '30',
-    'profile-diameter': '35',
-    'profile-opening': '30',
-    'profile-boil-temperature': '100',
+    'profile-boil-loss': '3',
+    'profile-trub-loss': '2',
+    'profile-mash-deadspace': '0',
+    'profile-mash-absorption': '0.8',
+    'profile-mash-thickness': '2.5',
+    'profile-boil-volume': '30',
+    'profile-kettle-diameter': '35',
   }, 'natural');
   await page.goto(recipeUrl);
   await page.getByText('Equipment settings', { exact: true }).click();
@@ -225,8 +223,8 @@ test('editing a shared profile leaves a started brew frozen and changes only lat
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText(title);
   const before = await page.getByRole('main').innerText();
   await page.goto(`/equipment?profile=${profileId}`);
-  await expect(page.locator('#profile-boil-off')).toHaveValue('3');
-  await page.locator('#profile-boil-off').fill('6');
+  await expect(page.locator('#profile-boil-loss')).toHaveValue('3');
+  await page.locator('#profile-boil-loss').fill('6');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await page.goto(brewUrl);
@@ -658,8 +656,8 @@ test('a changed equipment context is reported with refreshed targets and renewed
   const other = await page.context().newPage();
   await other.goto(`/equipment?profile=${profileId}`);
   // Wait for the saved profile to load before editing, or the form can reset the fill.
-  await expect(other.locator('#profile-boil-off')).toHaveValue('3');
-  await other.locator('#profile-boil-off').fill('6');
+  await expect(other.locator('#profile-boil-loss')).toHaveValue('3');
+  await other.locator('#profile-boil-loss').fill('6');
   await other.getByRole('button', { name: 'Save profile' }).click();
   await expect(other.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   // Let background requests finish; closing a tab cancels in-flight server calls.
@@ -735,7 +733,7 @@ test('a recipe override is listed in the review with a trimmed value', async ({ 
   await expect(page.getByRole('status').filter({ hasText: /Saved revision 3/ })).toBeVisible();
   const dialog = await reviewCurrentStart(page);
   await expect(dialog.getByTestId('start-overrides')).toContainText('1 recipe override');
-  await expect(dialog.getByTestId('start-override-list')).toContainText('Boil-off');
+  await expect(dialog.getByTestId('start-override-list')).toContainText('Boil loss');
   await expect(dialog.getByTestId('start-override-list')).toContainText('4.5 L/h · recipe override');
   await expect(dialog).not.toContainText(/\d\.\d{6,}/);
 });
