@@ -4644,7 +4644,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
       expect(separation, `gap before ${names[index]}`).toBeGreaterThanOrEqual(gap - 0.5);
     }
 
-    // Escape closes the dialog and returns focus; the draft is kept.
+    // Escape closes the dialog and the draft is kept.
     await page.keyboard.press('Escape');
     await expect(guard).not.toBeVisible();
     await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Action row recipe');
