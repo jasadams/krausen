@@ -28,6 +28,7 @@ library/shell.spec.ts › zero memberships offers no workspace switching
 recipes/beerxml.spec.ts › a expired check keeps the retained request until it is acknowledged by name
 recipes/beerxml.spec.ts › a focus revalidation while the export task shows its acknowledgement prepares it again
 recipes/beerxml.spec.ts › a identity conflict check keeps the retained request until it is acknowledged by name
+recipes/beerxml.spec.ts › a long equipment profile name never widens the import form past a narrow screen with enlarged text
 recipes/beerxml.spec.ts › a lost import response is retained before sending and survives reload with the same request
 recipes/beerxml.spec.ts › a retained import is neither shown nor sent under a different account
 recipes/beerxml.spec.ts › an account switch hides a retained import and sends no source under the new account

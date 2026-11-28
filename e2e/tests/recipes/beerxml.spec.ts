@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { DEFAULT_TEST_USER, createSecondUser, db, getDefaultWorkspaceId, loginUser, setAccountTheme, sqlText, walCheckpoint } from '../../helpers/test-helpers';
+import { DEFAULT_TEST_USER, createEquipmentProfile, createSecondUser, db, getDefaultWorkspaceId, loginUser, setAccountTheme, sqlText, walCheckpoint } from '../../helpers/test-helpers';
 
 test.beforeEach(async ({ page }) => {
   // The saved appearance is shared account state: start every test from Light.
@@ -261,6 +261,19 @@ for (const theme of ['light', 'dark'] as const) {
     });
   }
 }
+
+test('a long equipment profile name never widens the import form past a narrow screen with enlarged text', async ({ page }) => {
+  await createEquipmentProfile(page, `Long import profile ${'x'.repeat(40)} ${Date.now()}`, { 'profile-mash-efficiency': '75' });
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.goto('/beerxml');
+  await expect(page.locator('#beerxml-equipment')).toBeVisible();
+  await page.evaluate(() => { document.documentElement.style.fontSize = '30px'; });
+  const edges = await page.evaluate(() => ({
+    select: document.querySelector('#beerxml-equipment')!.getBoundingClientRect().right,
+    panel: document.querySelector('#beerxml-equipment')!.closest('.k-panel')!.getBoundingClientRect().right,
+  }));
+  expect(edges.select).toBeLessThanOrEqual(edges.panel + 1);
+});
 
 test('cancelling after preview creates no recipe', async ({ page }) => {
   const title = `Cancel import ${Date.now()}`;
