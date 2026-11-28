@@ -362,7 +362,7 @@ async fn exercise(db: DbPool) {
     profile.expected_metadata_revision = created.metadata_revision;
     profile.request_id = Uuid::new_v4().to_string();
     profile.settings.boil_loss_l_per_hour = Some(2.0);
-    let changed_profile = krausen_app::equipment::save(&db, &actor, profile)
+    let changed_profile = krausen_app::equipment::save(&db, &actor, profile.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -425,6 +425,36 @@ async fn exercise(db: DbPool) {
         interchange::commit(&db, &actor, &request, failed_key).await,
         ImportCommitOutcome::Imported { revision: 1, .. }
     ));
+    // An import that names no profile takes the workspace default (recipe-level efficiency
+    // override still applies); one that names a profile keeps its own.
+    profile.expected_revision = changed_profile.revision;
+    profile.expected_metadata_revision = changed_profile.metadata_revision;
+    profile.is_default = Some(true);
+    profile.request_id = Uuid::new_v4().to_string();
+    krausen_app::equipment::save(&db, &actor, profile).await.unwrap();
+    let ImportPreviewOutcome::Preview(defaulted) =
+        interchange::preview(&db, &actor, &request).await
+    else {
+        panic!("default preview");
+    };
+    assert_eq!(
+        defaulted.document.equipment_profile_id.as_deref(),
+        Some(created.profile_id.as_str())
+    );
+    let ImportCommitOutcome::Imported { recipe_id, .. } =
+        interchange::commit(&db, &actor, &request, Uuid::new_v4()).await
+    else {
+        panic!("default import");
+    };
+    let krausen_types::recipe_editor::RecipeReadOutcome::Found(found) =
+        krausen_app::recipe_editor::read(&db, &actor, &intent, &recipe_id).await
+    else {
+        panic!("read imported");
+    };
+    assert_eq!(
+        found.document.equipment_profile_id.as_deref(),
+        Some(created.profile_id.as_str())
+    );
 }
 
 use sha2::Digest;

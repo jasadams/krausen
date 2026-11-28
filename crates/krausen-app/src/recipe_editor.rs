@@ -65,40 +65,6 @@ async fn read_inner(
 
 /// Create or save through one transaction. `recipe_id = None` creates revision 1;
 /// otherwise the observed head is required. Reusing a request id recovers its result.
-/// A new recipe that names no equipment profile takes the workspace default, as the
-/// editor's new-recipe flow does; every creation path shares this rule. A document that
-/// already names a profile, an edit, or a workspace with no default is saved unchanged.
-pub async fn save_with_default(
-    pool: &DbPool,
-    actor: &ActorContext,
-    intent: &OperationIntent,
-    recipe_id: Option<&str>,
-    expected_revision: Option<i64>,
-    document: &RecipeDocumentV1,
-    request_id: uuid::Uuid,
-) -> RecipeSaveOutcome {
-    match with_workspace_default(pool, actor, intent, recipe_id, document).await {
-        Ok(document) => save(pool, actor, intent, recipe_id, expected_revision, &document, request_id).await,
-        Err(error) => save_error_outcome(error),
-    }
-}
-pub async fn with_workspace_default(
-    pool: &DbPool,
-    actor: &ActorContext,
-    intent: &OperationIntent,
-    recipe_id: Option<&str>,
-    document: &RecipeDocumentV1,
-) -> Result<RecipeDocumentV1, Error> {
-    let mut document = document.clone();
-    if recipe_id.is_none() && document.equipment_profile_id.is_none() {
-        let page = crate::equipment::list(pool, actor, intent, None, 1, false).await?;
-        if let Some(default) = page.default_profile {
-            document.equipment_profile_id = Some(default.profile_id);
-        }
-    }
-    Ok(document)
-}
-
 pub async fn save(
     pool: &DbPool,
     actor: &ActorContext,
@@ -120,18 +86,15 @@ pub async fn save(
     .await
     {
         Ok(result) => result,
-        Err(error) => save_error_outcome(error),
-    }
-}
-fn save_error_outcome(error: Error) -> RecipeSaveOutcome {
-    match error {
-        Error::Forbidden => RecipeSaveOutcome::Forbidden,
-        Error::ContextChanged => RecipeSaveOutcome::ContextChanged,
-        Error::Invalid(_) => RecipeSaveOutcome::InvalidRequest,
-        Error::RequestIdentityConflict => RecipeSaveOutcome::RequestIdentityConflict,
-        Error::ResultExpired { resource_id } => RecipeSaveOutcome::ResultExpired { resource_id },
-        Error::Retryable => RecipeSaveOutcome::Retryable,
-        e => {
+        Err(Error::Forbidden) => RecipeSaveOutcome::Forbidden,
+        Err(Error::ContextChanged) => RecipeSaveOutcome::ContextChanged,
+        Err(Error::Invalid(_)) => RecipeSaveOutcome::InvalidRequest,
+        Err(Error::RequestIdentityConflict) => RecipeSaveOutcome::RequestIdentityConflict,
+        Err(Error::ResultExpired { resource_id }) => {
+            RecipeSaveOutcome::ResultExpired { resource_id }
+        }
+        Err(Error::Retryable) => RecipeSaveOutcome::Retryable,
+        Err(e) => {
             tracing::error!(error = %e, "recipe save failed");
             RecipeSaveOutcome::Unavailable
         }
@@ -179,6 +142,26 @@ async fn save_inner(
     if let Some(result) = recover_request(&mut tx, &key).await? {
         return Ok(serde_json::from_value(result)?);
     }
+    // A new recipe that names no profile takes the workspace default. This is the one
+    // place that rule lives, after request recovery so a retry returns the original result.
+    let defaulted;
+    let document = if recipe_id.is_none() && document.equipment_profile_id.is_none() {
+        match krausen_brewery::equipment_store::load_default(&mut tx, &actor.workspace_id)
+            .await
+            .map_err(boundary_error)?
+        {
+            Some(default) => {
+                defaulted = RecipeDocumentV1 {
+                    equipment_profile_id: Some(default.profile_id),
+                    ..document.clone()
+                };
+                &defaulted
+            }
+            None => document,
+        }
+    } else {
+        document
+    };
     if let Some(profile_id) = &document.equipment_profile_id {
         let profile =
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)

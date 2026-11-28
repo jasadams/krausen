@@ -6,6 +6,7 @@ use krausen_types::{
     brewery::*,
     equipment::{ArchiveEquipment, EquipmentProvenance, SaveEquipment},
     formulation::{PreviewOutcome, PreviewRequest, Vessel},
+    recipe_editor::{RecipeReadOutcome, RecipeSaveOutcome},
     request_context::OperationIntent,
 };
 
@@ -173,21 +174,44 @@ async fn exercise(db: DbPool) {
     assert_eq!(seed.equipment_profile_id.as_deref(), Some(first_id.as_str()));
     assert_eq!(seed.batch_size_l, None, "the profile's batch size does not seed new recipes");
 
-    // Every creation path takes the default: a document naming no profile gets it (the MCP
-    // create path uses this), one that names a profile keeps its own.
-    let blank = krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, None, &RecipeDocumentV1::default())
-        .await
-        .unwrap();
-    assert_eq!(blank.equipment_profile_id.as_deref(), Some(first_id.as_str()));
-    let named = RecipeDocumentV1 { equipment_profile_id: Some("other".into()), ..Default::default() };
+    // Every creation path takes the default, inside the save transaction: a recipe naming no
+    // profile gets it, one naming a profile keeps its own, and a retry with the same request id
+    // after the default moved recovers the original result.
+    let request = uuid::Uuid::new_v4();
+    let blank = RecipeDocumentV1 { title: "Defaulted".into(), ..Default::default() };
+    let created = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &blank, request).await;
+    let RecipeSaveOutcome::Saved { recipe_id, revision: 1 } = created.clone() else { panic!("create: {created:?}") };
+    let read = |id: String| {
+        let (db, actor, intent) = (db.clone(), actor.clone(), intent.clone());
+        async move {
+            let RecipeReadOutcome::Found(found) = krausen_app::recipe_editor::read(&db, &actor, &intent, &id).await else { panic!("read") };
+            found.document.equipment_profile_id
+        }
+    };
+    assert_eq!(read(recipe_id.clone()).await.as_deref(), Some(first_id.as_str()));
+    // Move the default, then retry the identical request.
+    let moved_id = uuid::Uuid::new_v4().to_string();
+    equipment::save(&db, &actor, save_request(&intent, &moved_id, "Moved default", Some(true), (0, 0))).await.unwrap();
     assert_eq!(
-        krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, None, &named)
-            .await
-            .unwrap()
-            .equipment_profile_id
-            .as_deref(),
-        Some("other")
+        krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &blank, request).await,
+        created,
+        "a retry after the default changed recovers the original result"
     );
+    let named = RecipeDocumentV1 { title: "Named".into(), equipment_profile_id: Some(first_id.clone()), ..Default::default() };
+    let RecipeSaveOutcome::Saved { recipe_id: named_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &named, uuid::Uuid::new_v4()).await else { panic!("named") };
+    assert_eq!(read(named_id).await.as_deref(), Some(first_id.as_str()));
+    let fresh = RecipeDocumentV1 { title: "Fresh".into(), ..Default::default() };
+    let RecipeSaveOutcome::Saved { recipe_id: fresh_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &fresh, uuid::Uuid::new_v4()).await else { panic!("fresh") };
+    assert_eq!(read(fresh_id).await.as_deref(), Some(moved_id.as_str()), "a new create takes the current default");
+    // An actor outside the workspace stays Forbidden, not Unavailable.
+    let stranger = ActorContext { actor_id: "stranger".into(), ..actor.clone() };
+    assert_eq!(
+        krausen_app::recipe_editor::save(&db, &stranger, &intent, None, None, &fresh, uuid::Uuid::new_v4()).await,
+        RecipeSaveOutcome::Forbidden
+    );
+    // Put the default back for the checks below.
+    equipment::save(&db, &actor, save_request(&intent, &first_id, "Grainfather (220V) - Bluetooth Controller", Some(true), (1, 1))).await.unwrap();
+    equipment::save(&db, &actor, save_request(&intent, &moved_id, "Moved default", Some(false), (1, 1))).await.unwrap();
 
     // A save that does not mention the default leaves it alone.
     let mut again = save_request(&intent, &first_id, "Renamed", None, (1, 1));

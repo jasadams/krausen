@@ -184,8 +184,10 @@ mash efficiency already counts only the extract that reaches the kettle (no seco
 efficiency penalty, as for transfer loss). They differ in what they describe, not
 in how they enter the water chain. Mash water and the sparge remainder are as
 above; the sparge water is the total loaded into the sparge vessel and so
-includes `D_s`. Pre-boil SG uses `pre_boil_l`; OG, colour and bitterness inputs
-are unchanged because they use the reference post-boil volume and batch.
+includes `D_s`. Pre-boil SG uses `pre_boil_l`; OG and colour are unchanged because they use the
+reference post-boil volume and batch. Bitterness uses the boil's volumes for its
+gravity-dependent utilisation, which follow the reference boil loss `E × (1 - s)`, so
+shrinkage can change IBU slightly.
 
 Capacity checks produce vessel warnings in the targets (`vessel_warnings`: the
 vessel, required litres and capacity), never clamping and never blocking Save or

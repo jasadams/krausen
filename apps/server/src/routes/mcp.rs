@@ -252,6 +252,18 @@ equipment_request!(IngredientSearch, krausen_types::catalogue::SearchCatalogue);
 fn schema(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     value.as_object().cloned().expect("static schema")
 }
+/// The equipment save schema. `EquipmentSettingsV1` is shared with recipe overrides, which
+/// carry the recipe-level efficiency override; a profile save rejects it, so this tool's
+/// schema does not offer it.
+fn profile_save_schema() -> serde_json::Map<String, serde_json::Value> {
+    let mut value =
+        serde_json::to_value(schemars::schema_for!(EquipmentSave)).expect("equipment schema");
+    value["$defs"]["EquipmentSettingsV1"]["properties"]
+        .as_object_mut()
+        .expect("settings properties")
+        .remove("efficiency_override_fraction");
+    schema(value)
+}
 impl ServerHandler for McpHandler {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
@@ -325,10 +337,7 @@ impl ServerHandler for McpHandler {
             Tool::new(
                 operations::EQUIPMENT_SAVE.mcp_tool,
                 "Save a guarded equipment profile",
-                schema(
-                    serde_json::to_value(schemars::schema_for!(EquipmentSave))
-                        .expect("equipment schema"),
-                ),
+                profile_save_schema(),
             ),
             Tool::new(
                 operations::EQUIPMENT_ARCHIVE.mcp_tool,
@@ -1052,8 +1061,7 @@ impl ServerHandler for McpHandler {
                     access_expires_at: principal.access_expires_at,
                     workspace_id: input.workspace_id,
                 };
-                // A new recipe without a profile takes the workspace default, like the editor.
-                let outcome = krausen_app::recipe_editor::save_with_default(
+                let outcome = krausen_app::recipe_editor::save(
                     &self.db,
                     &actor,
                     &input.intent,

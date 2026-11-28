@@ -1081,7 +1081,7 @@ async fn exercise(db: DbPool) {
     ] {
         assert!(settings.contains_key(field), "{field}");
     }
-    for removed in ["kettle_opening_cm", "boil_temperature_c", "chilling", "pre_boil_deadspace_l"] {
+    for removed in ["kettle_opening_cm", "boil_temperature_c", "chilling", "pre_boil_deadspace_l", "efficiency_override_fraction"] {
         assert!(!settings.contains_key(removed), "{removed}");
     }
     let about = defs["EquipmentAboutV1"]["properties"].as_object().unwrap();

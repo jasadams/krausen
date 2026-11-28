@@ -227,6 +227,8 @@ recipes/editor.spec.ts › editor controls remain usable on mobile and in dark m
 recipes/editor.spec.ts › editor state controls keep raw labels and focus across representative presentation settings
 recipes/editor.spec.ts › equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel
 recipes/editor.spec.ts › equipment profiles can be saved, selected, edited and recovered
+recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in dark mode
+recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in light mode
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a denied-after-edit task
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a disposed task
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a superseded task

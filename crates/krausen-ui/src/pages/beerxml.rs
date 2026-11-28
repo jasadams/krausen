@@ -425,6 +425,15 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 if append {
                     profiles.update(|items| items.extend(page.items));
                 } else {
+                    // An import with no chosen profile uses the workspace default, so show it chosen.
+                    if let Some(default) = &page.default_profile {
+                        if selected_profile.get_untracked().is_empty()
+                            && preview.get_untracked().is_none()
+                            && pending.get_untracked().is_none()
+                        {
+                            selected_profile.set(default.profile_id.clone());
+                        }
+                    }
                     profiles.set(page.items);
                 }
                 profile_cursor.set(page.next_cursor);
