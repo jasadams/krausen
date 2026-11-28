@@ -848,6 +848,9 @@ test('dirty evidence Discard and leave discards the draft and arrives in one cli
   await guard.getByRole('button', { name: 'Discard local inputs and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
+  // The draft was discarded: coming back shows an empty note.
+  await page.goBack();
+  await expect(page.locator('#brew-note')).toHaveValue('');
 });
 
 test('lost Record response is proven committed and retries the same identity', async ({

@@ -3062,6 +3062,7 @@ test('equipment profiles can be saved: Discard and leave discards the edit and a
   const name = `Discard profile ${Date.now()}`;
   await page.goto('/equipment');
   await page.getByLabel('Equipment name').fill(name);
+  await page.getByLabel('Mash efficiency (%)').fill('75');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
   await page.getByLabel('Mash efficiency (%)').fill('61');
@@ -3073,7 +3074,8 @@ test('equipment profiles can be saved: Discard and leave discards the edit and a
   await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
   await page.goto('/equipment');
   await page.getByLabel('Manage profile').selectOption({ label: name });
-  await expect(page.getByLabel('Mash efficiency (%)')).not.toHaveValue('61');
+  // The edit was discarded: the profile is back to its saved value.
+  await expect(page.getByLabel('Mash efficiency (%)')).toHaveValue('75');
 });
 
 test('equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel', async ({ page }) => {
@@ -3777,6 +3779,44 @@ test('a failed workspace switch is reported after choosing to discard', async ({
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not switch workspaces.');
   await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('a change made after choosing Discard and leave still stops the sign-out', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const name = page.getByLabel('Recipe name', { exact: true });
+  await name.fill('Draft before sign-out');
+  const logouts: string[] = [];
+  await page.route('**/leptos-api/logout*', route => { logouts.push(route.request().url()); return route.continue(); });
+  // Only context checks that arrive after the explicit arm point are held.
+  let armed = false;
+  let arrived!: () => void;
+  const checkArrived = new Promise<void>(resolve => { arrived = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/leptos-api/get_user_context*', async route => {
+    if (armed) { arrived(); await held; }
+    await route.continue();
+  });
+  const signOutPopup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await signOutPopup.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved recipe changes' });
+  await expect(guard).toBeVisible();
+  armed = true;
+  await guard.getByRole('button', { name: 'Discard and leave' }).click();
+  await checkArrived;
+  // The discard was accepted and the leave is waiting on its context check. The modal
+  // dialog keeps the page inert for real input, so deliver the newer edit as the input
+  // event the field would raise (as an assistive or injected change would).
+  await name.evaluate((input: HTMLInputElement) => {
+    input.value = 'Typed after the choice';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  armed = false;
+  release();
+  await expect(page.getByRole('alert')).toContainText('Newer task state prevents the original navigation');
+  await expect(page).toHaveURL(/recipe-editor/);
+  await expect(name).toHaveValue('Typed after the choice');
+  expect(logouts).toHaveLength(0);
 });
 
 test('a failed sign-out is reported after choosing to discard', async ({ page }) => {

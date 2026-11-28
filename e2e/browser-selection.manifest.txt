@@ -168,10 +168,13 @@ recipes/editor.spec.ts › Review highlighted fields keeps the button's natural 
 recipes/editor.spec.ts › Review highlighted fields keeps the button's natural width, left-aligned with the header fields at 390px
 recipes/editor.spec.ts › Review highlighted fields never blinks and nothing moves while another field is edited with an Invalid outstanding
 recipes/editor.spec.ts › Review highlighted fields started from Saved versions selects the Recipe tab and focuses the exact control
+recipes/editor.spec.ts › a change made after choosing Discard and leave still stops the sign-out
 recipes/editor.spec.ts › a delayed save freezes its payload and preserves newer edits without duplicate dispatch
 recipes/editor.spec.ts › a denied access re-check hides the editor content at once
 recipes/editor.spec.ts › a dirty new recipe remains private to its original account and workspace
 recipes/editor.spec.ts › a disposed editor ignores a delayed focus read without reactive panic
+recipes/editor.spec.ts › a failed sign-out is reported after choosing to discard
+recipes/editor.spec.ts › a failed workspace switch is reported after choosing to discard
 recipes/editor.spec.ts › a failure after the announcement is announced once instead of leaving the status stale
 recipes/editor.spec.ts › a focus refetch to a newer saved revision shows no water plan or chilling note from the old revision
 recipes/editor.spec.ts › a focused recipe heading is visible and not clipped
@@ -263,11 +266,13 @@ recipes/editor.spec.ts › process sections stay reachable and aligned at 601px
 recipes/editor.spec.ts › process sections stay reachable and aligned at 900px
 recipes/editor.spec.ts › profile pagination exposes later active and archived profiles
 recipes/editor.spec.ts › raw formatting settles on blur and correction preserves precision and caret
+recipes/editor.spec.ts › recipe discard publishes its reset generation before the native departure lease is captured
 recipes/editor.spec.ts › recipe header stays usable under browser page zoom and enlarged text
 recipes/editor.spec.ts › recipe overrides show inherited and effective values and reset deletes the override
 recipes/editor.spec.ts › recovered older-base conflict does not invent an original document from the newer head
 recipes/editor.spec.ts › recovered uncertain create retries its original request without a duplicate
 recipes/editor.spec.ts › repeated diagnostics clear one at a time while the summary keeps its place during typing
+recipes/editor.spec.ts › repeated guarded Back Forward Stay preserves native entries and the exact draft position
 recipes/editor.spec.ts › retained draft stays isolated across sign-out and a different account
 recipes/editor.spec.ts › revalidation never steals a newer deliberate account focus
 recipes/editor.spec.ts › save and leave waits for a successful revision before navigating

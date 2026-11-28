@@ -204,6 +204,8 @@ impl EditorGuard {
                 // the departure lease captures the post-discard state, and resolve
                 // again: the choice covers the discard's own state change. Only a
                 // change made after this point can invalidate the leave.
+                // Pages must therefore publish their post-discard state from an
+                // effect on signals the discard sets, never after an await.
                 leptos::task::spawn_local(async move {
                     leptos::task::tick().await;
                     if self.navigation.try_get_untracked() == Some(navigation) {
