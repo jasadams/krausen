@@ -525,6 +525,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
             expected_profile_id: None,
+            expected_no_profile: false,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: generation,
         };
@@ -576,6 +577,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     efficiency_error.set(efficiency_problem);
                     let mut request = request;
                     request.expected_profile_id = result.selected_profile_id.clone();
+                    request.expected_no_profile = result.selected_profile_id.is_none();
                     request.expected_profile_revision = result.selected_profile_revision;
                     request.expected_profile_metadata_revision =
                         result.selected_profile_metadata_revision;
@@ -1382,6 +1384,7 @@ mod tests {
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
             expected_profile_id: None,
+            expected_no_profile: false,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: "current".into(),
         };

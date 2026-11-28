@@ -58,6 +58,7 @@ async fn exercise(db: DbPool) {
         expected_profile_revision: None,
         expected_profile_metadata_revision: None,
         expected_profile_id: None,
+        expected_no_profile: false,
         equipment_draft: EquipmentSettingsV1::default(),
         draft_generation: "generation-1".into(),
     };
@@ -426,6 +427,10 @@ async fn exercise(db: DbPool) {
         interchange::commit(&db, &actor, &request, failed_key).await,
         ImportCommitOutcome::Imported { revision: 1, .. }
     ));
+    // A default that appears between preview and commit is a change: the preview resolved none.
+    let mut resolved_none = request.clone();
+    resolved_none.expected_no_profile = true;
+    // (Committed below once the default exists.)
     // An import that names no profile takes the workspace default (recipe-level efficiency
     // override still applies); one that names a profile keeps its own.
     profile.expected_revision = changed_profile.revision;
@@ -500,6 +505,27 @@ async fn exercise(db: DbPool) {
     assert_eq!(
         interchange::commit(&db, &actor, &previewed, Uuid::new_v4()).await,
         ImportCommitOutcome::ProfileChanged
+    );
+    assert_eq!(
+        interchange::commit(&db, &actor, &resolved_none, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged,
+        "a default appeared after a preview that resolved none"
+    );
+    // The default the preview used is gone: also a change (archive clears it).
+    let gone_default = krausen_app::equipment::list(&db, &actor, &intent, None, 1, false).await.unwrap().default_profile.unwrap();
+    krausen_app::equipment::set_archived(&db, &actor, krausen_types::equipment::ArchiveEquipment {
+        intent: intent.clone(),
+        profile_id: gone_default.profile_id.clone(),
+        archived: true,
+        expected_metadata_revision: gone_default.metadata_revision,
+        request_id: Uuid::new_v4().to_string(),
+    }).await.unwrap();
+    let mut had_default = request.clone();
+    had_default.expected_profile_id = Some(gone_default.profile_id);
+    assert_eq!(
+        interchange::commit(&db, &actor, &had_default, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged,
+        "the default the preview resolved is gone"
     );
     let retry_key = Uuid::new_v4();
     let first = interchange::commit(&db, &actor, &request, retry_key).await;

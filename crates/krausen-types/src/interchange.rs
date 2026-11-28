@@ -59,6 +59,9 @@ pub struct ImportRequest {
     /// The profile the preview resolved (named or the workspace default); compared at commit.
     #[serde(default)]
     pub expected_profile_id: Option<String>,
+    /// The preview resolved no profile; a default that has appeared since is a change.
+    #[serde(default)]
+    pub expected_no_profile: bool,
     pub equipment_draft: crate::brewery::EquipmentSettingsV1,
     pub draft_generation: String,
 }

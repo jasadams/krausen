@@ -214,6 +214,7 @@ mod tests {
             choices: ImportChoices::default(),
             equipment_profile_id: None,
             expected_profile_id: None,
+            expected_no_profile: false,
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
             equipment_draft: EquipmentSettingsV1::default(),

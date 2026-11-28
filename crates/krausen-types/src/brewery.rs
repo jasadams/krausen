@@ -172,9 +172,6 @@ impl Default for EquipmentSettingsV1 {
 }
 
 impl EquipmentSettingsV1 {
-    /// A profile never carries a Brewhouse efficiency: that is a per-recipe
-    /// override. Profile data stored before the equipment spec may carry one; it
-    /// is dropped on read, not folded into mash efficiency.
     /// True when these settings are recipe-only equipment of their own. The recipe-level
     /// efficiency override is not equipment: a recipe with only that still takes the default.
     pub fn brings_recipe_equipment(&self) -> bool {
@@ -182,6 +179,9 @@ impl EquipmentSettingsV1 {
         own.efficiency_override_fraction = None;
         own != Self::default()
     }
+    /// A profile never carries a Brewhouse efficiency: that is a per-recipe
+    /// override. Profile data stored before the equipment spec may carry one; it
+    /// is dropped on read, not folded into mash efficiency.
     pub fn into_profile_settings(mut self) -> Self {
         self.efficiency_override_fraction = None;
         self

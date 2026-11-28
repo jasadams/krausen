@@ -237,6 +237,13 @@ async fn commit_inner(
         // The default the preview used is gone.
         return Ok(ImportCommitOutcome::ProfileChanged);
     }
+    if imported.document.equipment_profile_id.is_some()
+        && request.equipment_profile_id.is_none()
+        && request.expected_no_profile
+    {
+        // The preview resolved no profile; a default has appeared since.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
     if let Some(profile_id) = &imported.document.equipment_profile_id {
         let profile =
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)

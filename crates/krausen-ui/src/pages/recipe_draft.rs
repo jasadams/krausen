@@ -345,9 +345,12 @@ impl RecipeDraft {
     }
     /// The server stored the workspace default the recipe named none of: the live document takes
     /// it too, without counting as an edit, so preview, baseline and storage agree.
+    /// A later deliberate choice (a profile, or recipe-only) made while the save was in flight stays.
     pub fn adopt_stored_profile(&mut self, profile_id: &str) {
+        if self.document.equipment_profile_id.is_some() || self.document.recipe_only_equipment {
+            return;
+        }
         self.document.equipment_profile_id = Some(profile_id.to_owned());
-        self.document.recipe_only_equipment = false;
         self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
     }
     pub fn mark_saved(&mut self) {
