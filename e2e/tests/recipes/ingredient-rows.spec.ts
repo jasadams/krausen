@@ -86,6 +86,16 @@ const box = (locator: Locator) => locator.evaluate((node) => {
   return { x, y, width: r.width, height: r.height };
 });
 
+// scrollTop is a whole number while the page may be scrolled by a fraction, so content
+// coordinates agree to within a pixel; a real move is far larger.
+const numbers = (value: unknown): number[] => (typeof value === 'number' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(numbers) : []);
+function expectSamePlace(actual: unknown, expected: unknown, what: string) {
+  const a = numbers(actual);
+  const e = numbers(expected);
+  expect(a.length, `${what}: same shape`).toBe(e.length);
+  a.forEach((value, index) => expect(Math.abs(value - e[index]), `${what}: ${JSON.stringify(actual)} vs ${JSON.stringify(expected)}`).toBeLessThanOrEqual(1));
+}
+
 /** No visible label is cut short (labels keep one line, so truncation would hide part of the name). */
 async function assertLabelsComplete(row: Locator, what: string) {
   const cut = await row.evaluate((element) => [...element.querySelectorAll('.k-field__label')]
@@ -135,17 +145,17 @@ async function assertToggleStable(row: Locator, what: string) {
   await expect(body).toBeVisible();
   await assertLabelsComplete(row, `${what} with details open`);
   const after = { fields: await geometry(row), summary: await box(summary), description: await describe() };
-  expect(after.summary, `${what}: toggle position`).toEqual(before.summary);
-  expect(after.description, `${what}: description position`).toEqual(before.description);
-  expect(after.fields, `${what}: fields stay put`).toEqual(before.fields);
+  expectSamePlace(after.summary, before.summary, `${what}: toggle position`);
+  expectSamePlace(after.description, before.description, `${what}: description position`);
+  expectSamePlace(after.fields, before.fields, `${what}: fields stay put`);
   const opened = await box(body);
   const fieldsBottom = Math.max(...after.fields.map((f) => f.field.y + f.field.height));
   expect(opened.y, `${what}: details open below the fields`).toBeGreaterThanOrEqual(fieldsBottom - 0.5);
   expect(opened.y, `${what}: details open below the toggle`).toBeGreaterThanOrEqual(after.summary.y + after.summary.height - 0.5);
   await summary.click();
   await expect(body).toBeHidden();
-  expect(await box(summary), `${what}: toggle position after closing`).toEqual(before.summary);
-  expect(await geometry(row), `${what}: fields after closing`).toEqual(before.fields);
+  expectSamePlace(await box(summary), before.summary, `${what}: toggle position after closing`);
+  expectSamePlace(await geometry(row), before.fields, `${what}: fields after closing`);
 }
 
 const rowTypes = [
@@ -274,12 +284,12 @@ test('KRA75 the details toggle opens from the keyboard without moving', async ({
   await page.keyboard.press('Enter');
   await expect(row.locator('.k-disclosure__body')).toBeVisible();
   await expect(summary).toBeFocused();
-  expect(await box(summary)).toEqual(before);
+  expectSamePlace(await box(summary), before, 'toggle position');
   // Still an operable disclosure in the accessibility tree, not just a styled box.
   expect(await row.ariaSnapshot()).toContain('Addition details');
   await page.keyboard.press('Space');
   await expect(row.locator('.k-disclosure__body')).toBeHidden();
-  expect(await box(summary)).toEqual(before);
+  expectSamePlace(await box(summary), before, 'toggle position');
 });
 
 test('KRA75 a hop row holds together at every width around the point where it goes onto one line', async ({ page }) => {
