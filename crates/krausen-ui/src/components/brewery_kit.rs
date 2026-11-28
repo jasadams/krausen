@@ -802,6 +802,22 @@ mod tests {
     }
 
     #[test]
+    fn the_search_select_lists_a_held_value_that_is_not_among_the_options() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let value = RwSignal::new("Unavailable: Old style".to_owned());
+            let options = Signal::derive(|| vec![(String::new(), "No style".to_owned()), ("A".into(), "4A · Munich Helles".into())]);
+            let html = view! {
+                <BreweryDraftSearchSelect id="style" label="Beer style" value=Signal::from(value)
+                    on_change=Callback::new(move |next| value.set(next)) options=options
+                    search_label="Find a style" search_placeholder="Search"/>
+            }.to_html();
+            assert!(html.contains("value=\"Unavailable: Old style\""));
+            assert!(html.contains(">Unavailable: Old style</option>"));
+        });
+    }
+
+    #[test]
     fn a_style_without_numeric_ranges_says_so_in_readable_text() {
         let html = view! { <BreweryStyleNoRanges/> }.to_html();
         assert!(html.contains("No numeric ranges"));
@@ -1031,7 +1047,7 @@ pub fn BreweryDraftSelect(
 /// narrows a native select, so touch devices keep their native picker and
 /// assistive technology keeps a plain labelled select. Every whitespace-separated
 /// word must appear in an option's label; the empty-valued option and the current
-/// value always stay listed so the select never shows a choice that is not held.
+/// value always stay listed (a value that is not among the options is listed as given) so the select never shows a choice that is not held.
 #[component]
 pub fn BreweryDraftSearchSelect(
     #[prop(into)] id: String,
@@ -1063,7 +1079,7 @@ pub fn BreweryDraftSearchSelect(
         <div class="k-field__control"><input id=search_id type="search" autocomplete="off" aria-label=search_label placeholder=search_placeholder aria-describedby=status_id.clone()
             prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev))/></div>
         <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev))>
-            {move || { let selected = value.get(); visible.get().into_iter().map(|(v, label)| { let chosen = v == selected; view! { <option value=v selected=chosen>{label}</option> } }).collect_view() }}
+            {move || { let selected = value.get(); let held = (!selected.is_empty() && !options.with(|all| all.iter().any(|(v, _)| *v == selected))).then(|| view! { <option value=selected.clone() selected=true>{selected.clone()}</option> }); view! { {held}{visible.get().into_iter().map(|(v, label)| { let chosen = v == selected; view! { <option value=v selected=chosen>{label}</option> } }).collect_view()} } }}
         </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
         <span id=status_id class="k-field__hint" role="status">{move || status.get()}</span>
     </div> }
