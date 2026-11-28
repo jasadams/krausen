@@ -193,7 +193,7 @@ multi-step/save/reload/Undo and absence versus zero; no formula/default changes.
 ### UX-005: Equipment selection, overrides and management are distinct
 
 **Owner:** recipe equipment context and reusable Equipment manager. Visible
-selection MUST identify profile or “Recipe-only equipment”, with effective source
+selection MUST identify a profile, a deliberate “Recipe-only equipment” choice, or “No equipment chosen” (the state of a new recipe before the workspace default is applied; only this state lets a new recipe take the default), with effective source
 and override indication near estimates. “Adjust for this recipe” exposes
 inherited/effective/overridden states and per-value reset. Reset MUST remove the
 override, not copy a profile/default value into an override. Do not merge distinct

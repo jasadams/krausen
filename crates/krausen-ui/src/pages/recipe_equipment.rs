@@ -393,7 +393,8 @@ pub fn RecipeEquipment(
                 EquipmentSource::Profile { name, .. } => format!("Using profile “{name}” for this recipe. Recipe overrides below apply only to this recipe."),
                 EquipmentSource::Loading { .. } => "The selected profile’s details are still loading; the settings below apply to this recipe until they arrive.".to_owned(),
                 EquipmentSource::Unavailable { .. } => "The selected profile is not available here.".to_owned(),
-                EquipmentSource::RecipeOnly => "Using recipe-only equipment: the settings below belong to this recipe.".to_owned(),
+                EquipmentSource::RecipeOnly if draft.with(|d| d.document().recipe_only_equipment) => "Using recipe-only equipment: the settings below belong to this recipe.".to_owned(),
+                EquipmentSource::RecipeOnly => "No equipment chosen. The settings below belong to this recipe; a new recipe takes the workspace default equipment when it is first saved unless you choose Recipe-only equipment.".to_owned(),
             }}</p>
             <Show when=move || library.next_cursor.get().is_some()>
                 <Button variant=ButtonVariant::Secondary disabled=library.loading on:click=move |_| library.load_more()>"Load more profiles"</Button>

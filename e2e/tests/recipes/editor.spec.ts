@@ -3357,7 +3357,7 @@ test('recipe overrides show inherited and effective values and reset deletes the
   await page.getByRole('button', { name: 'Reset Boil loss to inherited' }).click();
   await expect(boil).toHaveValue('');
   // Switching the selected profile never writes into the recipe overrides.
-  await page.getByLabel('Equipment profile', { exact: true }).selectOption('');
+  await page.getByLabel('Equipment profile', { exact: true }).selectOption('recipe-only');
   await expect(page.getByText('Using recipe-only equipment')).toBeVisible();
   await expect(page.locator('#recipe-capacity')).toHaveValue('');
 });

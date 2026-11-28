@@ -235,7 +235,7 @@ test('editing a shared profile leaves a started brew frozen and changes only lat
   await page.goto(recipeUrl);
   await page.getByText('Equipment settings', { exact: true }).click();
   await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
-  await expect(page.getByText(/Inherited: effective 6 L\/h from Frozen kettle/)).toBeVisible();
+  await expect(page.getByText(/Inherited: effective 6 L\/hr from Frozen kettle/)).toBeVisible();
 });
 
 test('starts an explicitly selected historical revision without restoring it', async ({
@@ -734,7 +734,7 @@ test('a recipe override is listed in the review with a trimmed value', async ({ 
   const dialog = await reviewCurrentStart(page);
   await expect(dialog.getByTestId('start-overrides')).toContainText('1 recipe override');
   await expect(dialog.getByTestId('start-override-list')).toContainText('Boil loss');
-  await expect(dialog.getByTestId('start-override-list')).toContainText('4.5 L/h · recipe override');
+  await expect(dialog.getByTestId('start-override-list')).toContainText('4.5 L/hr · recipe override');
   await expect(dialog).not.toContainText(/\d\.\d{6,}/);
 });
 
