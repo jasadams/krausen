@@ -47,6 +47,9 @@
   "design-fidelity": {
    "spec": "tests/recipes/design-fidelity.spec.ts"
   },
+  "ingredient-rows": {
+   "spec": "tests/recipes/ingredient-rows.spec.ts"
+  },
   "library-shell": {
    "spec": "tests/library/shell.spec.ts"
   }
@@ -99,7 +102,8 @@
     "editor-profile-pagination",
     "design-fidelity",
     "style-picker",
-    "default-batch-size"
+    "default-batch-size",
+    "ingredient-rows"
    ]
   },
   {
@@ -184,6 +188,14 @@
    ],
    "groups": [
     "design-fidelity"
+   ]
+  },
+  {
+   "match": [
+    "e2e/tests/recipes/ingredient-rows.spec.ts"
+   ],
+   "groups": [
+    "ingredient-rows"
    ]
   },
   {

@@ -320,6 +320,18 @@ recipes/editor.spec.ts › undo and retained raw draft survive reload without be
 recipes/editor.spec.ts › unsupported imported process details are named and kept, never silently dropped
 recipes/editor.spec.ts › wort attenuation is independent of the informational yeast attenuation
 recipes/editor.spec.ts › wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link
+recipes/ingredient-rows.spec.ts › KRA75 a fermentable shows yield and colour rounded while the saved recipe keeps full precision
+recipes/ingredient-rows.spec.ts › KRA75 a value the brewer types keeps their exact text and is stored unrounded
+recipes/ingredient-rows.spec.ts › KRA75 fermentable row fields share one top line and the details toggle stays put at desktop width
+recipes/ingredient-rows.spec.ts › KRA75 fermentable row fields share one top line and the details toggle stays put at mobile width
+recipes/ingredient-rows.spec.ts › KRA75 hop row fields share one top line and the details toggle stays put at desktop width
+recipes/ingredient-rows.spec.ts › KRA75 hop row fields share one top line and the details toggle stays put at mobile width
+recipes/ingredient-rows.spec.ts › KRA75 other row fields share one top line and the details toggle stays put at desktop width
+recipes/ingredient-rows.spec.ts › KRA75 other row fields share one top line and the details toggle stays put at mobile width
+recipes/ingredient-rows.spec.ts › KRA75 the design-system showcase rows align and keep their toggle at desktop width
+recipes/ingredient-rows.spec.ts › KRA75 the design-system showcase rows align and keep their toggle at mobile width
+recipes/ingredient-rows.spec.ts › KRA75 yeast row fields share one top line and the details toggle stays put at desktop width
+recipes/ingredient-rows.spec.ts › KRA75 yeast row fields share one top line and the details toggle stays put at mobile width
 recipes/library.spec.ts › a delayed denial after leaving the library does not access disposed UI state
 recipes/library.spec.ts › a stale denied revision response still redacts the current selection
 recipes/library.spec.ts › delayed historical revision responses cannot replace a new selection or survive context recheck
