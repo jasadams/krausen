@@ -54,10 +54,10 @@ Yield affects gravity and bitterness; missing colour affects colour alone.
 Present batch volume and Ready addition quantities must be positive. Yield and
 mash efficiency are in `(0, 1]`; attenuation and alpha are in `[0, 1]`; colour,
 losses, absorption and durations are nonnegative. Hop exposure cannot exceed the
-boil. Kettle diameter/opening are positive and opening cannot exceed diameter.
-Forced chilling requires positive rate and plateau below boil temperature;
-counterflow requires positive flow. Zero-rate fallback defaults in the current
-engine must not silently replace invalid inputs. Explicitly selected defaults
+boil. Kettle diameter is positive; the kettle is assumed uncovered (opening equals
+diameter) and the boil 100 °C. Counterflow chilling requires a positive flow rate;
+other cooling methods resolve to the published curves. Zero-rate fallback defaults
+in the current engine must not silently replace invalid inputs. Explicitly selected defaults
 carry assumption provenance and resolve to concrete values before calculation.
 
 Retain finite binary64 values without display rounding. Defaults: SG 3 decimals,
@@ -119,8 +119,10 @@ show the assumption. Hot observed volumes retain their physical/temperature
 context and are not silently compared as reference volumes. Thermal correction
 is a versioned later expansion.
 
-For batch `B`, post-boil transfer loss `L`, boil-off `E` L/h, boil duration `T`
-minutes, mashed-grain mass `G`, absorption `A` L/kg and pre-boil deadspace `D`:
+This is the water chain with the equipment-spec stage terms absent (the V2 chain,
+which V3 reduces to). For batch `B`, post-boil trub and chiller loss `L`, boil loss
+`E` L/h, boil duration `T` minutes, mashed-grain mass `G`, mash grain absorption `A`
+L/kg and mash tun deadspace `D`:
 
 ```text
 post_boil_kettle_l = B + L
@@ -130,10 +132,10 @@ grain_absorption_l = G × A
 total_water_l = pre_boil_l + grain_absorption_l + D
 ```
 
-`transfer_loss_l` is wort lost after boiling; `pre_boil_deadspace_l` is additional
-unrecoverable water before boiling. Neither includes the other. Mapping legacy
-`kettle_deadspace_l` requires an explicit assumption and retained source value,
-not double-counting that loss as transfer loss.
+`trub_and_chiller_loss_l` is wort lost after boiling; `mash_tun_deadspace_l` is
+additional unrecoverable water before boiling. Neither includes the other. The
+[equipment profile V2 section](#equipment-profile-v2-water-chain-and-capacity-checks)
+adds the sparge-stage and shrinkage terms.
 
 Choose `manual` mash water or `profile_thickness`. The latter derives
 `mash_water_l = mashed_grain_kg × profile_mash_thickness_l_per_kg`, with positive
