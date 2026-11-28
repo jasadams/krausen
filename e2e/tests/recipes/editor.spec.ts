@@ -4609,3 +4609,53 @@ test('wrapping belongs to the Wrap size: the showcase keeps ordinary labels on o
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
 });
+
+for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'mobile', width: 390, height: 844 }]) {
+  test(`the unsaved-changes dialog lays its actions out in the dialog action row on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto('/recipes');
+    await page.getByRole('link', { name: 'New recipe', exact: true }).click();
+    await page.getByLabel('Recipe name', { exact: true }).fill('Action row recipe');
+    await page.evaluate(() => history.back());
+    const guard = page.locator('#workspace-draft-warning');
+    await expect(guard).toBeVisible();
+    await expect(guard.getByRole('heading', { name: 'Unsaved recipe changes' })).toBeVisible();
+
+    // Every action is in the dialog's own action row; none is loose in the body.
+    const row = guard.locator('.k-dialog__actions');
+    await expect(guard.locator('.k-dialog__body').getByRole('button')).toHaveCount(0);
+    const names = await row.getByRole('button').allInnerTexts();
+    expect(names).toEqual(['Save and leave', 'Discard and leave', 'Stay']);
+    // One stay/close action: no Close beside Stay.
+    await expect(guard.getByRole('button', { name: 'Close', exact: true })).toHaveCount(0);
+    await expect(guard.getByRole('button', { name: 'Stay', exact: true })).toHaveCount(1);
+
+    // Adjacent actions are separated by the kit gap, never touching.
+    const gap = await row.evaluate(element => parseFloat(getComputedStyle(element).columnGap));
+    const kitGap = await row.evaluate(element => {
+      const probe = document.createElement('div');
+      probe.style.width = 'var(--k-space-2)';
+      element.append(probe);
+      const width = probe.getBoundingClientRect().width;
+      probe.remove();
+      return width;
+    });
+    expect(kitGap).toBeGreaterThan(0);
+    expect(gap).toBeCloseTo(kitGap, 1);
+    const boxes = await row.getByRole('button').evaluateAll(buttons => buttons.map(button => {
+      const { left, right, top, bottom } = button.getBoundingClientRect();
+      return { left, right, top, bottom };
+    }));
+    for (let index = 1; index < boxes.length; index += 1) {
+      const previous = boxes[index - 1], current = boxes[index];
+      const sameLine = Math.abs(previous.top - current.top) < 2;
+      const separation = sameLine ? current.left - previous.right : current.top - previous.bottom;
+      expect(separation, `gap before ${names[index]}`).toBeGreaterThanOrEqual(gap - 0.5);
+    }
+
+    // Escape closes the dialog and the draft is kept.
+    await page.keyboard.press('Escape');
+    await expect(guard).not.toBeVisible();
+    await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Action row recipe');
+  });
+}
