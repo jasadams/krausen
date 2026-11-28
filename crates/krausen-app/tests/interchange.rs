@@ -57,6 +57,7 @@ async fn exercise(db: DbPool) {
         equipment_profile_id: None,
         expected_profile_revision: None,
         expected_profile_metadata_revision: None,
+        expected_profile_id: None,
         equipment_draft: EquipmentSettingsV1::default(),
         draft_generation: "generation-1".into(),
     };
@@ -462,13 +463,42 @@ async fn exercise(db: DbPool) {
         panic!("own equipment preview");
     };
     assert_eq!(own.document.equipment_profile_id, None);
+    // An import that only carries the recipe's efficiency override still takes the default.
+    let mut efficiency_only = request.clone();
+    efficiency_only.equipment_draft.efficiency_override_fraction = Some(0.7);
+    let ImportPreviewOutcome::Preview(eff) = interchange::preview(&db, &actor, &efficiency_only).await else { panic!("efficiency preview") };
+    assert_eq!(eff.document.equipment_profile_id.as_deref(), Some(created.profile_id.as_str()));
     // An unnamed import that passes the revisions its preview reported is guarded like a named
     // one, and a retry of a committed request recovers its original result.
     let mut guarded = request.clone();
+    guarded.expected_profile_id = defaulted.selected_profile_id.clone();
     guarded.expected_profile_revision = defaulted.selected_profile_revision;
     guarded.expected_profile_metadata_revision = Some(0);
     assert_eq!(
         interchange::commit(&db, &actor, &guarded, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
+    );
+    // The default switches to another profile with the same revision numbers: ProfileChanged.
+    let mut previewed = request.clone();
+    previewed.expected_profile_id = defaulted.selected_profile_id.clone();
+    previewed.expected_profile_revision = defaulted.selected_profile_revision;
+    previewed.expected_profile_metadata_revision = defaulted.selected_profile_metadata_revision;
+    let mut mover = profile_for_default_move(&intent, &db, &actor).await;
+    // One more save brings it to the same revision numbers as the previewed profile.
+    mover.expected_revision = 1;
+    mover.expected_metadata_revision = 1;
+    mover.settings.boil_loss_l_per_hour = Some(1.0);
+    mover.request_id = Uuid::new_v4().to_string();
+    krausen_app::equipment::save(&db, &actor, mover).await.unwrap();
+    let moved_default = krausen_app::equipment::list(&db, &actor, &intent, None, 1, false).await.unwrap().default_profile.unwrap();
+    assert_ne!(Some(moved_default.profile_id.as_str()), previewed.expected_profile_id.as_deref());
+    assert_eq!(
+        (moved_default.revision, moved_default.metadata_revision),
+        (defaulted.selected_profile_revision.unwrap(), defaulted.selected_profile_metadata_revision.unwrap()),
+        "same revision numbers on a different profile"
+    );
+    assert_eq!(
+        interchange::commit(&db, &actor, &previewed, Uuid::new_v4()).await,
         ImportCommitOutcome::ProfileChanged
     );
     let retry_key = Uuid::new_v4();

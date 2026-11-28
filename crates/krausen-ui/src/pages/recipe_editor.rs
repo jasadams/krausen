@@ -1068,9 +1068,18 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                 Ok(RecipeSaveOutcome::Saved {
                     recipe_id: id,
                     revision: saved,
+                    default_equipment,
                 }) => {
                     retry.set(None);
-                    baseline.set(attempt.document.clone());
+                    // What was stored: the saved document plus any workspace default the server applied.
+                    let unchanged_since_save = draft.with_untracked(|d| d.generation) == attempt.generation;
+                    let mut stored = attempt.document.clone();
+                    if let Some(applied) = &default_equipment {
+                        stored.equipment_profile_id = Some(applied.profile_id.clone());
+                        stored.recipe_only_equipment = false;
+                        draft.update(|d| d.adopt_stored_profile(&applied.profile_id));
+                    }
+                    baseline.set(stored.clone());
                     original_baseline_available.set(true);
                     #[cfg(target_arch = "wasm32")]
                     if creating && may_apply_scope {
@@ -1091,7 +1100,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                     }
                     recipe_id.set(Some(id));
                     revision.set(Some(saved));
-                    if draft.with_untracked(|d| d.generation) == attempt.generation {
+                    if unchanged_since_save {
                         draft.update(|d| d.mark_saved());
                         status.set(if may_apply_scope { format!("Saved revision {saved}.") } else { format!("Saved revision {saved} in the original context. Recheck access before continuing; no leave action was performed.") });
                         #[cfg(target_arch = "wasm32")]
@@ -1115,7 +1124,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                         }
                     } else {
                         saving_to_leave.set(false);
-                        draft.update(|d| d.mark_earlier_document_saved(attempt.document.clone()));
+                        draft.update(|d| d.mark_earlier_document_saved(stored.clone()));
                         status.set(format!(
                             "Saved revision {saved}; newer changes remain unsaved."
                         ));

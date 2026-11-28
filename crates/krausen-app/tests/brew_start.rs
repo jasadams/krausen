@@ -215,7 +215,7 @@ async fn exercise(db: DbPool) {
     let doc1 = complete_document(&profile_id, "Revision one");
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = save_recipe(&db, &actor, None, None, &doc1).await
     else {
         panic!("recipe fixture");
@@ -279,7 +279,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&recipe_id), Some(1), &doc2).await,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     let historical = start_request(&actor, &recipe_id, 1, None, &digest1);

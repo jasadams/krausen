@@ -180,7 +180,9 @@ async fn exercise(db: DbPool) {
     let request = uuid::Uuid::new_v4();
     let blank = RecipeDocumentV1 { title: "Defaulted".into(), ..Default::default() };
     let created = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &blank, request).await;
-    let RecipeSaveOutcome::Saved { recipe_id, revision: 1 } = created.clone() else { panic!("create: {created:?}") };
+    let RecipeSaveOutcome::Saved { recipe_id, revision: 1, default_equipment } = created.clone() else { panic!("create: {created:?}") };
+    // The result says which profile the server applied, so the editor can adopt it.
+    assert_eq!(default_equipment.as_ref().map(|d| d.profile_id.as_str()), Some(first_id.as_str()));
     let read = |id: String| {
         let (db, actor, intent) = (db.clone(), actor.clone(), intent.clone());
         async move {
@@ -200,6 +202,16 @@ async fn exercise(db: DbPool) {
     let named = RecipeDocumentV1 { title: "Named".into(), equipment_profile_id: Some(first_id.clone()), ..Default::default() };
     let RecipeSaveOutcome::Saved { recipe_id: named_id, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &named, uuid::Uuid::new_v4()).await else { panic!("named") };
     assert_eq!(read(named_id).await.as_deref(), Some(first_id.as_str()));
+    // A deliberate recipe-only choice keeps no profile and reports no applied default.
+    let chosen = RecipeDocumentV1 { title: "Chosen".into(), recipe_only_equipment: true, ..Default::default() };
+    let RecipeSaveOutcome::Saved { recipe_id: chosen_id, default_equipment: none_applied, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &chosen, uuid::Uuid::new_v4()).await else { panic!("chosen") };
+    assert_eq!((read(chosen_id).await, none_applied), (None, None));
+    // Only the recipe-level efficiency override still takes the default; other settings do not.
+    let mut efficiency_only = RecipeDocumentV1 { title: "Efficiency".into(), ..Default::default() };
+    efficiency_only.equipment_overrides.efficiency_override_fraction = Some(0.7);
+    let RecipeSaveOutcome::Saved { recipe_id: eff_id, default_equipment: eff_applied, .. } = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &efficiency_only, uuid::Uuid::new_v4()).await else { panic!("efficiency") };
+    assert_eq!(read(eff_id).await.as_deref(), Some(moved_id.as_str()));
+    assert!(eff_applied.is_some());
     // Its own recipe-only equipment settings are an explicit choice and keep no profile.
     let mut recipe_only = RecipeDocumentV1 { title: "Recipe only".into(), ..Default::default() };
     recipe_only.equipment_overrides.boil_loss_l_per_hour = Some(3.0);

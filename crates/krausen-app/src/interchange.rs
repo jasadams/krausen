@@ -18,9 +18,7 @@ async fn effective_profile_id(
     request: &ImportRequest,
 ) -> Result<Option<String>, Error> {
     // An import that names a profile, or brings its own recipe-only equipment, keeps that choice.
-    if request.equipment_profile_id.is_some()
-        || request.equipment_draft != krausen_types::brewery::EquipmentSettingsV1::default()
-    {
+    if request.equipment_profile_id.is_some() || request.equipment_draft.brings_recipe_equipment() {
         return Ok(request.equipment_profile_id.clone());
     }
     let default = krausen_brewery::equipment_store::load_default(tx, &actor.workspace_id)
@@ -148,6 +146,7 @@ async fn preview_inner(
             .ok_or(Error::Invalid("missing original source"))?
             .sha256
             .clone(),
+        selected_profile_id: preview_profile.map(|profile| profile.profile_id.clone()),
         selected_profile_revision: preview_profile.map(|profile| profile.revision),
         selected_profile_metadata_revision: preview_profile
             .map(|profile| profile.metadata_revision),
@@ -234,6 +233,10 @@ async fn commit_inner(
     if !pending.is_empty() {
         return Ok(ImportCommitOutcome::ChoicesRequired(pending));
     }
+    if imported.document.equipment_profile_id.is_none() && request.expected_profile_id.is_some() {
+        // The default the preview used is gone.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
     if let Some(profile_id) = &imported.document.equipment_profile_id {
         let profile =
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)
@@ -246,10 +249,15 @@ async fn commit_inner(
         // A named profile must match the revisions previewed. An unnamed import that took the
         // default is checked too when the caller passes the revisions its preview reported.
         let checked = request.equipment_profile_id.is_some()
+            || request.expected_profile_id.is_some()
             || request.expected_profile_revision.is_some()
             || request.expected_profile_metadata_revision.is_some();
         if checked
-            && (request.expected_profile_revision != Some(profile.revision)
+            && (request
+                .expected_profile_id
+                .as_deref()
+                .is_some_and(|id| id != profile.profile_id)
+                || request.expected_profile_revision != Some(profile.revision)
                 || request.expected_profile_metadata_revision != Some(profile.metadata_revision))
         {
             return Ok(ImportCommitOutcome::ProfileChanged);

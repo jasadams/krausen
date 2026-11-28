@@ -3134,6 +3134,53 @@ test('equipment profiles can be saved with every field of the spec, made the def
   }
 });
 
+test('equipment profiles can be saved as the default: an unspecified new recipe adopts it, a recipe-only choice stays', async ({ page, context }) => {
+  const name = `Default adoption ${Date.now()}`;
+  let profileId = '';
+  const setDefault = async (target: import('@playwright/test').Page, on: boolean) => {
+    await target.goto(`/equipment?profile=${profileId}`);
+    const toggle = target.getByRole('switch', { name: 'Default equipment' });
+    if ((await toggle.getAttribute('aria-checked')) !== String(on)) {
+      await toggle.click();
+      await target.getByRole('button', { name: 'Save profile' }).click();
+      await expect(target.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+    }
+  };
+  try {
+    profileId = await createEquipmentProfile(page, name, PROFILE_VALUES, 'natural');
+    // The editor opens while no default exists, so it cannot know about one chosen later.
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Adopts ${Date.now()}`);
+    const other = await context.newPage();
+    await setDefault(other, true);
+    await other.close();
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    // The editor now shows the profile the server stored, and a later save keeps it.
+    await page.getByText('Equipment settings', { exact: true }).click();
+    await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Adopts again ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 2' })).toBeVisible();
+    await page.reload();
+    await page.getByText('Equipment settings', { exact: true }).click();
+    await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+    // A deliberate Recipe-only choice on a new recipe is kept, not replaced by the default.
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Recipe only ${Date.now()}`);
+    await page.getByText('Equipment settings', { exact: true }).click();
+    await page.getByLabel('Equipment profile', { exact: true }).selectOption('');
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await page.reload();
+    await page.getByText('Equipment settings', { exact: true }).click();
+    await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue('');
+  } finally {
+    // The default is workspace state: leave none behind for the rest of the shard.
+    if (profileId) await setDefault(page, false);
+  }
+});
+
 for (const scheme of ['light', 'dark'] as const) {
   test(`equipment profiles can be saved: the spec form keeps its order without overflow at 390px in ${scheme} mode`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });

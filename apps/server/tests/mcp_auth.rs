@@ -1308,7 +1308,7 @@ async fn exercise(db: DbPool) {
     let brew_doc = brew_test_document(&brew_profile_id);
     let krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
         recipe_id: brew_recipe,
-        revision: 1,
+        revision: 1, ..
     } = krausen_app::recipe_editor::save(
         &db,
         &browser_actor,
@@ -1777,7 +1777,8 @@ async fn exercise(db: DbPool) {
         .await,
         krausen_types::recipe_editor::RecipeSaveOutcome::Saved {
             recipe_id: brew_recipe.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     let head_conflict_request = krausen_types::brew::StartBrewRequest {

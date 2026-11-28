@@ -86,6 +86,7 @@ fn matches_import_context(request: &ImportRequest, result: &ImportPreview) -> bo
                             None => match &context.equipment_profile {
                                 Some(profile) => {
                                     profile.workspace_id == request.intent.workspace_id
+                                        && result.document.equipment_profile_id.as_deref() == Some(profile.profile_id.as_str())
                                         && !profile.archived
                                         && context.equipment_draft == profile.settings
                                         && context.equipment_provenance == "saved_profile"
@@ -523,6 +524,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                 .then(|| selected_profile.get_untracked()),
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
+            expected_profile_id: None,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: generation,
         };
@@ -573,6 +575,7 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     colour_error.set(colour_problem);
                     efficiency_error.set(efficiency_problem);
                     let mut request = request;
+                    request.expected_profile_id = result.selected_profile_id.clone();
                     request.expected_profile_revision = result.selected_profile_revision;
                     request.expected_profile_metadata_revision =
                         result.selected_profile_metadata_revision;
@@ -1378,6 +1381,7 @@ mod tests {
             equipment_profile_id: None,
             expected_profile_revision: None,
             expected_profile_metadata_revision: None,
+            expected_profile_id: None,
             equipment_draft: EquipmentSettingsV1::default(),
             draft_generation: "current".into(),
         };
@@ -1397,6 +1401,7 @@ mod tests {
             draft_generation: "current".into(),
             document: Default::default(),
             source_sha256: String::new(),
+            selected_profile_id: None,
             selected_profile_revision: None,
             selected_profile_metadata_revision: None,
             source_estimates: SourceEstimates::default(),

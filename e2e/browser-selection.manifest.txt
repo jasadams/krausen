@@ -225,6 +225,7 @@ recipes/editor.spec.ts › diagnostics from an earlier draft stay marked out of 
 recipes/editor.spec.ts › disposed initial recovery authorization cannot write into the retired editor
 recipes/editor.spec.ts › editor controls remain usable on mobile and in dark mode
 recipes/editor.spec.ts › editor state controls keep raw labels and focus across representative presentation settings
+recipes/editor.spec.ts › equipment profiles can be saved as the default: an unspecified new recipe adopts it, a recipe-only choice stays
 recipes/editor.spec.ts › equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel
 recipes/editor.spec.ts › equipment profiles can be saved, selected, edited and recovered
 recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in dark mode

@@ -39,6 +39,10 @@ pub struct RecipeDocumentV1 {
     pub batch_size_l: Option<f64>,
     pub boil_minutes: Option<f64>,
     pub equipment_profile_id: Option<String>,
+    /// The brewer deliberately chose recipe-only equipment, so a new recipe is saved with no
+    /// profile instead of taking the workspace default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recipe_only_equipment: bool,
     #[serde(default)]
     pub equipment_overrides: EquipmentSettingsV1,
     pub fermentables: Vec<FermentableAddition>,
@@ -51,6 +55,16 @@ pub struct RecipeDocumentV1 {
     pub extensions: BTreeMap<String, Value>,
 }
 
+impl RecipeDocumentV1 {
+    /// A new recipe that names no profile, did not deliberately choose recipe-only equipment and
+    /// brings no equipment settings of its own takes the workspace default when it is created.
+    pub fn takes_workspace_default(&self) -> bool {
+        self.equipment_profile_id.is_none()
+            && !self.recipe_only_equipment
+            && !self.equipment_overrides.brings_recipe_equipment()
+    }
+}
+
 impl Default for RecipeDocumentV1 {
     fn default() -> Self {
         Self {
@@ -61,6 +75,7 @@ impl Default for RecipeDocumentV1 {
             batch_size_l: None,
             boil_minutes: None,
             equipment_profile_id: None,
+            recipe_only_equipment: false,
             equipment_overrides: EquipmentSettingsV1::default(),
             fermentables: vec![],
             hops: vec![],
@@ -160,6 +175,13 @@ impl EquipmentSettingsV1 {
     /// A profile never carries a Brewhouse efficiency: that is a per-recipe
     /// override. Profile data stored before the equipment spec may carry one; it
     /// is dropped on read, not folded into mash efficiency.
+    /// True when these settings are recipe-only equipment of their own. The recipe-level
+    /// efficiency override is not equipment: a recipe with only that still takes the default.
+    pub fn brings_recipe_equipment(&self) -> bool {
+        let mut own = self.clone();
+        own.efficiency_override_fraction = None;
+        own != Self::default()
+    }
     pub fn into_profile_settings(mut self) -> Self {
         self.efficiency_override_fraction = None;
         self

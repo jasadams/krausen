@@ -172,7 +172,7 @@ async fn fixture(db: &DbPool) -> (ActorContext, String, BrewPlanV1) {
     let document = complete_document(&profile_id, "Evidence brew");
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision,
+        revision, ..
     } = recipe_editor::save(
         db,
         &actor,

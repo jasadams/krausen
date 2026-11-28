@@ -115,7 +115,7 @@ async fn exercise(db: DbPool) {
     .await;
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = saved_recipe
     else {
         panic!("profile-linked recipe save")

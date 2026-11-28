@@ -103,6 +103,7 @@ fn field_label(key: &str) -> String {
         "volume_l" => "Volume (L)",
         "equipment_overrides" => "Recipe equipment settings",
         "equipment_profile_id" => "Selected equipment profile",
+        "recipe_only_equipment" => "Recipe-only equipment chosen",
         "other_ingredients" => "Other additions",
         "mash_steps" => "Mash steps",
         "fermentation_steps" => "Fermentation steps",

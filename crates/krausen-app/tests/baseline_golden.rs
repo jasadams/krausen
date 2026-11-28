@@ -73,7 +73,7 @@ async fn baseline_v1_golden_refused_and_v3_matches_targets() {
     };
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision,
+        revision, ..
     } = recipe_editor::save(&db, &actor, &intent, None, None, &document, Uuid::new_v4()).await
     else {
         panic!("save golden recipe")

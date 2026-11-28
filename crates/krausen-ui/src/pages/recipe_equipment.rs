@@ -331,7 +331,12 @@ pub fn RecipeEquipment(
         }
     });
     let choose = Callback::new(move |id: String| {
-        draft.update(|d| d.edit(|doc| doc.equipment_profile_id = (!id.is_empty()).then_some(id)));
+        // Choosing "Recipe-only equipment" is a deliberate choice the server must not replace
+        // with the workspace default; choosing a profile clears it.
+        draft.update(|d| d.edit(|doc| {
+            doc.recipe_only_equipment = id.is_empty();
+            doc.equipment_profile_id = (!id.is_empty()).then_some(id);
+        }));
     });
     let manage_href = Signal::derive(move || {
         // An unsaved recipe has no address to return to; it stays protected by its own guard.

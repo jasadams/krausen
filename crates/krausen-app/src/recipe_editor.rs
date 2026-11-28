@@ -142,19 +142,21 @@ async fn save_inner(
     if let Some(result) = recover_request(&mut tx, &key).await? {
         return Ok(serde_json::from_value(result)?);
     }
-    // A new recipe that names no profile takes the workspace default, unless it carries its
-    // own recipe-only equipment settings. This is the one place that rule lives, after request
-    // recovery so a retry returns the original result.
+    // A new recipe that names no profile, made no deliberate recipe-only choice and brings no
+    // equipment settings takes the workspace default. This is the one place that rule lives,
+    // after request recovery so a retry returns the original result. The result says which.
     let defaulted;
-    let document = if recipe_id.is_none()
-        && document.equipment_profile_id.is_none()
-        && document.equipment_overrides == krausen_types::brewery::EquipmentSettingsV1::default()
-    {
+    let mut applied = None;
+    let document = if recipe_id.is_none() && document.takes_workspace_default() {
         match krausen_brewery::equipment_store::load_default(&mut tx, &actor.workspace_id)
             .await
             .map_err(boundary_error)?
         {
             Some(default) => {
+                applied = Some(krausen_types::recipe_editor::AppliedEquipment {
+                    profile_id: default.profile_id.clone(),
+                    revision: default.revision,
+                });
                 defaulted = RecipeDocumentV1 {
                     equipment_profile_id: Some(default.profile_id),
                     ..document.clone()
@@ -271,6 +273,7 @@ async fn save_inner(
     let result = RecipeSaveOutcome::Saved {
         recipe_id: id.clone(),
         revision,
+        default_equipment: applied,
     };
     record_request(&mut tx, &key, &serde_json::to_value(&result)?, Some(&id)).await?;
     if changed {

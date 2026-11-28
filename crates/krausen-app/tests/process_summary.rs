@@ -247,7 +247,7 @@ async fn exercise(db: DbPool) {
     let mut draft = complete_draft(&profile_id);
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = save_recipe(&db, &actor, None, None, &draft).await
     else {
         panic!("initial recipe save failed");
@@ -257,7 +257,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&recipe_id), Some(1), &draft).await,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
 
@@ -449,7 +450,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&other_recipe), Some(1), &other).await,
         RecipeSaveOutcome::Saved {
             recipe_id: other_recipe.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     other.title = "Other recipe three".into();
@@ -457,7 +459,8 @@ async fn exercise(db: DbPool) {
         save_recipe(&db, &actor, Some(&other_recipe), Some(2), &other).await,
         RecipeSaveOutcome::Saved {
             recipe_id: other_recipe.clone(),
-            revision: 3
+            revision: 3,
+            default_equipment: None,
         }
     );
     assert_eq!(

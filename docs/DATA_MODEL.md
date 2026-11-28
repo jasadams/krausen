@@ -145,9 +145,7 @@ fields it does not list are removed, not hidden.
   revisioned settings, so an old revision never claims to be the default. Save
   carries an optional `is_default` (absent leaves it unchanged). Archiving the
   default profile clears it in the same transaction; an archived profile cannot be
-  made default. Every creation path (editor, MCP `recipe_save`, BeerXML import) takes the default profile when it names none and brings no recipe-only equipment settings of its own; the profile's batch size
-  is stored and shown but does not seed them (a per-user default batch size is
-  KRA-74). Existing recipes are untouched.
+  made default. Every creation path (editor, MCP `recipe_save`, BeerXML import) applies it in one place, inside the create transaction after request-replay recovery: a new recipe takes the workspace default only when it names no profile, did not deliberately choose recipe-only equipment (`recipe_only_equipment`, which the editor sets when the brewer picks "Recipe-only equipment") and brings no recipe-only equipment settings of its own. The recipe-level efficiency override is not equipment settings. The save result reports the applied profile and revision so the editor adopts it; a retry of the same request returns the original result. A BeerXML import that took the default carries the resolved profile id and revisions into its commit, which is refused (`ProfileChanged`) if the default has since changed. The profile's batch size is stored and shown but does not seed them (a per-user default batch size is KRA-74). Existing recipes are untouched.
 - **No profile migration.** Profile data from before the spec is not converted. A
   stored profile's removed fields are ignored on read, and a profile-level
   `efficiency_override_fraction` is cleared on read; such a profile is Incomplete

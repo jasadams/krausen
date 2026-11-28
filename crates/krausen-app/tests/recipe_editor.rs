@@ -91,7 +91,7 @@ async fn exercise(db: DbPool) {
     let created = save(&db, &actor, None, None, &draft, key).await;
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = &created
     else {
         panic!("{created:?}");
@@ -125,7 +125,8 @@ async fn exercise(db: DbPool) {
         saved,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 2
+            revision: 2,
+            default_equipment: None,
         }
     );
     assert_eq!(
@@ -345,7 +346,8 @@ async fn exercise(db: DbPool) {
         first,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 3
+            revision: 3,
+            default_equipment: None,
         }
     );
     assert_eq!(second, first);
@@ -400,7 +402,8 @@ async fn exercise(db: DbPool) {
         save(&db, &actor, Some(recipe_id), Some(3), &draft, failed_key).await,
         RecipeSaveOutcome::Saved {
             recipe_id: recipe_id.clone(),
-            revision: 4
+            revision: 4,
+            default_equipment: None,
         }
     );
     run!(
@@ -493,7 +496,7 @@ async fn postgres_resource_lock_wait_rechecks_access_expiry() {
     let replay_key = Uuid::new_v4();
     let RecipeSaveOutcome::Saved {
         recipe_id,
-        revision: 1,
+        revision: 1, ..
     } = save(&pool, &actor, None, None, &draft, replay_key).await
     else {
         panic!("initial recipe creation failed");

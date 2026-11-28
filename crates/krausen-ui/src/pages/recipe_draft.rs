@@ -343,6 +343,13 @@ impl RecipeDraft {
             .checked_add(1)
             .expect("draft generation exhausted");
     }
+    /// The server stored the workspace default the recipe named none of: the live document takes
+    /// it too, without counting as an edit, so preview, baseline and storage agree.
+    pub fn adopt_stored_profile(&mut self, profile_id: &str) {
+        self.document.equipment_profile_id = Some(profile_id.to_owned());
+        self.document.recipe_only_equipment = false;
+        self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
+    }
     pub fn mark_saved(&mut self) {
         self.baseline = self.contents();
         self.dirty = false;
