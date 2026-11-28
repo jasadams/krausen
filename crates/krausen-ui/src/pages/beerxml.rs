@@ -340,9 +340,8 @@ fn BeerXmlForm(identity: OperationIntent) -> impl IntoView {
                     selected_profile.set(String::new());
                     // The shared guard fences on the task generation; discarding
                     // must not look like a newer edit, so `sequence` is untouched.
-                    // The task effect later clears `resolved_navigation` when `dirty`
-                    // flips; that is harmless because the leave already captured
-                    // its owners and lease compares only generation/in-flight.
+                    // The task effect clears `resolved_navigation` when `dirty` flips;
+                    // the shared guard waits for that effect before it continues.
                     discard_epoch.update(|n| *n = n.wrapping_add(1));
                     preview.set(None);
                     imported_id.set(None);
