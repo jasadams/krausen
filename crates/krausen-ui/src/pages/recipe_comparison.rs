@@ -40,6 +40,9 @@ pub(super) fn changes(
 }
 
 fn native_text(value: &Value, path: &str) -> String {
+    if path == "recipe_only_equipment" {
+        return if value.as_bool() == Some(true) { "Yes".into() } else { "No".into() };
+    }
     if path.ends_with("_fraction") && value.is_number() { format!("{} (fraction)", display(value)) }
     else { display(value) }
 }

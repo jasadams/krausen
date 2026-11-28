@@ -471,8 +471,18 @@ async fn exercise(db: DbPool) {
     // An import that only carries the recipe's efficiency override still takes the default.
     let mut efficiency_only = request.clone();
     efficiency_only.equipment_draft.efficiency_override_fraction = Some(0.7);
+    // The BeerXML efficiency choice, when it kept the source value as a recipe override, wins.
+    let ImportPreviewOutcome::Preview(source_wins) = interchange::preview(&db, &actor, &efficiency_only).await else { panic!("source preview") };
+    assert_eq!(source_wins.document.equipment_overrides.efficiency_override_fraction, Some(0.75));
+    efficiency_only.choices.efficiency = Some(krausen_types::interchange::EfficiencyChoice::SelectedEquipment);
     let ImportPreviewOutcome::Preview(eff) = interchange::preview(&db, &actor, &efficiency_only).await else { panic!("efficiency preview") };
     assert_eq!(eff.document.equipment_profile_id.as_deref(), Some(created.profile_id.as_str()));
+    // The default is applied without losing the draft's efficiency override, at preview and commit.
+    assert_eq!(eff.document.equipment_overrides.efficiency_override_fraction, Some(0.7));
+    let ImportCommitOutcome::Imported { recipe_id: eff_recipe, .. } = interchange::commit(&db, &actor, &efficiency_only, Uuid::new_v4()).await else { panic!("efficiency commit") };
+    let krausen_types::recipe_editor::RecipeReadOutcome::Found(eff_found) = krausen_app::recipe_editor::read(&db, &actor, &intent, &eff_recipe).await else { panic!("read eff") };
+    assert_eq!(eff_found.document.equipment_overrides.efficiency_override_fraction, Some(0.7));
+    assert_eq!(eff_found.document.equipment_profile_id.as_deref(), Some(created.profile_id.as_str()));
     // An unnamed import that passes the revisions its preview reported is guarded like a named
     // one, and a retry of a committed request recovers its original result.
     let mut guarded = request.clone();
@@ -526,6 +536,13 @@ async fn exercise(db: DbPool) {
         interchange::commit(&db, &actor, &had_default, Uuid::new_v4()).await,
         ImportCommitOutcome::ProfileChanged,
         "the default the preview resolved is gone"
+    );
+    // That check comes before outstanding BeerXML choices are reported.
+    let mut needs_choices = had_default.clone();
+    needs_choices.choices = Default::default();
+    assert_eq!(
+        interchange::commit(&db, &actor, &needs_choices, Uuid::new_v4()).await,
+        ImportCommitOutcome::ProfileChanged
     );
     let retry_key = Uuid::new_v4();
     let first = interchange::commit(&db, &actor, &request, retry_key).await;

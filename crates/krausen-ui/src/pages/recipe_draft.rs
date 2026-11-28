@@ -347,16 +347,17 @@ impl RecipeDraft {
     /// it too, without counting as an edit, so preview, baseline and storage agree.
     /// A later deliberate choice (a profile, or recipe-only) made while the save was in flight stays.
     pub fn adopt_stored_profile(&mut self, profile_id: &str) {
-        if self.document.equipment_profile_id.is_some() || self.document.recipe_only_equipment {
-            return;
-        }
-        self.document.equipment_profile_id = Some(profile_id.to_owned());
-        // Undo must not bring back the recipe without the profile the server stored.
+        // Undo must never bring back a recipe without the profile the server stored, whatever
+        // the live document now holds.
         for earlier in &mut self.undo {
             if earlier.document.equipment_profile_id.is_none() && !earlier.document.recipe_only_equipment {
                 earlier.document.equipment_profile_id = Some(profile_id.to_owned());
             }
         }
+        if self.document.equipment_profile_id.is_some() || self.document.recipe_only_equipment {
+            return;
+        }
+        self.document.equipment_profile_id = Some(profile_id.to_owned());
         self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
     }
     pub fn mark_saved(&mut self) {
@@ -700,5 +701,8 @@ mod tests {
         named.edit(|doc| doc.equipment_profile_id = Some("p2".into()));
         named.adopt_stored_profile("p1");
         assert_eq!(named.document().equipment_profile_id.as_deref(), Some("p2"));
+        // The stored default stays reachable: undoing the later pick returns to it, not to nothing.
+        named.undo();
+        assert_eq!(named.document().equipment_profile_id.as_deref(), Some("p1"));
     }
 }

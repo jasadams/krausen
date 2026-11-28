@@ -3180,12 +3180,12 @@ test('equipment profiles can be saved as the default: an unspecified new recipe 
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(`Recipe only ${Date.now()}`);
     await page.getByText('Equipment settings', { exact: true }).click();
-    await page.getByLabel('Equipment profile', { exact: true }).selectOption('');
+    await page.getByLabel('Equipment profile', { exact: true }).selectOption('recipe-only');
     await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
     await page.reload();
     await page.getByText('Equipment settings', { exact: true }).click();
-    await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue('');
+    await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue('recipe-only');
   } finally {
     // The default is workspace state: leave none behind for the rest of the shard.
     if (profileId) await setDefault(page, false);

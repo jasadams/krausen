@@ -39,6 +39,15 @@ fn project(
         krausen_beerxml::native::from_xml_at(&request.xml, &request.choices, request.recipe_index)
             .ok()??;
     result.document.equipment_profile_id = profile_id.map(str::to_owned);
+    if profile_id.is_some() && request.equipment_profile_id.is_none() {
+        // The workspace default was applied: the draft's only content is the recipe-level
+        // efficiency override, which the BeerXML efficiency choice, when made, outranks.
+        let document = &mut result.document.equipment_overrides;
+        if document.efficiency_override_fraction.is_none() {
+            document.efficiency_override_fraction =
+                request.equipment_draft.efficiency_override_fraction;
+        }
+    }
     if profile_id.is_none() {
         let efficiency = result
             .document
@@ -217,6 +226,17 @@ async fn commit_inner(
     let Some(imported) = project(request, profile_id.as_deref()) else {
         return Ok(ImportCommitOutcome::InvalidSource);
     };
+    if imported.document.equipment_profile_id.is_none() && request.expected_profile_id.is_some() {
+        // The default the preview used is gone.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
+    if imported.document.equipment_profile_id.is_some()
+        && request.equipment_profile_id.is_none()
+        && request.expected_no_profile
+    {
+        // The preview resolved no profile; a default has appeared since.
+        return Ok(ImportCommitOutcome::ProfileChanged);
+    }
     let pending: Vec<_> = imported
         .warnings
         .iter()
@@ -232,17 +252,6 @@ async fn commit_inner(
         .collect();
     if !pending.is_empty() {
         return Ok(ImportCommitOutcome::ChoicesRequired(pending));
-    }
-    if imported.document.equipment_profile_id.is_none() && request.expected_profile_id.is_some() {
-        // The default the preview used is gone.
-        return Ok(ImportCommitOutcome::ProfileChanged);
-    }
-    if imported.document.equipment_profile_id.is_some()
-        && request.equipment_profile_id.is_none()
-        && request.expected_no_profile
-    {
-        // The preview resolved no profile; a default has appeared since.
-        return Ok(ImportCommitOutcome::ProfileChanged);
     }
     if let Some(profile_id) = &imported.document.equipment_profile_id {
         let profile =

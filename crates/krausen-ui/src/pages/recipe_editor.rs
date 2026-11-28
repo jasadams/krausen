@@ -968,7 +968,6 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
             retry.set(Some(attempt.clone()));
             attempt
         };
-        let submitted_generation = attempt.generation;
         pending.set(true);
         save_sequence.update(|sequence| *sequence = sequence.checked_add(1).expect("save sequence exhausted"));
         let save_task = save_sequence.get_untracked();

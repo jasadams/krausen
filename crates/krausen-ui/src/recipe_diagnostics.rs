@@ -39,6 +39,7 @@ const CODES: &[CodeText] = &[
     CodeText { code: "out_of_range", inline: "Value is out of range", tail: "is outside its allowed range" },
     CodeText { code: "non_finite", inline: "Enter a finite number", tail: "is not a valid number" },
     CodeText { code: "exposure_exceeds_boil", inline: "Longer than the boil time", tail: "is longer than the boil time" },
+    CodeText { code: "recipe_only_with_profile", inline: "Cannot also be recipe-only equipment", tail: "cannot be chosen together with recipe-only equipment" },
     CodeText { code: "negative_sparge", inline: "More than the water available", tail: "is more than the water available" },
     CodeText { code: "unsupported_fermentable_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported stage (mash or boil)" },
     CodeText { code: "unsupported_hop_stage", inline: "Choose a supported stage to start a brew", tail: "needs a supported use" },

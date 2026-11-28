@@ -123,6 +123,15 @@ pub fn validate_draft(recipe: &RecipeDocumentV1, equipment: &EquipmentSettingsV1
             ALL,
         );
     }
+    if recipe.recipe_only_equipment && recipe.equipment_profile_id.is_some() {
+        // A deliberate recipe-only choice and a named profile contradict each other.
+        v.add(
+            "recipe_only_with_profile",
+            "recipe_only_equipment",
+            Readiness::Invalid,
+            ALL,
+        );
+    }
     let mut row_ids = std::collections::HashSet::new();
     for (group, id) in recipe
         .fermentables

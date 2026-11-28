@@ -222,3 +222,16 @@ fn colour_and_yield_have_distinct_target_dependencies() {
     assert!(v.target_available(Target::Water));
     assert!(v.target_available(Target::Colour));
 }
+
+#[test]
+fn recipe_only_equipment_with_a_named_profile_is_invalid() {
+    let mut r = RecipeDocumentV1::default();
+    r.recipe_only_equipment = true;
+    r.equipment_profile_id = Some("p".into());
+    let result = validate_draft(&r, &EquipmentSettingsV1::default());
+    assert_eq!(result.state, Readiness::Invalid);
+    assert!(result.diagnostics.iter().any(|d| d.code == "recipe_only_with_profile" && d.path == "recipe_only_equipment"));
+    r.equipment_profile_id = None;
+    let ok = validate_draft(&r, &EquipmentSettingsV1::default());
+    assert!(!ok.diagnostics.iter().any(|d| d.code == "recipe_only_with_profile"));
+}

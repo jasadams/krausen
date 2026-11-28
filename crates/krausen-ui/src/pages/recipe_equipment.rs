@@ -129,6 +129,9 @@ struct Spec {
     read: fn(&EquipmentSettingsV1) -> Option<f64>,
     write: fn(&mut EquipmentSettingsV1, Option<f64>),
 }
+/// Select value of the deliberate "Recipe-only equipment" choice (profile ids are UUIDs).
+const RECIPE_ONLY_CHOICE: &str = "recipe-only";
+
 static SPECS: [Spec; 16] = [
     Spec { id: "recipe-efficiency-override", label: "Brewhouse efficiency override", unit: "%", scale: 100.0, path: "equipment_overrides.efficiency_override_fraction", read: |s| s.efficiency_override_fraction, write: |s, v| s.efficiency_override_fraction = v },
     Spec { id: "recipe-mash-volume", label: "Mash tun volume", unit: "L", scale: 1.0, path: "equipment_overrides.mash_tun_volume_l", read: |s| s.mash_tun_volume_l, write: |s, v| s.mash_tun_volume_l = v },
@@ -330,12 +333,15 @@ pub fn RecipeEquipment(
             summary.set(next);
         }
     });
-    let choose = Callback::new(move |id: String| {
-        // Choosing "Recipe-only equipment" is a deliberate choice the server must not replace
-        // with the workspace default; choosing a profile clears it.
+    // Three states: a profile, a deliberate "Recipe-only equipment" choice, or nothing chosen yet.
+    // Only "nothing chosen" lets a new recipe take the workspace default.
+    let choice = Signal::derive(move || {
+        if draft.with(|d| d.document().recipe_only_equipment) { RECIPE_ONLY_CHOICE.to_owned() } else { selection.get() }
+    });
+    let choose = Callback::new(move |value: String| {
         draft.update(|d| d.edit(|doc| {
-            doc.recipe_only_equipment = id.is_empty();
-            doc.equipment_profile_id = (!id.is_empty()).then_some(id);
+            doc.recipe_only_equipment = value == RECIPE_ONLY_CHOICE;
+            doc.equipment_profile_id = (!value.is_empty() && value != RECIPE_ONLY_CHOICE).then_some(value);
         }));
     });
     let manage_href = Signal::derive(move || {
@@ -375,12 +381,12 @@ pub fn RecipeEquipment(
                 {move || {
                     // Track only the list: rebuilding on each choice would drop keyboard focus.
                     let selected = selection.get_untracked();
-                    let mut options = vec![(String::new(), "Recipe-only equipment".to_owned())];
+                    let mut options = vec![(String::new(), "No equipment chosen".to_owned()), (RECIPE_ONLY_CHOICE.to_owned(), "Recipe-only equipment".to_owned())];
                     options.extend(library.profiles.get().into_iter().filter(|p| !p.archived || p.profile_id == selected).map(|p| {
                         let label = if p.archived { format!("{} (archived, unavailable)", p.name) } else { p.name };
                         (p.profile_id, label)
                     }));
-                    view! { <BreweryDraftSelect id="equipment-profile-select" label="Equipment profile" value=selection on_change=choose options=options/> }
+                    view! { <BreweryDraftSelect id="equipment-profile-select" label="Equipment profile" value=choice on_change=choose options=options/> }
                 }}
             </div>
             <p class="k-field__hint">{move || match summary.get().source {
