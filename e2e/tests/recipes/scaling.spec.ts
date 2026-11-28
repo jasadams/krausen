@@ -495,9 +495,10 @@ test('a retained Scale replay never rolls the editor back past a newer saved rev
   // The recorded outcome is reported truthfully; the editor keeps revision 3.
   await expect(dialog).toContainText('An earlier Scale was saved as revision 2');
   await expect(dialog).toContainText('has changed since');
-  // The operation's result takes focus: it never drops to the document body when Retry goes away.
-  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog#scale-dialog')), 'focus stays inside the dialog').toBe(true);
+  // The operation's result takes focus (in the next animation frame, so wait for it): it never
+  // drops to the document body when Retry goes away.
   await expect(dialog.locator('#scale-result')).toBeFocused();
+  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog#scale-dialog')), 'focus stays inside the dialog').toBe(true);
   await expect(page.getByRole('status').filter({ hasText: 'Scaled recipe saved as revision 2' })).toHaveCount(0);
   await dialog.getByRole('button', { name: /^(Cancel|Close)$/ }).click();
   await expect(name, 'the newer saved edit is still shown').toHaveValue(`${title} saved later`);
