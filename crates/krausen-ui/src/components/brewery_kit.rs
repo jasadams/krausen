@@ -99,13 +99,15 @@ pub fn BreweryPanel(
     #[prop(default = false)] mobile_compact: bool,
     /// Body is one vertical stack of sections and field rows with shared spacing.
     #[prop(default = false)] stacked: bool,
+    /// Spans every column of a grid parent, for content that needs the full line.
+    #[prop(default = false)] wide: bool,
     #[prop(optional)] presentation: PanelPresentation,
     #[prop(optional)] actions: Option<ChildrenFn>,
     #[prop(optional)] footer: Option<ChildrenFn>,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <section id=id class="k-panel" class:k-panel--mobile-compact=mobile_compact class:k-panel--stacked=stacked class:k-panel--summary=matches!(presentation, PanelPresentation::Summary)>
+        <section id=id class="k-panel" class:k-panel--mobile-compact=mobile_compact class:k-panel--stacked=stacked class:k-panel--wide=wide class:k-panel--summary=matches!(presentation, PanelPresentation::Summary)>
             <header class="k-panel__header"><div>{eyebrow.map(|text| view! { <span class="k-panel__eyebrow">{text}</span> })}<h2 class="k-panel__title">{title}</h2>{description.map(|text| view! { <p class="k-panel__description">{text}</p> })}</div>{actions.map(|slot| view! { <div class="k-panel__actions">{slot()}</div> })}</header>
             <div class="k-panel__body">{children()}</div>
             {footer.map(|slot| view! { <footer class="k-panel__footer">{slot()}</footer> })}
@@ -520,6 +522,8 @@ pub fn BreweryCompactIngredientRow(
     /// Routine schedule controls stay visible; details are for secondary specs.
     #[prop(optional)] schedule: Option<AnyView>,
     details: AnyView,
+    /// Shows the details expanded when the row first renders.
+    #[prop(optional)] details_open: bool,
     on_remove: Callback<()>,
     /// Stable id of the remove action, so removal can move focus deterministically.
     #[prop(optional, into)] remove_id: Option<String>,
@@ -529,11 +533,11 @@ pub fn BreweryCompactIngredientRow(
         Some(id) => view! { <crate::components::Button id=id variant=crate::components::ButtonVariant::GhostDestructive aria_label=remove_label on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button> }.into_any(),
         None => view! { <crate::components::Button variant=crate::components::ButtonVariant::GhostDestructive aria_label=remove_label on:click=move |_| on_remove.run(())>"Remove addition"</crate::components::Button> }.into_any(),
     };
-    view! { <div class="k-compact-ingredient" role="group" aria-label=move || label.get()>
+    view! { <div class="k-compact-ingredient-host"><div class="k-compact-ingredient" role="group" aria-label=move || label.get()>
         <div class="k-compact-ingredient__main">{name_field}{amount_field}{schedule.map(|slot| view! { <div class="k-compact-ingredient__schedule">{slot}</div> })}{remove_button}</div>
         {move || { let text = description.get(); (!text.is_empty()).then(|| view! { <p class="k-compact-ingredient__description">{text}</p> }) }}
-        <BreweryDisclosure title="Addition details" compact=true aria_label=Signal::derive(move || format!("Addition details for {}", label.get()))>{details}</BreweryDisclosure>
-    </div> }
+        <BreweryDisclosure title="Addition details" compact=true open=details_open aria_label=Signal::derive(move || format!("Addition details for {}", label.get()))>{details}</BreweryDisclosure>
+    </div></div> }
 }
 
 /// Ingredient identity and quantity controls retain an accessible name on mobile.
@@ -1123,10 +1127,12 @@ pub fn BreweryDisclosure(
     /// Stable DOM id so a command can reveal this native disclosure.
     #[prop(optional, into)] id: Option<String>,
     #[prop(optional)] compact: bool,
+    /// Starts expanded; the brewer's own toggling still controls it afterwards.
+    #[prop(optional)] open: bool,
     #[prop(optional, into)] aria_label: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
-    view! { <details id=id class="k-disclosure" class:k-disclosure--compact=compact><summary aria-label=move || aria_label.try_get().flatten()>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
+    view! { <details id=id class="k-disclosure" class:k-disclosure--compact=compact open=open><summary aria-label=move || aria_label.try_get().flatten()>{title}</summary><div class="k-disclosure__body">{children()}</div></details> }
 }
 
 /// Controlled multiline text for descriptions and notes.

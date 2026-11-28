@@ -244,6 +244,9 @@ pub fn DesignSystemPage() -> impl IntoView {
     let hop_amount = RwSignal::new("28.0".to_owned());
     let hop_minutes = RwSignal::new("60".to_owned());
     let hop_stage = RwSignal::new("boil".to_owned());
+    let munich_name = RwSignal::new("Weyermann Munich I".to_owned());
+    let munich_amount = RwSignal::new("1.50".to_owned());
+    let munich_stage = RwSignal::new("mash".to_owned());
     let changing_popup = RwSignal::new(false);
     let more_memberships = RwSignal::new(false);
     let temporary_popup = RwSignal::new(false);
@@ -308,13 +311,22 @@ pub fn DesignSystemPage() -> impl IntoView {
                     </tbody></table></div>
                     <dl class="print-sheet__facts"><crate::components::BrewProvenanceFact label="Recipe revision".to_owned() value="Revision 3".to_owned()/></dl>
                 </BreweryPanel>
-                <BreweryPanel title="Ingredients" description="Editable quantities stay with their source specification.">
+                <BreweryPanel title="Ingredients" wide=true description="Editable quantities stay with their source specification.">
                     <BreweryCompactIngredientRow label=Signal::derive(move || hop_name.get()) description=Signal::derive(|| "Hop schedule example — ordinary decisions remain outside secondary details".to_owned())
                         name_field=view! { <BreweryField id="show-hop-name" label="Hop name" value=hop_name/> }.into_any()
                         amount_field=view! { <BreweryField id="show-hop-amount" label="Hop amount" unit="g" numeric=true value=hop_amount/> }.into_any()
                         schedule=view! { <BreweryFieldRow><BrewerySelect id="show-hop-stage" label="Hop stage" value=hop_stage options=vec![("boil".into(), "Boil".into()), ("whirlpool".into(), "Whirlpool".into())]/><BreweryField id="show-hop-minutes" label="Contact time" unit="min" numeric=true value=hop_minutes/></BreweryFieldRow> }.into_any()
                         details=view! { <BreweryField id="show-hop-alpha" label="Alpha acid example" unit="%" value=RwSignal::new("4.5".to_owned()) numeric=true/> }.into_any()
                         on_remove=Callback::new(move |()| settled.set("Example removal requested; demonstration row retained.".into()))/>
+                    <div id="showcase-open-details-row">
+                        <BreweryCompactIngredientRow label=Signal::derive(|| "Weyermann Munich I".to_owned()) description=Signal::derive(|| "Stage control with its details open — the toggle and fields keep their place".to_owned())
+                            name_field=view! { <BreweryField id="show-munich-name" label="Malt name" value=munich_name/> }.into_any()
+                            amount_field=view! { <BreweryField id="show-munich-amount" label="Malt amount" unit="kg" numeric=true value=munich_amount/> }.into_any()
+                            schedule=view! { <BrewerySelect id="show-munich-stage" label="Stage" value=munich_stage options=vec![("mash".into(), "Mash".into()), ("boil".into(), "Boil".into())]/> }.into_any()
+                            details=view! { <div class="recipe-editor__fields"><BreweryField id="show-munich-yield" label="Yield" unit="%" numeric=true value=RwSignal::new("81.8".to_owned())/><BreweryField id="show-munich-colour" label="Colour" unit="EBC" numeric=true value=RwSignal::new("14".to_owned())/></div> }.into_any()
+                            details_open=true
+                            on_remove=Callback::new(move |()| settled.set("Example removal requested; demonstration row retained.".into()))/>
+                    </div>
                     <Show when=move || show_grain.get() fallback=move || view! { <Button variant=ButtonVariant::Secondary on:click=move |_| show_grain.set(true)>"Restore example"</Button> }>
                         <BreweryCompactIngredientRow label=Signal::derive(move || { let name = grain_name.get(); if name.trim().is_empty() { "Unnamed fermentable".to_owned() } else { name } }) description=Signal::derive(|| "Weyermann · 3 EBC".to_owned()) name_field=view! { <BreweryField id="show-grain-name" label="Name" value=grain_name/> }.into_any() amount_field=view! { <BreweryField id="show-grain-amount" label="Amount" unit="kg" value=grain numeric=true/> }.into_any() details=view! { <p>"Source specification and stage"</p> }.into_any() on_remove=Callback::new(move |()| show_grain.set(false))/>
                     </Show>

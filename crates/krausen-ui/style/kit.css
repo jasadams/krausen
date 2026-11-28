@@ -44,8 +44,8 @@ fieldset { min-width: 0; }
 .k-field input:disabled, .k-field select:disabled, .k-field textarea:disabled { color: var(--k-color-muted); background: var(--k-color-surface-subtle); opacity: .65; cursor: not-allowed; }
 .k-field__error, .k-field__hint, .k-notice__body { overflow-wrap: anywhere; }
 .k-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: start; gap: var(--k-space-4); }
-.k-field-row > .k-field, .k-compact-ingredient__main > .k-field { padding-bottom: 1.5em; position: relative; }
-.k-field-row > .k-field > :is(.k-field__hint, .k-field__error), .k-compact-ingredient__main > .k-field > :is(.k-field__hint, .k-field__error) { margin-bottom: -1.5em; min-height: 1.5em; }
+.k-field-row > .k-field, .k-compact-ingredient__main > .k-field, .k-compact-ingredient__schedule > .k-field { padding-bottom: 1.5em; position: relative; }
+.k-field-row > .k-field > :is(.k-field__hint, .k-field__error), .k-compact-ingredient__main > .k-field > :is(.k-field__hint, .k-field__error), .k-compact-ingredient__schedule > .k-field > :is(.k-field__hint, .k-field__error) { margin-bottom: -1.5em; min-height: 1.5em; }
 .k-action-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--k-space-3); min-width: 0; }
 .k-action-group--end { justify-content: flex-end; }
 .k-popover { position: fixed; inset: auto; margin: 0; width: min(22rem, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; overscroll-behavior: contain; padding: var(--k-space-4); border: 1px solid var(--k-color-border-strong); border-radius: var(--k-radius-md); background: var(--k-color-surface-raised); color: var(--k-color-foreground); box-shadow: var(--k-shadow-overlay); overflow-wrap: anywhere; }
@@ -403,29 +403,44 @@ fieldset { min-width: 0; }
   .k-panel--mobile-compact .k-style-range__limits { margin-top: var(--k-space-1); }
   .k-panel--mobile-compact .k-style-range__status { margin-top: 0; }
 }
+.k-panel--wide { grid-column: 1 / -1; }
 .k-addition { display: grid; gap: var(--k-space-3); padding: var(--k-space-4) 0; border-bottom: 1px solid var(--k-color-border); }
 .k-addition > button { justify-self: start; }
+/* KRA-75: the one-line row needs a browser that supports ::details-content (Chromium 131, Safari 18.4,
+   Firefox 143 and later). A row lays itself out by the width it is given (its host is the container), not the
+   viewport: the editor and the showcase give it very different widths at one viewport. Narrow rows
+   stack; wide rows put every field, the remove action and the "Addition details" toggle on one line.
+   Every field starts on one top line, the labels keep one line so the controls do too, and the
+   remove action and toggle sit on the controls' line. Opening the details only fills the cell
+   below the row, so nothing above or beside it moves. */
+.k-compact-ingredient-host { container: k-ingredient-row / inline-size; min-width: 0; }
 .k-compact-ingredient { min-width: 0; padding: var(--k-space-2) 0; border-bottom: 1px solid var(--k-color-border); }
-.k-compact-ingredient__main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 9rem) auto; align-items: end; gap: var(--k-space-2); }
+.k-compact-ingredient__main .k-field__label { line-height: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-compact-ingredient__main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); align-items: start; gap: var(--k-space-2); }
 .k-compact-ingredient__main > * { min-width: 0; }
-.k-compact-ingredient__main:has(> .k-compact-ingredient__schedule) { grid-template-columns: minmax(0, 1fr) minmax(6rem, 9rem) minmax(8rem, 1fr) auto; }
-.k-compact-ingredient__schedule { min-width: 0; }
+.k-compact-ingredient__main > button { grid-column: 1 / -1; justify-self: end; }
+.k-compact-ingredient__schedule { grid-column: 1 / -1; min-width: 0; }
+.k-compact-ingredient__schedule > .k-field-row { grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr)); gap: var(--k-space-2); }
 .k-disclosure--compact { border: 0; background: transparent; }
 .k-disclosure--compact > summary { padding: var(--k-space-1) 0; min-height: 44px; align-content: center; color: var(--k-color-muted); font-size: var(--k-font-xs); }
 .k-disclosure--compact > .k-disclosure__body { padding: var(--k-space-2) 0; }
 .k-compact-ingredient__description { color: var(--k-color-muted); font-size: var(--k-font-xs); }
-@media (min-width: 761px) {
-  .k-compact-ingredient { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 9rem) auto auto; align-items: end; column-gap: var(--k-space-2); padding-block: 0; }
+@container k-ingredient-row (min-width: 48rem) {
+  .k-compact-ingredient { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 9rem) minmax(8rem, 1fr) auto auto; align-items: start; column-gap: var(--k-space-2); padding-block: 0; }
+  .k-compact-ingredient:not(:has(.k-compact-ingredient__schedule)) { grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 9rem) auto auto; }
+  .k-compact-ingredient:has(.k-compact-ingredient__schedule > .k-field-row) { grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 9rem) minmax(15rem, 1.5fr) auto auto; }
   .k-compact-ingredient__main { display: contents; }
+  .k-compact-ingredient__schedule { grid-column: auto; }
+  /* The remove action and the toggle line up with the controls: below the label, the control's height. */
+  .k-compact-ingredient__main > button { grid-column: auto; justify-self: auto; }
+  .k-compact-ingredient__main > button, .k-compact-ingredient > .k-disclosure--compact > summary { margin-top: calc(1rem + var(--k-space-1)); min-height: var(--k-control-height); line-height: var(--k-control-height); padding-block: 0; }
   .k-compact-ingredient__description { grid-column: 1 / -1; }
-  .k-compact-ingredient > .k-disclosure--compact { grid-column: 4; grid-row: 1; }
-  .k-compact-ingredient > .k-disclosure--compact > summary { min-height: var(--k-control-height); line-height: var(--k-control-height); padding-block: 0; }
-  .k-compact-ingredient > .k-disclosure--compact[open] { grid-column: 1 / -1; grid-row: 3; }
-  .k-compact-ingredient:has(.k-compact-ingredient__schedule) { grid-template-columns: minmax(0, 1fr) minmax(6rem, 9rem) minmax(8rem, 1fr) auto auto; }
-  .k-compact-ingredient:has(.k-compact-ingredient__schedule) > .k-disclosure--compact:not([open]) { grid-column: 5; }
+  /* The disclosure's box is transparent to the row grid: its summary is the toggle in the last cell
+     of row 1 and its content is the full-width cell of row 3, open or closed. */
+  .k-compact-ingredient > .k-disclosure--compact { display: contents; }
+  .k-compact-ingredient > .k-disclosure--compact > summary { grid-column: -2; grid-row: 1; }
+  .k-compact-ingredient > .k-disclosure--compact::details-content { grid-column: 1 / -1; grid-row: 3; }
 }
-@media (max-width: 600px) { .k-compact-ingredient__main { grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); } .k-compact-ingredient__main > button { grid-column: 1 / -1; justify-self: end; } }
-@media (max-width: 760px) { .k-compact-ingredient__main:has(> .k-compact-ingredient__schedule) { grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); } .k-compact-ingredient__schedule { grid-column: 1 / -1; } }
 .recipe-editor__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--k-space-4); margin-top: var(--k-space-4); }
 @media (max-width: 600px) { .recipe-editor__preview-summary .recipe-editor__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--k-space-2); } }
 .recipe-editor__provenance { margin-top: var(--k-space-4); color: var(--k-color-muted); font-size: var(--k-font-xs); line-height: 1.5; }
