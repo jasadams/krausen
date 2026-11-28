@@ -23,9 +23,12 @@ test('every BJCP 2021 style is searchable by number and name and shows its range
   await expect(page.getByLabel(/Bitterness\. .*Style reference 50\.0 to 100\.0 IBU/)).toBeVisible();
 
   // Accents and case do not matter: "kolsch" finds Kölsch, "marzen" finds Märzen.
+  await expect(style).toHaveValue('Specialty IPA: Belgian IPA');
   await search.fill('KOLSCH');
+  await expect(style).toHaveValue('Specialty IPA: Belgian IPA');
   await expect(style.getByRole('option', { name: '5B · Kölsch' })).toBeAttached();
   await search.fill('marzen');
+  await expect(style).toHaveValue('Specialty IPA: Belgian IPA');
   await expect(style.getByRole('option', { name: '6A · Märzen' })).toBeAttached();
 
   // Searching never drops the style that is chosen.

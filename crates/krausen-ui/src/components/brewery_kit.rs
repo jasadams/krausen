@@ -1101,7 +1101,10 @@ pub fn BreweryDraftSearchSelect(
         <div class="k-field__control"><input id=search_id type="search" autocomplete="off" aria-label=search_label placeholder=search_placeholder aria-describedby=status_id.clone()
             prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev))/></div>
         <div class="k-field__control k-select"><select id=id prop:value=move || value.get() on:change=move |ev| on_change.run(event_target_value(&ev))>
-            {move || { let selected = value.get(); let held = (!selected.is_empty() && !options.with(|all| all.iter().any(|(v, _)| *v == selected))).then(|| view! { <option value=selected.clone() selected=true>{selected.clone()}</option> }); view! { {held}{visible.get().into_iter().map(|(v, label)| { let chosen = v == selected; view! { <option value=v selected=chosen>{label}</option> } }).collect_view()} } }}
+            {move || { let selected = value.get(); (!selected.is_empty() && !options.with(|all| all.iter().any(|(v, _)| *v == selected))).then(|| view! { <option value=selected.clone() selected=true>{selected.clone()}</option> }) }}
+            // Keyed, so filtering keeps the existing option elements (and the browser's own
+            // selection) and only adds or removes the ones that enter or leave the list.
+            <For each=move || visible.get() key=|(v, _)| v.clone() children=move |(v, label)| { let chosen = value.get_untracked() == v; view! { <option value=v selected=chosen>{label}</option> } }/>
         </select><span class="kit-select-chevron" aria-hidden="true">"⌄"</span></div>
         <span id=status_id class="k-field__hint" role="status">{move || status.get()}</span>
     </div> }
