@@ -3165,6 +3165,17 @@ test('equipment profiles can be saved as the default: an unspecified new recipe 
     await page.reload();
     await page.getByText('Equipment settings', { exact: true }).click();
     await expect(page.getByLabel('Equipment profile', { exact: true })).toHaveValue(profileId);
+    // Saving to leave still leaves when the server applied the default: take the default away,
+    // open a new recipe with none, restore it from another tab, then Save and leave.
+    await setDefault(page, false);
+    await page.goto('/recipe-editor/new');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Leaves ${Date.now()}`);
+    const second = await context.newPage();
+    await setDefault(second, true);
+    await second.close();
+    await openSettings(page);
+    await page.getByRole('dialog', { name: 'Unsaved recipe changes' }).getByRole('button', { name: 'Save and leave', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings/);
     // A deliberate Recipe-only choice on a new recipe is kept, not replaced by the default.
     await page.goto('/recipe-editor/new');
     await page.getByLabel('Recipe name', { exact: true }).fill(`Recipe only ${Date.now()}`);

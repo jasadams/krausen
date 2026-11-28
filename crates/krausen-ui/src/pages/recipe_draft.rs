@@ -351,6 +351,12 @@ impl RecipeDraft {
             return;
         }
         self.document.equipment_profile_id = Some(profile_id.to_owned());
+        // Undo must not bring back the recipe without the profile the server stored.
+        for earlier in &mut self.undo {
+            if earlier.document.equipment_profile_id.is_none() && !earlier.document.recipe_only_equipment {
+                earlier.document.equipment_profile_id = Some(profile_id.to_owned());
+            }
+        }
         self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
     }
     pub fn mark_saved(&mut self) {
@@ -670,5 +676,29 @@ mod tests {
         assert_ne!(draft.generation, before);
         assert_eq!(draft.document(), &replacement);
         assert!(!draft.dirty);
+    }
+
+    #[test]
+    fn adopting_the_stored_default_keeps_undo_from_restoring_the_recipe_without_it() {
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.edit(|doc| doc.title = "New".into());
+        draft.adopt_stored_profile("p1");
+        draft.mark_saved();
+        assert!(!draft.dirty);
+        draft.undo();
+        assert_eq!(draft.document().equipment_profile_id.as_deref(), Some("p1"));
+        assert!(draft.dirty, "the undone title differs from what was saved");
+    }
+
+    #[test]
+    fn adopting_the_stored_default_keeps_a_later_deliberate_choice() {
+        let mut chosen = RecipeDraft::new(RecipeDocumentV1::default());
+        chosen.edit(|doc| doc.recipe_only_equipment = true);
+        chosen.adopt_stored_profile("p1");
+        assert_eq!(chosen.document().equipment_profile_id, None);
+        let mut named = RecipeDraft::new(RecipeDocumentV1::default());
+        named.edit(|doc| doc.equipment_profile_id = Some("p2".into()));
+        named.adopt_stored_profile("p1");
+        assert_eq!(named.document().equipment_profile_id.as_deref(), Some("p2"));
     }
 }

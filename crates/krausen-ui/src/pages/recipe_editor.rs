@@ -1114,7 +1114,8 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                             if may_leave && saving_to_leave.get_untracked() {
                                 guard_task.update(GuardTaskState { dirty: false, generation: draft.with_untracked(|d| d.generation), in_flight: false, uncertain: false, recovery_retained: false, context_visible: true });
                                 if let Some(leave_token) = leave_attempt.get_value() {
-                                    guard_task.complete_save(leave_token, GuardSaveResolution::Saved { submitted_generation });
+                                    // Adopting an applied default advances the generation; the saved state is the current one.
+                                    guard_task.complete_save(leave_token, GuardSaveResolution::Saved { submitted_generation: draft.with_untracked(|d| d.generation) });
                                 }
                             }
                         } else if may_apply_scope {
