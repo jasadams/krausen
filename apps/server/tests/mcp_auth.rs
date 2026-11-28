@@ -1770,6 +1770,42 @@ async fn exercise(db: DbPool) {
         forbidden_view.structured_content.unwrap()["outcome"],
         "Forbidden"
     );
+    // KRA-74: the default batch size is set, read, applied to a new recipe and unset through MCP.
+    let settings_call = |tool: &'static str, request: serde_json::Value| {
+        let args = json!({"workspace_id": ws, "request": request}).as_object().unwrap().clone();
+        let modern = &modern;
+        async move { modern.call_tool(CallToolRequestParams::new(tool).with_arguments(args)).await.unwrap() }
+    };
+    let new_recipe = |title: &str| {
+        let args = json!({
+            "workspace_id": ws,
+            "intent": intent.clone(),
+            "recipe_id": null,
+            "expected_revision": null,
+            "document": krausen_types::brewery::RecipeDocumentV1 { title: title.into(), ..Default::default() },
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let modern = &modern;
+        async move { modern.call_tool(CallToolRequestParams::new("recipe_save").with_arguments(args)).await.unwrap() }
+    };
+    let saved = settings_call("user_settings_save", json!({"intent": intent.clone(), "settings": {"default_batch_size_l": 21.0}})).await;
+    assert_ne!(saved.is_error, Some(true));
+    assert_eq!(saved.structured_content.unwrap()["outcome"]["Settings"]["default_batch_size_l"], 21.0);
+    let read = settings_call("user_settings_get", json!({"intent": intent.clone()})).await;
+    assert_eq!(read.structured_content.unwrap()["outcome"]["Settings"]["default_batch_size_l"], 21.0);
+    let defaulted = new_recipe("MCP default").await;
+    assert_ne!(defaulted.is_error, Some(true));
+    assert_eq!(defaulted.structured_content.unwrap()["outcome"]["Saved"]["default_batch_size_l"], 21.0);
+    let refused = settings_call("user_settings_save", json!({"intent": intent.clone(), "settings": {"default_batch_size_l": 0.0}})).await;
+    assert_eq!(refused.is_error, Some(true));
+    assert_eq!(refused.structured_content.unwrap()["outcome"], "Invalid");
+    let unset = settings_call("user_settings_save", json!({"intent": intent.clone(), "settings": {"default_batch_size_l": null}})).await;
+    assert!(unset.structured_content.unwrap()["outcome"]["Settings"]["default_batch_size_l"].is_null());
+    let plain = new_recipe("MCP no default").await;
+    assert!(plain.structured_content.unwrap()["outcome"]["Saved"]["default_batch_size_l"].is_null());
     let mut brew_edit = brew_doc.clone();
     brew_edit.title = "Brew edit".into();
     assert_eq!(
@@ -1787,6 +1823,7 @@ async fn exercise(db: DbPool) {
             recipe_id: brew_recipe.clone(),
             revision: 2,
             default_equipment: None,
+            default_batch_size_l: None,
         }
     );
     let head_conflict_request = krausen_types::brew::StartBrewRequest {

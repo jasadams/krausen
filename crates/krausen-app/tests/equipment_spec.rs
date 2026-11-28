@@ -180,7 +180,7 @@ async fn exercise(db: DbPool) {
     let request = uuid::Uuid::new_v4();
     let blank = RecipeDocumentV1 { title: "Defaulted".into(), ..Default::default() };
     let created = krausen_app::recipe_editor::save(&db, &actor, &intent, None, None, &blank, request).await;
-    let RecipeSaveOutcome::Saved { recipe_id, revision: 1, default_equipment } = created.clone() else { panic!("create: {created:?}") };
+    let RecipeSaveOutcome::Saved { recipe_id, revision: 1, default_equipment, .. } = created.clone() else { panic!("create: {created:?}") };
     // The result says which profile the server applied, so the editor can adopt it.
     assert_eq!(default_equipment.as_ref().map(|d| d.profile_id.as_str()), Some(first_id.as_str()));
     let read = |id: String| {

@@ -360,6 +360,25 @@ impl RecipeDraft {
         self.document.equipment_profile_id = Some(profile_id.to_owned());
         self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
     }
+    /// The server stored the user's default batch size for a new recipe that carried none: the
+    /// live document takes it too, without counting as an edit. A size the brewer has typed since
+    /// the save was sent (valid or not) stays, and undo never brings back a recipe without it.
+    pub fn adopt_stored_batch_size(&mut self, litres: f64) {
+        const PATH: &str = "batch_size_l";
+        let blank = |raw: &BTreeMap<String, String>| raw.get(PATH).is_none_or(|text| text.trim().is_empty());
+        for earlier in &mut self.undo {
+            if earlier.document.batch_size_l.is_none() && blank(&earlier.raw_numbers) {
+                earlier.document.batch_size_l = Some(litres);
+                earlier.raw_numbers.remove(PATH);
+            }
+        }
+        if self.document.batch_size_l.is_some() || !blank(&self.raw_numbers) {
+            return;
+        }
+        self.document.batch_size_l = Some(litres);
+        self.raw_numbers.remove(PATH);
+        self.generation = self.generation.checked_add(1).expect("draft generation exhausted");
+    }
     pub fn mark_saved(&mut self) {
         self.baseline = self.contents();
         self.dirty = false;
@@ -689,6 +708,34 @@ mod tests {
         draft.undo();
         assert_eq!(draft.document().equipment_profile_id.as_deref(), Some("p1"));
         assert!(draft.dirty, "the undone title differs from what was saved");
+    }
+
+    #[test]
+    fn adopting_the_stored_batch_size_fills_a_cleared_field_and_keeps_what_was_typed() {
+        // A cleared (empty) field takes the stored default without counting as an edit's text,
+        // and undo cannot bring the recipe back without it.
+        let mut draft = RecipeDraft::new(RecipeDocumentV1::default());
+        draft.edit_number("batch_size_l", "18".into(), |d, n| d.batch_size_l = n);
+        draft.edit_number("batch_size_l", "".into(), |d, n| d.batch_size_l = n);
+        let generation = draft.generation;
+        draft.adopt_stored_batch_size(22.0);
+        assert_eq!(draft.snapshot().unwrap().batch_size_l, Some(22.0));
+        assert_eq!(draft.number_text("batch_size_l", Some(22.0)), "22");
+        assert_eq!(draft.generation, generation + 1);
+        draft.undo();
+        assert_eq!(draft.snapshot().unwrap().batch_size_l, Some(18.0), "undo still steps back through typing");
+        draft.undo();
+        assert_eq!(draft.snapshot().unwrap().batch_size_l, Some(22.0), "the first state is never again without the stored size");
+        // A size typed since the save was sent stays, valid or not.
+        let mut typed = RecipeDraft::new(RecipeDocumentV1::default());
+        typed.edit_number("batch_size_l", "18".into(), |d, n| d.batch_size_l = n);
+        typed.adopt_stored_batch_size(22.0);
+        assert_eq!(typed.snapshot().unwrap().batch_size_l, Some(18.0));
+        let mut partial = RecipeDraft::new(RecipeDocumentV1::default());
+        partial.edit_number("batch_size_l", "1e".into(), |d, n| d.batch_size_l = n);
+        partial.adopt_stored_batch_size(22.0);
+        assert_eq!(partial.number_text("batch_size_l", None), "1e");
+        assert!(partial.snapshot().is_err());
     }
 
     #[test]

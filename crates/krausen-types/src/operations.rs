@@ -253,6 +253,18 @@ pub const BREW_FEEDBACK_APPLY: Operation = Operation {
     input_contract: "BrewFeedbackApplyRequest",
     output_contract: "BrewFeedbackApplyOutcome",
 };
+pub const USER_SETTINGS_GET: Operation = Operation {
+    id: "user-settings.get.v1",
+    mcp_tool: "user_settings_get",
+    input_contract: "UserSettingsQuery",
+    output_contract: "UserSettingsOutcome",
+};
+pub const USER_SETTINGS_SAVE: Operation = Operation {
+    id: "user-settings.save.v1",
+    mcp_tool: "user_settings_save",
+    input_contract: "SaveUserSettings",
+    output_contract: "UserSettingsOutcome",
+};
 pub const BREW_PRINT: Operation = Operation {
     id: "brew.print.v1",
     mcp_tool: "brew_print",
@@ -302,6 +314,8 @@ pub const OPERATIONS: &[Operation] = &[
     BREW_FEEDBACK_PREVIEW,
     BREW_FEEDBACK_APPLY,
     BREW_PRINT,
+    USER_SETTINGS_GET,
+    USER_SETTINGS_SAVE,
 ];
 pub fn by_tool(name: &str) -> Option<&'static Operation> {
     OPERATIONS

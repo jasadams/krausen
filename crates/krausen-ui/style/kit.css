@@ -15,6 +15,8 @@
 .k-button--lg { min-height: 48px; padding: 0 var(--k-space-6); font-size: var(--k-font-body); }
 .k-button--icon { width: var(--k-control-height); padding: 0; }
 .k-button:disabled { opacity: 0.45; box-shadow: none; }
+/* A fieldset (used to disable a whole form) otherwise keeps its content's minimum width, so one long option name widens the form past a narrow screen. */
+fieldset { min-width: 0; }
 .k-field { display: flex; flex-direction: column; gap: var(--k-space-1); min-width: 0; }
 .k-field__label { font-size: var(--k-font-sm); font-weight: 500; color: var(--k-color-muted); }
 .k-field__control { display: flex; align-items: center; position: relative; min-width: 0; }

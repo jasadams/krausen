@@ -286,9 +286,19 @@ pub fn RecipeEditorPage() -> impl IntoView {
                     .ok_or_else(|| ServerFnError::new("Workspace required"))?,
             };
             let seed = if id == "new" {
-                crate::pages::equipment_profiles::load_default_profile(&identity)
+                // A new recipe starts from the workspace default equipment and the user's
+                // default batch size; each is absent when nothing is set.
+                let mut seed = crate::pages::equipment_profiles::load_default_profile(&identity)
                     .await?
                     .map(|profile| profile.new_recipe_seed())
+                    .unwrap_or_default();
+                match crate::server_fns::user_settings::get_user_settings().await? {
+                    krausen_types::user_settings::UserSettingsOutcome::Settings(settings) => {
+                        seed.batch_size_l = settings.default_batch_size_l;
+                    }
+                    _ => return Err(ServerFnError::new("Unable to load your default batch size.")),
+                }
+                Some(seed)
             } else {
                 None
             };
@@ -1068,6 +1078,7 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                     recipe_id: id,
                     revision: saved,
                     default_equipment,
+                    default_batch_size_l,
                 }) => {
                     retry.set(None);
                     // What was stored: the saved document plus any workspace default the server applied.
@@ -1077,6 +1088,10 @@ fn RecipeForm(identity: EditorIdentity, initial: Option<RecipeSnapshot>, seed: O
                         stored.equipment_profile_id = Some(applied.profile_id.clone());
                         stored.recipe_only_equipment = false;
                         draft.update(|d| d.adopt_stored_profile(&applied.profile_id));
+                    }
+                    if let Some(litres) = default_batch_size_l {
+                        stored.batch_size_l = Some(litres);
+                        draft.update(|d| d.adopt_stored_batch_size(litres));
                     }
                     baseline.set(stored.clone());
                     original_baseline_available.set(true);

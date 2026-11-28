@@ -11,6 +11,7 @@ use crate::components::{
     SettingsPageSkeleton, INPUT_CLASS,
 };
 use crate::server_fns::profile::*;
+use crate::server_fns::user_settings::{get_user_settings, save_user_settings};
 use crate::types::ProfileData;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ pub fn ProfilePage() -> impl IntoView {
                                         <ProfileInfoCard data=data_profile.clone()/>
                                     </Show>
                                     <div id="appearance"><AppearanceCard data=data_appearance/></div>
+                                    <div id="recipe-defaults"><RecipeDefaultsCard/></div>
                                     <McpConnectionCard is_personal=is_personal/>
                                     <Show when=move || !is_personal && has_invitations>
                                         <InvitationsCard invitations=inv_list.clone()/>
@@ -206,6 +208,121 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
                             </button>
                         }
                     }).collect_view()}
+                </div>
+            </CardContent>
+        </Card>
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recipe Defaults Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a field's text means as a default batch size: nothing (unset) or a number to send.
+/// Whether the number is a valid batch size is the application's rule, answered by `Invalid`;
+/// only text that is not a finite number cannot be sent at all.
+fn parse_default_batch(text: &str) -> Result<Option<f64>, &'static str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<f64>() {
+        Ok(litres) if litres.is_finite() => Ok(Some(litres)),
+        _ => Err("Enter a number of litres."),
+    }
+}
+
+#[component]
+fn RecipeDefaultsCard() -> impl IntoView {
+    use krausen_types::user_settings::{UserSettings, UserSettingsOutcome};
+
+    let settings = Resource::new(|| (), |_| get_user_settings());
+    let (text, set_text) = signal(String::new());
+    // What the server holds: `None` until it has been read, so nothing is saved over an
+    // unread setting; `Some(None)` is a setting the user has not made.
+    let (stored, set_stored) = signal(None::<Option<f64>>);
+    let (message, set_message) = signal(None::<(bool, String)>);
+    let save_action = Action::new(|settings: &UserSettings| {
+        let settings = settings.clone();
+        async move { save_user_settings(settings).await }
+    });
+    let saving = save_action.pending();
+
+    // Show what is stored once it has loaded, and say so when it cannot be.
+    Effect::new(move |_| match settings.get() {
+        Some(Ok(UserSettingsOutcome::Settings(loaded))) => {
+            set_text.set(loaded.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+            set_stored.set(Some(loaded.default_batch_size_l));
+        }
+        Some(_) => set_message.set(Some((false, "Your default batch size could not be loaded. Reload the page to change it.".to_string()))),
+        None => {}
+    });
+    // Report what the server did with the last save.
+    Effect::new(move |_| {
+        if let Some(result) = save_action.value().get() {
+            set_message.set(Some(match result {
+                Ok(UserSettingsOutcome::Settings(saved)) => {
+                    set_stored.set(Some(saved.default_batch_size_l));
+                    // The field is disabled while a save runs, so the text is still what was sent.
+                    set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+                    (true, "Saved".to_string())
+                }
+                Ok(UserSettingsOutcome::Invalid) => (false, "Enter a batch size greater than zero, in litres.".to_string()),
+                Ok(_) => (false, "Your default batch size could not be saved. Try again.".to_string()),
+                Err(e) => (false, e.to_string()),
+            }));
+        }
+    });
+    let on_blur = move |_| {
+        // Nothing to save before the setting is read, while a save is in flight, or when the
+        // text still means what is stored.
+        let Some(stored_value) = stored.get_untracked() else { return };
+        if saving.get_untracked() {
+            return;
+        }
+        match parse_default_batch(&text.get_untracked()) {
+            Ok(value) if value == stored_value => {}
+            Ok(default_batch_size_l) => {
+                save_action.dispatch(UserSettings { default_batch_size_l });
+            }
+            Err(problem) => set_message.set(Some((false, problem.to_string()))),
+        }
+    };
+
+    view! {
+        <Card>
+            <CardHeader>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <CardTitle>"Recipe defaults"</CardTitle>
+                        <CardDescription>"What every new recipe you start begins with. You can still change it in each recipe."</CardDescription>
+                    </div>
+                    <span class="text-xs" aria-live="polite" data-testid="default-batch-status">
+                        {move || message.get().map(|(ok, msg)| {
+                            let class = if ok { "text-success-foreground" } else { "text-error-foreground" };
+                            view! { <span class=class>{msg}</span> }
+                        })}
+                    </span>
+                </div>
+            </CardHeader>
+            <CardContent>
+                <div class="space-y-2">
+                    <Label html_for="default-batch-size">"Default batch size (L)"</Label>
+                    <input
+                        id="default-batch-size"
+                        type="text"
+                        inputmode="decimal"
+                        class=INPUT_CLASS
+                        placeholder="Not set"
+                        disabled=move || stored.get().is_none() || saving.get()
+                        prop:value=text
+                        on:input=move |ev| {
+                            set_text.set(event_target_value(&ev));
+                            set_message.set(None);
+                        }
+                        on:blur=on_blur
+                    />
+                    <p class="text-xs text-muted-foreground">"Leave empty and new recipes start with no batch size."</p>
                 </div>
             </CardContent>
         </Card>
@@ -575,5 +692,21 @@ fn ClearLocalDataCard() -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     {
         view! { <span></span> }.into_any()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_default_batch;
+
+    #[test]
+    fn default_batch_text_is_unset_litres_or_refused() {
+        assert_eq!(parse_default_batch(""), Ok(None));
+        assert_eq!(parse_default_batch("  "), Ok(None));
+        assert_eq!(parse_default_batch(" 23 "), Ok(Some(23.0)));
+        assert_eq!(parse_default_batch("22.5"), Ok(Some(22.5)));
+        for bad in ["abc", "1e", "NaN", "inf"] {
+            assert!(parse_default_batch(bad).is_err(), "{bad}");
+        }
     }
 }

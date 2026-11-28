@@ -168,6 +168,27 @@ async fn save_inner(
     } else {
         document
     };
+    // A new recipe that carries no batch size starts with the user's default batch size, read in
+    // this transaction. Like the equipment default, the result says which value was applied.
+    let batch_defaulted;
+    let mut applied_batch = None;
+    let mut validation = validation;
+    let document = if recipe_id.is_none() && document.batch_size_l.is_none() {
+        match crate::user_settings::default_batch_size(&mut tx, &actor.actor_id).await? {
+            Some(litres) => {
+                applied_batch = Some(litres);
+                batch_defaulted = RecipeDocumentV1 {
+                    batch_size_l: Some(litres),
+                    ..document.clone()
+                };
+                validation = validate_draft(&batch_defaulted, &batch_defaulted.equipment_overrides);
+                &batch_defaulted
+            }
+            None => document,
+        }
+    } else {
+        document
+    };
     if let Some(profile_id) = &document.equipment_profile_id {
         let profile =
             krausen_brewery::equipment_store::load(&mut tx, &actor.workspace_id, profile_id, true)
@@ -274,6 +295,7 @@ async fn save_inner(
         recipe_id: id.clone(),
         revision,
         default_equipment: applied,
+        default_batch_size_l: applied_batch,
     };
     record_request(&mut tx, &key, &serde_json::to_value(&result)?, Some(&id)).await?;
     if changed {

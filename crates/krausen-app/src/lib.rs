@@ -440,6 +440,7 @@ pub mod recipe_editor;
 mod style_reference;
 
 pub mod equipment;
+pub mod user_settings;
 
 pub mod process_summary;
 pub mod recipe_library;
