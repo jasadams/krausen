@@ -145,7 +145,7 @@ fields it does not list are removed, not hidden.
   revisioned settings, so an old revision never claims to be the default. Save
   carries an optional `is_default` (absent leaves it unchanged). Archiving the
   default profile clears it in the same transaction; an archived profile cannot be
-  made default. New recipes select the default profile; the profile's batch size
+  made default. Every creation path (editor and MCP `recipe_save` without a profile) takes the default profile; the profile's batch size
   is stored and shown but does not seed them (a per-user default batch size is
   KRA-74). Existing recipes are untouched.
 - **No profile migration.** Profile data from before the spec is not converted. A

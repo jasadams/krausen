@@ -173,6 +173,22 @@ async fn exercise(db: DbPool) {
     assert_eq!(seed.equipment_profile_id.as_deref(), Some(first_id.as_str()));
     assert_eq!(seed.batch_size_l, None, "the profile's batch size does not seed new recipes");
 
+    // Every creation path takes the default: a document naming no profile gets it (the MCP
+    // create path uses this), one that names a profile keeps its own.
+    let blank = krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, RecipeDocumentV1::default())
+        .await
+        .unwrap();
+    assert_eq!(blank.equipment_profile_id.as_deref(), Some(first_id.as_str()));
+    let named = RecipeDocumentV1 { equipment_profile_id: Some("other".into()), ..Default::default() };
+    assert_eq!(
+        krausen_app::recipe_editor::with_workspace_default(&db, &actor, &intent, named)
+            .await
+            .unwrap()
+            .equipment_profile_id
+            .as_deref(),
+        Some("other")
+    );
+
     // A save that does not mention the default leaves it alone.
     let mut again = save_request(&intent, &first_id, "Renamed", None, (1, 1));
     again.about.notes = Some("Edited".into());

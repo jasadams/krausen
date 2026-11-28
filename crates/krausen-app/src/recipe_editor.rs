@@ -65,6 +65,24 @@ async fn read_inner(
 
 /// Create or save through one transaction. `recipe_id = None` creates revision 1;
 /// otherwise the observed head is required. Reusing a request id recovers its result.
+/// A new recipe that names no equipment profile takes the workspace default, as the
+/// editor's new-recipe flow does; every creation path shares this rule. A document that
+/// already names a profile, or a workspace with no default, is returned unchanged.
+pub async fn with_workspace_default(
+    pool: &DbPool,
+    actor: &ActorContext,
+    intent: &OperationIntent,
+    mut document: RecipeDocumentV1,
+) -> Result<RecipeDocumentV1, Error> {
+    if document.equipment_profile_id.is_none() {
+        let page = crate::equipment::list(pool, actor, intent, None, 1, false).await?;
+        if let Some(default) = page.default_profile {
+            document.equipment_profile_id = Some(default.profile_id);
+        }
+    }
+    Ok(document)
+}
+
 pub async fn save(
     pool: &DbPool,
     actor: &ActorContext,
