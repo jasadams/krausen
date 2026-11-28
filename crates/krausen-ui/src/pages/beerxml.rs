@@ -36,11 +36,13 @@ fn calculation_summary(outcome: krausen_types::formulation::PreviewOutcome) -> S
         .map(|d| format!("{}: {}", d.path, d.code.replace('_', " ")))
         .collect::<Vec<_>>()
         .join("; ");
-    let style = value.style.as_ref().map(|s| format!(
-        "Style {} ({}): OG {:.3}–{:.3}, FG {:.3}–{:.3}, IBU {:.1}–{:.1}, ABV {:.1}–{:.1}%, colour {:.1}–{:.1} EBC.",
-        s.name, s.edition, s.original_sg.min, s.original_sg.max, s.final_sg.min, s.final_sg.max,
-        s.ibu.min, s.ibu.max, s.abv_percent.min, s.abv_percent.max, s.colour_ebc.min, s.colour_ebc.max
-    )).unwrap_or_default();
+    let style = value.style.as_ref().map(|s| match (&s.original_sg, &s.final_sg, &s.ibu, &s.abv_percent, &s.colour_ebc) {
+        (Some(og), Some(fg), Some(ibu), Some(abv), Some(colour)) => format!(
+            "Style {} ({}): OG {:.3}–{:.3}, FG {:.3}–{:.3}, IBU {:.1}–{:.1}, ABV {:.1}–{:.1}%, colour {:.1}–{:.1} EBC.",
+            s.name, s.edition, og.min, og.max, fg.min, fg.max, ibu.min, ibu.max, abv.min, abv.max, colour.min, colour.max
+        ),
+        _ => format!("Style {} ({}): no numeric ranges.", s.name, s.edition),
+    }).unwrap_or_default();
     format!(
         "Readiness: {:?}. OG: {}; FG: {}; ABV: {}%; IBU: {}; colour: {} EBC. {} {}",
         value.validation.state,

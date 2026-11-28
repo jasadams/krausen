@@ -383,22 +383,22 @@ pub fn PrintableRecipe(summary: ProcessSummary) -> impl IntoView {
                 </div>
                 {style_ranges.clone().map(|style| {
                     let comparison = style_comparison.clone();
-                    let line = |label: &'static str, range: &krausen_types::formulation::Range, status: Option<RangeStatus>, unit: &'static str, digits: usize| {
-                        format!("{label} {}–{} {unit} ({})", trimmed(range.min, digits), trimmed(range.max, digits), range_status(status))
+                    let line = |label: &'static str, range: &Option<krausen_types::formulation::Range>, status: Option<RangeStatus>, unit: &'static str, digits: usize| {
+                        range.as_ref().map(|range| format!("{label} {}–{} {unit} ({})", trimmed(range.min, digits), trimmed(range.max, digits), range_status(status)))
                     };
+                    let lines = [
+                        line("OG", &style.original_sg, comparison.as_ref().and_then(|c| c.original_sg), "SG", 3),
+                        line("FG", &style.final_sg, comparison.as_ref().and_then(|c| c.final_sg), "SG", 3),
+                        line("ABV", &style.abv_percent, comparison.as_ref().and_then(|c| c.abv_percent), "%", 1),
+                        line("IBU", &style.ibu, comparison.as_ref().and_then(|c| c.ibu), "IBU", 1),
+                        line("EBC", &style.colour_ebc, comparison.as_ref().and_then(|c| c.colour_ebc), "EBC", 1),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                    let ranges = if lines.is_empty() { "no numeric ranges".to_owned() } else { lines.join(" · ") };
                     view! {
-                        <p class="print-sheet__ranges">
-                            {format!("{} · {} · ", style.name, style.edition)}
-                            {line("OG", &style.original_sg, comparison.as_ref().and_then(|c| c.original_sg), "SG", 3)}
-                            {" · "}
-                            {line("FG", &style.final_sg, comparison.as_ref().and_then(|c| c.final_sg), "SG", 3)}
-                            {" · "}
-                            {line("ABV", &style.abv_percent, comparison.as_ref().and_then(|c| c.abv_percent), "%", 1)}
-                            {" · "}
-                            {line("IBU", &style.ibu, comparison.as_ref().and_then(|c| c.ibu), "IBU", 1)}
-                            {" · "}
-                            {line("EBC", &style.colour_ebc, comparison.as_ref().and_then(|c| c.colour_ebc), "EBC", 1)}
-                        </p>
+                        <p class="print-sheet__ranges">{format!("{} · {} · {ranges}", style.name, style.edition)}</p>
                     }
                 })}
                 <p class="print-sheet__muted">"Estimates use the full-precision shared formulation context; they are not measured results."</p>

@@ -156,6 +156,13 @@ precision, format only for display, and expose numeric ranges/status in the
 future shared UI/MCP contract. Future historical records must retain the style
 identity/edition they were formulated against.
 
+Production offers every BJCP 2021 beer style and substyle (123 entries, categories
+1-34) in a searchable shared-kit picker: the search box narrows a native select by
+number or name and always keeps the chosen style listed. A style whose guideline
+publishes no numeric range (for example Experimental Beer) is still selectable; its
+metrics show the readable **No numeric ranges** status in the same rows instead of a
+band.
+
 This interaction is confirmed; reference-data and numeric semantics follow
 `docs/CALCULATIONS.md` and its versioned policy.
 

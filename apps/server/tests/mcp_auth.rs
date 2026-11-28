@@ -902,6 +902,14 @@ async fn exercise(db: DbPool) {
         .await
         .unwrap();
     assert_eq!(styles.structured_content, legacy_styles.structured_content);
+    // MCP lists the same complete BJCP 2021 set as the browser.
+    assert_eq!(
+        styles.structured_content.as_ref().unwrap()["outcome"]["Styles"]
+            .as_array()
+            .unwrap()
+            .len(),
+        123
+    );
     let mut stale_intent = intent.clone();
     stale_intent.workspace_id = "old-workspace".into();
     let stale_styles_browser =

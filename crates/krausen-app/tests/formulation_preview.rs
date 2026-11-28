@@ -80,8 +80,9 @@ async fn exercise(db: DbPool) {
     let choices = krausen_app::formulation::list_styles(&db, &actor, &intent)
         .await
         .unwrap();
-    assert_eq!(choices.len(), 3);
-    assert_eq!(choices[0].style_id.as_deref(), Some("4A"));
+    assert_eq!(choices.len(), 123, "every BJCP 2021 beer style and substyle");
+    assert_eq!(choices[0].style_id.as_deref(), Some("1A"));
+    assert!(choices.iter().any(|s| s.style_id.as_deref() == Some("4A") && s.name == "Munich Helles"));
     let mut req = request();
     req.intent = intent.clone();
     let PreviewOutcome::Preview(first) = preview(&db, &actor, req.clone()).await.unwrap() else {
@@ -186,9 +187,12 @@ async fn exercise(db: DbPool) {
         panic!("style preview")
     };
     let ranges = with_style.style.unwrap();
-    assert_eq!(ranges.reference_version, "bjcp-2021-initial-v1");
+    assert_eq!(ranges.reference_version, "bjcp-2021-guidelines-v1");
     assert_eq!(
-        (ranges.original_sg.min, ranges.original_sg.max),
+        {
+            let og = ranges.original_sg.as_ref().unwrap();
+            (og.min, og.max)
+        },
         (1.044, 1.048)
     );
     assert_ne!(with_style.context_digest, first.context_digest);

@@ -36,7 +36,7 @@ pub mod wayfinding;
 
 pub use action_status::ActionStatus;
 pub use anchored_popover::BreweryPopover;
-pub use brewery_kit::{BreweryActionGroup, BreweryFieldRow, BreweryFields, BreweryStale, BreweryStaleCue, BreweryStepGroup, BreweryStepRow, BreweryMetricList, BrewerySection, BreweryStyleRangePlaceholder, MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation};
+pub use brewery_kit::{BreweryActionGroup, BreweryFieldRow, BreweryFields, BreweryStale, BreweryStaleCue, BreweryStepGroup, BreweryStepRow, BreweryMetricList, BrewerySection, BreweryStyleNoRanges, BreweryStyleRangePlaceholder, MetricDensity, NoticeAnnouncement, NoticeTone, PanelPresentation};
 pub use alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonLink, ButtonSize, ButtonVariant, DownloadLink, ToggleButton};
@@ -57,7 +57,7 @@ pub use switch::Switch;
 pub use theme::ThemeProvider;
 pub use tooltip::Tooltip;
 
-pub use brewery_kit::{BreweryAddition, BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
+pub use brewery_kit::{BreweryAddition, BreweryBrand, BreweryDialog, BreweryDisclosure, BreweryDraftArea, BreweryDraftField, BreweryDraftSearchSelect, BreweryDraftSelect, BreweryField, BreweryIngredientRow, BreweryMetric, BreweryNotice, BreweryPanel, BrewerySaveStatus, BrewerySelect, BreweryTabs, BreweryTextArea, CatalogueItem, SaveState, StyleRange, StyleState, SwatchRole, TokenSwatch};
 
 pub use print_preview::{PageIsolation, PrintPreviewTask};
 pub use printable_recipe::PrintableRecipe;

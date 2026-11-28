@@ -3,7 +3,7 @@
 use crate::{
     components::{
         BreweryDisclosure, BreweryDraftField, BreweryNotice, BreweryPanel, BreweryStale, BreweryTabs,
-        BreweryStyleRangePlaceholder, Button, ButtonVariant, SelectedSavedRevision,
+        BreweryStyleNoRanges, BreweryStyleRangePlaceholder, Button, ButtonVariant, SelectedSavedRevision,
         printable_recipe::diagnostic_message,
     },
     pages::recipe_draft::RecipeDraft,
@@ -2132,6 +2132,11 @@ fn PreviewMetrics(
 ) -> impl IntoView {
     let style = if reference_style_current { preview.as_ref().and_then(|preview| preview.style.as_ref()) } else { None };
     let comparison = if reference_style_current { preview.as_ref().and_then(|preview| preview.style_comparison.as_ref()) } else { None };
+    let band_rows = match style {
+        Some(style) if !style.has_numeric_ranges() => StyleBandRows::NoNumeric,
+        _ if style_selected => StyleBandRows::Awaiting,
+        _ => StyleBandRows::None,
+    };
     // The fermenter batch is the draft that was actually calculated; it is a
     // different quantity from total water, which belongs to the water plan. The
     // preview's context repeats the submitted value even when the validator
@@ -2143,11 +2148,11 @@ fn PreviewMetrics(
         current.then(|| preview.as_ref().and_then(|preview| pick(&preview.targets))).flatten()
     };
     view! { <div class="recipe-editor__metrics">
-        {preview_metric_with_style("Original gravity", value(|t| t.original_sg), style.map(|s| &s.original_sg), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline, style_selected)}
-        {preview_metric_with_style("Final gravity", value(|t| t.final_sg), style.map(|s| &s.final_sg), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline, style_selected)}
-        {preview_metric_with_style("Alcohol", value(|t| t.abv_percent), style.map(|s| &s.abv_percent), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline, style_selected)}
-        {preview_metric_with_style("Bitterness", value(|t| t.ibu), style.map(|s| &s.ibu), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline, style_selected)}
-        {preview_metric_with_style("Colour", value(|t| t.colour_ebc), style.map(|s| &s.colour_ebc), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline, style_selected)}
+        {preview_metric_with_style("Original gravity", value(|t| t.original_sg), style.and_then(|s| s.original_sg.as_ref()), comparison.and_then(|c| c.original_sg), "SG", 3, crate::components::MetricDensity::Headline, band_rows)}
+        {preview_metric_with_style("Final gravity", value(|t| t.final_sg), style.and_then(|s| s.final_sg.as_ref()), comparison.and_then(|c| c.final_sg), "SG", 3, crate::components::MetricDensity::Headline, band_rows)}
+        {preview_metric_with_style("Alcohol", value(|t| t.abv_percent), style.and_then(|s| s.abv_percent.as_ref()), comparison.and_then(|c| c.abv_percent), "%", 1, crate::components::MetricDensity::Headline, band_rows)}
+        {preview_metric_with_style("Bitterness", value(|t| t.ibu), style.and_then(|s| s.ibu.as_ref()), comparison.and_then(|c| c.ibu), "IBU", 1, crate::components::MetricDensity::Headline, band_rows)}
+        {preview_metric_with_style("Colour", value(|t| t.colour_ebc), style.and_then(|s| s.colour_ebc.as_ref()), comparison.and_then(|c| c.colour_ebc), "EBC", 1, crate::components::MetricDensity::Headline, band_rows)}
         {preview_metric("Into fermenter", fermenter, None, None, "L", 1, crate::components::MetricDensity::Headline)}
     </div> }
 }
@@ -2209,6 +2214,17 @@ fn PreviewDetails(preview: krausen_types::formulation::Preview) -> impl IntoView
     })}
     }
 }
+/// What a metric reserves under its value when it has no style range to draw.
+#[derive(Clone, Copy)]
+enum StyleBandRows {
+    /// No style selected: nothing is reserved.
+    None,
+    /// A style is selected but its reference values are not known yet.
+    Awaiting,
+    /// The selected style's guideline publishes no numeric ranges.
+    NoNumeric,
+}
+
 pub(crate) fn preview_metric(
     label: &'static str,
     value: Option<f64>,
@@ -2218,7 +2234,7 @@ pub(crate) fn preview_metric(
     digits: usize,
     density: crate::components::MetricDensity,
 ) -> AnyView {
-    preview_metric_with_style(label, value, range, comparison, unit, digits, density, false)
+    preview_metric_with_style(label, value, range, comparison, unit, digits, density, StyleBandRows::None)
 }
 
 /// The summary variant: when a style is selected but its reference values are not
@@ -2232,7 +2248,7 @@ fn preview_metric_with_style(
     unit: &'static str,
     digits: usize,
     density: crate::components::MetricDensity,
-    style_selected: bool,
+    band_rows: StyleBandRows,
 ) -> AnyView {
     use krausen_types::formulation::RangeStatus;
     let formatted = value
@@ -2243,8 +2259,11 @@ fn preview_metric_with_style(
             let state = match comparison { Some(RangeStatus::Below) => crate::components::StyleState::Below, Some(RangeStatus::Within) => crate::components::StyleState::Within, Some(RangeStatus::Above) => crate::components::StyleState::Above, None => crate::components::StyleState::Awaiting };
             Some(view! { <crate::components::StyleRange label=label min=r.min max=r.max value=value state=state unit=unit digits=digits/> }.into_any())
         }
-        None if style_selected => Some(view! { <BreweryStyleRangePlaceholder/> }.into_any()),
-        None => None,
+        None => match band_rows {
+            StyleBandRows::NoNumeric => Some(view! { <BreweryStyleNoRanges/> }.into_any()),
+            StyleBandRows::Awaiting => Some(view! { <BreweryStyleRangePlaceholder/> }.into_any()),
+            StyleBandRows::None => None,
+        },
     };
     view! { <crate::components::BreweryMetric label=label value=formatted unit=unit density=density>{range_view}</crate::components::BreweryMetric> }.into_any()
 }

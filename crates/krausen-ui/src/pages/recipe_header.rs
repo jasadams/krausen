@@ -9,7 +9,7 @@
 //! automatically.
 use crate::{
     components::{
-        BreweryActionGroup, BreweryDraftField, BreweryDraftSelect, BrewerySaveStatus,
+        BreweryActionGroup, BreweryDraftField, BreweryDraftSearchSelect, BrewerySaveStatus,
         BreweryPopover, Button, ButtonVariant, SaveState,
     },
     pages::{
@@ -238,7 +238,7 @@ pub fn RecipeHeader(
             <BreweryDraftField id="recipe-title" label="Recipe name" value=title on_change=on_title title_variant=true/>
             <div class="recipe-header__context">
                 <div class="recipe-header__batch">{children()}<span id="recipe-batch-note" class="k-field__hint recipe-header__hint">"Batch is the volume into the fermenter"</span></div>
-                {move || view! { <BreweryDraftSelect id="recipe-style" label="Beer style" value=style_value on_change=on_style options=style_options.get()/> }}
+                <BreweryDraftSearchSelect id="recipe-style" label="Beer style" value=style_value on_change=on_style options=style_options search_label="Find a style" search_placeholder="Search by number or name"/>
                 <div class="recipe-header__equipment">
                     <span class="k-field__label">"Equipment"</span>
                     <div class="recipe-header__equipment-body">
