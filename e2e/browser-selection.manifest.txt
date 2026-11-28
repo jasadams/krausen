@@ -78,6 +78,7 @@ recipes/brew-start.spec.ts › controlled identity conflict retains the original
 recipes/brew-start.spec.ts › delayed lifecycle continuation ignores a second click
 recipes/brew-start.spec.ts › dirty evidence Back is guarded and retains the draft
 recipes/brew-start.spec.ts › dirty evidence Discard and leave discards the draft and arrives in one click
+recipes/brew-start.spec.ts › dirty evidence Discard clears the draft on the page before a failed departure
 recipes/brew-start.spec.ts › discarding unsent evidence preserves a committed uncertain request through navigation and reload
 recipes/brew-start.spec.ts › editing a shared profile leaves a started brew frozen and changes only later previews
 recipes/brew-start.spec.ts › evidence Return respects newer successor before its owned focus frame
@@ -234,6 +235,7 @@ recipes/editor.spec.ts › equipment profiles can be saved as the default: an un
 recipes/editor.spec.ts › equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel
 recipes/editor.spec.ts › equipment profiles can be saved, selected, edited and recovered
 recipes/editor.spec.ts › equipment profiles can be saved: Discard and leave discards the edit and arrives in one click
+recipes/editor.spec.ts › equipment profiles can be saved: a discarded edit is reset on the page before a failed departure
 recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in dark mode
 recipes/editor.spec.ts › equipment profiles can be saved: the spec form keeps its order without overflow at 390px in light mode
 recipes/editor.spec.ts › explicit save conflict follow-up cannot publish a denied-after-edit task

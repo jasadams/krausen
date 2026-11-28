@@ -3072,10 +3072,6 @@ test('equipment profiles can be saved: Discard and leave discards the edit and a
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
-  await page.goto('/equipment');
-  await page.getByLabel('Manage profile').selectOption({ label: name });
-  // The edit was discarded: the profile is back to its saved value.
-  await expect(page.getByLabel('Mash efficiency (%)')).toHaveValue('75');
 });
 
 test('equipment profiles can be saved with every field of the spec, made the default, and flag an overfilled vessel', async ({ page }) => {
@@ -3779,6 +3775,23 @@ test('a failed workspace switch is reported after choosing to discard', async ({
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not switch workspaces.');
   await expect(page).toHaveURL(/recipe-editor/);
+});
+
+test('equipment profiles can be saved: a discarded edit is reset on the page before a failed departure', async ({ page }) => {
+  await page.goto('/equipment');
+  await page.getByLabel('Equipment name').fill(`Discard reset ${Date.now()}`);
+  await page.getByLabel('Mash efficiency (%)').fill('75');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Profile saved.' })).toBeVisible();
+  await page.getByLabel('Mash efficiency (%)').fill('61');
+  await page.route('**/leptos-api/logout*', route => route.abort('failed'));
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await popup.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await page.locator('#workspace-draft-warning').getByRole('button', { name: 'Discard and leave' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not sign out.');
+  // The page stayed, and the discard put the form back to the saved value.
+  await expect(page).toHaveURL(/\/equipment/);
+  await expect(page.getByLabel('Mash efficiency (%)')).toHaveValue('75');
 });
 
 test('a change made after choosing Discard and leave still stops the sign-out', async ({ page }) => {

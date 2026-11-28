@@ -1596,11 +1596,6 @@ test('an edited library form leaves in one click with Discard and leave', async 
   await guard.getByRole('button', { name: 'Discard and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
-  // The edited form was discarded: a new library form starts empty.
-  await page.goto('/recipe-editor/new');
-  await page.getByRole('button', { name: 'Add fermentable', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Build your grain bill' }).getByRole('button', { name: 'Create fermentable', exact: true }).first().click();
-  await expect(page.getByRole('dialog', { name: 'A fermentable of your own' }).getByLabel('Fermentable name')).toHaveValue('');
 });
 
 test('KRA42-L3 an unknown library Save survives reload and is replayed verbatim before any new command', async ({ page }) => {

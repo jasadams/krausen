@@ -4,6 +4,7 @@ import {
   createEquipmentProfile,
   getDefaultUserId,
   loginUser,
+  openAccount,
   seedWorkspace,
   sqliteExec,
   walCheckpoint,
@@ -848,8 +849,16 @@ test('dirty evidence Discard and leave discards the draft and arrives in one cli
   await guard.getByRole('button', { name: 'Discard local inputs and leave' }).click();
   await expect(page).toHaveURL(/\/recipes$/);
   await expect(page.getByText('Newer task state prevents the original navigation')).toHaveCount(0);
-  // The draft was discarded: coming back shows an empty note.
-  await page.goBack();
+});
+
+test('dirty evidence Discard clears the draft on the page before a failed departure', async ({ page }) => {
+  await startBrewAndOpenEvidence(page, `Brew discard reset ${Date.now()}`);
+  await page.locator('#brew-note').fill('draft note to discard');
+  await page.route('**/leptos-api/logout*', route => route.abort('failed'));
+  const popup = await openAccount(page, page.locator('.app-shell__desktop'));
+  await popup.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await page.locator('#workspace-draft-warning').getByRole('button', { name: 'Discard local inputs and leave' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not sign out.');
   await expect(page.locator('#brew-note')).toHaveValue('');
 });
 
