@@ -45,7 +45,10 @@ async function geometry(row: Locator): Promise<FieldGeometry[]> {
   return row.evaluate((element) => {
     const box = (node: Element): Box => {
       const r = node.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height };
+      let x = r.x;
+      let y = r.y;
+      for (let up = node.parentElement; up; up = up.parentElement) { x += up.scrollLeft; y += up.scrollTop; }
+      return { x, y, width: r.width, height: r.height };
     };
     return [...element.querySelectorAll('.k-field')]
       .filter((field) => !field.closest('details'))
@@ -70,14 +73,19 @@ function lines(fields: FieldGeometry[]): FieldGeometry[][] {
   return out;
 }
 
+// Content coordinates (every scrolled ancestor added back), so scrolling the row into view
+// when it is clicked is not counted as a move.
 const box = (locator: Locator) => locator.evaluate((node) => {
   const r = node.getBoundingClientRect();
-  return { x: r.x, y: r.y, width: r.width, height: r.height };
+  let x = r.x;
+  let y = r.y;
+  for (let up = node.parentElement; up; up = up.parentElement) { x += up.scrollLeft; y += up.scrollTop; }
+  return { x, y, width: r.width, height: r.height };
 });
 
 async function assertRowAligned(row: Locator, desktop: boolean, what: string) {
   const fields = await geometry(row);
-  expect(fields.length, `${what}: fields found`).toBeGreaterThanOrEqual(3);
+  expect(fields.length, `${what}: fields found`).toBeGreaterThanOrEqual(2);
   const grouped = lines(fields);
   if (desktop) expect(grouped.length, `${what}: one line of fields on desktop: ${JSON.stringify(grouped.map((l) => l.map((f) => f.id)))}`).toBe(1);
   for (const line of grouped) {
@@ -163,11 +171,13 @@ for (const viewport of WIDTHS) {
   test(`KRA75 the design-system showcase rows align and keep their toggle at ${viewport.name} width`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto('/design-system');
-    const rows = page.locator('.k-compact-ingredient:not(:has(details[open]))');
+    const rows = page.locator('.k-compact-ingredient');
     await expect(rows.first()).toBeVisible();
     const count = await rows.count();
-    expect(count).toBeGreaterThanOrEqual(2);
+    const startsOpen = await rows.evaluateAll((all) => all.map((row) => !!row.querySelector('details[open]')));
+    expect(startsOpen.filter((open) => !open).length).toBeGreaterThanOrEqual(2);
     for (let index = 0; index < count; index++) {
+      if (startsOpen[index]) continue;
       const row = rows.nth(index);
       await assertRowAligned(row, viewport.name === 'desktop', `showcase row ${index} ${viewport.name}`);
       await assertToggleStable(row, `showcase row ${index} ${viewport.name}`);

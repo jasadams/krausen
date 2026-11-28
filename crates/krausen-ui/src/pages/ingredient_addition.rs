@@ -96,6 +96,15 @@ impl Field {
     fn is_percent(self) -> bool {
         matches!(self, Self::Yield | Self::Alpha | Self::Attenuation)
     }
+    /// Decimal places a stored number is shown with in a row (KRA-75). The stored value is
+    /// untouched; text the brewer typed is shown exactly as typed.
+    fn display_decimals(self, category: AdditionCategory) -> usize {
+        match (self, category) {
+            (Self::Amount, AdditionCategory::Fermentable) => 3,
+            (Self::Amount, AdditionCategory::Yeast | AdditionCategory::Other) => 2,
+            _ => 1,
+        }
+    }
     /// DOM-id suffix. Stable across releases: diagnostics and tests use them.
     fn dom_suffix(self) -> &'static str {
         match self {
@@ -296,6 +305,10 @@ pub(crate) fn fraction_to_percent(value: f64) -> f64 {
     shift_decimal(&value.to_string(), 2)
         .and_then(|text| text.parse().ok())
         .unwrap_or(value * 100.0)
+}
+/// `value` rounded to `decimals` places, as the shortest number that reads back as it.
+pub(crate) fn round_for_display(value: f64, decimals: usize) -> f64 {
+    format!("{value:.decimals$}").parse().unwrap_or(value)
 }
 pub(crate) fn percent_to_fraction(value: f64) -> f64 {
     shift_decimal(&value.to_string(), -2)
@@ -968,7 +981,8 @@ fn RowNumberField(
             d.number_text(
                 &read_path,
                 row_number(d.document(), category, &read_id, field)
-                    .map(|n| if percent { fraction_to_percent(n) } else { n }),
+                    .map(|n| if percent { fraction_to_percent(n) } else { n })
+                    .map(|n| round_for_display(n, field.display_decimals(category))),
             )
         })
     });
@@ -1100,6 +1114,17 @@ fn manual_suffix(field: Field) -> &'static str {
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_numbers_display_at_a_readable_precision() {
+        let yield_percent = fraction_to_percent(0.8006231877785952);
+        assert_eq!(round_for_display(yield_percent, Field::Yield.display_decimals(AdditionCategory::Fermentable)).to_string(), "80.1");
+        assert_eq!(round_for_display(13.986999999999998, Field::Colour.display_decimals(AdditionCategory::Fermentable)).to_string(), "14");
+        assert_eq!(round_for_display(3.6, 1).to_string(), "3.6");
+        assert_eq!(round_for_display(4.5, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "4.5");
+        assert_eq!(round_for_display(0.1234567, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "0.123");
+        assert_eq!(round_for_display(20.04, Field::Amount.display_decimals(AdditionCategory::Hop)).to_string(), "20");
+    }
 
     fn hop(id: &str, name: &str, stage: &str, minutes: Option<f64>) -> HopAddition {
         HopAddition {
