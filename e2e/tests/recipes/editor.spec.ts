@@ -4632,11 +4632,20 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
 
     // Adjacent actions are separated by the kit gap, never touching.
     const gap = await row.evaluate(element => parseFloat(getComputedStyle(element).columnGap));
+    const kitGap = await row.evaluate(element => {
+      const probe = document.createElement('div');
+      probe.style.width = 'var(--k-space-2)';
+      element.append(probe);
+      const width = probe.getBoundingClientRect().width;
+      probe.remove();
+      return width;
+    });
+    expect(kitGap).toBeGreaterThan(0);
+    expect(gap).toBeCloseTo(kitGap, 1);
     const boxes = await row.getByRole('button').evaluateAll(buttons => buttons.map(button => {
       const { left, right, top, bottom } = button.getBoundingClientRect();
       return { left, right, top, bottom };
     }));
-    expect(gap).toBeGreaterThanOrEqual(6);
     for (let index = 1; index < boxes.length; index += 1) {
       const previous = boxes[index - 1], current = boxes[index];
       const sameLine = Math.abs(previous.top - current.top) < 2;

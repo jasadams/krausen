@@ -1223,7 +1223,7 @@ pub fn Layout() -> impl IntoView {
                 let start_in_flight = start_state.is_some_and(|state| state.in_flight);
                 view! { <crate::components::BreweryDialog id="workspace-draft-warning" title=if recipe { "Unsaved recipe changes" } else if start_in_flight { "Brew start in progress" } else if start_unconfirmed { "Brew start unconfirmed" } else if editor_guard.active_task().is_some_and(|task| task.kind == GuardTaskKind::Import && task.state.uncertain) { "Import result unconfirmed" } else { "Unsaved task changes" } description="Resolve this task, or stay with your work." open=editor_guard.notice return_focus_fallback="mobile-navigation-open".to_string() actions=std::sync::Arc::new(move || view! {
                     <Show when=move || !editor_guard.navigation_error.get().is_empty() && editor_guard.history_restore_ready.get()>
-                    <Button on:click=move |_| { if let Some(restore) = editor_guard.history_restore.get_value() { restore.run(()); } }>"Retry original history restoration"</Button>
+                    <Button variant=crate::components::ButtonVariant::Secondary on:click=move |_| { if let Some(restore) = editor_guard.history_restore.get_value() { restore.run(()); } }>"Retry original history restoration"</Button>
                     </Show>
                     <Show when=move || editor_guard.active_task().is_some_and(|task| task.callbacks.save_and_leave.is_some())>
                     <crate::components::Button disabled=Signal::derive(move || editor_guard.pending.get() || editor_guard.destination.get().is_none()) on:click=move |_| editor_guard.save_active()>"Save and leave"</crate::components::Button>
