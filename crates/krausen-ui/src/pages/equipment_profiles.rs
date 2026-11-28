@@ -854,6 +854,12 @@ pub fn EquipmentManager(
                 Ok(EquipmentOutcome::Profile(latest)) => {
                     if had_edits {
                         // Keep the raw edits; they are now measured against the latest revision.
+                        // An untouched default toggle follows the latest value, so it is not
+                        // mistaken for an edit and sent over another session's choice.
+                        let untouched = form.with_untracked(|f| baseline.with_untracked(|b| f.is_default == b.is_default));
+                        if untouched {
+                            form.update(|f| f.is_default = latest.is_default);
+                        }
                         baseline.set(ProfileForm::from_profile(Some(&latest)));
                         editing.set(Some(latest));
                         conflict.set(false);
