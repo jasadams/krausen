@@ -415,7 +415,7 @@ fieldset { min-width: 0; }
    below the row, so nothing above or beside it moves. */
 .k-compact-ingredient-host { container: k-ingredient-row / inline-size; min-width: 0; }
 .k-compact-ingredient { min-width: 0; padding: var(--k-space-2) 0; border-bottom: 1px solid var(--k-color-border); }
-.k-compact-ingredient .k-field__label { line-height: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-compact-ingredient__main .k-field__label { line-height: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .k-compact-ingredient__main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem); align-items: start; gap: var(--k-space-2); }
 .k-compact-ingredient__main > * { min-width: 0; }
 .k-compact-ingredient__main > button { grid-column: 1 / -1; justify-self: end; }
