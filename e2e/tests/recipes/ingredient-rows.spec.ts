@@ -86,7 +86,16 @@ const box = (locator: Locator) => locator.evaluate((node) => {
   return { x, y, width: r.width, height: r.height };
 });
 
+/** No visible label is cut short (labels keep one line, so truncation would hide part of the name). */
+async function assertLabelsComplete(row: Locator, what: string) {
+  const cut = await row.evaluate((element) => [...element.querySelectorAll('.k-field__label')]
+    .filter((label) => label.getClientRects().length > 0 && label.scrollWidth > label.clientWidth)
+    .map((label) => label.textContent));
+  expect(cut, `${what}: truncated labels`).toEqual([]);
+}
+
 async function assertRowAligned(row: Locator, desktop: boolean, what: string) {
+  await assertLabelsComplete(row, what);
   const fields = await geometry(row);
   expect(fields.length, `${what}: fields found`).toBeGreaterThanOrEqual(2);
   const grouped = lines(fields);
@@ -124,6 +133,7 @@ async function assertToggleStable(row: Locator, what: string) {
   await summary.click();
   const body = row.locator('.k-disclosure__body');
   await expect(body).toBeVisible();
+  await assertLabelsComplete(row, `${what} with details open`);
   const after = { fields: await geometry(row), summary: await box(summary), description: await describe() };
   expect(after.summary, `${what}: toggle position`).toEqual(before.summary);
   expect(after.description, `${what}: description position`).toEqual(before.description);

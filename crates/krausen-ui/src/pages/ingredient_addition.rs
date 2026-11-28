@@ -308,9 +308,11 @@ pub(crate) fn fraction_to_percent(value: f64) -> f64 {
         .and_then(|text| text.parse().ok())
         .unwrap_or(value * 100.0)
 }
-/// `value` rounded to `decimals` places, as the shortest number that reads back as it.
+/// `value` rounded to `decimals` places for display, as the shortest number that reads back as it.
+/// A nonzero value that would round to zero is shown whole rather than as zero.
 pub(crate) fn round_for_display(value: f64, decimals: usize) -> f64 {
-    format!("{value:.decimals$}").parse().unwrap_or(value)
+    let rounded = crate::pages::brew_history_presentation::trim_fixed(value, decimals).parse().unwrap_or(value);
+    if value != 0.0 && rounded == 0.0 { value } else { rounded }
 }
 pub(crate) fn percent_to_fraction(value: f64) -> f64 {
     shift_decimal(&value.to_string(), -2)
@@ -519,14 +521,14 @@ fn row_description(doc: &RecipeDocumentV1, category: AdditionCategory, id: &str,
         AdditionCategory::Hop => {
             if valid(Field::Alpha) {
                 if let Some(value) = row_number(doc, category, id, Field::Alpha) {
-                    parts.push(format!("Alpha {}%", fraction_to_percent(value)));
+                    parts.push(format!("Alpha {}%", round_for_display(fraction_to_percent(value), Field::Alpha.display_decimals(category))));
                 }
             }
         }
         AdditionCategory::Yeast => {
             if valid(Field::Attenuation) {
                 if let Some(value) = row_number(doc, category, id, Field::Attenuation) {
-                    parts.push(format!("Yeast attenuation {}% (informational)", fraction_to_percent(value)));
+                    parts.push(format!("Yeast attenuation {}% (informational)", round_for_display(fraction_to_percent(value), Field::Attenuation.display_decimals(category))));
                 }
             }
         }
@@ -1123,6 +1125,9 @@ mod tests {
         assert_eq!(round_for_display(yield_percent, Field::Yield.display_decimals(AdditionCategory::Fermentable)).to_string(), "80.1");
         assert_eq!(round_for_display(13.986999999999998, Field::Colour.display_decimals(AdditionCategory::Fermentable)).to_string(), "14");
         assert_eq!(round_for_display(3.6, 1).to_string(), "3.6");
+        assert_eq!(round_for_display(-0.0, 1).to_string(), "0");
+        assert_eq!(round_for_display(-0.04, 1).to_string(), "-0.04");
+        assert_eq!(round_for_display(0.0004, 3).to_string(), "0.0004");
         assert_eq!(round_for_display(4.5, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "4.5");
         assert_eq!(round_for_display(0.1234567, Field::Amount.display_decimals(AdditionCategory::Fermentable)).to_string(), "0.123");
         assert_eq!(round_for_display(20.04, Field::Amount.display_decimals(AdditionCategory::Hop)).to_string(), "20");

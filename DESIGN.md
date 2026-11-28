@@ -189,6 +189,12 @@ composition. Copper is an action colour, not a universal decoration; green is
 not the only indication of success. Colour samples are accompanied by named
 units and values.
 
+## Supported browsers
+
+Safari 18.4, Chrome 131 and Firefox 143 or later. The one-line ingredient row places its
+"Addition details" toggle and content in the row grid with `::details-content`, which these
+versions introduced; there is no fallback layout for older browsers.
+
 ## Tokens
 
 ### Compact default density

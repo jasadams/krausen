@@ -47,7 +47,7 @@ pub(crate) fn unit_label(unit: &str) -> String {
     }
 }
 
-fn trim_fixed(value: f64, digits: usize) -> String {
+pub(crate) fn trim_fixed(value: f64, digits: usize) -> String {
     let text = format!("{value:.digits$}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     if text.is_empty() || text == "-0" {
