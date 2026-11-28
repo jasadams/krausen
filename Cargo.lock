@@ -2704,6 +2704,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",

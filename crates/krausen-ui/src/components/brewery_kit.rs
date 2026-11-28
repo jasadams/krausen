@@ -818,6 +818,18 @@ mod tests {
     }
 
     #[test]
+    fn search_words_ignore_accents_and_case() {
+        assert!(search_matches("kolsch", "5B · Kölsch"));
+        assert!(search_matches("marzen", "6A · Märzen"));
+        assert!(search_matches("biere garde", "24C · Bière de Garde"));
+        assert!(search_matches("KÖLSCH", "5B · Kolsch"));
+        assert!(search_matches("5b", "5B · Kölsch"));
+        assert!(search_matches("", "anything"));
+        assert!(!search_matches("kolsch pils", "5B · Kölsch"));
+        assert_eq!(search_fold("MÄRZEN"), "marzen");
+    }
+
+    #[test]
     fn a_style_without_numeric_ranges_says_so_in_readable_text() {
         let html = view! { <BreweryStyleNoRanges/> }.to_html();
         assert!(html.contains("No numeric ranges"));
@@ -1043,6 +1055,19 @@ pub fn BreweryDraftSelect(
 
 }
 
+/// Lower-cased text without diacritics, so "kolsch" finds "Kölsch" and "biere"
+/// finds "Bière". Used only to compare search words with option labels.
+fn search_fold(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.nfd().filter(|c| !('\u{300}'..='\u{36f}').contains(c)).collect::<String>().to_lowercase()
+}
+
+/// Every whitespace-separated word of `query` appears in `label`, ignoring case and accents.
+fn search_matches(query: &str, label: &str) -> bool {
+    let label = search_fold(label);
+    query.split_whitespace().all(|word| label.contains(&search_fold(word)))
+}
+
 /// Controlled choice from a long list (more than a dozen entries): a search box
 /// narrows a native select, so touch devices keep their native picker and
 /// assistive technology keeps a plain labelled select. Every whitespace-separated
@@ -1061,10 +1086,7 @@ pub fn BreweryDraftSearchSelect(
     let query = RwSignal::new(String::new());
     let search_id = format!("{id}-search");
     let status_id = format!("{id}-matches");
-    let matching = move |query: &str, label: &str| {
-        let label = label.to_lowercase();
-        query.split_whitespace().all(|word| label.contains(&word.to_lowercase()))
-    };
+    let matching = search_matches;
     let visible = Signal::derive(move || {
         let selected = value.get();
         let query = query.get();

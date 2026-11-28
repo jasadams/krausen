@@ -217,6 +217,25 @@ mod tests {
         Some((min.parse().unwrap(), max.parse().unwrap()))
     }
 
+    /// The first `min - max` pair after `label` in the published Vital
+    /// Statistics wording, formatted like a reviewed numeric cell.
+    fn published_range(published: &str, label: &str) -> String {
+        let words: Vec<&str> = published.split_whitespace().collect();
+        let number = |word: &str| word.trim_end_matches('%').parse::<f64>().ok();
+        for (i, word) in words.iter().enumerate() {
+            if *word != label {
+                continue;
+            }
+            if let [min, dash, max] = words[i + 1..].iter().take(3).copied().collect::<Vec<_>>()[..]
+            {
+                if let (Some(min), "-", Some(max)) = (number(min), dash, number(max)) {
+                    return format!("{min:?}..{max:?}");
+                }
+            }
+        }
+        "-".into()
+    }
+
     /// The reviewed table is the published Vital Statistics text transcribed
     /// per style (with the one recorded Saison review note), kept apart from
     /// the data file so a wrong number in either is caught.
@@ -236,6 +255,28 @@ mod tests {
                 panic!("malformed reviewed row {row:?}")
             };
             assert!(url.starts_with("https://www.bjcp.org/style/2021/"), "{id}");
+            // The numeric columns are checked against the published wording
+            // itself, except where the review note records a deliberate choice.
+            let [_, _, _, published, _, _, _, _, _, note] = row[..] else {
+                unreachable!()
+            };
+            if note.is_empty() {
+                for (label, cell) in [
+                    ("IBU", ibu),
+                    ("SRM", srm),
+                    ("OG", og),
+                    ("FG", fg),
+                    ("ABV", abv),
+                ] {
+                    assert_eq!(
+                        published_range(published, label),
+                        cell,
+                        "{id} {name} {label} against the published text"
+                    );
+                }
+            } else {
+                assert_eq!(id, "25B", "only Saison carries a review note");
+            }
             assert_eq!(identity.style_id.as_deref(), Some(id));
             assert_eq!(identity.name, name);
             let resolved = resolve(identity).unwrap();

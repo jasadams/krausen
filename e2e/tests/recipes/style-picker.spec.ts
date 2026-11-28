@@ -22,6 +22,12 @@ test('every BJCP 2021 style is searchable by number and name and shows its range
   await expect(page.getByLabel(/Original gravity\. .*Style reference 1\.058 to 1\.080 SG/)).toBeVisible();
   await expect(page.getByLabel(/Bitterness\. .*Style reference 50\.0 to 100\.0 IBU/)).toBeVisible();
 
+  // Accents and case do not matter: "kolsch" finds Kölsch, "marzen" finds Märzen.
+  await search.fill('KOLSCH');
+  await expect(style.getByRole('option', { name: '5B · Kölsch' })).toBeAttached();
+  await search.fill('marzen');
+  await expect(style.getByRole('option', { name: '6A · Märzen' })).toBeAttached();
+
   // Searching never drops the style that is chosen.
   await search.fill('27a');
   await expect(page.getByText('9 of 123 match')).toBeVisible();

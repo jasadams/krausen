@@ -44,6 +44,8 @@ leptos_axum = { version = "0.8", optional = true }
 # Serialization (shared types cross server/client boundary)
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Accent-insensitive search in the shared picker.
+unicode-normalization = "0.1"
 krausen-types = { workspace = true }
 
 # WASM error handling (client-only, but always compiled — no-op on server)
