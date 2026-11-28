@@ -238,24 +238,36 @@ fn RecipeDefaultsCard() -> impl IntoView {
 
     let settings = Resource::new(|| (), |_| get_user_settings());
     let (text, set_text) = signal(String::new());
+    // What the server holds: `None` until it has been read, so nothing is saved over an
+    // unread setting; `Some(None)` is a setting the user has not made.
+    let (stored, set_stored) = signal(None::<Option<f64>>);
     let (message, set_message) = signal(None::<(bool, String)>);
+    // The text of the save in flight, so its answer never replaces what was typed since.
+    let submitted = StoredValue::new(String::new());
     let save_action = Action::new(|settings: &UserSettings| {
         let settings = settings.clone();
         async move { save_user_settings(settings).await }
     });
+    let saving = save_action.pending();
 
-    // Show what is stored once it has loaded.
-    Effect::new(move |_| {
-        if let Some(Ok(UserSettingsOutcome::Settings(loaded))) = settings.get() {
+    // Show what is stored once it has loaded, and say so when it cannot be.
+    Effect::new(move |_| match settings.get() {
+        Some(Ok(UserSettingsOutcome::Settings(loaded))) => {
             set_text.set(loaded.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+            set_stored.set(Some(loaded.default_batch_size_l));
         }
+        Some(_) => set_message.set(Some((false, "Your default batch size could not be loaded. Reload the page to change it.".to_string()))),
+        None => {}
     });
     // Report what the server did with the last save.
     Effect::new(move |_| {
         if let Some(result) = save_action.value().get() {
             set_message.set(Some(match result {
                 Ok(UserSettingsOutcome::Settings(saved)) => {
-                    set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+                    set_stored.set(Some(saved.default_batch_size_l));
+                    if text.get_untracked() == submitted.get_value() {
+                        set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+                    }
                     (true, "Saved".to_string())
                 }
                 Ok(UserSettingsOutcome::Invalid) => (false, "Enter a batch size greater than zero, in litres.".to_string()),
@@ -264,11 +276,21 @@ fn RecipeDefaultsCard() -> impl IntoView {
             }));
         }
     });
-    let on_blur = move |_| match parse_default_batch(&text.get_untracked()) {
-        Ok(default_batch_size_l) => {
-            save_action.dispatch(UserSettings { default_batch_size_l });
+    let on_blur = move |_| {
+        // Nothing to save before the setting is read, while a save is in flight, or when the
+        // text still means what is stored.
+        let Some(stored_value) = stored.get_untracked() else { return };
+        if saving.get_untracked() {
+            return;
         }
-        Err(problem) => set_message.set(Some((false, problem.to_string()))),
+        match parse_default_batch(&text.get_untracked()) {
+            Ok(value) if value == stored_value => {}
+            Ok(default_batch_size_l) => {
+                submitted.set_value(text.get_untracked());
+                save_action.dispatch(UserSettings { default_batch_size_l });
+            }
+            Err(problem) => set_message.set(Some((false, problem.to_string()))),
+        }
     };
 
     view! {
@@ -296,6 +318,7 @@ fn RecipeDefaultsCard() -> impl IntoView {
                         inputmode="decimal"
                         class=INPUT_CLASS
                         placeholder="Not set"
+                        disabled=move || stored.get().is_none() || saving.get()
                         prop:value=text
                         on:input=move |ev| {
                             set_text.set(event_target_value(&ev));
