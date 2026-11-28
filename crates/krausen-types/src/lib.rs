@@ -20,6 +20,7 @@ pub mod request_context;
 pub mod catalogue;
 pub mod equipment;
 pub mod interchange;
+pub mod user_settings;
 
 pub mod brew;
 pub mod brew_history;

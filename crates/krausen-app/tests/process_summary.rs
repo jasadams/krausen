@@ -259,6 +259,7 @@ async fn exercise(db: DbPool) {
             recipe_id: recipe_id.clone(),
             revision: 2,
             default_equipment: None,
+            default_batch_size_l: None,
         }
     );
 
@@ -452,6 +453,7 @@ async fn exercise(db: DbPool) {
             recipe_id: other_recipe.clone(),
             revision: 2,
             default_equipment: None,
+            default_batch_size_l: None,
         }
     );
     other.title = "Other recipe three".into();
@@ -461,6 +463,7 @@ async fn exercise(db: DbPool) {
             recipe_id: other_recipe.clone(),
             revision: 3,
             default_equipment: None,
+            default_batch_size_l: None,
         }
     );
     assert_eq!(

@@ -170,6 +170,8 @@ recipes/editor.spec.ts › Review highlighted fields keeps the button's natural 
 recipes/editor.spec.ts › Review highlighted fields never blinks and nothing moves while another field is edited with an Invalid outstanding
 recipes/editor.spec.ts › Review highlighted fields started from Saved versions selects the Recipe tab and focuses the exact control
 recipes/editor.spec.ts › a change made after choosing Discard and leave still stops the sign-out
+recipes/editor.spec.ts › a default batch size is applied by the server to a new recipe saved without one, and the editor adopts it
+recipes/editor.spec.ts › a default batch size set in Settings starts every new recipe with it, and it can be changed and unset
 recipes/editor.spec.ts › a delayed save freezes its payload and preserves newer edits without duplicate dispatch
 recipes/editor.spec.ts › a denied access re-check hides the editor content at once
 recipes/editor.spec.ts › a dirty new recipe remains private to its original account and workspace

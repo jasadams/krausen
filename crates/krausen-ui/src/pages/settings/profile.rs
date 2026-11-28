@@ -11,6 +11,7 @@ use crate::components::{
     SettingsPageSkeleton, INPUT_CLASS,
 };
 use crate::server_fns::profile::*;
+use crate::server_fns::user_settings::{get_user_settings, save_user_settings};
 use crate::types::ProfileData;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ pub fn ProfilePage() -> impl IntoView {
                                         <ProfileInfoCard data=data_profile.clone()/>
                                     </Show>
                                     <div id="appearance"><AppearanceCard data=data_appearance/></div>
+                                    <div id="recipe-defaults"><RecipeDefaultsCard/></div>
                                     <McpConnectionCard is_personal=is_personal/>
                                     <Show when=move || !is_personal && has_invitations>
                                         <InvitationsCard invitations=inv_list.clone()/>
@@ -206,6 +208,100 @@ fn AppearanceCard(data: ProfileData) -> impl IntoView {
                             </button>
                         }
                     }).collect_view()}
+                </div>
+            </CardContent>
+        </Card>
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recipe Defaults Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a field's text means as a default batch size: nothing (unset) or litres.
+fn parse_default_batch(text: &str) -> Result<Option<f64>, &'static str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<f64>() {
+        Ok(litres) if litres.is_finite() && litres > 0.0 => Ok(Some(litres)),
+        _ => Err("Enter a batch size greater than zero, in litres."),
+    }
+}
+
+#[component]
+fn RecipeDefaultsCard() -> impl IntoView {
+    use krausen_types::user_settings::{UserSettings, UserSettingsOutcome};
+
+    let settings = Resource::new(|| (), |_| get_user_settings());
+    let (text, set_text) = signal(String::new());
+    let (message, set_message) = signal(None::<(bool, String)>);
+    let save_action = Action::new(|settings: &UserSettings| {
+        let settings = settings.clone();
+        async move { save_user_settings(settings).await }
+    });
+
+    // Show what is stored once it has loaded.
+    Effect::new(move |_| {
+        if let Some(Ok(UserSettingsOutcome::Settings(loaded))) = settings.get() {
+            set_text.set(loaded.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+        }
+    });
+    // Report what the server did with the last save.
+    Effect::new(move |_| {
+        if let Some(result) = save_action.value().get() {
+            set_message.set(Some(match result {
+                Ok(UserSettingsOutcome::Settings(saved)) => {
+                    set_text.set(saved.default_batch_size_l.map(|l| l.to_string()).unwrap_or_default());
+                    (true, "Saved".to_string())
+                }
+                Ok(UserSettingsOutcome::Invalid) => (false, "Enter a batch size greater than zero, in litres.".to_string()),
+                Ok(_) => (false, "Your default batch size could not be saved. Try again.".to_string()),
+                Err(e) => (false, e.to_string()),
+            }));
+        }
+    });
+    let on_blur = move |_| match parse_default_batch(&text.get_untracked()) {
+        Ok(default_batch_size_l) => {
+            save_action.dispatch(UserSettings { default_batch_size_l });
+        }
+        Err(problem) => set_message.set(Some((false, problem.to_string()))),
+    };
+
+    view! {
+        <Card>
+            <CardHeader>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <CardTitle>"Recipe defaults"</CardTitle>
+                        <CardDescription>"What every new recipe you start begins with. You can still change it in each recipe."</CardDescription>
+                    </div>
+                    <span class="text-xs" aria-live="polite" data-testid="default-batch-status">
+                        {move || message.get().map(|(ok, msg)| {
+                            let class = if ok { "text-success-foreground" } else { "text-error-foreground" };
+                            view! { <span class=class>{msg}</span> }
+                        })}
+                    </span>
+                </div>
+            </CardHeader>
+            <CardContent>
+                <div class="space-y-2">
+                    <Label html_for="default-batch-size">"Default batch size (L)"</Label>
+                    <input
+                        id="default-batch-size"
+                        type="text"
+                        inputmode="decimal"
+                        class=INPUT_CLASS
+                        placeholder="Not set"
+                        prop:value=text
+                        on:input=move |ev| {
+                            set_text.set(event_target_value(&ev));
+                            set_message.set(None);
+                        }
+                        on:blur=on_blur
+                    />
+                    <p class="text-xs text-muted-foreground">"Leave empty and new recipes start with no batch size."</p>
                 </div>
             </CardContent>
         </Card>
@@ -575,5 +671,21 @@ fn ClearLocalDataCard() -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     {
         view! { <span></span> }.into_any()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_default_batch;
+
+    #[test]
+    fn default_batch_text_is_unset_litres_or_refused() {
+        assert_eq!(parse_default_batch(""), Ok(None));
+        assert_eq!(parse_default_batch("  "), Ok(None));
+        assert_eq!(parse_default_batch(" 23 "), Ok(Some(23.0)));
+        assert_eq!(parse_default_batch("22.5"), Ok(Some(22.5)));
+        for bad in ["0", "-1", "abc", "1e", "NaN", "inf"] {
+            assert!(parse_default_batch(bad).is_err(), "{bad}");
+        }
     }
 }

@@ -235,6 +235,14 @@ equipment_request!(
     EquipmentRevision,
     krausen_types::equipment::EquipmentRevisionQuery
 );
+equipment_request!(
+    UserSettingsGet,
+    krausen_types::user_settings::UserSettingsQuery
+);
+equipment_request!(
+    UserSettingsSave,
+    krausen_types::user_settings::SaveUserSettings
+);
 equipment_request!(RecipeList, krausen_types::recipe_library::LibraryQuery);
 equipment_request!(RecipeHistory, krausen_types::recipe_library::HistoryQuery);
 equipment_request!(RecipeRevision, krausen_types::recipe_library::RevisionQuery);
@@ -544,6 +552,16 @@ impl ServerHandler for McpHandler {
                 operations::BREW_PRINT.mcp_tool,
                 "Read the frozen historical plan and optional actuals for printing or structured export",
                 typed_schema::<BrewPrintInput>(),
+            ),
+            Tool::new(
+                operations::USER_SETTINGS_GET.mcp_tool,
+                "Read the signed-in user's settings, including the default batch size new recipes start with",
+                typed_schema::<UserSettingsGet>(),
+            ),
+            Tool::new(
+                operations::USER_SETTINGS_SAVE.mcp_tool,
+                "Replace the signed-in user's settings; a null default batch size (litres) unsets it",
+                typed_schema::<UserSettingsSave>(),
             ),
         ]))
     }
@@ -1447,6 +1465,44 @@ impl ServerHandler for McpHandler {
                 let success = matches!(
                     outcome,
                     krausen_types::brew_history::BrewPrintOutcome::Print(_)
+                );
+                let value = json!({"outcome": outcome});
+                if success {
+                    CallToolResult::structured(value)
+                } else {
+                    CallToolResult::structured_error(value)
+                }
+            }
+            "user-settings.get.v1" | "user-settings.save.v1" => {
+                let (workspace_id, outcome) = if operation.id == "user-settings.get.v1" {
+                    let c: UserSettingsGet = serde_json::from_value(input).map_err(|_| {
+                        ErrorData::invalid_params("Invalid user settings request", None)
+                    })?;
+                    (c.workspace_id, Err(c.request))
+                } else {
+                    let c: UserSettingsSave = serde_json::from_value(input).map_err(|_| {
+                        ErrorData::invalid_params("Invalid user settings request", None)
+                    })?;
+                    (c.workspace_id, Ok(c.request))
+                };
+                let actor = krausen_app::ActorContext {
+                    actor_id: principal.user_id.clone(),
+                    session_iat_us: principal.session_iat_us,
+                    access_expires_at: principal.access_expires_at,
+                    workspace_id,
+                };
+                let outcome = krausen_app::user_settings::project(match outcome {
+                    Ok(save) => {
+                        krausen_app::user_settings::save(&self.db, &actor, &save.intent, &save.settings)
+                            .await
+                    }
+                    Err(query) => {
+                        krausen_app::user_settings::get(&self.db, &actor, &query.intent).await
+                    }
+                });
+                let success = matches!(
+                    outcome,
+                    krausen_types::user_settings::UserSettingsOutcome::Settings(_)
                 );
                 let value = json!({"outcome": outcome});
                 if success {

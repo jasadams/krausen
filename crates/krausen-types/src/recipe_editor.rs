@@ -34,6 +34,10 @@ pub enum RecipeSaveOutcome {
         /// The profile the server applied because the recipe named none: the caller adopts it.
         #[serde(default)]
         default_equipment: Option<AppliedEquipment>,
+        /// The user's default batch size the server applied because a new recipe carried none:
+        /// the caller adopts it.
+        #[serde(default)]
+        default_batch_size_l: Option<f64>,
     },
     Invalid(Validation),
     UnresolvedEquipmentProfile,

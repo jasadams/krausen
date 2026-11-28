@@ -11,6 +11,7 @@ pub mod recipes;
 pub mod security;
 pub mod sidebar;
 pub mod team;
+pub mod user_settings;
 pub mod workspace;
 
 /// State provided to server functions via Leptos context.

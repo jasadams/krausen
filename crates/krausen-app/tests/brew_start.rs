@@ -281,6 +281,7 @@ async fn exercise(db: DbPool) {
             recipe_id: recipe_id.clone(),
             revision: 2,
             default_equipment: None,
+            default_batch_size_l: None,
         }
     );
     let historical = start_request(&actor, &recipe_id, 1, None, &digest1);

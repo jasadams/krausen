@@ -16,6 +16,10 @@
   "style-picker": {
    "spec": "tests/recipes/style-picker.spec.ts"
   },
+  "default-batch-size": {
+   "spec": "tests/recipes/editor.spec.ts",
+   "grep": "a default batch size"
+  },
   "wayfinding": {
    "spec": "tests/recipes/wayfinding.spec.ts"
   },
@@ -84,14 +88,18 @@
     "crates/krausen-app/src/style_reference.rs",
     "crates/krausen-app/reference/**",
     "e2e/tests/recipes/editor.spec.ts",
-    "e2e/tests/recipes/style-picker.spec.ts"
+    "e2e/tests/recipes/style-picker.spec.ts",
+    "crates/krausen-ui/src/server_fns/user_settings.rs",
+    "crates/krausen-app/src/user_settings.rs",
+    "crates/krausen-types/src/user_settings.rs"
    ],
    "groups": [
     "editor-profiles",
     "editor-state",
     "editor-profile-pagination",
     "design-fidelity",
-    "style-picker"
+    "style-picker",
+    "default-batch-size"
    ]
   },
   {
@@ -195,7 +203,8 @@
     "crates/krausen-ui/src/server_fns/workspace.rs"
    ],
    "groups": [
-    "library-shell"
+    "library-shell",
+    "default-batch-size"
    ]
   },
   {

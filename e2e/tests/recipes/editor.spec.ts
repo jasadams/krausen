@@ -4730,3 +4730,84 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
     await expect(page.getByLabel('Recipe name', { exact: true })).toHaveValue('Action row recipe');
   });
 }
+
+/** Set or clear the signed-in user's default batch size on the Settings page. */
+async function setDefaultBatchSize(page: import('@playwright/test').Page, litres: string) {
+  await page.goto('/settings/profile');
+  const field = page.getByLabel('Default batch size (L)');
+  await expect(field).toBeVisible();
+  await field.fill(litres);
+  await field.blur();
+  await expect(page.getByTestId('default-batch-status')).toHaveText('Saved');
+}
+
+test('a default batch size set in Settings starts every new recipe with it, and it can be changed and unset', async ({ page }) => {
+  try {
+    await page.goto('/settings/profile');
+    await expect(page.getByLabel('Default batch size (L)')).toHaveValue('');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('');
+
+    // Set once: the setting is remembered and a new recipe starts with it, still editable.
+    await setDefaultBatchSize(page, '23');
+    await page.reload();
+    await expect(page.getByLabel('Default batch size (L)')).toHaveValue('23');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('23');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Default batch ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('23');
+    const kept = page.url();
+
+    // Change: the next new recipe takes it, a recipe may carry its own, and a saved one is unchanged.
+    await setDefaultBatchSize(page, '20');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('20');
+    await page.getByLabel('Batch volume (L)').fill('18');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Own batch ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('18');
+    await page.goto(kept);
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('23');
+
+    // A value that is not a positive number is refused and the default stays.
+    await page.goto('/settings/profile');
+    await page.getByLabel('Default batch size (L)').fill('0');
+    await page.getByLabel('Default batch size (L)').blur();
+    await expect(page.getByTestId('default-batch-status')).toContainText('greater than zero');
+    await page.reload();
+    await expect(page.getByLabel('Default batch size (L)')).toHaveValue('20');
+
+    // Unset: new recipes start with no batch size again.
+    await setDefaultBatchSize(page, '');
+    await page.reload();
+    await expect(page.getByLabel('Default batch size (L)')).toHaveValue('');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('');
+  } finally {
+    // The default is user state: leave none behind for the rest of the shard.
+    await setDefaultBatchSize(page, '');
+  }
+});
+
+test('a default batch size is applied by the server to a new recipe saved without one, and the editor adopts it', async ({ page }) => {
+  try {
+    await setDefaultBatchSize(page, '22');
+    await page.goto('/recipe-editor/new');
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('22');
+    // The brewer clears the field; the saved recipe still starts with the default and the editor shows it.
+    await page.getByLabel('Batch volume (L)').fill('');
+    await page.getByLabel('Recipe name', { exact: true }).fill(`Cleared batch ${Date.now()}`);
+    await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('22');
+    await page.reload();
+    await expect(page.getByLabel('Batch volume (L)')).toHaveValue('22');
+  } finally {
+    await setDefaultBatchSize(page, '');
+  }
+});
