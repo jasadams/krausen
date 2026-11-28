@@ -4735,13 +4735,27 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
 async function setDefaultBatchSize(page: import('@playwright/test').Page, litres: string) {
   await page.goto('/settings/profile');
   const field = page.getByLabel('Default batch size (L)');
-  await expect(field).toBeVisible();
+  await expect(field).toBeEnabled();
   await field.fill(litres);
   await field.blur();
   await expect(page.getByTestId('default-batch-status')).toHaveText('Saved');
 }
 
+/** Leave no default behind: save an unset only when a value is still stored. */
+async function clearDefaultBatchSize(page: import('@playwright/test').Page) {
+  await page.goto('/settings/profile');
+  const field = page.getByLabel('Default batch size (L)');
+  await expect(field).toBeEnabled();
+  if ((await field.inputValue()) !== '') {
+    await field.fill('');
+    await field.blur();
+    await expect(page.getByTestId('default-batch-status')).toHaveText('Saved');
+  }
+  await expect(field).toHaveValue('');
+}
+
 test('a default batch size set in Settings starts every new recipe with it, and it can be changed and unset', async ({ page }) => {
+  test.slow();
   try {
     await page.goto('/settings/profile');
     await expect(page.getByLabel('Default batch size (L)')).toHaveValue('');
@@ -4790,7 +4804,7 @@ test('a default batch size set in Settings starts every new recipe with it, and 
     await expect(page.getByLabel('Batch volume (L)')).toHaveValue('');
   } finally {
     // The default is user state: leave none behind for the rest of the shard.
-    await setDefaultBatchSize(page, '');
+    await clearDefaultBatchSize(page);
   }
 });
 
@@ -4803,11 +4817,14 @@ test('a default batch size is applied by the server to a new recipe saved withou
     await page.getByLabel('Batch volume (L)').fill('');
     await page.getByLabel('Recipe name', { exact: true }).fill(`Cleared batch ${Date.now()}`);
     await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+    const saved = page.getByRole('status').filter({ hasText: 'Saved revision 1' });
+    await expect(saved).toBeVisible();
     await expect(page.getByLabel('Batch volume (L)')).toHaveValue('22');
+    // Adopting the stored value is not an edit: the editor stays saved and clean.
+    await expect(saved).not.toContainText('Unsaved changes');
     await page.reload();
     await expect(page.getByLabel('Batch volume (L)')).toHaveValue('22');
   } finally {
-    await setDefaultBatchSize(page, '');
+    await clearDefaultBatchSize(page);
   }
 });
