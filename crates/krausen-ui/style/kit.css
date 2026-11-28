@@ -406,7 +406,8 @@ fieldset { min-width: 0; }
 .k-panel--wide { grid-column: 1 / -1; }
 .k-addition { display: grid; gap: var(--k-space-3); padding: var(--k-space-4) 0; border-bottom: 1px solid var(--k-color-border); }
 .k-addition > button { justify-self: start; }
-/* KRA-75: a row lays itself out by the width it is given (its host is the container), not the
+/* KRA-75: the one-line row needs a browser that supports ::details-content (Chromium 131, Safari 18.4,
+   Firefox 143 and later). A row lays itself out by the width it is given (its host is the container), not the
    viewport: the editor and the showcase give it very different widths at one viewport. Narrow rows
    stack; wide rows put every field, the remove action and the "Addition details" toggle on one line.
    Every field starts on one top line, the labels keep one line so the controls do too, and the
@@ -431,7 +432,8 @@ fieldset { min-width: 0; }
   .k-compact-ingredient__main { display: contents; }
   .k-compact-ingredient__schedule { grid-column: auto; }
   /* The remove action and the toggle line up with the controls: below the label, the control's height. */
-  .k-compact-ingredient__main > button, .k-compact-ingredient > .k-disclosure--compact > summary { grid-column: auto; justify-self: auto; align-self: start; margin-top: calc(1rem + var(--k-space-1)); min-height: var(--k-control-height); line-height: var(--k-control-height); padding-block: 0; }
+  .k-compact-ingredient__main > button { grid-column: auto; justify-self: auto; }
+  .k-compact-ingredient__main > button, .k-compact-ingredient > .k-disclosure--compact > summary { margin-top: calc(1rem + var(--k-space-1)); min-height: var(--k-control-height); line-height: var(--k-control-height); padding-block: 0; }
   .k-compact-ingredient__description { grid-column: 1 / -1; }
   /* The disclosure's box is transparent to the row grid: its summary is the toggle in the last cell
      of row 1 and its content is the full-width cell of row 3, open or closed. */

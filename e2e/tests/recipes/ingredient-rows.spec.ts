@@ -265,7 +265,68 @@ test('KRA75 the details toggle opens from the keyboard without moving', async ({
   await expect(row.locator('.k-disclosure__body')).toBeVisible();
   await expect(summary).toBeFocused();
   expect(await box(summary)).toEqual(before);
+  // Still an operable disclosure in the accessibility tree, not just a styled box.
+  expect(await row.ariaSnapshot()).toContain('Addition details');
   await page.keyboard.press('Space');
   await expect(row.locator('.k-disclosure__body')).toBeHidden();
   expect(await box(summary)).toEqual(before);
+});
+
+test('KRA75 a hop row holds together at every width around the point where it goes onto one line', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/recipe-editor/new');
+  await rowTypes[1].add(page);
+  const row = page.getByRole('group', { name: rowTypes[1].row });
+  const host = page.locator('.k-compact-ingredient-host');
+  const threshold = 48 * (await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)));
+  let wide = 0;
+  let stacked = 0;
+  for (let width = 1300; width <= 1500; width += 10) {
+    await page.setViewportSize({ width, height: 1000 });
+    const hostWidth = (await box(host)).width;
+    const fields = await geometry(row);
+    const grouped = lines(fields);
+    const what = `viewport ${width}, row ${hostWidth}px`;
+    if (hostWidth >= threshold) {
+      wide++;
+      expect(grouped.length, `${what}: one line`).toBe(1);
+      await assertActionsOnControlLine(row, what);
+    } else {
+      stacked++;
+      expect(grouped.length, `${what}: stacked`).toBeGreaterThan(1);
+    }
+    expect(await row.evaluate((element) => element.scrollWidth <= element.clientWidth), `${what}: nothing overflows the row`).toBe(true);
+    const hostBox = await box(host);
+    for (const target of [row.getByRole('button', { name: /^Remove/ }), row.locator('summary', { hasText: 'Addition details' })]) {
+      const b = await box(target);
+      expect(b.x + b.width, `${what}: action inside the row`).toBeLessThanOrEqual(hostBox.x + hostBox.width + 0.5);
+    }
+    for (const f of fields) expect(f.field.x + f.field.width, `${what}: field inside the row`).toBeLessThanOrEqual(hostBox.x + hostBox.width + 0.5);
+  }
+  expect(wide, 'the sweep covers the one-line layout').toBeGreaterThan(0);
+  expect(stacked, 'the sweep covers the stacked layout').toBeGreaterThan(0);
+});
+
+test('KRA75 hop amount and alpha acid show rounded after a reload while the typed text is kept until then', async ({ page }) => {
+  await page.goto('/recipe-editor/new');
+  const title = `Hop rounding ${Date.now()}`;
+  await page.getByLabel('Recipe name', { exact: true }).fill(title);
+  await page.getByLabel('Batch volume (L)').fill('20');
+  await addManual(page, 'Add hop', 'Cascade', async (dialog) => {
+    await dialog.getByLabel('Amount (g)', { exact: true }).fill('20.04');
+    await dialog.getByLabel('Use', { exact: true }).selectOption('boil');
+    await dialog.getByLabel('Contact time (min)', { exact: true }).fill('60');
+    await dialog.getByLabel('Alpha acid (%)', { exact: true }).fill('12.75');
+  });
+  const row = page.getByRole('group', { name: /^Cascade, hop/ });
+  await row.locator('summary', { hasText: 'Addition details' }).click();
+  await expect(row.getByLabel('Amount (g)', { exact: true })).toHaveValue('20.04');
+  await page.getByRole('button', { name: /^Save (recipe|changes)$/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved revision 1' })).toBeVisible();
+  await page.reload();
+  const reloaded = page.getByRole('group', { name: /^Cascade, hop/ });
+  await reloaded.locator('summary', { hasText: 'Addition details' }).click();
+  await expect(reloaded.getByLabel('Amount (g)', { exact: true })).toHaveValue('20');
+  await expect(reloaded.getByLabel('Alpha acid (%)', { exact: true })).toHaveValue('12.75');
+  expect(db.exec(`SELECT COUNT(*) FROM recipe_revisions WHERE document LIKE ${sqlText(`%${title}%`)} AND document LIKE ${sqlText('%20.04%')}`)).toBe('1');
 });

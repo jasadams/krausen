@@ -322,10 +322,12 @@ recipes/editor.spec.ts › wort attenuation is independent of the informational 
 recipes/editor.spec.ts › wrapping belongs to the Wrap size: the showcase keeps ordinary labels on one line and wraps the Wrap link
 recipes/ingredient-rows.spec.ts › KRA75 a fermentable shows yield and colour rounded while the saved recipe keeps full precision at desktop width
 recipes/ingredient-rows.spec.ts › KRA75 a fermentable shows yield and colour rounded while the saved recipe keeps full precision at mobile width
+recipes/ingredient-rows.spec.ts › KRA75 a hop row holds together at every width around the point where it goes onto one line
 recipes/ingredient-rows.spec.ts › KRA75 a typed value keeps its exact text on screen and is stored unrounded
 recipes/ingredient-rows.spec.ts › KRA75 fermentable row fields share one top line and the details toggle stays put at desktop width
 recipes/ingredient-rows.spec.ts › KRA75 fermentable row fields share one top line and the details toggle stays put at mobile width
 recipes/ingredient-rows.spec.ts › KRA75 fermentable row fields share one top line and the details toggle stays put at two-column editor width
+recipes/ingredient-rows.spec.ts › KRA75 hop amount and alpha acid show rounded after a reload while the typed text is kept until then
 recipes/ingredient-rows.spec.ts › KRA75 hop row fields share one top line and the details toggle stays put at desktop width
 recipes/ingredient-rows.spec.ts › KRA75 hop row fields share one top line and the details toggle stays put at mobile width
 recipes/ingredient-rows.spec.ts › KRA75 hop row fields share one top line and the details toggle stays put at two-column editor width
